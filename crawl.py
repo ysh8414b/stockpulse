@@ -410,10 +410,11 @@ def classify_stock_tags(name):
 def crawl_market_index():
     """네이버 금융 시장 지수 크롤링"""
     log("📊 시장 지수 크롤링 시작...")
-    
+
     indices = []
-    
+
     # 국내 지수
+    # HTML 구조: <span id="KOSPI_change"><span class="nup/ndown"></span>131.28 +2.31%<span class="blind">상승</span></span>
     try:
         url = "https://finance.naver.com/sise/"
         resp = requests.get(url, headers=HEADERS, timeout=10)
@@ -428,33 +429,28 @@ def crawl_market_index():
 
             val = val_el.get_text(strip=True)
 
-            # change_el 내부에서 .blind 텍스트 제거 후 순수 텍스트만 추출
-            # 구조: <span class="nup/ndown"></span>131.28 +2.31%<span class="blind">상승</span>
-            if change_el:
-                # .blind 요소 제거하고 텍스트 추출
-                for blind in change_el.select(".blind"):
-                    blind.decompose()
-                change_text = change_el.get_text(strip=True)
-            else:
-                change_text = "0 0%"
-
-            parts = change_text.split()
-            change_amt = parts[0] if parts else "0"
-            change_pct_raw = parts[1] if len(parts) > 1 else "0%"
-
             # 상승/하락 판별: ndown 클래스가 있으면 하락
             is_down = bool(change_el and change_el.select_one(".ndown"))
             trend = "down" if is_down else "up"
 
-            # change_pct_raw에 이미 부호가 포함된 경우 (-2.31%) 그대로 사용
-            # 아니면 부호 붙이기
-            pct_clean = change_pct_raw.replace("%", "").lstrip("+-")
-            if trend == "down":
-                change_amt = f"-{change_amt.lstrip('+-')}"
-                change_pct = f"-{pct_clean}%"
-            else:
-                change_amt = f"+{change_amt.lstrip('+-')}"
-                change_pct = f"+{pct_clean}%"
+            change_amt = "0"
+            change_pct = "0.00%"
+
+            if change_el:
+                # .blind 제거 후 텍스트 추출
+                for blind in change_el.select(".blind"):
+                    blind.decompose()
+                raw = change_el.get_text(strip=True)
+                # 정규식으로 숫자 추출: "131.28 +2.31%" or "6.71 -0.58%"
+                nums = re.findall(r'[\d,.]+', raw)
+                pct_match = re.search(r'([\d,.]+)\s*%', raw)
+
+                if nums:
+                    amt_val = nums[0]
+                    change_amt = f"-{amt_val}" if is_down else f"+{amt_val}"
+                if pct_match:
+                    pct_val = pct_match.group(1)
+                    change_pct = f"-{pct_val}%" if is_down else f"+{pct_val}%"
 
             indices.append({
                 "name": idx_name,
@@ -468,9 +464,10 @@ def crawl_market_index():
 
     except Exception as e:
         log(f"  ❌ 국내 지수 크롤링 실패: {e}")
-    
+
     # 해외 지수 (네이버 금융 월드 지수)
-    # 구조: #worldIndexColumn1/2/3 > li > dl > dd.point_status > strong(값), em(변동), span(%)
+    # HTML 구조: <dl class="point_up/point_dn">
+    #   <dd class="point_status"><strong>14,578.54</strong><em>52.38</em><span><span>+</span>0.36%</span><span class="blind">상승</span></dd>
     try:
         url2 = "https://finance.naver.com/world/"
         resp2 = requests.get(url2, headers=HEADERS, timeout=10)
@@ -493,37 +490,40 @@ def crawl_market_index():
                 if not dd:
                     continue
 
+                # 값: <strong>
                 val_el = dd.select_one("strong")
-                change_el = dd.select_one("em")
-                # 퍼센트: span 안에 span(부호) + 텍스트(숫자%)
-                pct_spans = dd.select("span")
-                # .blind 제외한 span 중에서 % 포함된 것 찾기
-                pct_text = ""
-                for sp in pct_spans:
-                    if "blind" not in sp.get("class", []):
-                        t = sp.get_text(strip=True)
-                        if "%" in t:
-                            pct_text = t
-                            break
-
                 val = val_el.get_text(strip=True) if val_el else "0"
-                change_amt = change_el.get_text(strip=True) if change_el else "0"
 
-                # 상승/하락: dl 클래스 또는 blind 텍스트로 판별
+                # 변동량: <em>
+                change_el = dd.select_one("em")
+                change_amt_raw = change_el.get_text(strip=True) if change_el else "0"
+
+                # 변동률: <span> 중 % 포함 (blind 제외, strong/em 제외)
+                # 구조: <span><span>+</span>0.36%</span>
+                pct_text = ""
+                for sp in dd.find_all("span", recursive=False):
+                    if "blind" in sp.get("class", []):
+                        continue
+                    full_text = sp.get_text(strip=True)
+                    if "%" in full_text:
+                        pct_text = full_text
+                        break
+
+                # 상승/하락: dl 클래스로 판별
                 dl = col.select_one("dl")
-                blind = dd.select_one(".blind")
-                blind_text = blind.get_text(strip=True) if blind else ""
-                is_down = "하락" in blind_text or (dl and "point_dn" in dl.get("class", []))
+                is_down = dl and "point_dn" in " ".join(dl.get("class", []))
                 trend = "down" if is_down else "up"
 
                 # 부호 정리
-                pct_clean = pct_text.replace("+", "").replace("-", "").strip()
+                amt_clean = re.sub(r'[^\d,.]', '', change_amt_raw)
+                pct_clean = re.sub(r'[^\d.]', '', pct_text)
+
                 if trend == "down":
-                    change_amt = f"-{change_amt.lstrip('+-')}"
-                    change_pct = f"-{pct_clean}"
+                    change_amt = f"-{amt_clean}"
+                    change_pct = f"-{pct_clean}%"
                 else:
-                    change_amt = f"+{change_amt.lstrip('+-')}"
-                    change_pct = f"+{pct_clean}"
+                    change_amt = f"+{amt_clean}"
+                    change_pct = f"+{pct_clean}%"
 
                 indices.append({
                     "name": name,
@@ -539,9 +539,9 @@ def crawl_market_index():
 
     except Exception as e:
         log(f"  ⚠️ 해외 지수 크롤링 실패: {e}")
-    
+
     # 환율
-    # 구조: #exchangeList .head.usd > .head_info.point_up/point_dn > .value, .change
+    # HTML 구조: <div class="head_info point_dn"><span class="value">1,448.50</span><span class="change"> 2.50</span><span class="blind">하락</span></div>
     try:
         url3 = "https://finance.naver.com/marketindex/"
         resp3 = requests.get(url3, headers=HEADERS, timeout=10)
@@ -561,19 +561,22 @@ def crawl_market_index():
             is_down = head_info and "point_dn" in " ".join(head_info.get("class", []))
             trend = "down" if is_down else "up"
 
-            # 변동률 계산 (환율 페이지에는 퍼센트가 없으므로 직접 계산)
+            # 변동률 계산
+            change_pct = ""
             try:
                 val_num = float(usd_val.replace(",", ""))
                 change_num = float(change_val.replace(",", ""))
-                pct = round(change_num / (val_num - change_num) * 100, 2) if val_num != change_num else 0
-                change_pct = f"-{abs(pct)}%" if is_down else f"+{abs(pct)}%"
+                if val_num > 0:
+                    pct = round(change_num / val_num * 100, 2)
+                    change_pct = f"-{pct}%" if is_down else f"+{pct}%"
             except:
-                change_pct = ""
+                change_pct = "0.00%"
 
+            change_val_clean = change_val.strip().lstrip("+-")
             indices.append({
                 "name": "USD/KRW",
                 "value": usd_val,
-                "change_amount": f"-{change_val}" if is_down else f"+{change_val}",
+                "change_amount": f"-{change_val_clean}" if is_down else f"+{change_val_clean}",
                 "change_pct": change_pct,
                 "trend": trend,
             })
@@ -581,7 +584,7 @@ def crawl_market_index():
 
     except Exception as e:
         log(f"  ⚠️ 환율 크롤링 실패: {e}")
-    
+
     return indices
 
 
@@ -591,86 +594,82 @@ def crawl_market_index():
 def crawl_sectors():
     """네이버 금융 업종별 시세 크롤링"""
     log("🏭 섹터 데이터 크롤링 시작...")
-    
+
     sectors = []
-    
-    # 섹터 매핑 (네이버 금융 업종 코드)
-    sector_map = {
-        "반도체": {"code": "261", "icon": "⚡"},
-        "2차전지": {"code": "247", "icon": "🔋"},
-        "바이오": {"code": "227", "icon": "🧬"},
-        "자동차": {"code": "202", "icon": "🚗"},
-        "IT/플랫폼": {"code": "230", "icon": "💻"},
-        "금융": {"code": "301", "icon": "🏦"},
-        "철강/소재": {"code": "206", "icon": "⚙️"},
-        "건설": {"code": "207", "icon": "🏗️"},
-    }
-    
+
+    # 섹터 매핑: 표시명 → (네이버 업종명 키워드 목록, 아이콘)
+    sector_map = [
+        ("반도체",    ["반도체와반도체장비", "반도체"],       "⚡"),
+        ("2차전지",   ["전기장비", "전자장비와기기"],          "🔋"),
+        ("바이오",    ["생물공학", "제약", "생명과학"],         "🧬"),
+        ("자동차",    ["자동차", "자동차부품"],                "🚗"),
+        ("IT/플랫폼", ["IT서비스", "소프트웨어"],              "💻"),
+        ("금융",      ["은행", "증권", "기타금융"],            "🏦"),
+        ("철강/소재", ["철강", "비철금속", "화학"],            "⚙️"),
+        ("건설",      ["건설", "건축자재"],                    "🏗️"),
+    ]
+
     try:
-        # 네이버 금융 업종별 시세
         url = "https://finance.naver.com/sise/sise_group.naver?type=upjong"
         resp = requests.get(url, headers=HEADERS, timeout=10)
         resp.encoding = "euc-kr"
         soup = BeautifulSoup(resp.text, "html.parser")
-        
+
         rows = soup.select("table.type_1 tr")
-        
+
+        # 업종명 → 등락률 딕셔너리
         sector_data = {}
         for row in rows:
             cols = row.select("td")
             if len(cols) < 4:
                 continue
-            
             name_tag = cols[0].find("a")
             if not name_tag:
                 continue
-            
             upjong_name = name_tag.get_text(strip=True)
             change_pct = cols[1].get_text(strip=True) if len(cols) > 1 else "0%"
-            
             sector_data[upjong_name] = change_pct
-        
+
         # 사전 정의 섹터에 매핑
-        for sname, sinfo in sector_map.items():
-            # 네이버 업종명과 매칭 시도
+        for sname, keywords, icon in sector_map:
             pct = "0.00%"
-            for upjong, val in sector_data.items():
-                if any(keyword in upjong for keyword in sname.split("/")):
-                    pct = val
+            # 정확한 업종명 매칭 (첫 번째 매칭 사용)
+            for kw in keywords:
+                if kw in sector_data:
+                    pct = sector_data[kw]
                     break
-            
+
             # +/- 판별
             try:
                 pct_num = float(pct.replace("%", "").replace("+", "").replace("-", ""))
-                trend = "down" if "-" in pct or pct_num < 0 else "up"
+                trend = "down" if "-" in pct else "up"
                 if not pct.startswith(("+", "-")):
                     pct = f"+{pct}" if trend == "up" else f"-{pct}"
             except:
                 trend = "up"
                 pct = "+0.00%"
-            
+
             sectors.append({
                 "name": sname,
                 "change_pct": pct,
                 "trend": trend,
-                "stock_count": 10,  # 기본값
-                "icon": sinfo["icon"],
+                "stock_count": 10,
+                "icon": icon,
                 "top_stock": "",
                 "description": "",
             })
-        
+
         log(f"  ✅ 섹터 {len(sectors)}개 수집 완료")
-        
+
     except Exception as e:
         log(f"  ❌ 섹터 크롤링 실패: {e}")
-        # 실패 시 기본값
-        for sname, sinfo in sector_map.items():
+        for sname, keywords, icon in sector_map:
             sectors.append({
                 "name": sname, "change_pct": "+0.00%", "trend": "up",
-                "stock_count": 0, "icon": sinfo["icon"],
+                "stock_count": 0, "icon": icon,
                 "top_stock": "", "description": "데이터 수집 중",
             })
-    
+
     return sectors
 
 
