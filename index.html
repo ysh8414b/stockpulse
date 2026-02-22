@@ -77,6 +77,7 @@ function Empty({msg}){return <div style={{textAlign:"center",padding:"60px 20px"
 
 // ═══ TAB: OVERVIEW ═══
 function TabOverview({idx,stk,nws,sec,loading}){
+  const[expSec,setExpSec]=useState(null);
   if(loading)return <Loader/>;
   return <div>
     <div className="grid-index" style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(idx.length||3,6)},1fr)`,gap:"10px",marginBottom:"28px"}}>
@@ -105,7 +106,7 @@ function TabOverview({idx,stk,nws,sec,loading}){
     </div>
     {sec.length>0&&<Box style={{padding:"22px 24px"}} hover={false}><div className="fade-up fade-up-d4">
       <h3 style={{fontSize:"15px",fontWeight:700,marginBottom:"16px",display:"flex",alignItems:"center",gap:"8px"}}><span style={{width:24,height:24,borderRadius:"6px",display:"inline-flex",alignItems:"center",justifyContent:"center",background:"rgba(139,92,246,0.12)",color:"#8b5cf6",fontSize:"11px"}}>▣</span>섹터별 등락</h3>
-      <div className="grid-sector" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"10px"}}>{sec.map(s=>{const u=s.trend==="up";return <div key={s.name} style={{background:u?"linear-gradient(145deg,rgba(34,197,94,0.07),rgba(34,197,94,0.02))":"linear-gradient(145deg,rgba(239,68,68,0.07),rgba(239,68,68,0.02))",border:"1px solid",borderColor:u?"rgba(34,197,94,0.12)":"rgba(239,68,68,0.12)",borderRadius:"10px",padding:"16px",textAlign:"center"}}><div style={{fontSize:"22px",marginBottom:"4px"}}>{s.icon}</div><div style={{fontWeight:600,fontSize:"13px",marginBottom:"4px"}}>{s.name}</div><div style={{fontWeight:700,fontSize:"17px",color:u?"#22c55e":"#ef4444"}}>{s.change_pct}</div></div>})}</div>
+      <div className="grid-sector" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"10px"}}>{sec.map(s=>{const u=s.trend==="up";const isExp=expSec===s.name;return <div key={s.name} onClick={()=>setExpSec(isExp?null:s.name)} style={{background:u?"linear-gradient(145deg,rgba(34,197,94,0.07),rgba(34,197,94,0.02))":"linear-gradient(145deg,rgba(239,68,68,0.07),rgba(239,68,68,0.02))",border:"1px solid",borderColor:isExp?"rgba(139,92,246,0.3)":(u?"rgba(34,197,94,0.12)":"rgba(239,68,68,0.12)"),borderRadius:"10px",padding:"16px",textAlign:"center",cursor:"pointer",transition:"all .2s",gridColumn:isExp?"1/-1":"auto"}}><div style={{fontSize:"22px",marginBottom:"4px"}}>{s.icon}</div><div style={{fontWeight:600,fontSize:"13px",marginBottom:"4px"}}>{s.name}</div><div style={{fontWeight:700,fontSize:"17px",color:u?"#22c55e":"#ef4444"}}>{s.change_pct}</div>{isExp&&<SectorStockList sectorName={s.name}/>}</div>})}</div>
     </div></Box>}
   </div>;
 }
@@ -160,13 +161,25 @@ function TabNews({nws,loading}){
 }
 
 // ═══ TAB: SECTORS ═══
+function SectorStockList({sectorName}){
+  const[stocks,setStocks]=useState([]);const[ld,setLd]=useState(true);
+  useEffect(()=>{(async()=>{setLd(true);const d=await db("sector_stocks",`sector_name=eq.${encodeURIComponent(sectorName)}&order=rank&limit=10`);if(d?.length)setStocks(d);setLd(false);})()},[sectorName]);
+  if(ld)return <div style={{padding:"12px 0",display:"flex",alignItems:"center",gap:"8px"}}><div style={{width:14,height:14,border:"2px solid rgba(139,92,246,0.2)",borderTop:"2px solid #8b5cf6",borderRadius:"50%",animation:"spin .8s linear infinite"}}/><span style={{color:"#6b7280",fontSize:"12px"}}>종목 로딩 중...</span></div>;
+  if(!stocks.length)return <div style={{padding:"12px 0",color:"#555",fontSize:"12px"}}>종목 데이터 없음</div>;
+  return <div style={{marginTop:"12px",animation:"fadeUp .3s ease both"}}>{stocks.map((st,i)=><div key={st.code||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:i<stocks.length-1?"1px solid rgba(255,255,255,0.04)":"none"}}>
+    <div style={{display:"flex",alignItems:"center",gap:"10px"}}><span style={{width:22,height:22,borderRadius:"6px",fontSize:"10px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",background:i<3?"rgba(139,92,246,0.12)":"rgba(255,255,255,0.05)",color:i<3?"#8b5cf6":"#6b7280"}}>{st.rank}</span>
+    <div><span style={{fontWeight:600,fontSize:"13px"}}>{st.stock_name}</span><span style={{color:"#555",fontSize:"10px",marginLeft:"5px"}}>{st.code}</span></div></div>
+    <div style={{display:"flex",alignItems:"center",gap:"14px"}}><span style={{fontWeight:600,fontSize:"13px",fontVariantNumeric:"tabular-nums"}}>₩{st.price}</span><span style={{fontWeight:700,fontSize:"12px",color:st.trend==="up"?"#22c55e":"#ef4444",minWidth:"60px",textAlign:"right"}}>{st.trend==="up"?"▲":"▼"} {st.change_pct}</span></div>
+  </div>)}</div>;
+}
 function TabSectors({sec,loading}){
+  const[expSec,setExpSec]=useState(null);
   if(loading)return <Loader/>;if(!sec.length)return <Empty msg="섹터 데이터 없음"/>;
   return <div className="fade-up"><h2 style={{fontSize:"17px",fontWeight:700,marginBottom:"18px"}}><span style={{color:"#8b5cf6"}}>▣</span> 섹터별 분석</h2>
-    <div className="grid-2col" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px"}}>{sec.map(s=>{const u=s.trend==="up";return <Box key={s.name} style={{padding:"22px"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"14px"}}><div style={{display:"flex",gap:"12px",alignItems:"center"}}><span style={{width:44,height:44,borderRadius:"11px",fontSize:"22px",display:"flex",alignItems:"center",justifyContent:"center",background:u?"rgba(34,197,94,0.08)":"rgba(239,68,68,0.08)"}}>{s.icon}</span><div><div style={{fontWeight:700,fontSize:"15px"}}>{s.name}</div><div style={{color:"#6b7280",fontSize:"11px",marginTop:"2px"}}>{s.stock_count}개 종목</div></div></div><div style={{fontSize:"22px",fontWeight:800,color:u?"#22c55e":"#ef4444"}}>{s.change_pct}</div></div>
+    <div className="grid-2col" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px"}}>{sec.map(s=>{const u=s.trend==="up";const isExp=expSec===s.name;return <Box key={s.name} style={{padding:"22px",cursor:"pointer"}} onClick={()=>setExpSec(isExp?null:s.name)}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"14px"}}><div style={{display:"flex",gap:"12px",alignItems:"center"}}><span style={{width:44,height:44,borderRadius:"11px",fontSize:"22px",display:"flex",alignItems:"center",justifyContent:"center",background:u?"rgba(34,197,94,0.08)":"rgba(239,68,68,0.08)"}}>{s.icon}</span><div><div style={{fontWeight:700,fontSize:"15px"}}>{s.name}</div><div style={{color:"#6b7280",fontSize:"11px",marginTop:"2px"}}>{s.stock_count}개 종목 <span style={{color:"#8b5cf6",fontSize:"10px"}}>{isExp?"▲ 접기":"▼ 종목보기"}</span></div></div></div><div style={{fontSize:"22px",fontWeight:800,color:u?"#22c55e":"#ef4444"}}>{s.change_pct}</div></div>
       <MiniBar trend={s.trend}/><div style={{display:"flex",justifyContent:"space-between",marginTop:"8px",fontSize:"10px",color:"#555"}}><span>5일 전</span><span>오늘</span></div>
-      {(s.top_stock||s.description)&&<div style={{marginTop:"14px",padding:"10px 12px",background:"rgba(255,255,255,0.02)",borderRadius:"8px",fontSize:"12px",color:"#9ca3af",border:"1px solid rgba(255,255,255,0.04)"}}>{s.top_stock&&<div style={{display:"flex",justifyContent:"space-between",marginBottom:"4px"}}><span>대장주</span><span style={{color:u?"#4ade80":"#f87171",fontWeight:600}}>{s.top_stock}</span></div>}{s.description&&<div style={{color:"#6b7280",lineHeight:1.5}}>{s.description}</div>}</div>}
+      {isExp&&<SectorStockList sectorName={s.name}/>}
     </Box>})}</div>
   </div>;
 }

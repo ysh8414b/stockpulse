@@ -641,6 +641,107 @@ def crawl_sectors():
 
 
 # ─────────────────────────────────────────
+# 5. 섹터별 종목 크롤링
+# ─────────────────────────────────────────
+def crawl_sector_stocks():
+    """네이버 금융 업종 상세 페이지에서 각 섹터의 상위 종목 크롤링"""
+    log("🏷️ 섹터별 종목 크롤링 시작...")
+
+    # 섹터명 → 네이버 업종 코드 매핑
+    sector_codes = {
+        "반도체": 278,
+        "2차전지": 306,    # 전기장비
+        "바이오": 286,     # 생물공학
+        "자동차": 273,
+        "IT/플랫폼": 267,  # IT서비스
+        "금융": 301,       # 은행
+        "철강/소재": 304,  # 철강
+        "건설": 279,
+    }
+
+    all_stocks = []
+
+    for sector_name, sector_no in sector_codes.items():
+        try:
+            url = f"https://finance.naver.com/sise/sise_group_detail.naver?type=upjong&no={sector_no}"
+            resp = requests.get(url, headers=HEADERS, timeout=10)
+            resp.encoding = "euc-kr"
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            table = soup.select_one("table.type_5")
+            if not table:
+                log(f"  ⚠️ {sector_name}: 테이블 없음")
+                continue
+
+            rank = 0
+            for row in table.select("tr"):
+                cols = row.select("td")
+                if len(cols) < 6:
+                    continue
+
+                name_tag = cols[0].find("a")
+                if not name_tag:
+                    continue
+
+                stock_name = name_tag.get_text(strip=True)
+                href = name_tag.get("href", "")
+                code_match = re.search(r"code=(\d{6})", href)
+                code = code_match.group(1) if code_match else ""
+
+                if not code:
+                    continue
+
+                rank += 1
+                if rank > 10:
+                    break
+
+                price = cols[1].get_text(strip=True).replace(",", "")
+                change_pct_text = cols[3].get_text(strip=True)
+
+                # 상승/하락 판별
+                img = cols[2].find("img")
+                if img:
+                    alt = img.get("alt", "")
+                    is_down = "하락" in alt
+                else:
+                    is_down = "-" in change_pct_text
+
+                trend = "down" if is_down else "up"
+
+                # 가격 포맷
+                try:
+                    price_formatted = f"{int(price):,}"
+                except:
+                    price_formatted = price
+
+                # 등락률 부호
+                pct_clean = change_pct_text.replace("%", "").replace("+", "").replace("-", "").strip()
+                if pct_clean:
+                    change_pct = f"-{pct_clean}%" if is_down else f"+{pct_clean}%"
+                else:
+                    change_pct = "0.00%"
+
+                all_stocks.append({
+                    "sector_name": sector_name,
+                    "stock_name": stock_name,
+                    "code": code,
+                    "price": price_formatted,
+                    "change_pct": change_pct,
+                    "trend": trend,
+                    "rank": rank,
+                })
+
+            log(f"  ✅ {sector_name}: {rank}개 종목 수집")
+            time.sleep(0.5)
+
+        except Exception as e:
+            log(f"  ❌ {sector_name} 크롤링 실패: {e}")
+
+    log(f"  ✅ 섹터별 종목 총 {len(all_stocks)}개 수집 완료")
+    return all_stocks
+
+
+# ─────────────────────────────────────────
 # 메인 실행
 # ─────────────────────────────────────────
 def main():
@@ -668,36 +769,46 @@ def main():
     
     # 4. 섹터 데이터 크롤링
     sectors = crawl_sectors()
-    
+    time.sleep(1)
+
+    # 5. 섹터별 종목 크롤링
+    sector_stocks = crawl_sector_stocks()
+
     # ─── Supabase에 저장 ───
     log("")
     log("💾 Supabase에 데이터 저장 중...")
-    
+
     # 기존 데이터 정리
     clear_today_data("news")
     clear_today_data("issue_stocks")
     clear_today_data("market_index")
     clear_today_data("sectors")
-    
+    supabase_request("DELETE", "sector_stocks", params={"id": "gt.0"})
+
     # 뉴스 저장
     if news:
         result = supabase_request("POST", "news", data=news)
         log(f"  📰 뉴스 {len(news)}개 저장 {'✅' if result else '❌'}")
-    
+
     # 종목 저장
     if stocks:
         result = supabase_request("POST", "issue_stocks", data=stocks)
         log(f"  📈 종목 {len(stocks)}개 저장 {'✅' if result else '❌'}")
-    
+
     # 지수 저장
     if indices:
         result = supabase_request("POST", "market_index", data=indices)
         log(f"  📊 지수 {len(indices)}개 저장 {'✅' if result else '❌'}")
-    
+
     # 섹터 저장
     if sectors:
         result = supabase_request("POST", "sectors", data=sectors)
         log(f"  🏭 섹터 {len(sectors)}개 저장 {'✅' if result else '❌'}")
+
+    # 섹터별 종목 저장
+    if sector_stocks:
+        result = supabase_request("POST", "sector_stocks", data=sector_stocks)
+        log(f"  🏷️ 섹터 종목 {len(sector_stocks)}개 저장 {'✅' if result else '❌'}")
     
     log("")
     log("=" * 50)
