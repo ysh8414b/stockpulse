@@ -419,134 +419,166 @@ def crawl_market_index():
         resp = requests.get(url, headers=HEADERS, timeout=10)
         resp.encoding = "euc-kr"
         soup = BeautifulSoup(resp.text, "html.parser")
-        
-        # 코스피
-        kospi_val = soup.select_one("#KOSPI_now")
-        kospi_change = soup.select_one("#KOSPI_change")
-        if kospi_val:
-            val = kospi_val.get_text(strip=True)
-            change_text = kospi_change.get_text(strip=True) if kospi_change else "0"
-            # 변동량과 변동률 분리
+
+        for idx_name, prefix in [("코스피", "KOSPI"), ("코스닥", "KOSDAQ")]:
+            val_el = soup.select_one(f"#{prefix}_now")
+            change_el = soup.select_one(f"#{prefix}_change")
+            if not val_el:
+                continue
+
+            val = val_el.get_text(strip=True)
+
+            # change_el 내부에서 .blind 텍스트 제거 후 순수 텍스트만 추출
+            # 구조: <span class="nup/ndown"></span>131.28 +2.31%<span class="blind">상승</span>
+            if change_el:
+                # .blind 요소 제거하고 텍스트 추출
+                for blind in change_el.select(".blind"):
+                    blind.decompose()
+                change_text = change_el.get_text(strip=True)
+            else:
+                change_text = "0 0%"
+
             parts = change_text.split()
             change_amt = parts[0] if parts else "0"
             change_pct_raw = parts[1] if len(parts) > 1 else "0%"
-            
-            # 상승/하락 판별
-            kospi_img = soup.select_one("#KOSPI_change img")
-            if kospi_img and "하락" in kospi_img.get("alt", ""):
-                trend = "down"
-                change_amt = f"-{change_amt.lstrip('-')}"
-                change_pct = f"-{change_pct_raw.strip('%')}%"
+
+            # 상승/하락 판별: ndown 클래스가 있으면 하락
+            is_down = bool(change_el and change_el.select_one(".ndown"))
+            trend = "down" if is_down else "up"
+
+            # change_pct_raw에 이미 부호가 포함된 경우 (-2.31%) 그대로 사용
+            # 아니면 부호 붙이기
+            pct_clean = change_pct_raw.replace("%", "").lstrip("+-")
+            if trend == "down":
+                change_amt = f"-{change_amt.lstrip('+-')}"
+                change_pct = f"-{pct_clean}%"
             else:
-                trend = "up"
-                change_amt = f"+{change_amt.lstrip('+')}"
-                change_pct = f"+{change_pct_raw.strip('%')}%"
-            
+                change_amt = f"+{change_amt.lstrip('+-')}"
+                change_pct = f"+{pct_clean}%"
+
             indices.append({
-                "name": "코스피",
+                "name": idx_name,
                 "value": val,
                 "change_amount": change_amt,
                 "change_pct": change_pct,
                 "trend": trend,
             })
-        
-        # 코스닥
-        kosdaq_val = soup.select_one("#KOSDAQ_now")
-        kosdaq_change = soup.select_one("#KOSDAQ_change")
-        if kosdaq_val:
-            val = kosdaq_val.get_text(strip=True)
-            change_text = kosdaq_change.get_text(strip=True) if kosdaq_change else "0"
-            parts = change_text.split()
-            change_amt = parts[0] if parts else "0"
-            change_pct_raw = parts[1] if len(parts) > 1 else "0%"
-            
-            kosdaq_img = soup.select_one("#KOSDAQ_change img")
-            if kosdaq_img and "하락" in kosdaq_img.get("alt", ""):
-                trend = "down"
-                change_amt = f"-{change_amt.lstrip('-')}"
-                change_pct = f"-{change_pct_raw.strip('%')}%"
-            else:
-                trend = "up"
-                change_amt = f"+{change_amt.lstrip('+')}"
-                change_pct = f"+{change_pct_raw.strip('%')}%"
-            
-            indices.append({
-                "name": "코스닥",
-                "value": val,
-                "change_amount": change_amt,
-                "change_pct": change_pct,
-                "trend": trend,
-            })
-        
+
         log(f"  ✅ 국내 지수 {len(indices)}개 수집")
-        
+
     except Exception as e:
         log(f"  ❌ 국내 지수 크롤링 실패: {e}")
     
     # 해외 지수 (네이버 금융 월드 지수)
+    # 구조: #worldIndexColumn1/2/3 > li > dl > dd.point_status > strong(값), em(변동), span(%)
     try:
         url2 = "https://finance.naver.com/world/"
         resp2 = requests.get(url2, headers=HEADERS, timeout=10)
         resp2.encoding = "euc-kr"
         soup2 = BeautifulSoup(resp2.text, "html.parser")
-        
-        world_indices = {
-            "다우존스": "DJI@DJI",
-            "나스닥": "NAS@IXIC",
-            "S&P 500": "SPI@SPX",
-        }
-        
-        for name, code in world_indices.items():
+
+        world_indices = [
+            ("다우존스", "worldIndexColumn1"),
+            ("나스닥", "worldIndexColumn2"),
+            ("S&P 500", "worldIndexColumn3"),
+        ]
+
+        for name, col_id in world_indices:
             try:
-                item = soup2.select_one(f"a[href*='{code}']")
-                if item:
-                    parent = item.find_parent("tr") or item.find_parent("div")
-                    if parent:
-                        texts = parent.get_text(" ", strip=True)
-                        # 간단한 파싱 시도
-                        nums = re.findall(r'[\d,]+\.?\d*', texts)
-                        if nums:
-                            indices.append({
-                                "name": name,
-                                "value": nums[0],
-                                "change_amount": nums[1] if len(nums) > 1 else "0",
-                                "change_pct": f"{nums[2]}%" if len(nums) > 2 else "0%",
-                                "trend": "up",  # 기본값
-                            })
-            except:
-                pass
-        
+                col = soup2.select_one(f"#{col_id}")
+                if not col:
+                    continue
+
+                dd = col.select_one("dd.point_status")
+                if not dd:
+                    continue
+
+                val_el = dd.select_one("strong")
+                change_el = dd.select_one("em")
+                # 퍼센트: span 안에 span(부호) + 텍스트(숫자%)
+                pct_spans = dd.select("span")
+                # .blind 제외한 span 중에서 % 포함된 것 찾기
+                pct_text = ""
+                for sp in pct_spans:
+                    if "blind" not in sp.get("class", []):
+                        t = sp.get_text(strip=True)
+                        if "%" in t:
+                            pct_text = t
+                            break
+
+                val = val_el.get_text(strip=True) if val_el else "0"
+                change_amt = change_el.get_text(strip=True) if change_el else "0"
+
+                # 상승/하락: dl 클래스 또는 blind 텍스트로 판별
+                dl = col.select_one("dl")
+                blind = dd.select_one(".blind")
+                blind_text = blind.get_text(strip=True) if blind else ""
+                is_down = "하락" in blind_text or (dl and "point_dn" in dl.get("class", []))
+                trend = "down" if is_down else "up"
+
+                # 부호 정리
+                pct_clean = pct_text.replace("+", "").replace("-", "").strip()
+                if trend == "down":
+                    change_amt = f"-{change_amt.lstrip('+-')}"
+                    change_pct = f"-{pct_clean}"
+                else:
+                    change_amt = f"+{change_amt.lstrip('+-')}"
+                    change_pct = f"+{pct_clean}"
+
+                indices.append({
+                    "name": name,
+                    "value": val,
+                    "change_amount": change_amt,
+                    "change_pct": change_pct,
+                    "trend": trend,
+                })
+            except Exception as ex:
+                log(f"  ⚠️ {name} 파싱 실패: {ex}")
+
         log(f"  ✅ 해외 지수 포함 총 {len(indices)}개")
-        
+
     except Exception as e:
         log(f"  ⚠️ 해외 지수 크롤링 실패: {e}")
     
     # 환율
+    # 구조: #exchangeList .head.usd > .head_info.point_up/point_dn > .value, .change
     try:
         url3 = "https://finance.naver.com/marketindex/"
         resp3 = requests.get(url3, headers=HEADERS, timeout=10)
         resp3.encoding = "euc-kr"
         soup3 = BeautifulSoup(resp3.text, "html.parser")
-        
-        usd_area = soup3.select_one(".market1 .usd")
+
+        usd_area = soup3.select_one("#exchangeList .head.usd")
         if usd_area:
-            val = usd_area.select_one(".value")
-            change = usd_area.select_one(".change")
-            if val:
-                usd_val = val.get_text(strip=True)
-                change_val = change.get_text(strip=True) if change else "0"
-                
-                # 상승/하락
-                is_down = "하락" in usd_area.get_text()
-                indices.append({
-                    "name": "USD/KRW",
-                    "value": usd_val,
-                    "change_amount": f"-{change_val}" if is_down else f"+{change_val}",
-                    "change_pct": "",
-                    "trend": "down" if is_down else "up",
-                })
-                log(f"  ✅ 환율 수집 완료")
-        
+            val_el = usd_area.select_one(".value")
+            change_el = usd_area.select_one(".change")
+            head_info = usd_area.select_one(".head_info")
+
+            usd_val = val_el.get_text(strip=True) if val_el else "0"
+            change_val = change_el.get_text(strip=True) if change_el else "0"
+
+            # 상승/하락: .head_info 클래스에 point_dn/point_up
+            is_down = head_info and "point_dn" in " ".join(head_info.get("class", []))
+            trend = "down" if is_down else "up"
+
+            # 변동률 계산 (환율 페이지에는 퍼센트가 없으므로 직접 계산)
+            try:
+                val_num = float(usd_val.replace(",", ""))
+                change_num = float(change_val.replace(",", ""))
+                pct = round(change_num / (val_num - change_num) * 100, 2) if val_num != change_num else 0
+                change_pct = f"-{abs(pct)}%" if is_down else f"+{abs(pct)}%"
+            except:
+                change_pct = ""
+
+            indices.append({
+                "name": "USD/KRW",
+                "value": usd_val,
+                "change_amount": f"-{change_val}" if is_down else f"+{change_val}",
+                "change_pct": change_pct,
+                "trend": trend,
+            })
+            log(f"  ✅ 환율 수집 완료")
+
     except Exception as e:
         log(f"  ⚠️ 환율 크롤링 실패: {e}")
     
