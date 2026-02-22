@@ -267,8 +267,15 @@ def crawl_issue_stocks():
             volume = cols[5].get_text(strip=True)
             
             # 상승/하락 판별
+            # 변동 0%인지 확인
+            pct_num_check = change_pct_text.replace("%", "").replace("+", "").replace("-", "").strip()
+            is_zero = (pct_num_check == "0.00" or pct_num_check == "0" or pct_num_check == "")
+
             img = cols[3].find("img")
-            if img:
+            if is_zero:
+                trend = "flat"
+                change_pct = "0.00%"
+            elif img:
                 alt = img.get("alt", "")
                 if "상승" in alt:
                     trend = "up"
@@ -277,14 +284,13 @@ def crawl_issue_stocks():
                     trend = "down"
                     change_pct = f"-{change_pct_text}"
                 else:
-                    trend = "up"
+                    trend = "flat"
                     change_pct = change_pct_text
             else:
-                # 텍스트로 판별
                 trend = "down" if "-" in change_text else "up"
                 change_pct = change_pct_text
-            
-            if not change_pct.startswith(("+", "-")):
+
+            if trend != "flat" and not change_pct.startswith(("+", "-")):
                 change_pct = f"+{change_pct}" if trend == "up" else f"-{change_pct}"
             
             # 가격 포맷
@@ -609,12 +615,20 @@ def crawl_sectors():
             # +/- 판별
             try:
                 pct_num = float(pct.replace("%", "").replace("+", "").replace("-", ""))
-                trend = "down" if "-" in pct else "up"
-                if not pct.startswith(("+", "-")):
-                    pct = f"+{pct}" if trend == "up" else f"-{pct}"
+                if pct_num == 0:
+                    trend = "flat"
+                    pct = "0.00%"
+                elif "-" in pct:
+                    trend = "down"
+                    if not pct.startswith("-"):
+                        pct = f"-{pct}"
+                else:
+                    trend = "up"
+                    if not pct.startswith("+"):
+                        pct = f"+{pct}"
             except:
-                trend = "up"
-                pct = "+0.00%"
+                trend = "flat"
+                pct = "0.00%"
 
             sectors.append({
                 "name": sname,
@@ -699,14 +713,19 @@ def crawl_sector_stocks():
                 change_pct_text = cols[3].get_text(strip=True)
 
                 # 상승/하락 판별
-                img = cols[2].find("img")
-                if img:
-                    alt = img.get("alt", "")
-                    is_down = "하락" in alt
-                else:
-                    is_down = "-" in change_pct_text
+                pct_check = change_pct_text.replace("%", "").replace("+", "").replace("-", "").strip()
+                is_zero = (pct_check == "0.00" or pct_check == "0" or pct_check == "")
 
-                trend = "down" if is_down else "up"
+                if is_zero:
+                    trend = "flat"
+                else:
+                    img = cols[2].find("img")
+                    if img:
+                        alt = img.get("alt", "")
+                        is_down = "하락" in alt
+                    else:
+                        is_down = "-" in change_pct_text
+                    trend = "down" if is_down else "up"
 
                 # 가격 포맷
                 try:
@@ -716,10 +735,12 @@ def crawl_sector_stocks():
 
                 # 등락률 부호
                 pct_clean = change_pct_text.replace("%", "").replace("+", "").replace("-", "").strip()
-                if pct_clean:
-                    change_pct = f"-{pct_clean}%" if is_down else f"+{pct_clean}%"
-                else:
+                if trend == "flat" or not pct_clean:
                     change_pct = "0.00%"
+                elif trend == "down":
+                    change_pct = f"-{pct_clean}%"
+                else:
+                    change_pct = f"+{pct_clean}%"
 
                 all_stocks.append({
                     "sector_name": sector_name,

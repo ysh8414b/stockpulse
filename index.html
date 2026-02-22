@@ -10,10 +10,42 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
   <style>
+    :root{
+      --bg:#07070c;--text:#e0ded8;--text-sub:#b0b0b0;--muted:#6b7280;--dim:#555;--dimmer:#444;
+      --card-bg:rgba(255,255,255,0.02);--card-bd:rgba(255,255,255,0.06);
+      --card-hbg:rgba(255,255,255,0.035);--card-hbd:rgba(255,255,255,0.1);
+      --div:rgba(255,255,255,0.04);--div2:rgba(255,255,255,0.05);--div3:rgba(255,255,255,0.06);
+      --inp-bg:rgba(255,255,255,0.05);--inp-bd:rgba(255,255,255,0.1);
+      --tab-bg:rgba(255,255,255,0.07);--tab-bd:rgba(255,255,255,0.1);
+      --ticker-bg:linear-gradient(90deg,#0a0a12,#0e0e1a,#0a0a12);
+      --hover:rgba(255,255,255,0.03);--hover2:rgba(255,255,255,0.015);
+      --badge-bg:rgba(255,255,255,0.05);--badge-bg2:rgba(255,255,255,0.04);
+      --h-grad:linear-gradient(135deg,#e0ded8 30%,#888 100%);
+      --glow1:rgba(6,182,212,0.03);--glow2:rgba(139,92,246,0.025);
+      --skel1:rgba(255,255,255,0.04);--skel2:rgba(255,255,255,0.08);
+      --scroll-thumb:rgba(255,255,255,0.1);
+      --row-head:rgba(255,255,255,0.025);
+    }
+    .light{
+      --bg:#f5f5f7;--text:#1a1a2e;--text-sub:#444;--muted:#6b7280;--dim:#9ca3af;--dimmer:#b0b0b0;
+      --card-bg:#ffffff;--card-bd:rgba(0,0,0,0.08);
+      --card-hbg:rgba(0,0,0,0.03);--card-hbd:rgba(0,0,0,0.15);
+      --div:rgba(0,0,0,0.06);--div2:rgba(0,0,0,0.08);--div3:rgba(0,0,0,0.1);
+      --inp-bg:rgba(0,0,0,0.03);--inp-bd:rgba(0,0,0,0.12);
+      --tab-bg:rgba(0,0,0,0.06);--tab-bd:rgba(0,0,0,0.12);
+      --ticker-bg:linear-gradient(90deg,#e8e8f0,#eff0f5,#e8e8f0);
+      --hover:rgba(0,0,0,0.03);--hover2:rgba(0,0,0,0.015);
+      --badge-bg:rgba(0,0,0,0.05);--badge-bg2:rgba(0,0,0,0.04);
+      --h-grad:linear-gradient(135deg,#1a1a2e 30%,#555 100%);
+      --glow1:transparent;--glow2:transparent;
+      --skel1:rgba(0,0,0,0.04);--skel2:rgba(0,0,0,0.08);
+      --scroll-thumb:rgba(0,0,0,0.15);
+      --row-head:rgba(0,0,0,0.03);
+    }
     *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
     html{scroll-behavior:smooth}
-    body{font-family:'Pretendard',-apple-system,BlinkMacSystemFont,sans-serif;background:#07070c;color:#e0ded8;-webkit-font-smoothing:antialiased;overflow-x:hidden}
-    ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:3px}
+    body{font-family:'Pretendard',-apple-system,BlinkMacSystemFont,sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;overflow-x:hidden;transition:background .3s,color .3s}
+    ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border-radius:3px}
     ::selection{background:rgba(6,182,212,0.3)}
     @keyframes tickerScroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
     @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.85)}}
@@ -23,9 +55,9 @@
     @keyframes spin{to{transform:rotate(360deg)}}
     .fade-up{animation:fadeUp .55s cubic-bezier(.16,1,.3,1) both}
     .fade-up-d1{animation-delay:.05s}.fade-up-d2{animation-delay:.1s}.fade-up-d3{animation-delay:.15s}.fade-up-d4{animation-delay:.2s}
-    .skeleton{background:linear-gradient(90deg,rgba(255,255,255,0.04) 25%,rgba(255,255,255,0.08) 50%,rgba(255,255,255,0.04) 75%);background-size:200% 100%;animation:shimmer 1.8s infinite;border-radius:6px}
-    body::before{content:'';position:fixed;top:-40%;left:-20%;width:80%;height:80%;background:radial-gradient(ellipse,rgba(6,182,212,0.03) 0%,transparent 70%);pointer-events:none;z-index:0}
-    body::after{content:'';position:fixed;bottom:-30%;right:-15%;width:60%;height:60%;background:radial-gradient(ellipse,rgba(139,92,246,0.025) 0%,transparent 70%);pointer-events:none;z-index:0}
+    .skeleton{background:linear-gradient(90deg,var(--skel1) 25%,var(--skel2) 50%,var(--skel1) 75%);background-size:200% 100%;animation:shimmer 1.8s infinite;border-radius:6px}
+    body::before{content:'';position:fixed;top:-40%;left:-20%;width:80%;height:80%;background:radial-gradient(ellipse,var(--glow1) 0%,transparent 70%);pointer-events:none;z-index:0;transition:background .5s}
+    body::after{content:'';position:fixed;bottom:-30%;right:-15%;width:60%;height:60%;background:radial-gradient(ellipse,var(--glow2) 0%,transparent 70%);pointer-events:none;z-index:0;transition:background .5s}
     #root{position:relative;z-index:1}
     @media(max-width:900px){.grid-2col{grid-template-columns:1fr!important}.grid-index{grid-template-columns:repeat(2,1fr)!important}.grid-sector{grid-template-columns:repeat(2,1fr)!important}.header-wrap{padding:20px 16px 14px!important}.main-wrap{padding:16px 16px 40px!important}.nav-wrap{padding:0 16px 14px!important;overflow-x:auto}.stock-row{font-size:12px!important}}
     @media(max-width:600px){.grid-index{grid-template-columns:1fr 1fr!important}.grid-sector{grid-template-columns:1fr!important}}
@@ -71,9 +103,9 @@ function MiniBar({trend}){
 }
 function Dot({s,size=8}){const c={positive:"#22c55e",negative:"#ef4444",neutral:"#6b7280"}[s]||"#6b7280";return <span style={{display:"inline-block",width:size,height:size,borderRadius:"50%",background:c,boxShadow:`0 0 ${size}px ${c}44`,flexShrink:0}}/>;}
 function Tag({children,color="purple"}){const m={purple:{b:"rgba(139,92,246,0.12)",t:"#a78bfa"},blue:{b:"rgba(59,130,246,0.12)",t:"#60a5fa"},cyan:{b:"rgba(6,182,212,0.12)",t:"#22d3ee"}}[color]||{b:"rgba(139,92,246,0.12)",t:"#a78bfa"};return <span style={{display:"inline-block",padding:"2px 8px",background:m.b,color:m.t,borderRadius:"4px",fontSize:"10px",fontWeight:600}}>{children}</span>;}
-function Box({children,style:s={},hover=true,onClick}){const[h,setH]=useState(false);return <div onClick={onClick} onMouseEnter={()=>hover&&setH(true)} onMouseLeave={()=>hover&&setH(false)} style={{background:h?"rgba(255,255,255,0.035)":"rgba(255,255,255,0.02)",border:"1px solid",borderColor:h?"rgba(255,255,255,0.1)":"rgba(255,255,255,0.06)",borderRadius:"14px",transition:"all .25s",transform:h?"translateY(-1px)":"none",cursor:onClick?"pointer":"default",...s}}>{children}</div>;}
-function Loader(){return <div style={{display:"flex",justifyContent:"center",alignItems:"center",padding:"60px",gap:"12px"}}><div style={{width:20,height:20,border:"2px solid rgba(6,182,212,0.2)",borderTop:"2px solid #06b6d4",borderRadius:"50%",animation:"spin .8s linear infinite"}}/><span style={{color:"#6b7280",fontSize:"13px"}}>데이터 로딩 중...</span></div>;}
-function Empty({msg}){return <div style={{textAlign:"center",padding:"60px 20px",color:"#555"}}><div style={{fontSize:"36px",marginBottom:"12px"}}>📭</div><div style={{fontSize:"14px",lineHeight:1.6}}>{msg}</div><div style={{fontSize:"12px",marginTop:"8px",color:"#444"}}>GitHub Actions에서 크롤링을 실행하면 데이터가 채워집니다</div></div>;}
+function Box({children,style:s={},hover=true,onClick}){const[h,setH]=useState(false);return <div onClick={onClick} onMouseEnter={()=>hover&&setH(true)} onMouseLeave={()=>hover&&setH(false)} style={{background:h?"var(--card-hbg)":"var(--card-bg)",border:"1px solid",borderColor:h?"var(--card-hbd)":"var(--card-bd)",borderRadius:"14px",transition:"all .25s",transform:h?"translateY(-1px)":"none",cursor:onClick?"pointer":"default",...s}}>{children}</div>;}
+function Loader(){return <div style={{display:"flex",justifyContent:"center",alignItems:"center",padding:"60px",gap:"12px"}}><div style={{width:20,height:20,border:"2px solid rgba(6,182,212,0.2)",borderTop:"2px solid #06b6d4",borderRadius:"50%",animation:"spin .8s linear infinite"}}/><span style={{color:"var(--muted)",fontSize:"13px"}}>데이터 로딩 중...</span></div>;}
+function Empty({msg}){return <div style={{textAlign:"center",padding:"60px 20px",color:"var(--dim)"}}><div style={{fontSize:"36px",marginBottom:"12px"}}>📭</div><div style={{fontSize:"14px",lineHeight:1.6}}>{msg}</div><div style={{fontSize:"12px",marginTop:"8px",color:"var(--dimmer)"}}>GitHub Actions에서 크롤링을 실행하면 데이터가 채워집니다</div></div>;}
 
 // ═══ TAB: OVERVIEW ═══
 function TabOverview({idx,stk,nws,sec,loading}){
@@ -82,31 +114,31 @@ function TabOverview({idx,stk,nws,sec,loading}){
   return <div>
     <div className="grid-index" style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(idx.length||3,6)},1fr)`,gap:"10px",marginBottom:"28px"}}>
       {idx.map((m,i)=><Box key={m.name} style={{padding:"18px"}}><div className={`fade-up fade-up-d${Math.min(i+1,4)}`}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"10px"}}><span style={{color:"#6b7280",fontSize:"11px",fontWeight:500}}>{m.name}</span><Sparkline trend={m.trend} w={44} h={20}/></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"10px"}}><span style={{color:"var(--muted)",fontSize:"11px",fontWeight:500}}>{m.name}</span><Sparkline trend={m.trend} w={44} h={20}/></div>
         <div style={{fontSize:"18px",fontWeight:700,marginBottom:"2px",fontVariantNumeric:"tabular-nums"}}>{m.value}</div>
-        <div style={{display:"flex",gap:"8px",alignItems:"baseline"}}><span style={{color:m.trend==="up"?"#22c55e":"#ef4444",fontSize:"13px",fontWeight:600}}>{m.trend==="up"?"▲":"▼"} {m.change_pct}</span><span style={{color:"#555",fontSize:"11px"}}>{m.change_amount}</span></div>
+        <div style={{display:"flex",gap:"8px",alignItems:"baseline"}}><span style={{color:m.trend==="up"?"#22c55e":(m.trend==="down"?"#ef4444":"#6b7280"),fontSize:"13px",fontWeight:600}}>{m.trend==="up"?"▲":(m.trend==="down"?"▼":"─")} {m.change_pct}</span><span style={{color:"var(--dim)",fontSize:"11px"}}>{m.change_amount}</span></div>
       </div></Box>)}
     </div>
     <div className="grid-2col" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"16px",marginBottom:"16px"}}>
       <Box style={{padding:"22px 24px"}} hover={false}><div className="fade-up fade-up-d2">
         <h3 style={{fontSize:"15px",fontWeight:700,marginBottom:"18px",display:"flex",alignItems:"center",gap:"8px"}}><span style={{width:24,height:24,borderRadius:"6px",display:"inline-flex",alignItems:"center",justifyContent:"center",background:"rgba(245,158,11,0.12)",color:"#f59e0b",fontSize:"11px"}}>◆</span>이슈 종목 TOP 5</h3>
-        {stk.length===0?<Empty msg="이슈 종목 데이터 없음"/>:stk.slice(0,5).map((s,i)=><div key={s.code||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"13px 0",borderBottom:i<4?"1px solid rgba(255,255,255,0.04)":"none"}}>
-          <div style={{display:"flex",alignItems:"center",gap:"12px"}}><span style={{width:26,height:26,borderRadius:"7px",fontSize:"11px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",background:i<3?"rgba(245,158,11,0.12)":"rgba(255,255,255,0.05)",color:i<3?"#f59e0b":"#6b7280"}}>{s.rank}</span>
-          <div><div style={{fontWeight:600,fontSize:"14px"}}>{s.name}<span style={{color:"#555",fontSize:"11px",marginLeft:"6px",fontWeight:400}}>{s.code}</span></div><div style={{color:"#6b7280",fontSize:"11px",marginTop:"2px"}}>{s.reason}</div></div></div>
-          <div style={{textAlign:"right"}}><div style={{fontWeight:600,fontSize:"14px",fontVariantNumeric:"tabular-nums"}}>₩{s.price}</div><div style={{color:s.trend==="up"?"#22c55e":"#ef4444",fontSize:"12px",fontWeight:600}}>{s.trend==="up"?"▲":"▼"} {s.change_pct}</div></div>
+        {stk.length===0?<Empty msg="이슈 종목 데이터 없음"/>:stk.slice(0,5).map((s,i)=><div key={s.code||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"13px 0",borderBottom:i<4?"1px solid var(--div)":"none"}}>
+          <div style={{display:"flex",alignItems:"center",gap:"12px"}}><span style={{width:26,height:26,borderRadius:"7px",fontSize:"11px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",background:i<3?"rgba(245,158,11,0.12)":"var(--badge-bg)",color:i<3?"#f59e0b":"var(--muted)"}}>{s.rank}</span>
+          <div><div style={{fontWeight:600,fontSize:"14px"}}>{s.name}<span style={{color:"var(--dim)",fontSize:"11px",marginLeft:"6px",fontWeight:400}}>{s.code}</span></div><div style={{color:"var(--muted)",fontSize:"11px",marginTop:"2px"}}>{s.reason}</div></div></div>
+          <div style={{textAlign:"right"}}><div style={{fontWeight:600,fontSize:"14px",fontVariantNumeric:"tabular-nums"}}>₩{s.price}</div><div style={{color:s.trend==="up"?"#22c55e":(s.trend==="down"?"#ef4444":"#6b7280"),fontSize:"12px",fontWeight:600}}>{s.trend==="up"?"▲":(s.trend==="down"?"▼":"─")} {s.change_pct}</div></div>
         </div>)}
       </div></Box>
       <Box style={{padding:"22px 24px"}} hover={false}><div className="fade-up fade-up-d3">
         <h3 style={{fontSize:"15px",fontWeight:700,marginBottom:"18px",display:"flex",alignItems:"center",gap:"8px"}}><span style={{width:24,height:24,borderRadius:"6px",display:"inline-flex",alignItems:"center",justifyContent:"center",background:"rgba(59,130,246,0.12)",color:"#3b82f6",fontSize:"11px"}}>◇</span>최신 주요 뉴스</h3>
-        {nws.length===0?<Empty msg="뉴스 데이터 없음"/>:nws.slice(0,5).map((n,i)=><div key={n.id||i} style={{padding:"13px 0",borderBottom:i<4?"1px solid rgba(255,255,255,0.04)":"none"}}>
+        {nws.length===0?<Empty msg="뉴스 데이터 없음"/>:nws.slice(0,5).map((n,i)=><div key={n.id||i} style={{padding:"13px 0",borderBottom:i<4?"1px solid var(--div)":"none"}}>
           <div style={{display:"flex",gap:"10px",alignItems:"flex-start"}}><Dot s={n.sentiment} size={7}/><div style={{marginTop:"-2px"}}><div style={{fontSize:"13px",fontWeight:500,lineHeight:1.55,marginBottom:"5px"}}>{n.title}</div>
-          <div style={{display:"flex",gap:"8px",alignItems:"center",color:"#6b7280",fontSize:"11px"}}><span style={{fontWeight:500}}>{n.source}</span><span style={{opacity:.4}}>·</span><span>{n.time_ago}</span><Tag color="blue">{n.category}</Tag></div></div></div>
+          <div style={{display:"flex",gap:"8px",alignItems:"center",color:"var(--muted)",fontSize:"11px"}}><span style={{fontWeight:500}}>{n.source}</span><span style={{opacity:.4}}>·</span><span>{n.time_ago}</span><Tag color="blue">{n.category}</Tag></div></div></div>
         </div>)}
       </div></Box>
     </div>
     {sec.length>0&&<Box style={{padding:"22px 24px"}} hover={false}><div className="fade-up fade-up-d4">
       <h3 style={{fontSize:"15px",fontWeight:700,marginBottom:"16px",display:"flex",alignItems:"center",gap:"8px"}}><span style={{width:24,height:24,borderRadius:"6px",display:"inline-flex",alignItems:"center",justifyContent:"center",background:"rgba(139,92,246,0.12)",color:"#8b5cf6",fontSize:"11px"}}>▣</span>섹터별 등락</h3>
-      <div className="grid-sector" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"10px"}}>{sec.map(s=>{const u=s.trend==="up";const isExp=expSec===s.name;return <div key={s.name} onClick={()=>setExpSec(isExp?null:s.name)} style={{background:u?"linear-gradient(145deg,rgba(34,197,94,0.07),rgba(34,197,94,0.02))":"linear-gradient(145deg,rgba(239,68,68,0.07),rgba(239,68,68,0.02))",border:"1px solid",borderColor:isExp?"rgba(139,92,246,0.3)":(u?"rgba(34,197,94,0.12)":"rgba(239,68,68,0.12)"),borderRadius:"10px",padding:"16px",textAlign:"center",cursor:"pointer",transition:"all .2s",gridColumn:isExp?"1/-1":"auto"}}><div style={{fontSize:"22px",marginBottom:"4px"}}>{s.icon}</div><div style={{fontWeight:600,fontSize:"13px",marginBottom:"4px"}}>{s.name}</div><div style={{fontWeight:700,fontSize:"17px",color:u?"#22c55e":"#ef4444"}}>{s.change_pct}</div>{isExp&&<SectorStockList sectorName={s.name}/>}</div>})}</div>
+      <div className="grid-sector" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"10px"}}>{sec.map(s=>{const u=s.trend==="up";const isExp=expSec===s.name;return <SectorCard key={s.name} s={s} u={u} isExp={isExp} onClick={()=>setExpSec(isExp?null:s.name)}/>})}</div>
     </div></Box>}
   </div>;
 }
@@ -118,22 +150,22 @@ function TabStocks({stk,loading}){
   const f=q?stk.filter(s=>s.name.includes(q)||s.code.includes(q)||(s.tags||[]).some(t=>t.includes(q))):stk;
   return <div className="fade-up">
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"18px",flexWrap:"wrap",gap:"12px"}}>
-      <h2 style={{fontSize:"17px",fontWeight:700}}><span style={{color:"#f59e0b"}}>◆</span> 오늘의 이슈 종목 <span style={{fontSize:"12px",color:"#555",fontWeight:400}}>{f.length}종목</span></h2>
-      <div style={{position:"relative"}}><input value={q} onChange={e=>setQ(e.target.value)} placeholder="종목명, 코드, 테마 검색" style={{background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:"8px",padding:"10px 14px 10px 34px",color:"#e0ded8",fontSize:"13px",width:240,outline:"none",fontFamily:"inherit"}}/><span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"#555",fontSize:"13px"}}>⌕</span></div>
+      <h2 style={{fontSize:"17px",fontWeight:700}}><span style={{color:"#f59e0b"}}>◆</span> 오늘의 이슈 종목 <span style={{fontSize:"12px",color:"var(--dim)",fontWeight:400}}>{f.length}종목</span></h2>
+      <div style={{position:"relative"}}><input value={q} onChange={e=>setQ(e.target.value)} placeholder="종목명, 코드, 테마 검색" style={{background:"var(--inp-bg)",border:"1px solid var(--inp-bd)",borderRadius:"8px",padding:"10px 14px 10px 34px",color:"var(--text)",fontSize:"13px",width:240,outline:"none",fontFamily:"inherit"}}/><span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"var(--dim)",fontSize:"13px"}}>⌕</span></div>
     </div>
     <Box style={{overflow:"hidden"}} hover={false}>
-      <div className="stock-row" style={{display:"grid",gridTemplateColumns:"44px 1.2fr 110px 90px 120px 1.5fr 100px",padding:"13px 20px",background:"rgba(255,255,255,0.025)",borderBottom:"1px solid rgba(255,255,255,0.06)",fontSize:"11px",color:"#6b7280",fontWeight:600}}><span>#</span><span>종목</span><span style={{textAlign:"right"}}>현재가</span><span style={{textAlign:"right"}}>등락률</span><span style={{textAlign:"right"}}>거래량</span><span style={{paddingLeft:"16px"}}>이슈 사유</span><span>테마</span></div>
+      <div className="stock-row" style={{display:"grid",gridTemplateColumns:"44px 1.2fr 110px 90px 120px 1.5fr 100px",padding:"13px 20px",background:"var(--row-head)",borderBottom:"1px solid var(--div3)",fontSize:"11px",color:"var(--muted)",fontWeight:600}}><span>#</span><span>종목</span><span style={{textAlign:"right"}}>현재가</span><span style={{textAlign:"right"}}>등락률</span><span style={{textAlign:"right"}}>거래량</span><span style={{paddingLeft:"16px"}}>이슈 사유</span><span>테마</span></div>
       {f.map((s,i)=><React.Fragment key={s.code||i}>
-        <div onClick={()=>setExp(exp===s.code?null:s.code)} onMouseEnter={()=>setHov(s.code)} onMouseLeave={()=>setHov(null)} className="stock-row" style={{display:"grid",gridTemplateColumns:"44px 1.2fr 110px 90px 120px 1.5fr 100px",padding:"15px 20px",borderBottom:"1px solid rgba(255,255,255,0.035)",background:hov===s.code?"rgba(255,255,255,0.03)":"transparent",cursor:"pointer",alignItems:"center",transition:"background .15s"}}>
-          <span style={{width:28,height:28,borderRadius:"7px",fontSize:"11px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",background:s.rank<=3?"rgba(245,158,11,0.14)":"rgba(255,255,255,0.04)",color:s.rank<=3?"#f59e0b":"#6b7280"}}>{s.rank}</span>
-          <div><span style={{fontWeight:600,fontSize:"14px"}}>{s.name}</span><span style={{color:"#555",fontSize:"11px",marginLeft:"6px"}}>{s.code}</span></div>
+        <div onClick={()=>setExp(exp===s.code?null:s.code)} onMouseEnter={()=>setHov(s.code)} onMouseLeave={()=>setHov(null)} className="stock-row" style={{display:"grid",gridTemplateColumns:"44px 1.2fr 110px 90px 120px 1.5fr 100px",padding:"15px 20px",borderBottom:"1px solid var(--div)",background:hov===s.code?"var(--hover)":"transparent",cursor:"pointer",alignItems:"center",transition:"background .15s"}}>
+          <span style={{width:28,height:28,borderRadius:"7px",fontSize:"11px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",background:s.rank<=3?"rgba(245,158,11,0.14)":"var(--badge-bg2)",color:s.rank<=3?"#f59e0b":"var(--muted)"}}>{s.rank}</span>
+          <div><span style={{fontWeight:600,fontSize:"14px"}}>{s.name}</span><span style={{color:"var(--dim)",fontSize:"11px",marginLeft:"6px"}}>{s.code}</span></div>
           <span style={{textAlign:"right",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>₩{s.price}</span>
-          <span style={{textAlign:"right",fontWeight:700,fontSize:"13px",color:s.trend==="up"?"#22c55e":"#ef4444"}}>{s.trend==="up"?"▲":"▼"} {s.change_pct}</span>
-          <span style={{textAlign:"right",color:"#6b7280",fontSize:"12px",fontVariantNumeric:"tabular-nums"}}>{s.volume}</span>
-          <span style={{paddingLeft:"16px",color:"#9ca3af",fontSize:"12px",lineHeight:1.4}}>{s.reason}</span>
+          <span style={{textAlign:"right",fontWeight:700,fontSize:"13px",color:s.trend==="up"?"#22c55e":(s.trend==="down"?"#ef4444":"#6b7280")}}>{s.trend==="up"?"▲":(s.trend==="down"?"▼":"─")} {s.change_pct}</span>
+          <span style={{textAlign:"right",color:"var(--muted)",fontSize:"12px",fontVariantNumeric:"tabular-nums"}}>{s.volume}</span>
+          <span style={{paddingLeft:"16px",color:"var(--text-sub)",fontSize:"12px",lineHeight:1.4}}>{s.reason}</span>
           <div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>{(s.tags||[]).map(t=><Tag key={t}>{t}</Tag>)}</div>
         </div>
-        {exp===s.code&&<div style={{padding:"16px 20px 16px 76px",background:"rgba(255,255,255,0.015)",borderBottom:"1px solid rgba(255,255,255,0.06)",animation:"fadeUp .3s ease both"}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"16px",fontSize:"12px"}}><div><div style={{color:"#6b7280",marginBottom:"4px"}}>이슈 상세</div><div style={{color:"#ccc",lineHeight:1.6}}>{s.reason}</div></div><div><div style={{color:"#6b7280",marginBottom:"4px"}}>테마</div><div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>{(s.tags||[]).map(t=><Tag key={t} color="cyan">{t}</Tag>)}</div></div><div><div style={{color:"#6b7280",marginBottom:"4px"}}>추세</div><Sparkline trend={s.trend} w={100} h={28}/></div></div></div>}
+        {exp===s.code&&<div style={{padding:"16px 20px 16px 76px",background:"var(--hover2)",borderBottom:"1px solid var(--div3)",animation:"fadeUp .3s ease both"}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"16px",fontSize:"12px"}}><div><div style={{color:"var(--muted)",marginBottom:"4px"}}>이슈 상세</div><div style={{color:"var(--text-sub)",lineHeight:1.6}}>{s.reason}</div></div><div><div style={{color:"var(--muted)",marginBottom:"4px"}}>테마</div><div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>{(s.tags||[]).map(t=><Tag key={t} color="cyan">{t}</Tag>)}</div></div><div><div style={{color:"var(--muted)",marginBottom:"4px"}}>추세</div><Sparkline trend={s.trend} w={100} h={28}/></div></div></div>}
       </React.Fragment>)}
     </Box>
   </div>;
@@ -148,37 +180,41 @@ function TabNews({nws,loading}){
   return <div className="fade-up">
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"18px",flexWrap:"wrap",gap:"12px"}}>
       <h2 style={{fontSize:"17px",fontWeight:700}}><span style={{color:"#3b82f6"}}>◇</span> 주요 뉴스</h2>
-      <div style={{display:"flex",gap:"5px"}}>{[{id:"all",l:"전체",c:null},{id:"positive",l:"호재",c:"#22c55e"},{id:"negative",l:"악재",c:"#ef4444"},{id:"neutral",l:"중립",c:"#6b7280"}].map(x=><button key={x.id} onClick={()=>setFil(x.id)} style={{padding:"7px 13px",fontFamily:"inherit",fontSize:"12px",fontWeight:500,background:fil===x.id?"rgba(255,255,255,0.1)":"rgba(255,255,255,0.03)",border:"1px solid",cursor:"pointer",display:"flex",alignItems:"center",gap:"5px",borderColor:fil===x.id?"rgba(255,255,255,0.15)":"rgba(255,255,255,0.06)",borderRadius:"7px",color:fil===x.id?(x.c||"#e0ded8"):"#6b7280",transition:"all .2s"}}>{x.c&&<Dot s={x.id} size={6}/>}{x.l}<span style={{color:"#555",fontSize:"10px"}}>({cnt[x.id]})</span></button>)}</div>
+      <div style={{display:"flex",gap:"5px"}}>{[{id:"all",l:"전체",c:null},{id:"positive",l:"호재",c:"#22c55e"},{id:"negative",l:"악재",c:"#ef4444"},{id:"neutral",l:"중립",c:"#6b7280"}].map(x=><button key={x.id} onClick={()=>setFil(x.id)} style={{padding:"7px 13px",fontFamily:"inherit",fontSize:"12px",fontWeight:500,background:fil===x.id?"var(--tab-bg)":"var(--hover)",border:"1px solid",cursor:"pointer",display:"flex",alignItems:"center",gap:"5px",borderColor:fil===x.id?"var(--tab-bd)":"transparent",borderRadius:"7px",color:fil===x.id?(x.c||"var(--text)"):"var(--muted)",transition:"all .2s"}}>{x.c&&<Dot s={x.id} size={6}/>}{x.l}<span style={{color:"var(--dim)",fontSize:"10px"}}>({cnt[x.id]})</span></button>)}</div>
     </div>
     <div style={{display:"grid",gap:"8px"}}>{f.map(n=><Box key={n.id} style={{padding:"20px 22px"}} onClick={()=>setExp(exp===n.id?null:n.id)}>
       <div style={{display:"flex",gap:"12px",alignItems:"flex-start"}}><div style={{paddingTop:"5px"}}><Dot s={n.sentiment} size={9}/></div><div style={{flex:1}}>
         <h4 style={{fontSize:"15px",fontWeight:600,lineHeight:1.5,marginBottom:"8px"}}>{n.title}</h4>
-        <div style={{display:"flex",gap:"10px",alignItems:"center",flexWrap:"wrap"}}><span style={{color:"#9ca3af",fontSize:"12px",fontWeight:500}}>{n.source}</span><span style={{color:"#444"}}>·</span><span style={{color:"#6b7280",fontSize:"12px"}}>{n.time_ago}</span><Tag color="blue">{n.category}</Tag></div>
-        {exp===n.id&&n.summary&&<div style={{marginTop:"14px",padding:"14px 16px",background:"rgba(255,255,255,0.02)",borderRadius:"8px",border:"1px solid rgba(255,255,255,0.05)",fontSize:"13px",lineHeight:1.7,color:"#b0b0b0",animation:"fadeUp .25s ease both"}}>{n.summary}</div>}
-      </div><span style={{color:"#444",fontSize:"16px",flexShrink:0,marginTop:"2px",transform:exp===n.id?"rotate(90deg)":"none",transition:"transform .2s"}}>→</span></div>
+        <div style={{display:"flex",gap:"10px",alignItems:"center",flexWrap:"wrap"}}><span style={{color:"var(--text-sub)",fontSize:"12px",fontWeight:500}}>{n.source}</span><span style={{color:"var(--dimmer)"}}>·</span><span style={{color:"var(--muted)",fontSize:"12px"}}>{n.time_ago}</span><Tag color="blue">{n.category}</Tag></div>
+        {exp===n.id&&n.summary&&<div style={{marginTop:"14px",padding:"14px 16px",background:"var(--card-bg)",borderRadius:"8px",border:"1px solid var(--div2)",fontSize:"13px",lineHeight:1.7,color:"var(--text-sub)",animation:"fadeUp .25s ease both"}}>{n.summary}</div>}
+      </div><span style={{color:"var(--dimmer)",fontSize:"16px",flexShrink:0,marginTop:"2px",transform:exp===n.id?"rotate(90deg)":"none",transition:"transform .2s"}}>→</span></div>
     </Box>)}</div>
   </div>;
 }
 
 // ═══ TAB: SECTORS ═══
+function SectorCard({s,u,isExp,onClick}){
+  const[h,setH]=useState(false);const f=s.trend==="flat";const clr=u?"34,197,94":(f?"107,114,128":"239,68,68");
+  return <div onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)} onClick={onClick} style={{background:f?"linear-gradient(145deg,rgba(107,114,128,0.07),rgba(107,114,128,0.02))":(u?"linear-gradient(145deg,rgba(34,197,94,0.07),rgba(34,197,94,0.02))":"linear-gradient(145deg,rgba(239,68,68,0.07),rgba(239,68,68,0.02))"),border:"1px solid",borderColor:isExp?"rgba(139,92,246,0.3)":(h?`rgba(${clr},0.25)`:`rgba(${clr},0.12)`),borderRadius:"10px",padding:"16px",textAlign:"center",cursor:"pointer",transition:"all .25s",transform:h?"translateY(-2px)":"none",boxShadow:h?`0 4px 16px rgba(${clr},0.1)`:"none",gridColumn:isExp?"1/-1":"auto"}}><div style={{fontSize:"22px",marginBottom:"4px"}}>{s.icon}</div><div style={{fontWeight:600,fontSize:"13px",marginBottom:"4px"}}>{s.name}</div><div style={{fontWeight:700,fontSize:"17px",color:u?"#22c55e":(f?"#6b7280":"#ef4444")}}>{s.change_pct}</div>{isExp&&<SectorStockList sectorName={s.name}/>}</div>;
+}
 function SectorStockList({sectorName}){
   const[stocks,setStocks]=useState([]);const[ld,setLd]=useState(true);
   useEffect(()=>{(async()=>{setLd(true);const d=await db("sector_stocks",`sector_name=eq.${encodeURIComponent(sectorName)}&order=rank&limit=10`);if(d?.length)setStocks(d);setLd(false);})()},[sectorName]);
-  if(ld)return <div style={{padding:"12px 0",display:"flex",alignItems:"center",gap:"8px"}}><div style={{width:14,height:14,border:"2px solid rgba(139,92,246,0.2)",borderTop:"2px solid #8b5cf6",borderRadius:"50%",animation:"spin .8s linear infinite"}}/><span style={{color:"#6b7280",fontSize:"12px"}}>종목 로딩 중...</span></div>;
-  if(!stocks.length)return <div style={{padding:"12px 0",color:"#555",fontSize:"12px"}}>종목 데이터 없음</div>;
-  return <div style={{marginTop:"12px",animation:"fadeUp .3s ease both"}}>{stocks.map((st,i)=><div key={st.code||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:i<stocks.length-1?"1px solid rgba(255,255,255,0.04)":"none"}}>
-    <div style={{display:"flex",alignItems:"center",gap:"10px"}}><span style={{width:22,height:22,borderRadius:"6px",fontSize:"10px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",background:i<3?"rgba(139,92,246,0.12)":"rgba(255,255,255,0.05)",color:i<3?"#8b5cf6":"#6b7280"}}>{st.rank}</span>
-    <div><span style={{fontWeight:600,fontSize:"13px"}}>{st.stock_name}</span><span style={{color:"#555",fontSize:"10px",marginLeft:"5px"}}>{st.code}</span></div></div>
-    <div style={{display:"flex",alignItems:"center",gap:"14px"}}><span style={{fontWeight:600,fontSize:"13px",fontVariantNumeric:"tabular-nums"}}>₩{st.price}</span><span style={{fontWeight:700,fontSize:"12px",color:st.trend==="up"?"#22c55e":"#ef4444",minWidth:"60px",textAlign:"right"}}>{st.trend==="up"?"▲":"▼"} {st.change_pct}</span></div>
+  if(ld)return <div style={{padding:"12px 0",display:"flex",alignItems:"center",gap:"8px"}}><div style={{width:14,height:14,border:"2px solid rgba(139,92,246,0.2)",borderTop:"2px solid #8b5cf6",borderRadius:"50%",animation:"spin .8s linear infinite"}}/><span style={{color:"var(--muted)",fontSize:"12px"}}>종목 로딩 중...</span></div>;
+  if(!stocks.length)return <div style={{padding:"12px 0",color:"var(--dim)",fontSize:"12px"}}>종목 데이터 없음</div>;
+  return <div style={{marginTop:"12px",animation:"fadeUp .3s ease both"}}>{stocks.map((st,i)=><div key={st.code||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:i<stocks.length-1?"1px solid var(--div)":"none"}}>
+    <div style={{display:"flex",alignItems:"center",gap:"10px"}}><span style={{width:22,height:22,borderRadius:"6px",fontSize:"10px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",background:i<3?"rgba(139,92,246,0.12)":"var(--badge-bg)",color:i<3?"#8b5cf6":"var(--muted)"}}>{st.rank}</span>
+    <div><span style={{fontWeight:600,fontSize:"13px"}}>{st.stock_name}</span><span style={{color:"var(--dim)",fontSize:"10px",marginLeft:"5px"}}>{st.code}</span></div></div>
+    <div style={{display:"flex",alignItems:"center",gap:"14px"}}><span style={{fontWeight:600,fontSize:"13px",fontVariantNumeric:"tabular-nums"}}>₩{st.price}</span><span style={{fontWeight:700,fontSize:"12px",color:st.trend==="up"?"#22c55e":(st.trend==="down"?"#ef4444":"#6b7280"),minWidth:"60px",textAlign:"right"}}>{st.trend==="up"?"▲":(st.trend==="down"?"▼":"─")} {st.change_pct}</span></div>
   </div>)}</div>;
 }
 function TabSectors({sec,loading}){
   const[expSec,setExpSec]=useState(null);
   if(loading)return <Loader/>;if(!sec.length)return <Empty msg="섹터 데이터 없음"/>;
   return <div className="fade-up"><h2 style={{fontSize:"17px",fontWeight:700,marginBottom:"18px"}}><span style={{color:"#8b5cf6"}}>▣</span> 섹터별 분석</h2>
-    <div className="grid-2col" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px"}}>{sec.map(s=>{const u=s.trend==="up";const isExp=expSec===s.name;return <Box key={s.name} style={{padding:"22px",cursor:"pointer"}} onClick={()=>setExpSec(isExp?null:s.name)}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"14px"}}><div style={{display:"flex",gap:"12px",alignItems:"center"}}><span style={{width:44,height:44,borderRadius:"11px",fontSize:"22px",display:"flex",alignItems:"center",justifyContent:"center",background:u?"rgba(34,197,94,0.08)":"rgba(239,68,68,0.08)"}}>{s.icon}</span><div><div style={{fontWeight:700,fontSize:"15px"}}>{s.name}</div><div style={{color:"#6b7280",fontSize:"11px",marginTop:"2px"}}>{s.stock_count}개 종목 <span style={{color:"#8b5cf6",fontSize:"10px"}}>{isExp?"▲ 접기":"▼ 종목보기"}</span></div></div></div><div style={{fontSize:"22px",fontWeight:800,color:u?"#22c55e":"#ef4444"}}>{s.change_pct}</div></div>
-      <MiniBar trend={s.trend}/><div style={{display:"flex",justifyContent:"space-between",marginTop:"8px",fontSize:"10px",color:"#555"}}><span>5일 전</span><span>오늘</span></div>
+    <div className="grid-2col" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px"}}>{sec.map(s=>{const u=s.trend==="up";const f=s.trend==="flat";const isExp=expSec===s.name;return <Box key={s.name} style={{padding:"22px",cursor:"pointer"}} onClick={()=>setExpSec(isExp?null:s.name)}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"14px"}}><div style={{display:"flex",gap:"12px",alignItems:"center"}}><span style={{width:44,height:44,borderRadius:"11px",fontSize:"22px",display:"flex",alignItems:"center",justifyContent:"center",background:u?"rgba(34,197,94,0.08)":(f?"rgba(107,114,128,0.08)":"rgba(239,68,68,0.08)")}}>{s.icon}</span><div><div style={{fontWeight:700,fontSize:"15px"}}>{s.name}</div><div style={{color:"var(--muted)",fontSize:"11px",marginTop:"2px"}}>{s.stock_count}개 종목 <span style={{color:"#8b5cf6",fontSize:"10px"}}>{isExp?"▲ 접기":"▼ 종목보기"}</span></div></div></div><div style={{fontSize:"22px",fontWeight:800,color:u?"#22c55e":(f?"#6b7280":"#ef4444")}}>{s.change_pct}</div></div>
+      <MiniBar trend={s.trend}/><div style={{display:"flex",justifyContent:"space-between",marginTop:"8px",fontSize:"10px",color:"var(--dim)"}}><span>5일 전</span><span>오늘</span></div>
       {isExp&&<SectorStockList sectorName={s.name}/>}
     </Box>})}</div>
   </div>;
@@ -193,15 +229,15 @@ function TabAI({stk,nws,sec}){
     const d=await r.json();setRes(d.content?.map(c=>c.text||"").join("\n")||"응답 오류");}catch(e){setRes("AI 응답 오류")}setLd(false);};
   return <div className="fade-up">
     <h2 style={{fontSize:"17px",fontWeight:700,marginBottom:"4px"}}><span style={{color:"#06b6d4"}}>⬡</span> AI 시장 분석</h2>
-    <p style={{color:"#6b7280",fontSize:"13px",marginBottom:"22px"}}>시장 데이터 기반 객관적 분석. 투자 추천 아닌 정보 제공 목적.</p>
+    <p style={{color:"var(--muted)",fontSize:"13px",marginBottom:"22px"}}>시장 데이터 기반 객관적 분석. 투자 추천 아닌 정보 제공 목적.</p>
     <Box style={{padding:"22px"}} hover={false}>
-      <div style={{display:"flex",gap:"10px",marginBottom:"12px"}}><input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="예: 오늘 반도체 섹터 동향 분석해줘" style={{flex:1,background:"rgba(255,255,255,0.05)",fontFamily:"inherit",border:"1px solid rgba(255,255,255,0.1)",borderRadius:"10px",padding:"13px 16px",color:"#e0ded8",fontSize:"14px",outline:"none"}}/>
+      <div style={{display:"flex",gap:"10px",marginBottom:"12px"}}><input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="예: 오늘 반도체 섹터 동향 분석해줘" style={{flex:1,background:"var(--inp-bg)",fontFamily:"inherit",border:"1px solid var(--inp-bd)",borderRadius:"10px",padding:"13px 16px",color:"var(--text)",fontSize:"14px",outline:"none"}}/>
       <button onClick={go} disabled={ld} style={{padding:"13px 26px",border:"none",borderRadius:"10px",fontFamily:"inherit",background:ld?"rgba(6,182,212,0.15)":"linear-gradient(135deg,#0891b2,#06b6d4)",color:"#fff",fontSize:"14px",fontWeight:600,cursor:ld?"wait":"pointer",animation:ld?"glowPulse 1.5s infinite":"none"}}>{ld?"분석 중…":"분석하기"}</button></div>
-      <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{["오늘 시장 요약","이슈 종목 TOP3","섹터 동향","주요 뉴스 브리핑"].map(p=><button key={p} onClick={()=>setQ(p)} style={{padding:"6px 12px",background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:"6px",color:"#6b7280",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}}>{p}</button>)}</div>
+      <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{["오늘 시장 요약","이슈 종목 TOP3","섹터 동향","주요 뉴스 브리핑"].map(p=><button key={p} onClick={()=>setQ(p)} style={{padding:"6px 12px",background:"var(--badge-bg2)",border:"1px solid var(--div3)",borderRadius:"6px",color:"var(--muted)",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}}>{p}</button>)}</div>
     </Box>
     {(ld||res)&&<div style={{marginTop:"16px",background:"rgba(6,182,212,0.03)",border:"1px solid rgba(6,182,212,0.12)",borderRadius:"14px",padding:"22px",animation:"fadeUp .4s ease both"}}>
       <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"14px"}}><span style={{width:26,height:26,borderRadius:"7px",background:"rgba(6,182,212,0.15)",color:"#06b6d4",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px"}}>⬡</span><span style={{fontSize:"13px",fontWeight:600,color:"#06b6d4"}}>AI 분석 결과</span></div>
-      {ld?<div style={{display:"grid",gap:"10px"}}>{[90,75,82,60].map((w,i)=><div key={i} className="skeleton" style={{height:"14px",width:`${w}%`}}/>)}</div>:<div style={{fontSize:"14px",lineHeight:1.85,color:"#c8c8c8",whiteSpace:"pre-wrap"}}>{res}</div>}
+      {ld?<div style={{display:"grid",gap:"10px"}}>{[90,75,82,60].map((w,i)=><div key={i} className="skeleton" style={{height:"14px",width:`${w}%`}}/>)}</div>:<div style={{fontSize:"14px",lineHeight:1.85,color:"var(--text-sub)",whiteSpace:"pre-wrap"}}>{res}</div>}
     </div>}
     <div style={{marginTop:"20px",padding:"14px 18px",background:"rgba(245,158,11,0.04)",border:"1px solid rgba(245,158,11,0.1)",borderRadius:"10px",fontSize:"12px",color:"#b4940f",lineHeight:1.6}}>⚠️ 본 AI 분석은 정보 제공 목적입니다. 투자 판단은 본인 책임이며 투자 추천/권유가 아닙니다.</div>
   </div>;
@@ -217,6 +253,12 @@ function App(){
   const[nws,setNws]=useState([]);
   const[sec,setSec]=useState([]);
   const[lastUp,setLastUp]=useState(null);
+  const[theme,setTheme]=useState(()=>{try{return localStorage.getItem("sp-theme")||"dark"}catch(e){return "dark"}});
+
+  useEffect(()=>{
+    document.body.className=theme==="light"?"light":"";
+    try{localStorage.setItem("sp-theme",theme)}catch(e){}
+  },[theme]);
 
   useEffect(()=>{(async()=>{
     setLoading(true);
@@ -229,15 +271,18 @@ function App(){
   const tabs=[{id:"overview",l:"시장 개요",ic:"◈"},{id:"issues",l:"이슈 종목",ic:"◆"},{id:"news",l:"주요 뉴스",ic:"◇"},{id:"sectors",l:"섹터 분석",ic:"▣"},{id:"ai",l:"AI 분석",ic:"⬡"}];
 
   return <div>
-    <div style={{background:"linear-gradient(90deg,#0a0a12,#0e0e1a,#0a0a12)",borderBottom:"1px solid rgba(255,255,255,0.05)",padding:"9px 0",overflow:"hidden",position:"relative"}}><div style={{display:"inline-flex",gap:"40px",whiteSpace:"nowrap",animation:"tickerScroll 120s linear infinite"}}>{[...idx,...idx,...idx,...idx].map((m,i)=><span key={i} style={{display:"inline-flex",alignItems:"center",gap:"7px",fontSize:"12px",paddingRight:"20px"}}><span style={{color:"#6b7280",fontWeight:500}}>{m.name}</span><span style={{color:"#e0ded8",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{m.value}</span><span style={{color:m.trend==="up"?"#22c55e":"#ef4444",fontWeight:600}}>{m.change_pct}</span></span>)}</div></div>
+    <div style={{background:"var(--ticker-bg)",borderBottom:"1px solid var(--div2)",padding:"9px 0",overflow:"hidden",position:"relative",transition:"background .3s"}}><div style={{display:"inline-flex",gap:"40px",whiteSpace:"nowrap",animation:"tickerScroll 120s linear infinite"}}>{[...idx,...idx,...idx,...idx].map((m,i)=><span key={i} style={{display:"inline-flex",alignItems:"center",gap:"7px",fontSize:"12px",paddingRight:"20px"}}><span style={{color:"var(--muted)",fontWeight:500}}>{m.name}</span><span style={{color:"var(--text)",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{m.value}</span><span style={{color:m.trend==="up"?"#22c55e":"#ef4444",fontWeight:600}}>{m.change_pct}</span></span>)}</div></div>
 
     <header className="header-wrap" style={{padding:"24px 40px 18px",maxWidth:1440,margin:"0 auto",display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-      <div className="fade-up"><div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"5px"}}><div style={{width:8,height:8,borderRadius:"50%",background:"#22c55e",boxShadow:"0 0 10px rgba(34,197,94,0.4)",animation:"pulse 2s infinite"}}/><h1 style={{fontSize:"24px",fontWeight:800,letterSpacing:"-0.03em",background:"linear-gradient(135deg,#e0ded8 30%,#888 100%)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>STOCKPULSE</h1><span style={{fontSize:"9px",padding:"3px 7px",background:"rgba(34,197,94,0.12)",color:"#22c55e",borderRadius:"4px",fontWeight:700}}>BETA</span></div>
-      <p style={{color:"#555",fontSize:"12px"}}>주식 시장 정보 · 뉴스 · 이슈 종목 대시보드{lastUp&&<span style={{marginLeft:"8px",color:"#444"}}>· 최종: {lastUp}</span>}</p></div>
-      <div className="fade-up fade-up-d1" style={{textAlign:"right"}}><div style={{color:"#6b7280",fontSize:"12px"}}>{time.toLocaleDateString("ko-KR",{year:"numeric",month:"long",day:"numeric",weekday:"short"})}</div><div style={{color:"#e0ded8",fontSize:"20px",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{time.toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</div></div>
+      <div className="fade-up"><div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"5px"}}><div style={{width:8,height:8,borderRadius:"50%",background:"#22c55e",boxShadow:"0 0 10px rgba(34,197,94,0.4)",animation:"pulse 2s infinite"}}/><h1 style={{fontSize:"24px",fontWeight:800,letterSpacing:"-0.03em",background:"var(--h-grad)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>STOCKPULSE</h1><span style={{fontSize:"9px",padding:"3px 7px",background:"rgba(34,197,94,0.12)",color:"#22c55e",borderRadius:"4px",fontWeight:700}}>BETA</span></div>
+      </div>
+      <div className="fade-up fade-up-d1" style={{display:"flex",alignItems:"center",gap:"12px"}}>
+        <div style={{textAlign:"right"}}><div style={{color:"var(--muted)",fontSize:"12px"}}>{time.toLocaleDateString("ko-KR",{year:"numeric",month:"long",day:"numeric",weekday:"short"})}</div><div style={{color:"var(--text)",fontSize:"20px",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{time.toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</div></div>
+        <button onClick={()=>setTheme(t=>t==="dark"?"light":"dark")} title={theme==="dark"?"라이트 모드로 전환":"다크 모드로 전환"} style={{width:38,height:38,borderRadius:"10px",border:"1px solid var(--card-bd)",background:"var(--card-bg)",cursor:"pointer",fontSize:"18px",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .25s",flexShrink:0}} onMouseEnter={e=>{e.currentTarget.style.background="var(--card-hbg)";e.currentTarget.style.borderColor="var(--card-hbd)";e.currentTarget.style.transform="translateY(-1px)"}} onMouseLeave={e=>{e.currentTarget.style.background="var(--card-bg)";e.currentTarget.style.borderColor="var(--card-bd)";e.currentTarget.style.transform="none"}}>{theme==="dark"?"☀️":"🌙"}</button>
+      </div>
     </header>
 
-    <nav className="nav-wrap" style={{maxWidth:1440,margin:"0 auto",padding:"0 40px 18px",display:"flex",gap:"3px",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>{tabs.map(t=><button key={t.id} onClick={()=>setTab(t.id)} style={{padding:"9px 18px",fontFamily:"inherit",fontSize:"13px",fontWeight:tab===t.id?600:400,cursor:"pointer",background:tab===t.id?"rgba(255,255,255,0.07)":"transparent",border:"1px solid",borderColor:tab===t.id?"rgba(255,255,255,0.1)":"transparent",borderRadius:"8px",color:tab===t.id?"#e0ded8":"#555",transition:"all .2s",display:"flex",alignItems:"center",gap:"5px",whiteSpace:"nowrap"}}><span style={{fontSize:"10px",opacity:tab===t.id?1:.6}}>{t.ic}</span>{t.l}</button>)}</nav>
+    <nav className="nav-wrap" style={{maxWidth:1440,margin:"0 auto",padding:"0 40px 18px",display:"flex",gap:"3px",borderBottom:"1px solid var(--div2)"}}>{tabs.map(t=><button key={t.id} onClick={()=>setTab(t.id)} style={{padding:"9px 18px",fontFamily:"inherit",fontSize:"13px",fontWeight:tab===t.id?600:400,cursor:"pointer",background:tab===t.id?"var(--tab-bg)":"transparent",border:"1px solid",borderColor:tab===t.id?"var(--tab-bd)":"transparent",borderRadius:"8px",color:tab===t.id?"var(--text)":"var(--dim)",transition:"all .2s",display:"flex",alignItems:"center",gap:"5px",whiteSpace:"nowrap"}}><span style={{fontSize:"10px",opacity:tab===t.id?1:.6}}>{t.ic}</span>{t.l}</button>)}</nav>
 
     <main className="main-wrap" style={{maxWidth:1440,margin:"0 auto",padding:"22px 40px 60px"}}>
       {tab==="overview"&&<TabOverview idx={idx} stk={stk} nws={nws} sec={sec} loading={loading}/>}
@@ -247,7 +292,7 @@ function App(){
       {tab==="ai"&&<TabAI stk={stk} nws={nws} sec={sec}/>}
     </main>
 
-    <footer style={{borderTop:"1px solid rgba(255,255,255,0.05)",maxWidth:1440,margin:"0 auto",padding:"18px 40px",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:"8px",color:"#444",fontSize:"11px"}}><div><span style={{fontWeight:600,color:"#555"}}>STOCKPULSE</span> © 2026 · 투자 권유 목적이 아닌 정보 제공 목적</div><div>데이터: 네이버 금융 크롤링</div></footer>
+    <footer style={{borderTop:"1px solid var(--div2)",maxWidth:1440,margin:"0 auto",padding:"18px 40px",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:"8px",color:"var(--dimmer)",fontSize:"11px"}}><div><span style={{fontWeight:600,color:"var(--dim)"}}>STOCKPULSE</span> © 2026 · 투자 권유 목적이 아닌 정보 제공 목적</div><div>데이터: 네이버 금융 크롤링</div></footer>
   </div>;
 }
 
