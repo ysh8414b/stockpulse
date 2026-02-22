@@ -227,81 +227,83 @@ def analyze_sentiment(title):
 # ─────────────────────────────────────────
 # 2. 인기/이슈 종목 크롤링
 # ─────────────────────────────────────────
+def format_trading_value(raw_text):
+    """거래대금 포맷 (억원 단위 → 읽기 쉬운 형태)"""
+    try:
+        val = float(raw_text.replace(",", "").replace(" ", "").strip())
+        if val >= 10000:  # 1조 이상
+            return f"{val/10000:.1f}조"
+        else:
+            return f"{int(val):,}억"
+    except:
+        return raw_text
+
 def crawl_issue_stocks():
-    """네이버 금융 인기 종목 크롤링 (거래량 상위 + 상승률 상위)"""
+    """네이버 금융 인기 종목 크롤링 (거래대금 상위 + 상승률 상위)"""
     log("📈 이슈 종목 크롤링 시작...")
-    
+
     stocks = []
     seen_codes = set()
-    
-    # 1) 거래량 상위 종목
+
+    # 1) 거래대금 상위 종목
+    # sise_quant_high.naver 컬럼 순서:
+    # cols[0]=N, cols[1]=거래대금(억), cols[2]=종목명, cols[3]=현재가, cols[4]=전일비, cols[5]=등락률
     try:
-        url = "https://finance.naver.com/sise/sise_quant.naver"
+        url = "https://finance.naver.com/sise/sise_quant_high.naver"
         resp = requests.get(url, headers=HEADERS, timeout=10)
         resp.encoding = "euc-kr"
         soup = BeautifulSoup(resp.text, "html.parser")
-        
+
         rows = soup.select("table.type_2 tr")
         rank = 1
-        
+
         for row in rows:
             cols = row.select("td")
             if len(cols) < 6:
                 continue
-            
-            name_tag = cols[1].find("a")
+
+            name_tag = cols[2].find("a")
             if not name_tag:
                 continue
-            
+
             name = name_tag.get_text(strip=True)
             href = name_tag.get("href", "")
             code_match = re.search(r"code=(\d{6})", href)
             code = code_match.group(1) if code_match else ""
-            
+
             if not code or code in seen_codes:
                 continue
-            
-            price = cols[2].get_text(strip=True).replace(",", "")
-            change_text = cols[3].get_text(strip=True).replace(",", "")
-            change_pct_text = cols[4].get_text(strip=True)
-            volume = cols[5].get_text(strip=True)
-            
-            # 상승/하락 판별
-            # 변동 0%인지 확인
-            pct_num_check = change_pct_text.replace("%", "").replace("+", "").replace("-", "").strip()
-            is_zero = (pct_num_check == "0.00" or pct_num_check == "0" or pct_num_check == "")
 
-            img = cols[3].find("img")
-            if is_zero:
-                trend = "flat"
-                change_pct = "0.00%"
-            elif img:
-                alt = img.get("alt", "")
-                if "상승" in alt:
-                    trend = "up"
-                    change_pct = f"+{change_pct_text}"
-                elif "하락" in alt:
-                    trend = "down"
-                    change_pct = f"-{change_pct_text}"
-                else:
-                    trend = "flat"
-                    change_pct = change_pct_text
-            else:
-                trend = "down" if "-" in change_text else "up"
+            price = cols[3].get_text(strip=True).replace(",", "")
+            change_pct_text = cols[5].get_text(strip=True)
+            volume_raw = cols[1].get_text(strip=True)
+            volume = format_trading_value(volume_raw)
+
+            # 상승/하락 판별 (등락률의 +/- 부호로 판별)
+            if change_pct_text.startswith("-"):
+                trend = "down"
                 change_pct = change_pct_text
+            elif change_pct_text.startswith("+") and change_pct_text != "+0.00%":
+                trend = "up"
+                change_pct = change_pct_text
+            else:
+                pct_num = change_pct_text.replace("%", "").replace("+", "").replace("-", "").strip()
+                if pct_num in ("0.00", "0", ""):
+                    trend = "flat"
+                    change_pct = "0.00%"
+                else:
+                    trend = "up"
+                    change_pct = f"+{change_pct_text}" if not change_pct_text.startswith("+") else change_pct_text
 
-            if trend != "flat" and not change_pct.startswith(("+", "-")):
-                change_pct = f"+{change_pct}" if trend == "up" else f"-{change_pct}"
-            
             # 가격 포맷
             try:
                 price_formatted = f"{int(price):,}"
             except:
                 price_formatted = price
-            
+
             # 태그 자동 분류
             tags = classify_stock_tags(name)
-            
+
             seen_codes.add(code)
             stocks.append({
                 "rank": rank,
@@ -310,20 +312,20 @@ def crawl_issue_stocks():
                 "price": price_formatted,
                 "change_pct": change_pct,
                 "volume": volume,
-                "reason": f"거래량 상위 {rank}위",
+                "reason": f"거래대금 상위 {rank}위",
                 "tags": tags,
                 "trend": trend,
                 "date": TODAY,
             })
-            
+
             rank += 1
             if rank > 10:
                 break
-        
-        log(f"  ✅ 이슈 종목 {len(stocks)}개 수집 완료")
-        
+
+        log(f"  ✅ 거래대금 상위 {len(stocks)}개 수집 완료")
+
     except Exception as e:
-        log(f"  ❌ 이슈 종목 크롤링 실패: {e}")
+        log(f"  ❌ 거래대금 상위 크롤링 실패: {e}")
     
     # 2) 상승률 상위에서 추가 (부족할 경우)
     if len(stocks) < 10:
@@ -351,7 +353,7 @@ def crawl_issue_stocks():
                 
                 price = cols[2].get_text(strip=True).replace(",", "")
                 change_pct_text = cols[4].get_text(strip=True)
-                volume = cols[5].get_text(strip=True) if len(cols) > 5 else "0"
+                volume = "-"
                 
                 try:
                     price_formatted = f"{int(price):,}"
@@ -365,7 +367,7 @@ def crawl_issue_stocks():
                     "name": name,
                     "code": code,
                     "price": price_formatted,
-                    "change_pct": f"+{change_pct_text}",
+                    "change_pct": change_pct_text if change_pct_text.startswith("+") else f"+{change_pct_text}",
                     "volume": volume,
                     "reason": f"상승률 상위",
                     "tags": classify_stock_tags(name),
