@@ -465,80 +465,47 @@ def crawl_market_index():
     except Exception as e:
         log(f"  ❌ 국내 지수 크롤링 실패: {e}")
 
-    # 해외 지수 (네이버 금융 월드 지수)
-    # HTML 구조: <dl class="point_up/point_dn">
-    #   <dd class="point_status"><strong>14,578.54</strong><em>52.38</em><span><span>+</span>0.36%</span><span class="blind">상승</span></dd>
-    try:
-        url2 = "https://finance.naver.com/world/"
-        resp2 = requests.get(url2, headers=HEADERS, timeout=10)
-        resp2.encoding = "euc-kr"
-        soup2 = BeautifulSoup(resp2.text, "html.parser")
+    # 해외 지수 (Yahoo Finance API - 네이버 월드 페이지 데이터 부정확하여 대체)
+    world_indices = [
+        ("다우존스", "%5EDJI"),
+        ("나스닥", "%5EIXIC"),
+        ("S&P 500", "%5EGSPC"),
+    ]
 
-        world_indices = [
-            ("다우존스", "worldIndexColumn1"),
-            ("나스닥", "worldIndexColumn2"),
-            ("S&P 500", "worldIndexColumn3"),
-        ]
+    for name, symbol in world_indices:
+        try:
+            api_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d"
+            resp2 = requests.get(api_url, headers={"User-Agent": HEADERS["User-Agent"]}, timeout=10)
+            data = resp2.json()
+            meta = data["chart"]["result"][0]["meta"]
 
-        for name, col_id in world_indices:
-            try:
-                col = soup2.select_one(f"#{col_id}")
-                if not col:
-                    continue
+            price = meta.get("regularMarketPrice", 0)
+            prev = meta.get("chartPreviousClose", 0) or meta.get("previousClose", 0)
 
-                dd = col.select_one("dd.point_status")
-                if not dd:
-                    continue
-
-                # 값: <strong>
-                val_el = dd.select_one("strong")
-                val = val_el.get_text(strip=True) if val_el else "0"
-
-                # 변동량: <em>
-                change_el = dd.select_one("em")
-                change_amt_raw = change_el.get_text(strip=True) if change_el else "0"
-
-                # 변동률: <span> 중 % 포함 (blind 제외, strong/em 제외)
-                # 구조: <span><span>+</span>0.36%</span>
-                pct_text = ""
-                for sp in dd.find_all("span", recursive=False):
-                    if "blind" in sp.get("class", []):
-                        continue
-                    full_text = sp.get_text(strip=True)
-                    if "%" in full_text:
-                        pct_text = full_text
-                        break
-
-                # 상승/하락: dl 클래스로 판별
-                dl = col.select_one("dl")
-                is_down = dl and "point_dn" in " ".join(dl.get("class", []))
-                trend = "down" if is_down else "up"
-
-                # 부호 정리
-                amt_clean = re.sub(r'[^\d,.]', '', change_amt_raw)
-                pct_clean = re.sub(r'[^\d.]', '', pct_text)
-
-                if trend == "down":
-                    change_amt = f"-{amt_clean}"
-                    change_pct = f"-{pct_clean}%"
-                else:
-                    change_amt = f"+{amt_clean}"
-                    change_pct = f"+{pct_clean}%"
+            if prev and prev > 0:
+                change = round(price - prev, 2)
+                pct = round((change / prev) * 100, 2)
+                trend = "down" if change < 0 else "up"
 
                 indices.append({
                     "name": name,
-                    "value": val,
-                    "change_amount": change_amt,
-                    "change_pct": change_pct,
+                    "value": f"{price:,.2f}",
+                    "change_amount": f"{change:+,.2f}",
+                    "change_pct": f"{pct:+.2f}%",
                     "trend": trend,
                 })
-            except Exception as ex:
-                log(f"  ⚠️ {name} 파싱 실패: {ex}")
+            else:
+                indices.append({
+                    "name": name,
+                    "value": f"{price:,.2f}",
+                    "change_amount": "0",
+                    "change_pct": "0.00%",
+                    "trend": "up",
+                })
+        except Exception as ex:
+            log(f"  ⚠️ {name} 조회 실패: {ex}")
 
-        log(f"  ✅ 해외 지수 포함 총 {len(indices)}개")
-
-    except Exception as e:
-        log(f"  ⚠️ 해외 지수 크롤링 실패: {e}")
+    log(f"  ✅ 해외 지수 포함 총 {len(indices)}개")
 
     # 환율
     # HTML 구조: <div class="head_info point_dn"><span class="value">1,448.50</span><span class="change"> 2.50</span><span class="blind">하락</span></div>
