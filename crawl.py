@@ -850,12 +850,34 @@ def crawl_themes():
             flat_count = cols[4].get_text(strip=True)
             down_count = cols[5].get_text(strip=True)
 
-            # 주도주 (최대 2개)
+            # 주도주: 테마 상세 페이지에서 상위 5개 풀네임 가져오기
             leaders = []
-            for c in cols[6:]:
-                a = c.find("a")
-                if a:
-                    leaders.append(a.get_text(strip=True))
+            theme_href = name_tag.get("href", "")
+            if theme_href:
+                try:
+                    detail_url = "https://finance.naver.com" + theme_href
+                    dresp = requests.get(detail_url, headers=HEADERS, timeout=5)
+                    dresp.encoding = "euc-kr"
+                    dsoup = BeautifulSoup(dresp.text, "html.parser")
+                    dtable = dsoup.select_one("table.type_5")
+                    if dtable:
+                        for drow in dtable.select("tr"):
+                            dcols = drow.select("td")
+                            if len(dcols) >= 1:
+                                a = dcols[0].find("a")
+                                if a:
+                                    leaders.append(a.get_text(strip=True))
+                            if len(leaders) >= 5:
+                                break
+                    time.sleep(0.3)
+                except:
+                    pass
+            # 상세 페이지 실패 시 기존 테이블에서 가져오기
+            if not leaders:
+                for c in cols[6:]:
+                    a = c.find("a")
+                    if a:
+                        leaders.append(a.get_text(strip=True))
 
             # 트렌드 판별
             if change_pct.startswith("-"):
