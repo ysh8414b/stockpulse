@@ -16,6 +16,7 @@ import os
 import re
 import json
 import time
+import urllib.parse
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -74,7 +75,7 @@ def supabase_request(method, table, data=None, params=None):
 
 def clear_today_data(table):
     """데이터 삭제 (중복 방지)"""
-    if table in ("market_index", "sectors", "issue_stocks"):
+    if table in ("market_index", "sectors", "issue_stocks", "themes"):
         # 항상 최신 데이터만 유지 (전체 교체)
         supabase_request("DELETE", table, params={"id": "gt.0"})
     else:
@@ -785,6 +786,112 @@ def crawl_sector_stocks():
 
 
 # ─────────────────────────────────────────
+# 6. 인기 테마 + 관련 뉴스 크롤링
+# ─────────────────────────────────────────
+def search_theme_news(keyword):
+    """테마 키워드로 관련 뉴스 1건 검색 (EUC-KR 인코딩)"""
+    try:
+        encoded = urllib.parse.quote(keyword.encode("euc-kr"))
+        url = f"https://finance.naver.com/news/news_search.naver?rcdate=&q={encoded}&x=0&y=0&page=1"
+        resp = requests.get(url, headers=HEADERS, timeout=5)
+        resp.encoding = "euc-kr"
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        # 제목에 키워드가 포함된 뉴스 우선 선택
+        items = soup.select(".articleSubject a")
+        for item in items:
+            title = item.get("title", "") or item.get_text(strip=True)
+            if title and keyword in title:
+                return title
+        # 없으면 첫 번째 뉴스
+        if items:
+            return items[0].get("title", "") or items[0].get_text(strip=True)
+    except:
+        pass
+    return ""
+
+
+def crawl_themes():
+    """네이버 금융 인기 테마 상위 10개 + 관련 뉴스 크롤링"""
+    log("🔥 테마 크롤링 시작...")
+
+    themes = []
+
+    try:
+        url = "https://finance.naver.com/sise/theme.naver"
+        resp = requests.get(url, headers=HEADERS, timeout=10)
+        resp.encoding = "euc-kr"
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        table = soup.select_one("table.type_1.theme")
+        if not table:
+            log("  ❌ 테마 테이블 없음")
+            return themes
+
+        rows = table.select("tr")
+        rank = 0
+
+        for row in rows:
+            cols = row.select("td")
+            if len(cols) < 6:
+                continue
+            name_tag = cols[0].find("a")
+            if not name_tag:
+                continue
+
+            rank += 1
+            if rank > 10:
+                break
+
+            name = name_tag.get_text(strip=True)
+            change_pct = cols[1].get_text(strip=True)
+            avg_3day = cols[2].get_text(strip=True)
+            up_count = cols[3].get_text(strip=True)
+            flat_count = cols[4].get_text(strip=True)
+            down_count = cols[5].get_text(strip=True)
+
+            # 주도주 (최대 2개)
+            leaders = []
+            for c in cols[6:]:
+                a = c.find("a")
+                if a:
+                    leaders.append(a.get_text(strip=True))
+
+            # 트렌드 판별
+            if change_pct.startswith("-"):
+                trend = "down"
+            elif change_pct.startswith("+") and change_pct != "+0.00%":
+                trend = "up"
+            else:
+                trend = "flat"
+
+            # 관련 뉴스 검색 (괄호/대표주 제거 후 핵심 키워드로 검색)
+            search_keyword = re.sub(r'\(.*?\)', '', name).replace("대표주", "").strip()
+            news_title = search_theme_news(search_keyword)
+
+            themes.append({
+                "rank": rank,
+                "name": name,
+                "change_pct": change_pct,
+                "avg_3day_pct": avg_3day,
+                "up_count": int(up_count) if up_count.isdigit() else 0,
+                "flat_count": int(flat_count) if flat_count.isdigit() else 0,
+                "down_count": int(down_count) if down_count.isdigit() else 0,
+                "leading_stocks": ", ".join(leaders),
+                "related_news": news_title,
+                "trend": trend,
+                "date": TODAY,
+            })
+
+        log(f"  ✅ 테마 {len(themes)}개 수집 완료")
+
+    except Exception as e:
+        log(f"  ❌ 테마 크롤링 실패: {e}")
+
+    return themes
+
+
+# ─────────────────────────────────────────
 # 메인 실행
 # ─────────────────────────────────────────
 def main():
@@ -816,6 +923,10 @@ def main():
 
     # 5. 섹터별 종목 크롤링
     sector_stocks = crawl_sector_stocks()
+    time.sleep(1)
+
+    # 6. 인기 테마 크롤링
+    themes = crawl_themes()
 
     # ─── Supabase에 저장 ───
     log("")
@@ -826,6 +937,7 @@ def main():
     clear_today_data("issue_stocks")
     clear_today_data("market_index")
     clear_today_data("sectors")
+    clear_today_data("themes")
     supabase_request("DELETE", "sector_stocks", params={"id": "gt.0"})
 
     # 뉴스 저장
@@ -852,7 +964,12 @@ def main():
     if sector_stocks:
         result = supabase_request("POST", "sector_stocks", data=sector_stocks)
         log(f"  🏷️ 섹터 종목 {len(sector_stocks)}개 저장 {'✅' if result else '❌'}")
-    
+
+    # 테마 저장
+    if themes:
+        result = supabase_request("POST", "themes", data=themes)
+        log(f"  🔥 테마 {len(themes)}개 저장 {'✅' if result else '❌'}")
+
     log("")
     log("=" * 50)
     log("✅ 크롤링 완료!")
