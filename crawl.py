@@ -238,8 +238,15 @@ def format_trading_value(raw_text):
     except:
         return raw_text
 
+def is_etf_etn(name):
+    """ETF/ETN 종목 필터링"""
+    skip = ["ETN", "ETF", "KODEX", "TIGER", "RISE", "KBSTAR", "SOL", "HANARO",
+            "인버스", "레버리지", "액티브", "선물", "채권", "합성"]
+    return any(kw in name for kw in skip)
+
+
 def crawl_issue_stocks():
-    """네이버 금융 인기 종목 크롤링 (거래대금 상위 + 상승률 상위)"""
+    """네이버 금융 인기 종목 크롤링 (거래대금 상위, ETF/ETN 제외)"""
     log("📈 이슈 종목 크롤링 시작...")
 
     stocks = []
@@ -272,6 +279,10 @@ def crawl_issue_stocks():
             code = code_match.group(1) if code_match else ""
 
             if not code or code in seen_codes:
+                continue
+
+            # ETF/ETN 제외
+            if is_etf_etn(name):
                 continue
 
             price = cols[3].get_text(strip=True).replace(",", "")
