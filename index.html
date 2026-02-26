@@ -220,6 +220,44 @@ function TabSectors({sec,loading}){
   </div>;
 }
 
+// ═══ TAB: THEMES ═══
+function TabThemes({thm,loading}){
+  if(loading)return <Loader/>;if(!thm.length)return <Empty msg="테마 데이터 없음"/>;
+  return <div className="fade-up">
+    <h2 style={{fontSize:"17px",fontWeight:700,marginBottom:"18px"}}><span style={{color:"#f97316"}}>◈</span> 인기 테마 TOP 10</h2>
+    <div style={{display:"grid",gap:"10px"}}>{thm.map((t,i)=>{
+      const u=t.trend==="up";const f=t.trend==="flat";const clr=u?"#22c55e":(f?"#6b7280":"#ef4444");
+      return <Box key={t.name||i} style={{padding:"20px 22px"}} hover={true}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"16px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:"14px",flex:1,minWidth:0}}>
+            <span style={{width:32,height:32,borderRadius:"8px",fontSize:"14px",fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",background:i<3?"rgba(249,115,22,0.14)":"var(--badge-bg)",color:i<3?"#f97316":"var(--muted)",flexShrink:0}}>{t.rank}</span>
+            <div style={{minWidth:0}}>
+              <div style={{fontWeight:700,fontSize:"15px",marginBottom:"4px"}}>{t.name}</div>
+              {t.related_news&&<div style={{fontSize:"12px",color:"var(--text-sub)",lineHeight:1.5,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"500px"}}>{t.related_news}</div>}
+            </div>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:"20px",flexShrink:0}}>
+            <div style={{display:"flex",gap:"8px",fontSize:"11px",color:"var(--muted)"}}>
+              <span style={{color:"#22c55e"}}>{u?"▲":""}{t.up_count||0}</span>
+              <span>·</span>
+              <span>{t.flat_count||0}</span>
+              <span>·</span>
+              <span style={{color:"#ef4444"}}>{!u&&!f?"▼":""}{t.down_count||0}</span>
+            </div>
+            <div style={{textAlign:"right",minWidth:"80px"}}>
+              <div style={{fontWeight:800,fontSize:"18px",color:clr}}>{t.change_pct}</div>
+              {t.avg_3day_pct&&<div style={{fontSize:"11px",color:"var(--muted)",marginTop:"2px"}}>3일 {t.avg_3day_pct}</div>}
+            </div>
+          </div>
+        </div>
+        {t.leading_stocks&&<div style={{marginTop:"10px",paddingTop:"10px",borderTop:"1px solid var(--div)",display:"flex",gap:"6px",flexWrap:"wrap"}}>
+          {t.leading_stocks.split(",").map((s,j)=><span key={j} style={{padding:"3px 9px",background:"var(--badge-bg)",borderRadius:"5px",fontSize:"11px",color:"var(--text-sub)",fontWeight:500}}>{s.trim()}</span>)}
+        </div>}
+      </Box>})}
+    </div>
+  </div>;
+}
+
 // ═══ TAB: AI ═══
 function TabAI({stk,nws,sec}){
   const[q,setQ]=useState("");const[res,setRes]=useState("");const[ld,setLd]=useState(false);
@@ -252,6 +290,7 @@ function App(){
   const[stk,setStk]=useState([]);
   const[nws,setNws]=useState([]);
   const[sec,setSec]=useState([]);
+  const[thm,setThm]=useState([]);
   const[lastUp,setLastUp]=useState(null);
   const[theme,setTheme]=useState(()=>{try{return localStorage.getItem("sp-theme")||"dark"}catch(e){return "dark"}});
 
@@ -262,13 +301,13 @@ function App(){
 
   useEffect(()=>{(async()=>{
     setLoading(true);
-    const[a,b,c,d]=await Promise.all([db("market_index","order=id"),db("issue_stocks","order=rank&limit=15"),db("news","order=created_at.desc&limit=20"),db("sectors","order=id")]);
-    if(a?.length)setIdx(a);if(b?.length)setStk(b);if(c?.length){setNws(c);setLastUp(c[0].date)}if(d?.length)setSec(d);
+    const[a,b,c,d,e]=await Promise.all([db("market_index","order=id"),db("issue_stocks","order=rank&limit=15"),db("news","order=created_at.desc&limit=20"),db("sectors","order=id"),db("themes","order=rank&limit=10")]);
+    if(a?.length)setIdx(a);if(b?.length)setStk(b);if(c?.length){setNws(c);setLastUp(c[0].date)}if(d?.length)setSec(d);if(e?.length)setThm(e);
     setLoading(false);
   })()},[]);
 
   useEffect(()=>{const t=setInterval(()=>setTime(new Date()),1000);return()=>clearInterval(t)},[]);
-  const tabs=[{id:"overview",l:"시장 개요",ic:"◈"},{id:"issues",l:"이슈 종목",ic:"◆"},{id:"news",l:"주요 뉴스",ic:"◇"},{id:"sectors",l:"섹터 분석",ic:"▣"},{id:"ai",l:"AI 분석",ic:"⬡"}];
+  const tabs=[{id:"overview",l:"시장 개요",ic:"◈"},{id:"issues",l:"이슈 종목",ic:"◆"},{id:"themes",l:"인기 테마",ic:"◈"},{id:"news",l:"주요 뉴스",ic:"◇"},{id:"sectors",l:"섹터 분석",ic:"▣"},{id:"ai",l:"AI 분석",ic:"⬡"}];
 
   return <div>
     <div style={{background:"var(--ticker-bg)",borderBottom:"1px solid var(--div2)",padding:"9px 0",overflow:"hidden",position:"relative",transition:"background .3s"}}><div style={{display:"inline-flex",gap:"40px",whiteSpace:"nowrap",animation:"tickerScroll 150s linear infinite"}}>{[...idx,...idx,...idx,...idx].map((m,i)=><span key={i} style={{display:"inline-flex",alignItems:"center",gap:"7px",fontSize:"12px",paddingRight:"20px"}}><span style={{color:"var(--muted)",fontWeight:500}}>{m.name}</span><span style={{color:"var(--text)",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{m.value}</span><span style={{color:m.trend==="up"?"#22c55e":"#ef4444",fontWeight:600}}>{m.change_pct}</span></span>)}</div></div>
@@ -288,6 +327,7 @@ function App(){
     <main className="main-wrap" style={{maxWidth:1440,margin:"0 auto",padding:"22px 40px 60px"}}>
       {tab==="overview"&&<TabOverview idx={idx} stk={stk} nws={nws} sec={sec} loading={loading}/>}
       {tab==="issues"&&<TabStocks stk={stk} loading={loading}/>}
+      {tab==="themes"&&<TabThemes thm={thm} loading={loading}/>}
       {tab==="news"&&<TabNews nws={nws} loading={loading}/>}
       {tab==="sectors"&&<TabSectors sec={sec} loading={loading}/>}
       {tab==="ai"&&<TabAI stk={stk} nws={nws} sec={sec}/>}
