@@ -246,17 +246,17 @@ def is_etf_etn(name):
 
 
 def crawl_issue_stocks():
-    """네이버 금융 인기 종목 크롤링 (거래대금 상위, ETF/ETN 제외)"""
+    """네이버 금융 인기 종목 크롤링 (거래량 상위, ETF/ETN 제외)"""
     log("📈 이슈 종목 크롤링 시작...")
 
     stocks = []
     seen_codes = set()
 
-    # 1) 거래대금 상위 종목
-    # sise_quant_high.naver 컬럼 순서:
-    # cols[0]=N, cols[1]=거래대금(억), cols[2]=종목명, cols[3]=현재가, cols[4]=전일비, cols[5]=등락률
+    # 1) 거래량 상위 종목 (sise_quant.naver)
+    # fieldIds=amount → 거래대금(백만) 컬럼 추가
+    # cols[0]=N, cols[1]=종목명, cols[2]=현재가, cols[3]=전일비, cols[4]=등락률, cols[5]=거래량, cols[6]=거래대금(백만)
     try:
-        url = "https://finance.naver.com/sise/sise_quant_high.naver"
+        url = "https://finance.naver.com/sise/sise_quant.naver?fieldIds=amount"
         resp = requests.get(url, headers=HEADERS, timeout=10)
         resp.encoding = "euc-kr"
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -269,7 +269,7 @@ def crawl_issue_stocks():
             if len(cols) < 6:
                 continue
 
-            name_tag = cols[2].find("a")
+            name_tag = cols[1].find("a")
             if not name_tag:
                 continue
 
@@ -285,12 +285,21 @@ def crawl_issue_stocks():
             if is_etf_etn(name):
                 continue
 
-            price = cols[3].get_text(strip=True).replace(",", "")
-            change_pct_text = cols[5].get_text(strip=True)
-            volume_raw = cols[1].get_text(strip=True)
-            volume = format_trading_value(volume_raw)
+            price = cols[2].get_text(strip=True).replace(",", "")
+            change_pct_text = cols[4].get_text(strip=True)
 
-            # 상승/하락 판별 (등락률의 +/- 부호로 판별)
+            # 거래대금(백만원) → 억원 변환
+            volume = "-"
+            if len(cols) > 6:
+                amount_raw = cols[6].get_text(strip=True).replace(",", "")
+                try:
+                    amount_mil = float(amount_raw)
+                    amount_eok = amount_mil / 100  # 백만 → 억
+                    volume = format_trading_value(str(int(amount_eok)))
+                except:
+                    volume = amount_raw
+
+            # 상승/하락 판별 (등락률 부호로 판별 - 상한가/하한가도 처리)
             if change_pct_text.startswith("-"):
                 trend = "down"
                 change_pct = change_pct_text
@@ -298,8 +307,8 @@ def crawl_issue_stocks():
                 trend = "up"
                 change_pct = change_pct_text
             else:
-                pct_num = change_pct_text.replace("%", "").replace("+", "").replace("-", "").strip()
-                if pct_num in ("0.00", "0", ""):
+                pct_clean = change_pct_text.replace("%", "").replace("+", "").replace("-", "").strip()
+                if pct_clean in ("0.00", "0", ""):
                     trend = "flat"
                     change_pct = "0.00%"
                 else:
@@ -323,7 +332,7 @@ def crawl_issue_stocks():
                 "price": price_formatted,
                 "change_pct": change_pct,
                 "volume": volume,
-                "reason": f"거래대금 상위 {rank}위",
+                "reason": f"거래량 상위 {rank}위",
                 "tags": tags,
                 "trend": trend,
                 "date": TODAY,
@@ -333,7 +342,7 @@ def crawl_issue_stocks():
             if rank > 10:
                 break
 
-        log(f"  ✅ 거래대금 상위 {len(stocks)}개 수집 완료")
+        log(f"  ✅ 거래량 상위 {len(stocks)}개 수집 완료")
 
     except Exception as e:
         log(f"  ❌ 거래대금 상위 크롤링 실패: {e}")
