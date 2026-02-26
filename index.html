@@ -233,7 +233,7 @@ function TabThemes({thm,loading}){
             <span style={{width:32,height:32,borderRadius:"8px",fontSize:"14px",fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",background:i<3?"rgba(249,115,22,0.14)":"var(--badge-bg)",color:i<3?"#f97316":"var(--muted)",flexShrink:0}}>{t.rank}</span>
             <div style={{minWidth:0}}>
               <div style={{fontWeight:700,fontSize:"15px",marginBottom:"4px"}}>{t.name}</div>
-              {t.related_news&&<div style={{fontSize:"12px",color:"var(--text-sub)",lineHeight:1.5,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"500px"}}>{t.related_news}</div>}
+              {t.related_news&&(t.news_url?<a href={t.news_url} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{display:"block",fontSize:"12px",color:"var(--text-sub)",lineHeight:1.5,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"500px",textDecoration:"none",transition:"color .15s"}} onMouseEnter={e=>e.currentTarget.style.color="#f97316"} onMouseLeave={e=>e.currentTarget.style.color="var(--text-sub)"}>{t.related_news}</a>:<div style={{fontSize:"12px",color:"var(--text-sub)",lineHeight:1.5,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"500px"}}>{t.related_news}</div>)}
             </div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:"20px",flexShrink:0}}>
@@ -251,7 +251,7 @@ function TabThemes({thm,loading}){
           </div>
         </div>
         {t.leading_stocks&&<div style={{marginTop:"10px",paddingTop:"10px",borderTop:"1px solid var(--div)",display:"flex",gap:"6px",flexWrap:"wrap"}}>
-          {t.leading_stocks.split(",").map((s,j)=><span key={j} style={{padding:"3px 9px",background:"var(--badge-bg)",borderRadius:"5px",fontSize:"11px",color:"var(--text-sub)",fontWeight:500}}>{s.trim()}</span>)}
+          {t.leading_stocks.split(",").map((s,j)=>{const parts=s.trim().split(":");const nm=parts[0];const cd=parts[1]||"";return cd?<a key={j} href={`https://finance.naver.com/item/main.naver?code=${cd}`} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{padding:"3px 9px",background:"var(--badge-bg)",borderRadius:"5px",fontSize:"11px",color:"var(--text-sub)",fontWeight:500,textDecoration:"none",cursor:"pointer",transition:"all .15s",border:"1px solid transparent"}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(249,115,22,0.12)";e.currentTarget.style.color="#f97316";e.currentTarget.style.borderColor="rgba(249,115,22,0.3)"}} onMouseLeave={e=>{e.currentTarget.style.background="var(--badge-bg)";e.currentTarget.style.color="var(--text-sub)";e.currentTarget.style.borderColor="transparent"}}>{nm}</a>:<span key={j} style={{padding:"3px 9px",background:"var(--badge-bg)",borderRadius:"5px",fontSize:"11px",color:"var(--text-sub)",fontWeight:500}}>{nm}</span>})}
         </div>}
       </Box>})}
     </div>

@@ -789,7 +789,7 @@ def crawl_sector_stocks():
 # 6. 인기 테마 + 관련 뉴스 크롤링
 # ─────────────────────────────────────────
 def search_theme_news(keyword):
-    """테마 키워드로 관련 뉴스 1건 검색 (EUC-KR 인코딩)"""
+    """테마 키워드로 관련 뉴스 1건 검색 (EUC-KR 인코딩) - 제목과 URL 반환"""
     try:
         encoded = urllib.parse.quote(keyword.encode("euc-kr"))
         url = f"https://finance.naver.com/news/news_search.naver?rcdate=&q={encoded}&x=0&y=0&page=1"
@@ -802,13 +802,18 @@ def search_theme_news(keyword):
         for item in items:
             title = item.get("title", "") or item.get_text(strip=True)
             if title and keyword in title:
-                return title
+                href = item.get("href", "")
+                news_url = ("https://finance.naver.com" + href) if href.startswith("/") else href
+                return title, news_url
         # 없으면 첫 번째 뉴스
         if items:
-            return items[0].get("title", "") or items[0].get_text(strip=True)
+            title = items[0].get("title", "") or items[0].get_text(strip=True)
+            href = items[0].get("href", "")
+            news_url = ("https://finance.naver.com" + href) if href.startswith("/") else href
+            return title, news_url
     except:
         pass
-    return ""
+    return "", ""
 
 
 def crawl_themes():
@@ -850,7 +855,7 @@ def crawl_themes():
             flat_count = cols[4].get_text(strip=True)
             down_count = cols[5].get_text(strip=True)
 
-            # 주도주: 테마 상세 페이지에서 상위 5개 풀네임 가져오기
+            # 주도주: 테마 상세 페이지에서 상위 10개 (이름:코드 형태)
             leaders = []
             theme_href = name_tag.get("href", "")
             if theme_href:
@@ -866,8 +871,12 @@ def crawl_themes():
                             if len(dcols) >= 1:
                                 a = dcols[0].find("a")
                                 if a:
-                                    leaders.append(a.get_text(strip=True))
-                            if len(leaders) >= 5:
+                                    stock_name = a.get_text(strip=True)
+                                    stock_href = a.get("href", "")
+                                    code_match = re.search(r'code=(\d+)', stock_href)
+                                    code = code_match.group(1) if code_match else ""
+                                    leaders.append(f"{stock_name}:{code}" if code else stock_name)
+                            if len(leaders) >= 10:
                                 break
                     time.sleep(0.3)
                 except:
@@ -889,7 +898,7 @@ def crawl_themes():
 
             # 관련 뉴스 검색 (괄호/대표주 제거 후 핵심 키워드로 검색)
             search_keyword = re.sub(r'\(.*?\)', '', name).replace("대표주", "").strip()
-            news_title = search_theme_news(search_keyword)
+            news_title, news_url = search_theme_news(search_keyword)
 
             themes.append({
                 "rank": rank,
@@ -901,6 +910,7 @@ def crawl_themes():
                 "down_count": int(down_count) if down_count.isdigit() else 0,
                 "leading_stocks": ", ".join(leaders),
                 "related_news": news_title,
+                "news_url": news_url,
                 "trend": trend,
                 "date": TODAY,
             })
