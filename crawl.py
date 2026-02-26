@@ -1,14 +1,16 @@
 """
 STOCKPULSE 크롤러
-네이버 금융에서 뉴스, 인기종목, 시장지수, 섹터 데이터를 크롤링하여 Supabase에 저장
+한국투자증권 KIS API + 네이버 금융에서 뉴스/섹터종목 데이터를 수집하여 Supabase에 저장
 
 사용법:
-  pip install requests beautifulsoup4 supabase
-  
+  pip install requests beautifulsoup4
+
   환경변수 설정:
     SUPABASE_URL=https://xxxx.supabase.co
     SUPABASE_KEY=your-service-role-key  (⚠️ service_role key 사용!)
-  
+    KIS_APP_KEY=발급받은_앱키
+    KIS_APP_SECRET=발급받은_시크릿키
+
   python crawl.py
 """
 
@@ -18,6 +20,7 @@ import json
 import time
 from datetime import datetime, timedelta
 from typing import Optional
+from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
@@ -27,6 +30,12 @@ from bs4 import BeautifulSoup
 # ─────────────────────────────────────────
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://mmmpqmvwpuxqyxlxytsh.supabase.co")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")  # service_role key (GitHub Secrets에 저장)
+
+# 한국투자증권 KIS API
+KIS_APP_KEY = os.environ.get("KIS_APP_KEY", "")
+KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET", "")
+KIS_BASE_URL = "https://openapi.koreainvestment.com:9443"
+KIS_TOKEN_FILE = Path(__file__).parent / "kis_token.json"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -70,6 +79,81 @@ def supabase_request(method, table, data=None, params=None):
         return resp.json() if resp.text else None
     except:
         return None
+
+
+# ─────────────────────────────────────────
+# KIS API 헬퍼
+# ─────────────────────────────────────────
+def kis_get_token():
+    """KIS API access_token 발급 (캐싱: 24시간 유효)"""
+    # 캐시된 토큰 확인
+    if KIS_TOKEN_FILE.exists():
+        try:
+            cached = json.loads(KIS_TOKEN_FILE.read_text(encoding="utf-8"))
+            expires = datetime.strptime(cached["expires"], "%Y-%m-%d %H:%M:%S")
+            if datetime.now() < expires - timedelta(minutes=30):
+                return cached["token"]
+            log("  🔄 KIS 토큰 만료 임박, 재발급...")
+        except Exception:
+            pass
+
+    # 새 토큰 발급
+    url = f"{KIS_BASE_URL}/oauth2/tokenP"
+    body = {
+        "grant_type": "client_credentials",
+        "appkey": KIS_APP_KEY,
+        "appsecret": KIS_APP_SECRET,
+    }
+    resp = requests.post(url, json=body, timeout=10)
+    data = resp.json()
+
+    if "access_token" not in data:
+        log(f"  ❌ KIS 토큰 발급 실패: {data}")
+        return None
+
+    token = data["access_token"]
+    expires_str = data.get("access_token_token_expired", "")
+
+    # 토큰 캐싱
+    KIS_TOKEN_FILE.write_text(
+        json.dumps({"token": token, "expires": expires_str}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    log(f"  ✅ KIS 토큰 발급 완료 (만료: {expires_str})")
+    return token
+
+
+def kis_headers(tr_id):
+    """KIS API 공통 헤더 생성"""
+    token = kis_get_token()
+    if not token:
+        return None
+    return {
+        "content-type": "application/json; charset=utf-8",
+        "authorization": f"Bearer {token}",
+        "appkey": KIS_APP_KEY,
+        "appsecret": KIS_APP_SECRET,
+        "tr_id": tr_id,
+    }
+
+
+def kis_request(path, tr_id, params):
+    """KIS API GET 요청 헬퍼"""
+    headers = kis_headers(tr_id)
+    if not headers:
+        return None
+    url = f"{KIS_BASE_URL}{path}"
+    resp = requests.get(url, headers=headers, params=params, timeout=10)
+    data = resp.json()
+    if data.get("rt_cd") != "0":
+        log(f"  ⚠️ KIS API 오류 ({tr_id}): {data.get('msg1', '')}")
+        return None
+    return data
+
+
+def kis_trend(sign):
+    """prdy_vrss_sign 값으로 trend 반환 (1:상한, 2:상승, 3:보합, 4:하한, 5:하락)"""
+    return "down" if sign in ("4", "5") else ("flat" if sign == "3" else "up")
 
 
 def clear_today_data(table):
@@ -239,149 +323,75 @@ def format_trading_value(raw_text):
         return raw_text
 
 def crawl_issue_stocks():
-    """네이버 금융 인기 종목 크롤링 (거래대금 상위 + 상승률 상위)"""
-    log("📈 이슈 종목 크롤링 시작...")
+    """KIS API 거래량 순위 상위 종목 조회"""
+    log("📈 이슈 종목 수집 시작 (KIS API)...")
 
     stocks = []
-    seen_codes = set()
 
-    # 1) 거래대금 상위 종목
-    # sise_quant_high.naver 컬럼 순서:
-    # cols[0]=N, cols[1]=거래대금(억), cols[2]=종목명, cols[3]=현재가, cols[4]=전일비, cols[5]=등락률
     try:
-        url = "https://finance.naver.com/sise/sise_quant_high.naver"
-        resp = requests.get(url, headers=HEADERS, timeout=10)
-        resp.encoding = "euc-kr"
-        soup = BeautifulSoup(resp.text, "html.parser")
+        data = kis_request(
+            "/uapi/domestic-stock/v1/quotations/volume-rank",
+            "FHPST01710000",
+            {
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_COND_SCR_DIV_CODE": "20171",
+                "FID_INPUT_ISCD": "0000",
+                "FID_DIV_CLS_CODE": "0",
+                "FID_BLNG_CLS_CODE": "0",
+                "FID_TRGT_CLS_CODE": "111111111",
+                "FID_TRGT_EXLS_CLS_CODE": "000000",
+                "FID_INPUT_PRICE_1": "0",
+                "FID_INPUT_PRICE_2": "0",
+                "FID_VOL_CNT": "0",
+                "FID_INPUT_DATE_1": "0",
+            },
+        )
+        if not data or "output" not in data:
+            log("  ⚠️ 거래량 순위 데이터 없음")
+            return stocks
 
-        rows = soup.select("table.type_2 tr")
-        rank = 1
+        for i, item in enumerate(data["output"][:10]):
+            name = item.get("hts_kor_isnm", "").strip()
+            code = item.get("mksc_shrn_iscd", "")
+            price_raw = item.get("stck_prpr", "0")
+            change_pct_val = item.get("prdy_ctrt", "0")
+            volume_raw = item.get("acml_vol", "0")
+            sign = item.get("prdy_vrss_sign", "3")
 
-        for row in rows:
-            cols = row.select("td")
-            if len(cols) < 6:
+            if not name or not code:
                 continue
 
-            name_tag = cols[2].find("a")
-            if not name_tag:
-                continue
-
-            name = name_tag.get_text(strip=True)
-            href = name_tag.get("href", "")
-            code_match = re.search(r"code=(\d{6})", href)
-            code = code_match.group(1) if code_match else ""
-
-            if not code or code in seen_codes:
-                continue
-
-            price = cols[3].get_text(strip=True).replace(",", "")
-            change_pct_text = cols[5].get_text(strip=True)
-            volume_raw = cols[1].get_text(strip=True)
-            volume = format_trading_value(volume_raw)
-
-            # 상승/하락 판별 (등락률의 +/- 부호로 판별)
-            if change_pct_text.startswith("-"):
-                trend = "down"
-                change_pct = change_pct_text
-            elif change_pct_text.startswith("+") and change_pct_text != "+0.00%":
-                trend = "up"
-                change_pct = change_pct_text
-            else:
-                pct_num = change_pct_text.replace("%", "").replace("+", "").replace("-", "").strip()
-                if pct_num in ("0.00", "0", ""):
-                    trend = "flat"
-                    change_pct = "0.00%"
-                else:
-                    trend = "up"
-                    change_pct = f"+{change_pct_text}" if not change_pct_text.startswith("+") else change_pct_text
+            trend = kis_trend(sign)
+            prefix = "-" if trend == "down" else "+"
+            pct_clean = change_pct_val.lstrip("+-")
 
             # 가격 포맷
             try:
-                price_formatted = f"{int(price):,}"
-            except:
-                price_formatted = price
+                price_formatted = f"{int(price_raw):,}"
+            except ValueError:
+                price_formatted = price_raw
 
-            # 태그 자동 분류
-            tags = classify_stock_tags(name)
+            # 거래량 포맷
+            volume = format_trading_value(str(int(int(volume_raw) * int(price_raw) / 100000000))) if volume_raw.isdigit() and price_raw.isdigit() else volume_raw
 
-            seen_codes.add(code)
             stocks.append({
-                "rank": rank,
+                "rank": i + 1,
                 "name": name,
                 "code": code,
                 "price": price_formatted,
-                "change_pct": change_pct,
+                "change_pct": f"{prefix}{pct_clean}%",
                 "volume": volume,
-                "reason": f"거래대금 상위 {rank}위",
-                "tags": tags,
+                "reason": f"거래량 상위 {i + 1}위",
+                "tags": classify_stock_tags(name),
                 "trend": trend,
                 "date": TODAY,
             })
 
-            rank += 1
-            if rank > 10:
-                break
-
-        log(f"  ✅ 거래대금 상위 {len(stocks)}개 수집 완료")
+        log(f"  ✅ 거래량 상위 {len(stocks)}개 수집 완료")
 
     except Exception as e:
-        log(f"  ❌ 거래대금 상위 크롤링 실패: {e}")
-    
-    # 2) 상승률 상위에서 추가 (부족할 경우)
-    if len(stocks) < 10:
-        try:
-            url2 = "https://finance.naver.com/sise/sise_rise.naver"
-            resp2 = requests.get(url2, headers=HEADERS, timeout=10)
-            resp2.encoding = "euc-kr"
-            soup2 = BeautifulSoup(resp2.text, "html.parser")
-            
-            for row in soup2.select("table.type_2 tr"):
-                cols = row.select("td")
-                if len(cols) < 6:
-                    continue
-                name_tag = cols[1].find("a")
-                if not name_tag:
-                    continue
-                
-                name = name_tag.get_text(strip=True)
-                href = name_tag.get("href", "")
-                code_match = re.search(r"code=(\d{6})", href)
-                code = code_match.group(1) if code_match else ""
-                
-                if not code or code in seen_codes:
-                    continue
-                
-                price = cols[2].get_text(strip=True).replace(",", "")
-                change_pct_text = cols[4].get_text(strip=True)
-                volume = "-"
-                
-                try:
-                    price_formatted = f"{int(price):,}"
-                except:
-                    price_formatted = price
-                
-                seen_codes.add(code)
-                rank = len(stocks) + 1
-                stocks.append({
-                    "rank": rank,
-                    "name": name,
-                    "code": code,
-                    "price": price_formatted,
-                    "change_pct": change_pct_text if change_pct_text.startswith("+") else f"+{change_pct_text}",
-                    "volume": volume,
-                    "reason": f"상승률 상위",
-                    "tags": classify_stock_tags(name),
-                    "trend": "up",
-                    "date": TODAY,
-                })
-                
-                if len(stocks) >= 10:
-                    break
-            
-            log(f"  ✅ 추가 수집 후 총 {len(stocks)}개")
-        except Exception as e:
-            log(f"  ⚠️ 상승률 추가 수집 실패: {e}")
-    
+        log(f"  ❌ 거래량 순위 조회 실패: {e}")
+
     return stocks
 
 
@@ -416,62 +426,46 @@ def classify_stock_tags(name):
 # 3. 시장 지수 크롤링
 # ─────────────────────────────────────────
 def crawl_market_index():
-    """네이버 금융 시장 지수 크롤링"""
-    log("📊 시장 지수 크롤링 시작...")
+    """시장 지수 수집 (KIS API: 국내, Yahoo: 해외, 네이버: 환율)"""
+    log("📊 시장 지수 수집 시작...")
 
     indices = []
 
-    # 국내 지수
-    # HTML 구조: <span id="KOSPI_change"><span class="nup/ndown"></span>131.28 +2.31%<span class="blind">상승</span></span>
-    try:
-        url = "https://finance.naver.com/sise/"
-        resp = requests.get(url, headers=HEADERS, timeout=10)
-        resp.encoding = "euc-kr"
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        for idx_name, prefix in [("코스피", "KOSPI"), ("코스닥", "KOSDAQ")]:
-            val_el = soup.select_one(f"#{prefix}_now")
-            change_el = soup.select_one(f"#{prefix}_change")
-            if not val_el:
+    # 국내 지수 (KIS API)
+    for idx_name, idx_code in [("코스피", "0001"), ("코스닥", "1001")]:
+        try:
+            data = kis_request(
+                "/uapi/domestic-stock/v1/quotations/inquire-index-price",
+                "FHPUP02100000",
+                {"FID_COND_MRKT_DIV_CODE": "U", "FID_INPUT_ISCD": idx_code},
+            )
+            if not data or "output" not in data:
+                log(f"  ⚠️ {idx_name} 데이터 없음")
                 continue
 
-            val = val_el.get_text(strip=True)
+            o = data["output"]
+            value = o.get("bstp_nmix_prpr", "0")
+            change_amt = o.get("bstp_nmix_prdy_vrss", "0")
+            change_pct_val = o.get("bstp_nmix_prdy_ctrt", "0")
+            sign = o.get("prdy_vrss_sign", "3")
+            trend = kis_trend(sign)
 
-            # 상승/하락 판별: ndown 클래스가 있으면 하락
-            is_down = bool(change_el and change_el.select_one(".ndown"))
-            trend = "down" if is_down else "up"
-
-            change_amt = "0"
-            change_pct = "0.00%"
-
-            if change_el:
-                # .blind 제거 후 텍스트 추출
-                for blind in change_el.select(".blind"):
-                    blind.decompose()
-                raw = change_el.get_text(strip=True)
-                # 정규식으로 숫자 추출: "131.28 +2.31%" or "6.71 -0.58%"
-                nums = re.findall(r'[\d,.]+', raw)
-                pct_match = re.search(r'([\d,.]+)\s*%', raw)
-
-                if nums:
-                    amt_val = nums[0]
-                    change_amt = f"-{amt_val}" if is_down else f"+{amt_val}"
-                if pct_match:
-                    pct_val = pct_match.group(1)
-                    change_pct = f"-{pct_val}%" if is_down else f"+{pct_val}%"
+            # 부호 포맷
+            prefix = "-" if trend == "down" else "+"
+            change_amt_clean = change_amt.lstrip("+-")
+            change_pct_clean = change_pct_val.lstrip("+-")
 
             indices.append({
                 "name": idx_name,
-                "value": val,
-                "change_amount": change_amt,
-                "change_pct": change_pct,
+                "value": value,
+                "change_amount": f"{prefix}{change_amt_clean}",
+                "change_pct": f"{prefix}{change_pct_clean}%",
                 "trend": trend,
             })
+        except Exception as e:
+            log(f"  ❌ {idx_name} KIS API 실패: {e}")
 
-        log(f"  ✅ 국내 지수 {len(indices)}개 수집")
-
-    except Exception as e:
-        log(f"  ❌ 국내 지수 크롤링 실패: {e}")
+    log(f"  ✅ 국내 지수 {len(indices)}개 수집")
 
     # 해외 지수 (Yahoo Finance API - 네이버 월드 페이지 데이터 부정확하여 대체)
     world_indices = [
@@ -567,70 +561,65 @@ def crawl_market_index():
 # 4. 섹터 데이터 크롤링
 # ─────────────────────────────────────────
 def crawl_sectors():
-    """네이버 금융 업종별 시세 크롤링"""
-    log("🏭 섹터 데이터 크롤링 시작...")
+    """KIS API 업종별 시세 조회"""
+    log("🏭 섹터 데이터 수집 시작 (KIS API)...")
 
     sectors = []
 
-    # 섹터 매핑: 표시명 → (네이버 업종명 키워드 목록, 아이콘)
+    # 섹터 매핑: 표시명 → (KIS 업종코드, 아이콘)
     sector_map = [
-        ("반도체",    ["반도체와반도체장비", "반도체"],       "⚡"),
-        ("2차전지",   ["전기장비", "전자장비와기기"],          "🔋"),
-        ("바이오",    ["생물공학", "제약", "생명과학"],         "🧬"),
-        ("자동차",    ["자동차", "자동차부품"],                "🚗"),
-        ("IT/플랫폼", ["IT서비스", "소프트웨어"],              "💻"),
-        ("금융",      ["은행", "증권", "기타금융"],            "🏦"),
-        ("철강/소재", ["철강", "비철금속", "화학"],            "⚙️"),
-        ("건설",      ["건설", "건축자재"],                    "🏗️"),
+        ("반도체",    "0013", "⚡"),   # 전기전자
+        ("2차전지",   "0013", "🔋"),   # 전기전자 (동일 업종)
+        ("바이오",    "0009", "🧬"),   # 의약품
+        ("자동차",    "0015", "🚗"),   # 운수장비
+        ("IT/플랫폼", "0026", "💻"),   # 서비스업
+        ("금융",      "0021", "🏦"),   # 금융업
+        ("철강/소재", "0011", "⚙️"),   # 철강금속
+        ("건설",      "0018", "🏗️"),   # 건설업
     ]
 
-    try:
-        url = "https://finance.naver.com/sise/sise_group.naver?type=upjong"
-        resp = requests.get(url, headers=HEADERS, timeout=10)
-        resp.encoding = "euc-kr"
-        soup = BeautifulSoup(resp.text, "html.parser")
+    seen_codes = set()
 
-        rows = soup.select("table.type_1 tr")
+    for sname, idx_code, icon in sector_map:
+        # 같은 업종코드(예: 반도체/2차전지 둘 다 0013)는 한 번만 조회
+        if idx_code in seen_codes:
+            # 이전 결과 복사
+            prev = next((s for s in sectors if s.get("_code") == idx_code), None)
+            if prev:
+                sectors.append({
+                    "name": sname,
+                    "change_pct": prev["change_pct"],
+                    "trend": prev["trend"],
+                    "stock_count": 10,
+                    "icon": icon,
+                    "top_stock": "",
+                    "description": "",
+                })
+            continue
 
-        # 업종명 → 등락률 딕셔너리
-        sector_data = {}
-        for row in rows:
-            cols = row.select("td")
-            if len(cols) < 4:
+        seen_codes.add(idx_code)
+
+        try:
+            data = kis_request(
+                "/uapi/domestic-stock/v1/quotations/inquire-index-price",
+                "FHPUP02100000",
+                {"FID_COND_MRKT_DIV_CODE": "U", "FID_INPUT_ISCD": idx_code},
+            )
+            if not data or "output" not in data:
+                sectors.append({
+                    "name": sname, "change_pct": "0.00%", "trend": "flat",
+                    "stock_count": 10, "icon": icon, "top_stock": "", "description": "",
+                })
                 continue
-            name_tag = cols[0].find("a")
-            if not name_tag:
-                continue
-            upjong_name = name_tag.get_text(strip=True)
-            change_pct = cols[1].get_text(strip=True) if len(cols) > 1 else "0%"
-            sector_data[upjong_name] = change_pct
 
-        # 사전 정의 섹터에 매핑
-        for sname, keywords, icon in sector_map:
-            pct = "0.00%"
-            # 정확한 업종명 매칭 (첫 번째 매칭 사용)
-            for kw in keywords:
-                if kw in sector_data:
-                    pct = sector_data[kw]
-                    break
+            o = data["output"]
+            change_pct_val = o.get("bstp_nmix_prdy_ctrt", "0")
+            sign = o.get("prdy_vrss_sign", "3")
+            trend = kis_trend(sign)
 
-            # +/- 판별
-            try:
-                pct_num = float(pct.replace("%", "").replace("+", "").replace("-", ""))
-                if pct_num == 0:
-                    trend = "flat"
-                    pct = "0.00%"
-                elif "-" in pct:
-                    trend = "down"
-                    if not pct.startswith("-"):
-                        pct = f"-{pct}"
-                else:
-                    trend = "up"
-                    if not pct.startswith("+"):
-                        pct = f"+{pct}"
-            except:
-                trend = "flat"
-                pct = "0.00%"
+            prefix = "-" if trend == "down" else ("" if trend == "flat" else "+")
+            pct_clean = change_pct_val.lstrip("+-")
+            pct = f"{prefix}{pct_clean}%" if trend != "flat" else "0.00%"
 
             sectors.append({
                 "name": sname,
@@ -640,19 +629,23 @@ def crawl_sectors():
                 "icon": icon,
                 "top_stock": "",
                 "description": "",
+                "_code": idx_code,  # 중복 조회 방지용 (Supabase 저장 시 제거)
             })
 
-        log(f"  ✅ 섹터 {len(sectors)}개 수집 완료")
-
-    except Exception as e:
-        log(f"  ❌ 섹터 크롤링 실패: {e}")
-        for sname, keywords, icon in sector_map:
+        except Exception as e:
+            log(f"  ❌ {sname} 업종 조회 실패: {e}")
             sectors.append({
-                "name": sname, "change_pct": "+0.00%", "trend": "up",
-                "stock_count": 0, "icon": icon,
-                "top_stock": "", "description": "데이터 수집 중",
+                "name": sname, "change_pct": "0.00%", "trend": "flat",
+                "stock_count": 10, "icon": icon, "top_stock": "", "description": "데이터 수집 중",
             })
 
+        time.sleep(0.1)  # API 속도 제한 대비
+
+    # _code 필드 제거 (Supabase에 저장하지 않음)
+    for s in sectors:
+        s.pop("_code", None)
+
+    log(f"  ✅ 섹터 {len(sectors)}개 수집 완료")
     return sectors
 
 
@@ -776,6 +769,12 @@ def main():
     if not SUPABASE_KEY:
         log("❌ SUPABASE_KEY 환경변수가 설정되지 않았습니다!")
         log("  export SUPABASE_KEY='your-service-role-key'")
+        return
+
+    if not KIS_APP_KEY or not KIS_APP_SECRET:
+        log("❌ KIS API 키가 설정되지 않았습니다!")
+        log("  export KIS_APP_KEY='발급받은_앱키'")
+        log("  export KIS_APP_SECRET='발급받은_시크릿키'")
         return
     
     # 1. 뉴스 크롤링

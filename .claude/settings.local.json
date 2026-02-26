@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "WebFetch(domain:glama.ai)",
+      "WebFetch(domain:tgparkk.github.io)"
     ]
   }
 }
