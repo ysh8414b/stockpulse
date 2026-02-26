@@ -73,9 +73,9 @@ def supabase_request(method, table, data=None, params=None):
 
 
 def clear_today_data(table):
-    """오늘 데이터 삭제 (중복 방지)"""
-    if table in ("market_index", "sectors"):
-        # 이 테이블들은 날짜 컬럼 없이 전체 교체
+    """데이터 삭제 (중복 방지)"""
+    if table in ("market_index", "sectors", "issue_stocks"):
+        # 항상 최신 데이터만 유지 (전체 교체)
         supabase_request("DELETE", table, params={"id": "gt.0"})
     else:
         supabase_request("DELETE", table, params={"date": f"eq.{TODAY}"})
