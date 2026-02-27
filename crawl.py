@@ -90,8 +90,13 @@ def get_existing_sparkline_data():
     result = {}
     for row in rows:
         name = row.get("name", "")
-        data = row.get("sparkline_data") or []
-        result[name] = data
+        sd = row.get("sparkline_data") or {}
+        if isinstance(sd, dict):
+            result[name] = {"d": sd.get("d", ""), "v": sd.get("v", [])}
+        elif isinstance(sd, list):
+            result[name] = {"d": "", "v": sd}
+        else:
+            result[name] = {"d": "", "v": []}
     return result
 
 
@@ -999,18 +1004,29 @@ def main():
         result = supabase_request("POST", "issue_stocks", data=stocks)
         log(f"  📈 종목 {len(stocks)}개 저장 {'✅' if result else '❌'}")
 
-    # 지수 저장 (sparkline_data 포함)
+    # 지수 저장 (sparkline_data 포함 — 하루치 전체, 장 시작시 리셋)
     if indices:
-        MAX_SPARKLINE_POINTS = 12
+        MAX_SPARKLINE_POINTS = 80
         for idx_item in indices:
             name = idx_item["name"]
             try:
                 current_value = float(idx_item["value"].replace(",", ""))
             except (ValueError, AttributeError):
                 current_value = 0
-            prev_data = existing_sparkline.get(name, [])
-            prev_data.append(current_value)
-            idx_item["sparkline_data"] = prev_data[-MAX_SPARKLINE_POINTS:]
+            existing = existing_sparkline.get(name, {"d": "", "v": []})
+            prev_date = existing["d"]
+            prev_data = existing["v"]
+            if prev_date == TODAY:
+                # 같은 날: 값이 변했을 때만 추가 (장 마감 후 중복 방지)
+                if not prev_data or abs(current_value - prev_data[-1]) >= 0.01:
+                    prev_data.append(current_value)
+                idx_item["sparkline_data"] = {"d": TODAY, "v": prev_data[-MAX_SPARKLINE_POINTS:]}
+            elif prev_data and abs(current_value - prev_data[-1]) < 0.01:
+                # 날짜 다르지만 값 동일 = 장 안 열림 (주말/공휴일) → 기존 차트 유지
+                idx_item["sparkline_data"] = {"d": prev_date, "v": prev_data}
+            else:
+                # 날짜 다르고 값 변동 = 새 거래일 → 리셋
+                idx_item["sparkline_data"] = {"d": TODAY, "v": [current_value]}
         result = supabase_request("POST", "market_index", data=indices)
         log(f"  📊 지수 {len(indices)}개 저장 (sparkline 포함) {'✅' if result else '❌'}")
 
