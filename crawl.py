@@ -82,6 +82,19 @@ def clear_today_data(table):
         supabase_request("DELETE", table, params={"date": f"eq.{TODAY}"})
 
 
+def get_existing_sparkline_data():
+    """기존 market_index에서 sparkline_data 읽기"""
+    rows = supabase_request("GET", "market_index", params={"select": "name,sparkline_data"})
+    if not rows:
+        return {}
+    result = {}
+    for row in rows:
+        name = row.get("name", "")
+        data = row.get("sparkline_data") or []
+        result[name] = data
+    return result
+
+
 # ─────────────────────────────────────────
 # 1. 네이버 금융 주요뉴스 크롤링
 # ─────────────────────────────────────────
@@ -868,14 +881,15 @@ def crawl_themes():
                     if dtable:
                         for drow in dtable.select("tr"):
                             dcols = drow.select("td")
-                            if len(dcols) >= 1:
+                            if len(dcols) >= 5:
                                 a = dcols[0].find("a")
                                 if a:
                                     stock_name = a.get_text(strip=True)
                                     stock_href = a.get("href", "")
                                     code_match = re.search(r'code=(\d+)', stock_href)
                                     code = code_match.group(1) if code_match else ""
-                                    leaders.append(f"{stock_name}:{code}" if code else stock_name)
+                                    pct = dcols[4].get_text(strip=True)
+                                    leaders.append(f"{stock_name}:{code}:{pct}" if code else stock_name)
                             if len(leaders) >= 10:
                                 break
                     time.sleep(0.3)
@@ -964,6 +978,9 @@ def main():
     log("")
     log("💾 Supabase에 데이터 저장 중...")
 
+    # sparkline_data 읽기 (DELETE 전에!)
+    existing_sparkline = get_existing_sparkline_data()
+
     # 기존 데이터 정리
     clear_today_data("news")
     clear_today_data("issue_stocks")
@@ -982,10 +999,20 @@ def main():
         result = supabase_request("POST", "issue_stocks", data=stocks)
         log(f"  📈 종목 {len(stocks)}개 저장 {'✅' if result else '❌'}")
 
-    # 지수 저장
+    # 지수 저장 (sparkline_data 포함)
     if indices:
+        MAX_SPARKLINE_POINTS = 12
+        for idx_item in indices:
+            name = idx_item["name"]
+            try:
+                current_value = float(idx_item["value"].replace(",", ""))
+            except (ValueError, AttributeError):
+                current_value = 0
+            prev_data = existing_sparkline.get(name, [])
+            prev_data.append(current_value)
+            idx_item["sparkline_data"] = prev_data[-MAX_SPARKLINE_POINTS:]
         result = supabase_request("POST", "market_index", data=indices)
-        log(f"  📊 지수 {len(indices)}개 저장 {'✅' if result else '❌'}")
+        log(f"  📊 지수 {len(indices)}개 저장 (sparkline 포함) {'✅' if result else '❌'}")
 
     # 섹터 저장
     if sectors:

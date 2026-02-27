@@ -91,10 +91,10 @@ const FB_IDX=[
 ];
 
 // ═══ COMPONENTS ═══
-function Sparkline({trend,w=56,h=26}){
+function Sparkline({trend,data,w=56,h=26}){
   const c=trend==="up"?"#22c55e":"#ef4444";
-  const p=useMemo(()=>{const a=[];let y=trend==="up"?20:6;for(let i=0;i<=10;i++){y=Math.max(2,Math.min(24,y+(Math.random()-(trend==="up"?.6:.4))*5));a.push(`${(i/10)*w},${y}`);}return a.join(" ")},[trend,w]);
-  return <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}><polyline points={p} fill="none" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>;
+  const p=useMemo(()=>{if(data&&data.length>=2){const mn=Math.min(...data),mx=Math.max(...data),rng=mx-mn||1,pad=2;return data.map((v,i)=>`${(i/(data.length-1))*w},${h-pad-((v-mn)/rng)*(h-pad*2)}`).join(" ")}const a=[];let y=trend==="up"?20:6;for(let i=0;i<=10;i++){y=Math.max(2,Math.min(24,y+(Math.random()-(trend==="up"?.6:.4))*5));a.push(`${(i/10)*w},${y}`);}return a.join(" ")},[trend,data,w,h]);
+  return <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{overflow:"visible"}}><polyline points={p} fill="none" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>;
 }
 function MiniBar({trend}){
   const c=trend==="up"?"34,197,94":"239,68,68";
@@ -114,7 +114,7 @@ function TabOverview({idx,stk,nws,sec,loading}){
   return <div>
     <div className="grid-index" style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(idx.length||3,6)},1fr)`,gap:"10px",marginBottom:"28px"}}>
       {idx.map((m,i)=><Box key={m.name} style={{padding:"18px"}}><div className={`fade-up fade-up-d${Math.min(i+1,4)}`}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"10px"}}><span style={{color:"var(--muted)",fontSize:"11px",fontWeight:500}}>{m.name}</span><Sparkline trend={m.trend} w={44} h={20}/></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"10px"}}><span style={{color:"var(--muted)",fontSize:"11px",fontWeight:500}}>{m.name}</span><Sparkline trend={m.trend} data={m.sparkline_data} w={44} h={20}/></div>
         <div style={{fontSize:"18px",fontWeight:700,marginBottom:"2px",fontVariantNumeric:"tabular-nums"}}>{m.value}</div>
         <div style={{display:"flex",gap:"8px",alignItems:"baseline"}}><span style={{color:m.trend==="up"?"#22c55e":(m.trend==="down"?"#ef4444":"#6b7280"),fontSize:"13px",fontWeight:600}}>{m.trend==="up"?"▲":(m.trend==="down"?"▼":"─")} {m.change_pct}</span><span style={{color:"var(--dim)",fontSize:"11px"}}>{m.change_amount}</span></div>
       </div></Box>)}
@@ -251,7 +251,7 @@ function TabThemes({thm,loading}){
           </div>
         </div>
         {t.leading_stocks&&<div style={{marginTop:"10px",paddingTop:"10px",borderTop:"1px solid var(--div)",display:"flex",gap:"6px",flexWrap:"wrap"}}>
-          {t.leading_stocks.split(",").map((s,j)=>{const parts=s.trim().split(":");const nm=parts[0];const cd=parts[1]||"";return cd?<a key={j} href={`https://finance.naver.com/item/main.naver?code=${cd}`} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{padding:"3px 9px",background:"var(--badge-bg)",borderRadius:"5px",fontSize:"11px",color:"var(--text-sub)",fontWeight:500,textDecoration:"none",cursor:"pointer",transition:"all .15s",border:"1px solid transparent"}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(249,115,22,0.12)";e.currentTarget.style.color="#f97316";e.currentTarget.style.borderColor="rgba(249,115,22,0.3)"}} onMouseLeave={e=>{e.currentTarget.style.background="var(--badge-bg)";e.currentTarget.style.color="var(--text-sub)";e.currentTarget.style.borderColor="transparent"}}>{nm}</a>:<span key={j} style={{padding:"3px 9px",background:"var(--badge-bg)",borderRadius:"5px",fontSize:"11px",color:"var(--text-sub)",fontWeight:500}}>{nm}</span>})}
+          {t.leading_stocks.split(",").map((s,j)=>{const parts=s.trim().split(":");const nm=parts[0];const cd=parts[1]||"";const pct=parts[2]||"";const pctClr=pct.startsWith("-")?"#ef4444":pct.startsWith("+")?"#22c55e":"var(--text-sub)";return cd?<a key={j} href={`https://finance.naver.com/item/main.naver?code=${cd}`} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{padding:"3px 9px",background:"var(--badge-bg)",borderRadius:"5px",fontSize:"11px",color:"var(--text-sub)",fontWeight:500,textDecoration:"none",cursor:"pointer",transition:"all .15s",border:"1px solid transparent"}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(249,115,22,0.12)";e.currentTarget.style.color="#f97316";e.currentTarget.style.borderColor="rgba(249,115,22,0.3)"}} onMouseLeave={e=>{e.currentTarget.style.background="var(--badge-bg)";e.currentTarget.style.color="var(--text-sub)";e.currentTarget.style.borderColor="transparent"}}>{nm}{pct&&<span style={{marginLeft:"4px",color:pctClr,fontSize:"10px",fontWeight:600}}>{pct}</span>}</a>:<span key={j} style={{padding:"3px 9px",background:"var(--badge-bg)",borderRadius:"5px",fontSize:"11px",color:"var(--text-sub)",fontWeight:500}}>{nm}</span>})}
         </div>}
       </Box>})}
     </div>
