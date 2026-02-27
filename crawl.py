@@ -1017,7 +1017,7 @@ def main():
             prev_date = existing["d"]
             prev_data = existing["v"]
             if prev_date == TODAY:
-                # 같은 날: 값이 변했을 때만 추가 (장 마감 후 중복 방지)
+                # 같은 날: 값이 변했을 때만 추가 (장 마감 후 차트 보존)
                 if not prev_data or abs(current_value - prev_data[-1]) >= 0.01:
                     prev_data.append(current_value)
                 idx_item["sparkline_data"] = {"d": TODAY, "v": prev_data[-MAX_SPARKLINE_POINTS:]}
