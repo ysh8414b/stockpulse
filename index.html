@@ -114,7 +114,7 @@ function TabOverview({idx,stk,nws,sec,loading}){
   return <div>
     <div className="grid-index" style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(idx.length||3,6)},1fr)`,gap:"10px",marginBottom:"28px"}}>
       {idx.map((m,i)=><Box key={m.name} style={{padding:"18px"}}><div className={`fade-up fade-up-d${Math.min(i+1,4)}`}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"10px"}}><span style={{color:"var(--muted)",fontSize:"11px",fontWeight:500}}>{m.name}</span><Sparkline trend={m.trend} data={m.sparkline_data?.v||m.sparkline_data} w={44} h={20}/></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"10px"}}><span style={{color:"var(--muted)",fontSize:"11px",fontWeight:500}}>{m.name}</span><Sparkline trend={m.trend} data={(m.sparkline_data&&m.sparkline_data.v)||m.sparkline_data} w={44} h={20}/></div>
         <div style={{fontSize:"18px",fontWeight:700,marginBottom:"2px",fontVariantNumeric:"tabular-nums"}}>{m.value}</div>
         <div style={{display:"flex",gap:"8px",alignItems:"baseline"}}><span style={{color:m.trend==="up"?"#22c55e":(m.trend==="down"?"#ef4444":"#6b7280"),fontSize:"13px",fontWeight:600}}>{m.trend==="up"?"▲":(m.trend==="down"?"▼":"─")} {m.change_pct}</span><span style={{color:"var(--dim)",fontSize:"11px"}}>{m.change_amount}</span></div>
       </div></Box>)}
