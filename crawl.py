@@ -776,7 +776,7 @@ KB금융=105560, 신한지주=055550, HD현대일렉트릭=267260, LS일렉트�
             if not theme.get("search_query"):
                 theme["search_query"] = theme["name"] + " 주식"
             if valid_stocks:
-                theme["stocks"] = valid_stocks
+                theme["stocks"] = valid_stocks[:10]  # 테마당 최대 10개
                 validated.append(theme)
 
         if validated:
