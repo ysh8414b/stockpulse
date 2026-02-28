@@ -645,14 +645,15 @@ def detect_themes_with_ai(news_titles):
 {news_text}
 
 ## 조건:
-1. 각 테마마다 관련 종목 5~10개 출력
-2. 종목명은 한국거래소 상장 공식 명칭 그대로 작성
-3. 종목코드(6자리) 반드시 포함
-4. 코스피/코스닥 구분 포함
-5. 우선주 제외 (예: 삼성전자우 제외)
-6. ETF 제외
-7. 비상장사 제외
-8. 존재하지 않는 종목 생성 금지
+1. 각 테마마다 관련 종목 최대 10개 출력
+2. 시가총액 3000억 원 이상 종목만 포함
+3. 종목명은 한국거래소 상장 공식 명칭 그대로 작성
+4. 종목코드(6자리) 반드시 포함
+5. 코스피/코스닥 구분 포함
+6. 우선주 제외 (예: 삼성전자우 제외)
+7. ETF 제외
+8. 비상장사 제외
+9. 존재하지 않는 종목 생성 금지
 
 ## 출력 형식 (JSON):
 {{
@@ -1103,6 +1104,8 @@ def crawl_themes(krx_data, news_titles=None):
             changes = []
             seen_codes = set()
 
+            MIN_MARKET_CAP = 300_000_000_000  # 시가총액 3000억 원
+
             for s in theme_def["stocks"]:
                 code = s["code"]
                 if code in seen_codes:
@@ -1111,6 +1114,11 @@ def crawl_themes(krx_data, news_titles=None):
 
                 d = krx_data.get(code)
                 if not d:
+                    continue
+
+                # 시가총액 3000억 미만 필터링
+                if d.get("market_cap", 0) < MIN_MARKET_CAP:
+                    log(f"     ⏭️ 시총 미달 스킵: {d['name']}({code}) {d.get('market_cap',0)/1e8:.0f}억")
                     continue
 
                 cp = d["change_pct"]
