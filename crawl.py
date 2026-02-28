@@ -710,18 +710,33 @@ def build_theme_stock_map(krx_data):
 
     log(f"  📋 대상 종목: {len(eligible)}개 (시총 3000억+)")
 
-    # 기업개요 크롤링 (배치)
+    # 기업개요 크롤링 (병렬)
     import time
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     stock_infos = {}
-    for i, (code, name, market) in enumerate(eligible):
+    done_count = [0]
+
+    def _fetch_one(item):
+        code, name, market = item
         sector, overview = _fetch_company_overview(code)
-        stock_infos[code] = {
-            "name": name, "market": market,
-            "sector": sector, "overview": overview[:300],
-        }
-        if (i + 1) % 50 == 0:
-            log(f"     ... {i + 1}/{len(eligible)} 기업개요 수집")
-            time.sleep(0.5)
+        return code, name, market, sector, overview
+
+    log(f"  ⏳ 기업개요 병렬 크롤링 중 (스레드 20개)...")
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = {executor.submit(_fetch_one, item): item for item in eligible}
+        for future in as_completed(futures):
+            try:
+                code, name, market, sector, overview = future.result()
+                stock_infos[code] = {
+                    "name": name, "market": market,
+                    "sector": sector, "overview": overview[:300],
+                }
+                done_count[0] += 1
+                if done_count[0] % 100 == 0:
+                    log(f"     ... {done_count[0]}/{len(eligible)} 기업개요 수집")
+            except Exception:
+                pass
 
     log(f"  ✅ 기업개요 수집 완료: {len(stock_infos)}개")
 
