@@ -46,6 +46,11 @@ YAHOO_HEADERS = {
 
 TODAY = datetime.now().strftime("%Y-%m-%d")
 
+import sys as _sys
+if _sys.stdout.encoding and _sys.stdout.encoding.lower().replace("-","") != "utf8":
+    _sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    _sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
 
@@ -226,7 +231,147 @@ def get_existing_sparkline_data():
 
 
 # ─────────────────────────────────────────
-# KRX 데이터 (메인 데이터 소스)
+# 네이버 금융 API (메인 데이터 소스)
+# ─────────────────────────────────────────
+NAVER_STOCK_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+}
+
+# 종목코드 → 업종 매핑 (주요 종목, 네이버 API에 업종 정보 없으므로 수동 매핑)
+CODE_SECTOR_MAP = {
+    # 반도체
+    "005930": "전기전자", "000660": "전기전자", "402340": "전기전자",
+    "042700": "전기전자", "166090": "전기전자", "058470": "전기전자",
+    "357780": "전기전자", "403870": "전기전자", "036930": "전기전자",
+    "240810": "전기전자", "267260": "전기전자", "010120": "전기전자",
+    # 바이오
+    "068270": "의약품", "207940": "의약품", "000100": "의약품",
+    "128940": "의약품", "196170": "의약품", "141080": "의약품",
+    "145020": "의약품", "302440": "의약품", "003460": "의약품",
+    # 자동차
+    "005380": "운수장비", "000270": "운수장비", "012330": "운수장비",
+    "018880": "운수장비",
+    # IT/플랫폼
+    "035420": "서비스업", "035720": "서비스업", "259960": "서비스업",
+    "036570": "서비스업", "263750": "서비스업", "251270": "서비스업",
+    "017670": "서비스업", "030200": "서비스업",
+    # 금융
+    "105560": "은행", "055550": "은행", "086790": "은행",
+    "316140": "은행", "032830": "증권", "000810": "증권",
+    # 방산
+    "012450": "기계", "079550": "기계", "047810": "기계",
+    "000880": "기계", "064350": "기계", "272210": "기계",
+    # 철강/소재
+    "005490": "철강금속", "051910": "화학", "090430": "화학",
+    "051900": "화학", "192820": "화학", "003230": "화학",
+    # 건설
+    "000720": "건설업", "047040": "건설업", "006360": "건설업",
+    "375500": "건설업", "028260": "건설업",
+    # 에너지
+    "015760": "전기가스업", "096770": "전기가스업", "034020": "전기가스업",
+    "052690": "전기가스업",
+    # 조선
+    "009540": "운수장비", "010140": "운수장비", "329180": "운수장비",
+    "042660": "운수장비",
+    # 엔터
+    "352820": "서비스업", "041510": "서비스업", "035900": "서비스업",
+}
+
+
+def _fetch_naver_stocks(market_type, page_size=100):
+    """네이버 금융 API에서 시장별 전종목 시세 조회"""
+    all_stocks = []
+    page = 1
+    while True:
+        try:
+            resp = requests.get(
+                f"https://m.stock.naver.com/api/stocks/marketValue/{market_type}",
+                params={"page": page, "pageSize": page_size},
+                headers=NAVER_STOCK_HEADERS,
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                log(f"  ⚠️ 네이버 {market_type} page {page}: HTTP {resp.status_code}")
+                break
+
+            data = resp.json()
+            stocks = data.get("stocks", [])
+            if not stocks:
+                break
+
+            all_stocks.extend(stocks)
+            total = data.get("totalCount", 0)
+
+            if page * page_size >= total:
+                break
+            page += 1
+
+        except Exception as e:
+            log(f"  ⚠️ 네이버 {market_type} page {page} 실패: {e}")
+            break
+
+    return all_stocks
+
+
+def fetch_naver_market_data():
+    """네이버 금융 API에서 전종목 시세 데이터 조회 (KRX 대체)"""
+    log("📋 네이버 금융 API 전종목 시세 조회 중...")
+    all_data = {}
+
+    for market_type, market_name in [("KOSPI", "KOSPI"), ("KOSDAQ", "KOSDAQ")]:
+        stocks = _fetch_naver_stocks(market_type)
+        count = 0
+
+        for item in stocks:
+            code = item.get("itemCode", "").strip()
+            name = item.get("stockName", "").strip()
+
+            if not code or not name or len(code) != 6 or not code.isdigit():
+                continue
+
+            # 우선주/ETF 등 제외
+            stock_end_type = item.get("stockEndType", "")
+            if stock_end_type not in ("stock", ""):
+                continue
+
+            try:
+                price = int(item.get("closePrice", "0").replace(",", ""))
+                change_pct = float(item.get("fluctuationsRatio", "0").replace(",", ""))
+                volume = int(item.get("accumulatedTradingVolume", "0").replace(",", ""))
+                trading_value = int(item.get("accumulatedTradingValue", "0").replace(",", ""))
+                market_cap = int(item.get("marketValue", "0").replace(",", ""))
+            except (ValueError, TypeError):
+                continue
+
+            # 업종 매핑
+            krx_sector = CODE_SECTOR_MAP.get(code, "")
+            if code in BATTERY_STOCK_CODES:
+                display_sector = "2차전지"
+            else:
+                display_sector = KRX_SECTOR_MAP.get(krx_sector, "")
+
+            all_data[code] = {
+                "code": code,
+                "name": name,
+                "market": market_name,
+                "krx_sector": krx_sector,
+                "display_sector": display_sector,
+                "price": price,
+                "change_pct": change_pct,
+                "volume": volume,
+                "trading_value": trading_value,
+                "market_cap": market_cap,
+            }
+            count += 1
+
+        log(f"  ✅ 네이버 {market_name}: {count}개 종목")
+
+    log(f"  📊 총 {len(all_data)}개 종목 로드 완료")
+    return all_data
+
+
+# ─────────────────────────────────────────
+# KRX 데이터 (Fallback)
 # ─────────────────────────────────────────
 def _fetch_krx_for_date(date_str, mkt_id, mkt_name):
     """특정 날짜의 KRX 전종목 시세 조회"""
@@ -257,13 +402,12 @@ def _fetch_krx_for_date(date_str, mkt_id, mkt_name):
 
 def fetch_krx_market_data():
     """KRX에서 전종목 시세 데이터 동적 조회 (코드+이름+업종+가격+거래량+시총)"""
-    log("📋 KRX 전종목 시세 조회 중...")
+    log("📋 KRX 전종목 시세 조회 중 (fallback)...")
     all_data = {}
 
-    # 오늘 → 최근 5영업일까지 시도
     for days_back in range(5):
         dt = datetime.now() - timedelta(days=days_back)
-        if dt.weekday() >= 5:  # 주말 건너뛰기
+        if dt.weekday() >= 5:
             continue
         date_str = dt.strftime("%Y%m%d")
 
@@ -287,7 +431,6 @@ def fetch_krx_market_data():
                 except (ValueError, TypeError):
                     continue
 
-                # 디스플레이 섹터 결정 (2차전지 특수 처리)
                 if code in BATTERY_STOCK_CODES:
                     display_sector = "2차전지"
                 else:
@@ -310,7 +453,7 @@ def fetch_krx_market_data():
                 log(f"  ✅ KRX {mkt_name} ({date_str}): {len(items)}개 종목")
 
         if all_data:
-            break  # 데이터 있으면 더 이상 과거 날짜 시도 안함
+            break
         else:
             log(f"  ⚠️ {date_str} 데이터 없음 - 이전 날짜 시도...")
 
@@ -319,14 +462,16 @@ def fetch_krx_market_data():
 
 
 def build_stock_code_map(krx_data):
-    """KRX 데이터에서 종목명 → (코드, 시장) 매핑 구축 (AI 코드 보정용)"""
+    """데이터에서 종목명 → (코드, 시장) 매핑 구축 (AI 코드 보정용)"""
     mapping = {}
     for code, info in krx_data.items():
         mapping[info["name"]] = (code, info["market"])
-    # 별칭 추가
+    # 별칭 추가 (양방향: alias→real, real→alias)
     for alias, real_name in STOCK_NAME_ALIASES.items():
-        if real_name in mapping:
+        if real_name in mapping and alias not in mapping:
             mapping[alias] = mapping[real_name]
+        if alias in mapping and real_name not in mapping:
+            mapping[real_name] = mapping[alias]
     return mapping
 
 
@@ -1062,10 +1207,13 @@ def main():
         log("  export SUPABASE_KEY='your-service-role-key'")
         return
 
-    # 1. KRX 전종목 시세 조회 (메인 데이터 소스)
-    krx_data = fetch_krx_market_data()
+    # 1. 전종목 시세 조회 (네이버 금융 → KRX fallback)
+    krx_data = fetch_naver_market_data()
     if not krx_data:
-        log("❌ KRX 데이터 조회 실패 - 크롤링 중단")
+        log("  ⚠️ 네이버 금융 실패 - KRX fallback 시도...")
+        krx_data = fetch_krx_market_data()
+    if not krx_data:
+        log("❌ 시세 데이터 조회 실패 - 크롤링 중단")
         return
 
     # 2. 종목코드 매핑 구축 (AI 테마 코드 보정용)
