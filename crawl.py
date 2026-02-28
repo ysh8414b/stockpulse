@@ -31,7 +31,7 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")  # service_role key (GitHub Se
 
 NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID", "")
 NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET", "")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 
 YAHOO_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -403,9 +403,9 @@ def _search_theme_news_api(query):
 
 
 def detect_themes_with_ai(news_titles):
-    """Google Gemini API로 뉴스 헤드라인을 분석하여 인기 테마를 자동 감지"""
-    if not GEMINI_API_KEY:
-        log("  ⚠️ GEMINI_API_KEY 미설정 - 정적 테마 사용")
+    """Groq API (Llama 3.3 70B)로 뉴스 헤드라인을 분석하여 인기 테마를 자동 감지"""
+    if not GROQ_API_KEY:
+        log("  ⚠️ GROQ_API_KEY 미설정 - 정적 테마 사용")
         return None
 
     if not news_titles:
@@ -446,28 +446,27 @@ def detect_themes_with_ai(news_titles):
 5. 정확히 10개 테마를 선정"""
 
     try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent"
         resp = requests.post(
-            url,
+            "https://api.groq.com/openai/v1/chat/completions",
             headers={
-                "x-goog-api-key": GEMINI_API_KEY,
+                "Authorization": f"Bearer {GROQ_API_KEY}",
                 "Content-Type": "application/json",
             },
             json={
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "responseMimeType": "application/json",
-                },
+                "model": "llama-3.3-70b-versatile",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3,
+                "response_format": {"type": "json_object"},
             },
             timeout=30,
         )
 
         if resp.status_code != 200:
-            log(f"  ⚠️ Gemini API 오류: {resp.status_code} - {resp.text[:200]}")
+            log(f"  ⚠️ Groq API 오류: {resp.status_code} - {resp.text[:200]}")
             return None
 
         result = resp.json()
-        content = result["candidates"][0]["content"]["parts"][0]["text"]
+        content = result["choices"][0]["message"]["content"]
 
         # JSON 배열 추출
         json_match = re.search(r'\[.*\]', content, re.DOTALL)
@@ -475,6 +474,9 @@ def detect_themes_with_ai(news_titles):
             themes = json.loads(json_match.group())
         else:
             themes = json.loads(content)
+            # json_object 모드에서 {"themes": [...]} 형태일 수 있음
+            if isinstance(themes, dict) and "themes" in themes:
+                themes = themes["themes"]
 
         # 검증: STOCK_UNIVERSE에 존재하는 종목 코드만 허용
         valid_codes = {s["code"] for s in STOCK_UNIVERSE}
