@@ -446,7 +446,7 @@ def detect_themes_with_ai(news_titles):
 5. 정확히 10개 테마를 선정"""
 
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent"
         resp = requests.post(
             url,
             headers={
