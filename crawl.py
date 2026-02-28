@@ -642,7 +642,7 @@ def _search_theme_news_api(query, theme_name=""):
 # AI 테마 감지 (Groq / Llama 3.3 70B)
 # ─────────────────────────────────────────
 def detect_themes_with_ai(news_titles, krx_data=None):
-    """Groq API로 뉴스 분석 → 인기 테마 + 관련 종목 자동 감지 (전체 한국 주식 대상)"""
+    """Groq API로 뉴스 분석 → 인기 테마 + 관련 종목명 감지, 코드는 krx_data에서 매칭"""
     if not GROQ_API_KEY:
         log("  ⚠️ GROQ_API_KEY 미설정 - 정적 테마 사용")
         return None
@@ -651,40 +651,21 @@ def detect_themes_with_ai(news_titles, krx_data=None):
         log("  ⚠️ 뉴스 데이터 없음 - 정적 테마 사용")
         return None
 
-    # ── 시총 3000억+ 전종목 리스트를 동적 생성 ──
-    MIN_MARKET_CAP = 300_000_000_000
-    stock_list_text = ""
-    if krx_data:
-        eligible = []
-        for code, d in krx_data.items():
-            if d.get("market_cap", 0) >= MIN_MARKET_CAP:
-                # 우선주 제외 (코드 끝자리 5,7,8,9 + 이름에 '우' 포함)
-                if code[-1] in ("5", "7", "8", "9") and "우" in d["name"]:
-                    continue
-                eligible.append((d["name"], code, d["market"]))
-        eligible.sort(key=lambda x: x[1])  # 코드순 정렬
-        stock_list_text = ", ".join(f"{name}={code}({mkt})" for name, code, mkt in eligible)
-        log(f"  📋 AI 프롬프트용 종목 리스트: 시총 3000억+ {len(eligible)}개")
-
     news_text = "\n".join(f"- {t}" for t in news_titles[:30])
 
-    prompt = f"""너는 국내 증시 테마 크롤러다.
+    prompt = f"""너는 국내 증시 테마 분석가다.
 
 ## 목표:
-아래 뉴스 헤드라인을 분석하여 현재 증시에서 가장 주목받는 테마 상위 10개를 선정한다.
+아래 뉴스 헤드라인을 분석하여 현재 증시에서 가장 주목받는 테마 상위 10개를 선정하고, 각 테마의 핵심 관련 종목명을 나열하라.
 
 ## 오늘의 뉴스 헤드라인:
 {news_text}
 
-## 현재 상장 종목 리스트 (시가총액 3000억 이상, 종목명=코드(시장)):
-{stock_list_text}
-
 ## 조건:
-1. 각 테마마다 관련 종목 5~10개 출력. 관련 종목이 충분하면 반드시 10개를 채워라
-2. 반드시 위 종목 리스트에 있는 종목만 사용. 리스트에 없는 종목은 절대 사용 금지
-3. 종목코드는 위 리스트의 코드를 그대로 복사하여 사용
-4. 우선주 제외, ETF 제외, 비상장사 제외
-5. 존재하지 않는 종목 생성 금지
+1. 각 테마마다 관련 종목 5~10개의 "종목명"을 나열 (종목코드는 불필요)
+2. 종목명은 한국거래소(KRX) 상장 공식 명칭 사용
+3. 우선주/ETF/비상장사 제외
+4. 관련 종목이 충분하면 10개를 채워라
 
 ## 출력 형식 (JSON):
 {{
@@ -692,31 +673,27 @@ def detect_themes_with_ai(news_titles, krx_data=None):
     {{
       "name": "테마명",
       "search_query": "테마명 주식",
-      "stocks": [
-        {{"code": "005930", "name": "삼성전자", "market": "KOSPI"}},
-        {{"code": "000660", "name": "SK하이닉스", "market": "KOSPI"}}
-      ]
+      "stocks": ["삼성전자", "SK하이닉스", "한미반도체"]
     }}
   ]
 }}
 
 ## search_query 작성법:
-- 네이버 뉴스 검색용 키워드. 테마명 + "주식" 형태로 작성
-- 예시: "반도체 주식", "전기차 주식", "방산 주식", "AI 주식"
+- 네이버 뉴스 검색용 키워드. 테마명 + "주식" 형태
+- 예시: "반도체 주식", "방산 주식", "2차전지 주식"
 
 ## 핵심 규칙:
 1. 종목은 해당 테마의 매출/사업이 직접 연관된 "핵심 수혜주"만 포함
-2. 삼성전자·SK하이닉스·네이버·카카오 등 대형 플랫폼/IT주를 모든 테마에 넣지 마라
-3. 예: "방산" → 한화에어로스페이스, 현대로템, LIG넥스원. 삼성전자/네이버는 방산 아님
-4. 예: "전기차" → 현대차, 기아, LG에너지솔루션, 삼성SDI. SK하이닉스는 전기차 아님
-5. 예: "2차전지" → LG에너지솔루션, 에코프로, 포스코퓨처엠, 엘앤에프. 삼성전자는 2차전지 아님
-6. 예: "AI" → AI 반도체(SK하이닉스), AI 솔루션/SW 기업 등. 네이버·카카오·JYP·CJ ENM은 AI 테마가 아님
+2. 삼성전자·SK하이닉스·네이버·카카오 등 대형주를 모든 테마에 넣지 마라. 해당 테마의 핵심 사업인 경우만 포함
+3. 예: "방산" → 한화에어로스페이스, 현대로템, LIG넥스원, 한국항공우주, 한화시스템
+4. 예: "2차전지" → LG에너지솔루션, 에코프로비엠, 에코프로, 포스코퓨처엠, 엘앤에프, 삼성SDI
+5. 예: "제약/바이오" → 셀트리온, 삼성바이오로직스, 알테오젠, 유한양행, 한미약품, SK바이오팜, 종근당, 녹십자
+6. 예: "AI" → SK하이닉스(HBM), 삼성전자(반도체), 솔트룩스, 코난테크놀로지 등 AI 직접 관련만. 네이버·카카오·JYP·CJ ENM은 AI 아님
 7. 추측 금지. 종목의 테마 관련성이 불확실하면 넣지 마라
-8. 동일 종목이 여러 테마에 중복 배치되지 않도록 주의
-9. market은 "KOSPI" 또는 "KOSDAQ"
-10. 뉴스에서 화제인 테마 우선, 정확히 10개
-11. 한국 상장 종목 중 직접적 수혜주가 3개 미만인 테마는 제외 (예: 비트코인, 유가, 환율 등)
-12. 테마와 무관한 종목을 억지로 끼워넣지 마라. 관련 종목이 부족하면 해당 테마를 버려라"""
+8. 동일 종목이 여러 테마에 중복되지 않도록 주의
+9. 뉴스에서 화제인 테마 우선, 정확히 10개
+10. 국내 상장 직접 수혜주가 3개 미만인 테마는 제외 (비트코인, 유가, 환율 등)
+11. 테마와 무관한 종목을 억지로 끼워넣지 마라. 부족하면 해당 테마를 버려라"""
 
     try:
         resp = requests.post(
@@ -754,48 +731,48 @@ def detect_themes_with_ai(news_titles, krx_data=None):
         else:
             themes = parsed
 
-        # 검증 + KNOWN_STOCK_CODES(KRX 기반)로 코드 보정
-        # 역방향 매핑 (코드→이름) 구축 for 추가 검증
-        code_to_name = {}
-        for kname, (kcode, kmkt) in KNOWN_STOCK_CODES.items():
-            code_to_name[kcode] = (kname, kmkt)
-
+        # ── AI 종목명 → krx_data에서 코드 매칭 ──
         validated = []
         for theme in themes:
             if not isinstance(theme, dict) or "name" not in theme or "stocks" not in theme:
                 continue
+
+            raw_stocks = theme["stocks"]
             valid_stocks = []
-            for s in theme["stocks"]:
-                if isinstance(s, dict) and s.get("code") and s.get("name"):
+            seen_codes = set()
+
+            for s in raw_stocks:
+                # 종목명 문자열 또는 {"name": ...} 딕셔너리 둘 다 지원
+                if isinstance(s, str):
+                    name = s.strip()
+                elif isinstance(s, dict) and s.get("name"):
                     name = str(s["name"]).strip()
-                    ai_code = str(s["code"]).zfill(6)
-                    ai_market = str(s.get("market", "KOSPI")).upper()
-                    if ai_market not in ("KOSPI", "KOSDAQ"):
-                        ai_market = "KOSPI"
-                    # KNOWN_STOCK_CODES(KRX에서 구축)로 정확한 코드 조회
-                    if name in KNOWN_STOCK_CODES:
-                        known_code, known_market = KNOWN_STOCK_CODES[name]
-                        if known_code != ai_code:
-                            log(f"     🔧 종목코드 보정: {name} {ai_code} → {known_code}")
-                        code = known_code
-                        market = known_market
+                else:
+                    continue
+
+                # KNOWN_STOCK_CODES (krx_data 기반)에서 이름으로 코드 조회
+                if name in KNOWN_STOCK_CODES:
+                    code, market = KNOWN_STOCK_CODES[name]
+                    if code not in seen_codes:
+                        valid_stocks.append({"code": code, "name": name, "market": market})
+                        seen_codes.add(code)
+                else:
+                    # 별칭(alias) 매핑 시도
+                    alias_name = STOCK_NAME_ALIASES.get(name, "")
+                    if alias_name and alias_name in KNOWN_STOCK_CODES:
+                        code, market = KNOWN_STOCK_CODES[alias_name]
+                        if code not in seen_codes:
+                            log(f"     🔧 별칭 매칭: {name} → {alias_name}({code})")
+                            valid_stocks.append({"code": code, "name": alias_name, "market": market})
+                            seen_codes.add(code)
                     else:
-                        # 이름 매칭 실패 시 → AI가 준 코드로 KRX 역방향 조회
-                        if ai_code in code_to_name:
-                            real_name, real_market = code_to_name[ai_code]
-                            if real_name != name:
-                                log(f"     ⚠️ 종목명 불일치: AI={name}({ai_code}) → KRX={real_name}({ai_code})")
-                                name = real_name  # KRX 이름으로 교체
-                            code = ai_code
-                            market = real_market
-                        else:
-                            log(f"     ❌ 미확인 종목 스킵: {name}({ai_code})")
-                            continue  # KRX에 없는 코드는 스킵
-                    valid_stocks.append({"code": code, "name": name, "market": market})
+                        log(f"     ❌ 종목명 매칭 실패: {name}")
+
             if not theme.get("search_query"):
                 theme["search_query"] = theme["name"] + " 주식"
+
             if valid_stocks:
-                theme["stocks"] = valid_stocks[:10]  # 테마당 최대 10개
+                theme["stocks"] = valid_stocks[:10]
                 validated.append(theme)
 
         if validated:
