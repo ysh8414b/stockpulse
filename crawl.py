@@ -624,7 +624,7 @@ def _search_theme_news_api(query):
 # ─────────────────────────────────────────
 # AI 테마 감지 (Groq / Llama 3.3 70B)
 # ─────────────────────────────────────────
-def detect_themes_with_ai(news_titles):
+def detect_themes_with_ai(news_titles, krx_data=None):
     """Groq API로 뉴스 분석 → 인기 테마 + 관련 종목 자동 감지 (전체 한국 주식 대상)"""
     if not GROQ_API_KEY:
         log("  ⚠️ GROQ_API_KEY 미설정 - 정적 테마 사용")
@@ -633,6 +633,21 @@ def detect_themes_with_ai(news_titles):
     if not news_titles:
         log("  ⚠️ 뉴스 데이터 없음 - 정적 테마 사용")
         return None
+
+    # ── 시총 3000억+ 전종목 리스트를 동적 생성 ──
+    MIN_MARKET_CAP = 300_000_000_000
+    stock_list_text = ""
+    if krx_data:
+        eligible = []
+        for code, d in krx_data.items():
+            if d.get("market_cap", 0) >= MIN_MARKET_CAP:
+                # 우선주 제외 (코드 끝자리 5,7,8,9 + 이름에 '우' 포함)
+                if code[-1] in ("5", "7", "8", "9") and "우" in d["name"]:
+                    continue
+                eligible.append((d["name"], code, d["market"]))
+        eligible.sort(key=lambda x: x[1])  # 코드순 정렬
+        stock_list_text = ", ".join(f"{name}={code}({mkt})" for name, code, mkt in eligible)
+        log(f"  📋 AI 프롬프트용 종목 리스트: 시총 3000억+ {len(eligible)}개")
 
     news_text = "\n".join(f"- {t}" for t in news_titles[:30])
 
@@ -644,16 +659,15 @@ def detect_themes_with_ai(news_titles):
 ## 오늘의 뉴스 헤드라인:
 {news_text}
 
+## 현재 상장 종목 리스트 (시가총액 3000억 이상, 종목명=코드(시장)):
+{stock_list_text}
+
 ## 조건:
 1. 각 테마마다 관련 종목 최대 10개 출력
-2. 시가총액 3000억 원 이상 종목만 포함
-3. 종목명은 한국거래소 상장 공식 명칭 그대로 작성
-4. 종목코드(6자리) 반드시 포함
-5. 코스피/코스닥 구분 포함
-6. 우선주 제외 (예: 삼성전자우 제외)
-7. ETF 제외
-8. 비상장사 제외
-9. 존재하지 않는 종목 생성 금지
+2. 반드시 위 종목 리스트에 있는 종목만 사용. 리스트에 없는 종목은 절대 사용 금지
+3. 종목코드는 위 리스트의 코드를 그대로 복사하여 사용
+4. 우선주 제외, ETF 제외, 비상장사 제외
+5. 존재하지 않는 종목 생성 금지
 
 ## 출력 형식 (JSON):
 {{
@@ -673,31 +687,17 @@ def detect_themes_with_ai(news_titles):
 - 네이버 뉴스 검색용 키워드. 테마명 + "주식" 형태로 작성
 - 예시: "반도체 주식", "전기차 주식", "방산 주식", "AI 주식"
 
-## 주요 종목코드 참고 (정확한 코드 사용 필수):
-삼성전자=005930, SK하이닉스=000660, 삼성SDI=006400, LG에너지솔루션=373220,
-현대자동차=005380, 기아=000270, 현대모비스=012330,
-네이버=035420, 카카오=035720, 크래프톤=259960,
-셀트리온=068270, 삼성바이오로직스=207940, 알테오젠=196170, 유한양행=000100,
-한화에어로스페이스=012450, 현대로템=064350, LIG넥스원=079550, 한화시스템=272210, 한국항공우주=047810,
-HD한국조선해양=009540, 삼성중공업=010140, HD현대중공업=329180, 한화오션=042660,
-두산에너빌리티=034020, 한전기술=052690, 한국전력=015760,
-두산로보틱스=454910, 레인보우로보틱스=277810,
-에코프로비엠=247540, 에코프로=086520, 포스코퓨처엠=003670,
-하이브=352820, SM=041510, JYP Ent.=035900,
-아모레퍼시픽=090430, LG생활건강=051900, 코스맥스=192820,
-포스코홀딩스=005490, LG화학=051910, 삼양식품=003230,
-KB금융=105560, 신한지주=055550, HD현대일렉트릭=267260, LS일렉트릭=010120
-
 ## 핵심 규칙:
 1. 종목은 해당 테마의 "핵심 수혜주"만 포함. 삼성전자·SK하이닉스 등 대형주를 모든 테마에 넣지 마라
 2. 예: "방산" 테마 → 한화에어로스페이스, 현대로템, LIG넥스원 등만. 삼성전자는 방산 아님
 3. 예: "전기차" 테마 → 현대차, 기아, LG에너지솔루션, 삼성SDI 등만. SK하이닉스는 전기차 아님
 4. 예: "2차전지" 테마 → LG에너지솔루션, 에코프로, 포스코퓨처엠 등만. 삼성전자는 2차전지 아님
-5. 추측 금지. 불확실하면 "확인 필요"라고 표시
+5. 추측 금지. 불확실하면 해당 종목을 넣지 마라
 6. 동일 종목이 여러 테마에 중복 배치되지 않도록 주의
-7. 종목코드는 위 참고 리스트 또는 실제 존재하는 6자리 숫자 코드 사용
-8. market은 "KOSPI" 또는 "KOSDAQ"
-9. 뉴스에서 화제인 테마 우선, 정확히 10개"""
+7. market은 "KOSPI" 또는 "KOSDAQ"
+8. 뉴스에서 화제인 테마 우선, 정확히 10개
+9. 한국 상장 종목 중 직접적 수혜주가 3개 미만인 테마는 제외하라 (예: 비트코인, 유가, 환율 등 해외자산 테마는 국내 직접 수혜주가 거의 없으므로 제외)
+10. 테마와 무관한 종목을 억지로 끼워넣지 마라. 관련 종목이 부족하면 해당 테마를 버려라"""
 
     try:
         resp = requests.post(
@@ -1094,17 +1094,16 @@ def crawl_themes(krx_data, news_titles=None):
     """AI가 선정한 테마의 종목을 KRX 데이터에서 조회하여 성과 계산"""
     log("🔥 테마 크롤링 시작...")
 
-    ai_themes = detect_themes_with_ai(news_titles)
+    ai_themes = detect_themes_with_ai(news_titles, krx_data)
 
     if ai_themes:
         # ── AI 테마: KRX 데이터에서 직접 가격 조회 ──
+        MIN_MARKET_CAP = 300_000_000_000  # 시가총액 3000억 원
         themes = []
         for theme_def in ai_themes:
             theme_stocks = []
             changes = []
             seen_codes = set()
-
-            MIN_MARKET_CAP = 300_000_000_000  # 시가총액 3000억 원
 
             for s in theme_def["stocks"]:
                 code = s["code"]
@@ -1124,6 +1123,11 @@ def crawl_themes(krx_data, news_titles=None):
                 cp = d["change_pct"]
                 changes.append(cp)
                 theme_stocks.append({"name": d["name"], "code": code, "change_pct": cp})
+
+            # 시총 필터 후 종목 3개 미만이면 테마 스킵 (관련 종목 부족)
+            if len(theme_stocks) < 3:
+                log(f"  ⏭️ 종목 부족으로 테마 스킵: {theme_def['name']} ({len(theme_stocks)}개)")
+                continue
 
             avg_change = sum(changes) / len(changes) if changes else 0.0
             up_count = sum(1 for c in changes if c > 0.005)
