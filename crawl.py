@@ -740,12 +740,13 @@ def build_theme_stock_map(krx_data):
 
     log(f"  ✅ 기업개요 수집 완료: {len(stock_infos)}개")
 
-    # AI로 배치 분류 (50개씩)
+    # AI로 배치 분류 (200개씩, rate limit 대응)
     stock_themes = {}  # code → [테마1, 테마2, ...]
-    batch_size = 50
+    batch_size = 200  # 큰 배치로 API 호출 횟수 최소화
     codes_list = list(stock_infos.keys())
+    total_batches = (len(codes_list) + batch_size - 1) // batch_size
 
-    for batch_start in range(0, len(codes_list), batch_size):
+    for batch_idx, batch_start in enumerate(range(0, len(codes_list), batch_size)):
         batch_codes = codes_list[batch_start:batch_start + batch_size]
         batch_text = "\n".join(
             f"- {stock_infos[c]['name']}({c}): 업종={stock_infos[c]['sector']}, 개요={stock_infos[c]['overview'][:150]}"
@@ -780,33 +781,43 @@ IT/플랫폼, 디스플레이, 의료기기, 항공, 물류, 패션, 미디어, 
 
 규칙: 핵심 매출 사업과 직접 관련된 테마만 1~2개 배정. 불확실하면 넣지 마라."""
 
-        try:
-            resp = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {GROQ_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": "llama-3.3-70b-versatile",
-                    "messages": [{"role": "user", "content": classify_prompt}],
-                    "temperature": 0.1,
-                    "response_format": {"type": "json_object"},
-                },
-                timeout=60,
-            )
-            if resp.status_code == 200:
-                result = json.loads(resp.json()["choices"][0]["message"]["content"])
-                for code_key, themes_list in result.items():
-                    code_str = str(code_key).zfill(6)
-                    if code_str in stock_infos and isinstance(themes_list, list):
-                        stock_themes[code_str] = [t for t in themes_list if isinstance(t, str)]
-            else:
-                log(f"     ⚠️ Groq 배치 분류 오류: {resp.status_code}")
-        except Exception as e:
-            log(f"     ⚠️ Groq 배치 분류 실패: {e}")
+        # 429 rate limit 대응: 최대 3회 재시도
+        for retry in range(3):
+            try:
+                resp = requests.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {GROQ_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "llama-3.3-70b-versatile",
+                        "messages": [{"role": "user", "content": classify_prompt}],
+                        "temperature": 0.1,
+                        "response_format": {"type": "json_object"},
+                    },
+                    timeout=120,
+                )
+                if resp.status_code == 200:
+                    result = json.loads(resp.json()["choices"][0]["message"]["content"])
+                    for code_key, themes_list in result.items():
+                        code_str = str(code_key).zfill(6)
+                        if code_str in stock_infos and isinstance(themes_list, list):
+                            stock_themes[code_str] = [t for t in themes_list if isinstance(t, str)]
+                    log(f"     ✅ 배치 {batch_idx+1}/{total_batches} 분류 완료 ({len(batch_codes)}개)")
+                    break
+                elif resp.status_code == 429:
+                    wait_sec = (retry + 1) * 15
+                    log(f"     ⏳ Rate limit - {wait_sec}초 대기 후 재시도 ({retry+1}/3)")
+                    time.sleep(wait_sec)
+                else:
+                    log(f"     ⚠️ Groq 배치 분류 오류: {resp.status_code}")
+                    break
+            except Exception as e:
+                log(f"     ⚠️ Groq 배치 분류 실패: {e}")
+                break
 
-        time.sleep(1)  # rate limit
+        time.sleep(5)  # 배치 간 기본 대기
 
     log(f"  ✅ AI 테마 분류 완료: {len(stock_themes)}개 종목")
 
@@ -855,13 +866,22 @@ def detect_themes_with_ai(news_titles, krx_data=None, theme_map=None):
         log("  ⚠️ 뉴스 데이터 없음 - 정적 테마 사용")
         return None
 
-    # 매핑 DB에서 사용 가능한 테마 목록 추출
-    available_themes = list(theme_map.keys()) if theme_map else []
-    themes_list_text = ", ".join(available_themes) if available_themes else ""
+    # 매핑 DB에서 사용 가능한 테마 목록 추출 (빈 경우 고정 목록 사용)
+    FIXED_THEMES = [
+        "반도체", "2차전지", "전기차", "자동차", "방산", "조선", "AI", "로봇",
+        "제약/바이오", "전력/에너지", "엔터", "화장품", "식품", "금융", "건설",
+        "통신", "철강/소재", "게임", "태양광", "원전", "IT/플랫폼", "디스플레이",
+        "의료기기", "항공", "물류", "패션", "미디어", "수소", "드론",
+    ]
+    available_themes = list(theme_map.keys()) if theme_map else FIXED_THEMES
+    themes_list_text = ", ".join(available_themes)
 
+    has_map = theme_map and len(theme_map) > 0
     news_text = "\n".join(f"- {t}" for t in news_titles[:30])
 
-    prompt = f"""너는 국내 증시 테마 분석가다.
+    if has_map:
+        # ── 매핑 DB 있음: 테마명만 선정 ──
+        prompt = f"""너는 국내 증시 테마 분석가다.
 
 ## 목표:
 아래 뉴스 헤드라인을 분석하여 현재 증시에서 가장 주목받는 테마 상위 10개를 선정하라.
@@ -887,6 +907,37 @@ def detect_themes_with_ai(news_titles, krx_data=None, theme_map=None):
 3. search_query는 네이버 뉴스 검색용 키워드 (테마명 + "주식")
 4. 정확히 10개 선정
 5. 뉴스와 무관한 테마를 넣지 마라"""
+    else:
+        # ── 매핑 DB 없음: 테마명 + 종목명 같이 요청 (fallback) ──
+        log("  ⚠️ 매핑 DB 없음 - AI에게 종목명도 요청")
+        prompt = f"""너는 국내 증시 테마 분석가다.
+
+## 목표:
+아래 뉴스 헤드라인을 분석하여 현재 증시에서 가장 주목받는 테마 상위 10개를 선정하고, 각 테마별 핵심 관련 종목명을 나열하라.
+
+## 오늘의 뉴스 헤드라인:
+{news_text}
+
+## 사용 가능한 테마 목록:
+{themes_list_text}
+
+## 출력 형식 (JSON):
+{{
+  "themes": [
+    {{"name": "테마명", "search_query": "테마명 주식", "stocks": ["종목명1", "종목명2"]}}
+  ]
+}}
+
+## 종목 포함 기준 (엄격 적용):
+- "주요 매출 사업"이 해당 테마 밸류체인에 직접 포함되는 기업만
+- 사업 일부 진출, 협약, 계획 단계 기업 제외
+- 간접 연관 기업 제외
+
+## 규칙:
+1. 위 테마 목록에서만 선택
+2. 각 테마당 종목 5~10개. 종목명은 KRX 공식 명칭
+3. 뉴스에서 화제인 테마 우선, 정확히 10개
+4. 뉴스와 무관한 테마를 넣지 마라"""
 
     try:
         resp = requests.post(
@@ -924,7 +975,7 @@ def detect_themes_with_ai(news_titles, krx_data=None, theme_map=None):
         else:
             raw_themes = parsed
 
-        # ── 매핑 DB에서 종목 조회 ──
+        # ── 테마별 종목 조회 ──
         validated = []
         for theme in raw_themes:
             if not isinstance(theme, dict) or "name" not in theme:
@@ -933,26 +984,47 @@ def detect_themes_with_ai(news_titles, krx_data=None, theme_map=None):
             theme_name = theme["name"].strip()
             search_query = theme.get("search_query", theme_name + " 주식")
 
-            # 매핑 DB에서 종목 조회
             stocks = []
-            if theme_map and theme_name in theme_map:
-                stocks = theme_map[theme_name][:10]
+
+            if has_map:
+                # 매핑 DB에서 종목 조회
+                if theme_name in theme_map:
+                    stocks = theme_map[theme_name][:10]
+                else:
+                    # 유사 테마명 매칭 시도
+                    for map_key in theme_map:
+                        if theme_name in map_key or map_key in theme_name:
+                            stocks = theme_map[map_key][:10]
+                            log(f"     🔧 유사 테마 매칭: {theme_name} → {map_key}")
+                            break
             else:
-                # 유사 테마명 매칭 시도
-                for map_key in (theme_map or {}):
-                    if theme_name in map_key or map_key in theme_name:
-                        stocks = theme_map[map_key][:10]
-                        log(f"     🔧 유사 테마 매칭: {theme_name} → {map_key}")
-                        break
+                # 매핑 DB 없음 → AI가 준 종목명을 KNOWN_STOCK_CODES에서 코드 매칭
+                raw_stocks = theme.get("stocks", [])
+                seen_codes = set()
+                for s in raw_stocks:
+                    name = s.strip() if isinstance(s, str) else str(s.get("name", "")).strip() if isinstance(s, dict) else ""
+                    if not name:
+                        continue
+                    if name in KNOWN_STOCK_CODES:
+                        code, market = KNOWN_STOCK_CODES[name]
+                        if code not in seen_codes:
+                            stocks.append({"code": code, "name": name, "market": market})
+                            seen_codes.add(code)
+                    elif STOCK_NAME_ALIASES.get(name, "") in KNOWN_STOCK_CODES:
+                        real = STOCK_NAME_ALIASES[name]
+                        code, market = KNOWN_STOCK_CODES[real]
+                        if code not in seen_codes:
+                            stocks.append({"code": code, "name": real, "market": market})
+                            seen_codes.add(code)
 
             if len(stocks) >= 3:
                 validated.append({
                     "name": theme_name,
                     "search_query": search_query,
-                    "stocks": stocks,
+                    "stocks": stocks[:10],
                 })
             else:
-                log(f"     ⏭️ 매핑 DB에 종목 부족: {theme_name} ({len(stocks)}개)")
+                log(f"     ⏭️ 종목 부족: {theme_name} ({len(stocks)}개)")
 
         if validated:
             total_stocks = sum(len(t["stocks"]) for t in validated)
