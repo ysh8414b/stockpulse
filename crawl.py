@@ -681,14 +681,21 @@ def build_theme_stock_map(krx_data):
     """시총 상위 종목의 기업개요를 수집 → AI로 테마 태그 추출 → JSON 캐싱"""
 
     # 이미 최신 파일이 있으면 로드
+    # 캐시 유효기간: 7일 (기업 핵심사업은 자주 안 바뀜)
+    CACHE_MAX_DAYS = 7
     if os.path.exists(THEME_MAP_FILE):
         try:
             with open(THEME_MAP_FILE, "r", encoding="utf-8") as f:
                 cached = json.load(f)
             cached_date = cached.get("date", "")
-            if cached_date == TODAY:
-                log(f"  📂 테마 매핑 DB 캐시 사용 (날짜: {cached_date}, {len(cached.get('stocks', {}))}개 종목)")
-                return cached.get("theme_to_stocks", {}), cached.get("stocks", {})
+            cached_stocks = cached.get("stocks", {})
+            if cached_date and cached_stocks:
+                days_old = (datetime.strptime(TODAY, "%Y-%m-%d") - datetime.strptime(cached_date, "%Y-%m-%d")).days
+                if days_old < CACHE_MAX_DAYS:
+                    log(f"  📂 테마 매핑 DB 캐시 사용 ({days_old}일 전, {len(cached_stocks)}개 종목)")
+                    return cached.get("theme_to_stocks", {}), cached_stocks
+                else:
+                    log(f"  🔄 테마 매핑 DB 캐시 만료 ({days_old}일 경과) - 재구축")
         except Exception:
             pass
 
