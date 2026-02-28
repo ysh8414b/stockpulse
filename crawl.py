@@ -31,6 +31,7 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")  # service_role key (GitHub Se
 
 NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID", "")
 NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 YAHOO_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -401,6 +402,106 @@ def _search_theme_news_api(query):
     return "", ""
 
 
+def detect_themes_with_ai(news_titles):
+    """Google Gemini API로 뉴스 헤드라인을 분석하여 인기 테마를 자동 감지"""
+    if not GEMINI_API_KEY:
+        log("  ⚠️ GEMINI_API_KEY 미설정 - 정적 테마 사용")
+        return None
+
+    if not news_titles:
+        log("  ⚠️ 뉴스 데이터 없음 - 정적 테마 사용")
+        return None
+
+    # STOCK_UNIVERSE에서 종목 목록 텍스트 생성
+    stock_list = "\n".join(
+        f"- {s['code']} {s['name']} (섹터: {s['sector']})"
+        for s in STOCK_UNIVERSE
+    )
+
+    news_text = "\n".join(f"- {t}" for t in news_titles[:30])
+
+    prompt = f"""오늘의 주식 뉴스 헤드라인을 분석하여 현재 가장 주목받는 주식 테마 10개를 선정해주세요.
+
+## 오늘의 뉴스 헤드라인:
+{news_text}
+
+## 사용 가능한 종목 목록:
+{stock_list}
+
+## 출력 형식 (JSON):
+정확히 아래 형식으로 JSON 배열만 출력하세요. 다른 텍스트 없이 JSON만 출력하세요.
+[
+  {{
+    "name": "테마명",
+    "search_query": "네이버 뉴스 검색 키워드",
+    "stocks": ["종목코드1", "종목코드2"]
+  }}
+]
+
+## 규칙:
+1. 테마명은 짧고 명확하게 (2~4글자, 예: "반도체", "AI", "2차전지")
+2. 각 테마에 관련 종목 코드를 3~8개 매핑 (위 종목 목록에서만 선택)
+3. search_query는 네이버 뉴스 검색에 최적화된 한국어 키워드 조합
+4. 뉴스에서 많이 언급되거나 시장에서 주목받는 테마 우선 선정
+5. 정확히 10개 테마를 선정"""
+
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+        resp = requests.post(
+            url,
+            headers={
+                "x-goog-api-key": GEMINI_API_KEY,
+                "Content-Type": "application/json",
+            },
+            json={
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "responseMimeType": "application/json",
+                },
+            },
+            timeout=30,
+        )
+
+        if resp.status_code != 200:
+            log(f"  ⚠️ Gemini API 오류: {resp.status_code} - {resp.text[:200]}")
+            return None
+
+        result = resp.json()
+        content = result["candidates"][0]["content"]["parts"][0]["text"]
+
+        # JSON 배열 추출
+        json_match = re.search(r'\[.*\]', content, re.DOTALL)
+        if json_match:
+            themes = json.loads(json_match.group())
+        else:
+            themes = json.loads(content)
+
+        # 검증: STOCK_UNIVERSE에 존재하는 종목 코드만 허용
+        valid_codes = {s["code"] for s in STOCK_UNIVERSE}
+        validated = []
+        for theme in themes:
+            if not isinstance(theme, dict) or "name" not in theme or "stocks" not in theme:
+                continue
+            theme["stocks"] = [c for c in theme["stocks"] if c in valid_codes]
+            if not theme.get("search_query"):
+                theme["search_query"] = theme["name"] + " 주식"
+            if theme["stocks"]:
+                validated.append(theme)
+
+        if validated:
+            log(f"  🤖 AI 테마 감지 완료: {len(validated)}개 테마")
+            for t in validated:
+                log(f"     - {t['name']}: {len(t['stocks'])}종목")
+            return validated[:10]
+        else:
+            log("  ⚠️ AI 결과 검증 실패 - 정적 테마 사용")
+            return None
+
+    except Exception as e:
+        log(f"  ⚠️ AI 테마 감지 실패: {e}")
+        return None
+
+
 # ─────────────────────────────────────────
 # 1. 뉴스 수집 (네이버 검색 API)
 # ─────────────────────────────────────────
@@ -738,9 +839,15 @@ def crawl_sector_stocks(yahoo_quotes):
 # ─────────────────────────────────────────
 # 6. 테마 (Yahoo + 네이버 검색 API 하이브리드)
 # ─────────────────────────────────────────
-def crawl_themes(yahoo_quotes):
-    """테마별 성과 계산 + 네이버 검색 API로 관련 뉴스"""
+def crawl_themes(yahoo_quotes, news_titles=None):
+    """테마별 성과 계산 + 네이버 검색 API로 관련 뉴스 (AI 동적 감지 우선)"""
     log("🔥 테마 크롤링 시작...")
+
+    # AI로 동적 테마 감지 시도, 실패 시 정적 정의 사용
+    ai_themes = detect_themes_with_ai(news_titles)
+    theme_defs = ai_themes if ai_themes else THEME_DEFINITIONS
+    if not ai_themes:
+        log("  📋 정적 테마 정의 사용")
 
     # code -> quote 룩업 테이블
     code_to_data = {}
@@ -751,7 +858,7 @@ def crawl_themes(yahoo_quotes):
 
     themes = []
 
-    for theme_def in THEME_DEFINITIONS:
+    for theme_def in theme_defs:
         theme_stocks = []
         changes = []
 
@@ -857,8 +964,9 @@ def main():
     # 5. 섹터별 종목 (Yahoo 데이터 기반)
     sector_stocks = crawl_sector_stocks(yahoo_quotes)
 
-    # 6. 테마 (Yahoo + 네이버 검색 API)
-    themes = crawl_themes(yahoo_quotes)
+    # 6. 테마 (Yahoo + 네이버 검색 API + AI 동적 감지)
+    news_titles = [n["title"] for n in news]
+    themes = crawl_themes(yahoo_quotes, news_titles)
 
     # ─── Supabase에 저장 ───
     log("")
