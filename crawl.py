@@ -660,7 +660,6 @@ def detect_themes_with_ai(news_titles):
     {{
       "name": "테마명",
       "search_query": "테마명 주식",
-      "description": "이 테마가 주목받는 이유 한줄 설명",
       "stocks": [
         {{"code": "005930", "name": "삼성전자", "market": "KOSPI"}},
         {{"code": "000660", "name": "SK하이닉스", "market": "KOSPI"}}
@@ -672,10 +671,6 @@ def detect_themes_with_ai(news_titles):
 ## search_query 작성법:
 - 네이버 뉴스 검색용 키워드. 테마명 + "주식" 형태로 작성
 - 예시: "반도체 주식", "전기차 주식", "방산 주식", "AI 주식"
-
-## description 작성법:
-- 오늘 이 테마가 왜 화제인지 뉴스 기반으로 한줄 요약
-- 예시: "삼성전자 HBM4 양산 돌입, 반도체 수출 사상 최대"
 
 ## 주요 종목코드 참고 (정확한 코드 사용 필수):
 삼성전자=005930, SK하이닉스=000660, 삼성SDI=006400, LG에너지솔루션=373220,
@@ -1141,19 +1136,15 @@ def crawl_themes(krx_data, news_titles=None):
                 pct_display = f"+{cp:.2f}%" if cp >= 0 else f"{cp:.2f}%"
                 leaders.append(f"{ts['name']}:{ts['code']}:{pct_display}")
 
-            # AI description을 우선 사용, 없으면 네이버 뉴스 검색
-            ai_desc = theme_def.get("description", "")
+            # 네이버 뉴스 검색
             search_kw = theme_def.get("search_query", theme_def["name"] + " 주식")
             news_title, news_url = _search_theme_news_api(search_kw)
-
-            # 표시할 뉴스: AI 설명이 있으면 우선, 없으면 네이버 검색 결과
-            display_news = ai_desc if ai_desc else news_title
 
             themes.append({
                 "rank": 0, "name": theme_def["name"], "change_pct": pct_str,
                 "avg_3day_pct": "", "up_count": up_count, "flat_count": flat_count,
                 "down_count": down_count, "leading_stocks": ", ".join(leaders),
-                "related_news": display_news, "news_url": news_url,
+                "related_news": news_title, "news_url": news_url,
                 "trend": trend, "date": TODAY,
             })
 
