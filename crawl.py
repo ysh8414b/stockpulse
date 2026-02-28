@@ -224,21 +224,37 @@ def get_existing_sparkline_data():
 # Yahoo Finance API 헬퍼
 # ─────────────────────────────────────────
 def fetch_yahoo_batch_quotes(tickers):
-    """Yahoo Finance v7 batch quote API로 종목 데이터 일괄 조회"""
+    """Yahoo Finance v8 chart API로 종목 데이터 개별 조회 (v7 인증 차단 대응)"""
     result = {}
-    CHUNK = 50
-    for i in range(0, len(tickers), CHUNK):
-        chunk = tickers[i:i+CHUNK]
-        symbols = ",".join(chunk)
-        url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbols}"
+    total = len(tickers)
+    for idx, ticker in enumerate(tickers):
+        if (idx + 1) % 20 == 0:
+            log(f"  📡 {idx+1}/{total} 종목 조회 중...")
         try:
-            resp = requests.get(url, headers=YAHOO_HEADERS, timeout=15)
+            encoded = urllib.parse.quote(ticker)
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded}?interval=1d&range=5d"
+            resp = requests.get(url, headers=YAHOO_HEADERS, timeout=10)
             data = resp.json()
-            for quote in data.get("quoteResponse", {}).get("result", []):
-                sym = quote.get("symbol", "")
-                result[sym] = quote
+            chart_result = data["chart"]["result"][0]
+            meta = chart_result["meta"]
+
+            price = meta.get("regularMarketPrice", 0)
+            prev = meta.get("chartPreviousClose", 0) or meta.get("previousClose", 0)
+            volume = meta.get("regularMarketVolume", 0)
+
+            change = round(price - prev, 2) if prev else 0
+            change_pct = round((change / prev) * 100, 2) if prev and prev > 0 else 0
+
+            result[ticker] = {
+                "symbol": ticker,
+                "regularMarketPrice": price,
+                "regularMarketChange": change,
+                "regularMarketChangePercent": change_pct,
+                "regularMarketVolume": volume,
+                "marketCap": 0,
+            }
         except Exception as e:
-            log(f"  ⚠️ Yahoo batch quote 실패 (chunk {i//CHUNK+1}): {e}")
+            log(f"  ⚠️ {ticker} 조회 실패: {e}")
     return result
 
 
@@ -670,7 +686,7 @@ def crawl_sector_stocks(yahoo_quotes):
     for sector_name in target_sectors:
         sector_universe = [s for s in STOCK_UNIVERSE if s["sector"] == sector_name]
 
-        # Yahoo 데이터 매핑 후 시가총액 순 정렬
+        # Yahoo 데이터 매핑 (STOCK_UNIVERSE 정의 순서 유지 = 대형주 우선)
         enriched = []
         for stock in sector_universe:
             quote = yahoo_quotes.get(stock["ticker"])
@@ -678,15 +694,11 @@ def crawl_sector_stocks(yahoo_quotes):
                 continue
             price = quote.get("regularMarketPrice", 0) or 0
             change_pct = quote.get("regularMarketChangePercent", 0) or 0
-            market_cap = quote.get("marketCap", 0) or 0
             enriched.append({
                 "stock": stock,
                 "price": price,
                 "change_pct": change_pct,
-                "market_cap": market_cap,
             })
-
-        enriched.sort(key=lambda x: x["market_cap"], reverse=True)
 
         for rank_idx, e in enumerate(enriched[:10], 1):
             s = e["stock"]
