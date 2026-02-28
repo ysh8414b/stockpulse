@@ -598,13 +598,13 @@ def _calc_time_ago(pub_date_str):
         return "오늘"
 
 
-def _search_theme_news_api(query):
-    """Naver Search API로 테마 관련 뉴스 1건 검색"""
+def _search_theme_news_api(query, theme_name=""):
+    """Naver Search API로 테마 관련 뉴스 1건 검색 (테마명 매칭 우선)"""
     if not NAVER_CLIENT_ID or not NAVER_CLIENT_SECRET:
         return "", ""
     try:
         url = "https://openapi.naver.com/v1/search/news.json"
-        params = {"query": query, "display": 1, "sort": "date"}
+        params = {"query": query, "display": 10, "sort": "date"}
         headers = {
             "X-Naver-Client-Id": NAVER_CLIENT_ID,
             "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
@@ -612,10 +612,27 @@ def _search_theme_news_api(query):
         resp = requests.get(url, headers=headers, params=params, timeout=5)
         data = resp.json()
         items = data.get("items", [])
-        if items:
-            title = re.sub(r'<[^>]+>', '', items[0].get("title", "")).strip()
-            link = items[0].get("link", "")
-            return title, link
+        if not items:
+            return "", ""
+
+        # 테마명 키워드가 제목에 포함된 뉴스 우선 선택
+        theme_keywords = theme_name.replace(" ", "").lower() if theme_name else ""
+        for item in items:
+            title = re.sub(r'<[^>]+>', '', item.get("title", "")).strip()
+            title_lower = title.replace(" ", "").lower()
+            if theme_keywords and theme_keywords in title_lower:
+                return title, item.get("link", "")
+
+        # 매칭 없으면 search_query 핵심 키워드로 재시도
+        core_kw = query.replace("주식", "").replace("관련", "").strip().lower()
+        for item in items:
+            title = re.sub(r'<[^>]+>', '', item.get("title", "")).strip()
+            if core_kw and core_kw in title.replace(" ", "").lower():
+                return title, item.get("link", "")
+
+        # 그래도 없으면 첫 번째 반환
+        title = re.sub(r'<[^>]+>', '', items[0].get("title", "")).strip()
+        return title, items[0].get("link", "")
     except:
         pass
     return "", ""
@@ -688,16 +705,18 @@ def detect_themes_with_ai(news_titles, krx_data=None):
 - 예시: "반도체 주식", "전기차 주식", "방산 주식", "AI 주식"
 
 ## 핵심 규칙:
-1. 종목은 해당 테마의 "핵심 수혜주"만 포함. 삼성전자·SK하이닉스 등 대형주를 모든 테마에 넣지 마라
-2. 예: "방산" 테마 → 한화에어로스페이스, 현대로템, LIG넥스원 등만. 삼성전자는 방산 아님
-3. 예: "전기차" 테마 → 현대차, 기아, LG에너지솔루션, 삼성SDI 등만. SK하이닉스는 전기차 아님
-4. 예: "2차전지" 테마 → LG에너지솔루션, 에코프로, 포스코퓨처엠 등만. 삼성전자는 2차전지 아님
-5. 추측 금지. 불확실하면 해당 종목을 넣지 마라
-6. 동일 종목이 여러 테마에 중복 배치되지 않도록 주의
-7. market은 "KOSPI" 또는 "KOSDAQ"
-8. 뉴스에서 화제인 테마 우선, 정확히 10개
-9. 한국 상장 종목 중 직접적 수혜주가 3개 미만인 테마는 제외하라 (예: 비트코인, 유가, 환율 등 해외자산 테마는 국내 직접 수혜주가 거의 없으므로 제외)
-10. 테마와 무관한 종목을 억지로 끼워넣지 마라. 관련 종목이 부족하면 해당 테마를 버려라"""
+1. 종목은 해당 테마의 매출/사업이 직접 연관된 "핵심 수혜주"만 포함
+2. 삼성전자·SK하이닉스·네이버·카카오 등 대형 플랫폼/IT주를 모든 테마에 넣지 마라
+3. 예: "방산" → 한화에어로스페이스, 현대로템, LIG넥스원. 삼성전자/네이버는 방산 아님
+4. 예: "전기차" → 현대차, 기아, LG에너지솔루션, 삼성SDI. SK하이닉스는 전기차 아님
+5. 예: "2차전지" → LG에너지솔루션, 에코프로, 포스코퓨처엠, 엘앤에프. 삼성전자는 2차전지 아님
+6. 예: "AI" → AI 반도체(SK하이닉스), AI 솔루션/SW 기업 등. 네이버·카카오·JYP·CJ ENM은 AI 테마가 아님
+7. 추측 금지. 종목의 테마 관련성이 불확실하면 넣지 마라
+8. 동일 종목이 여러 테마에 중복 배치되지 않도록 주의
+9. market은 "KOSPI" 또는 "KOSDAQ"
+10. 뉴스에서 화제인 테마 우선, 정확히 10개
+11. 한국 상장 종목 중 직접적 수혜주가 3개 미만인 테마는 제외 (예: 비트코인, 유가, 환율 등)
+12. 테마와 무관한 종목을 억지로 끼워넣지 마라. 관련 종목이 부족하면 해당 테마를 버려라"""
 
     try:
         resp = requests.post(
@@ -1150,7 +1169,7 @@ def crawl_themes(krx_data, news_titles=None):
 
             # 네이버 뉴스 검색
             search_kw = theme_def.get("search_query", theme_def["name"] + " 주식")
-            news_title, news_url = _search_theme_news_api(search_kw)
+            news_title, news_url = _search_theme_news_api(search_kw, theme_def["name"])
 
             themes.append({
                 "rank": 0, "name": theme_def["name"], "change_pct": pct_str,
@@ -1194,7 +1213,7 @@ def crawl_themes(krx_data, news_titles=None):
                 pct_display = f"+{cp:.2f}%" if cp >= 0 else f"{cp:.2f}%"
                 leaders.append(f"{ts['name']}:{ts['code']}:{pct_display}")
 
-            news_title, news_url = _search_theme_news_api(theme_def["search_query"])
+            news_title, news_url = _search_theme_news_api(theme_def["search_query"], theme_def["name"])
             themes.append({
                 "rank": 0, "name": theme_def["name"], "change_pct": pct_str,
                 "avg_3day_pct": "", "up_count": up_count, "flat_count": flat_count,
