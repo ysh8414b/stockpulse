@@ -26,6 +26,15 @@ jobs:
       - name: 패키지 설치
         run: pip install requests
 
+      - name: 테마 매핑 DB 캐시 복원
+        uses: actions/cache@v4
+        with:
+          path: theme_stock_map.json
+          key: theme-map-${{ hashFiles('crawl.py') }}-${{ github.run_id }}
+          restore-keys: |
+            theme-map-${{ hashFiles('crawl.py') }}-
+            theme-map-
+
       - name: 크롤링 실행
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

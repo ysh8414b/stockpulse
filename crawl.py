@@ -678,10 +678,9 @@ def _fetch_company_overview(code):
 
 
 def build_theme_stock_map(krx_data):
-    """시총 상위 종목의 기업개요를 수집 → AI로 테마 태그 추출 → JSON 캐싱"""
+    """네이버 업종 + 기업개요 키워드로 테마-종목 매핑 DB 구축 (AI 불필요)"""
 
-    # 이미 최신 파일이 있으면 로드
-    # 캐시 유효기간: 7일 (기업 핵심사업은 자주 안 바뀜)
+    # 캐시 유효기간: 7일
     CACHE_MAX_DAYS = 7
     if os.path.exists(THEME_MAP_FILE):
         try:
@@ -699,11 +698,101 @@ def build_theme_stock_map(krx_data):
         except Exception:
             pass
 
-    if not GROQ_API_KEY:
-        log("  ⚠️ GROQ_API_KEY 미설정 - 테마 매핑 DB 구축 불가")
-        return {}, {}
+    log("  🏗️ 테마-종목 매핑 DB 구축 시작 (업종+키워드 기반)...")
 
-    log("  🏗️ 테마-종목 매핑 DB 구축 시작...")
+    # ── 네이버 업종명 → 테마 매핑 룰 (정확히 일치하는 업종명) ──
+    SECTOR_TO_THEME = {
+        # 반도체
+        "반도체와반도체장비": "반도체",
+        # 2차전지
+        "전기제품": "2차전지",       # LG에너지솔루션, 삼성SDI, 에코프로비엠
+        # 자동차
+        "자동차": "자동차", "자동차부품": "자동차",
+        # 방산
+        "우주항공과국방": "방산",
+        # 조선
+        "조선": "조선",
+        # 제약/바이오
+        "제약": "제약/바이오", "생물공학": "제약/바이오",
+        "생명과학도구및서비스": "제약/바이오",
+        "건강관리업체및서비스": "제약/바이오",
+        # 전력/에너지
+        "전기유틸리티": "전력/에너지", "전기장비": "전력/에너지",
+        "가스유틸리티": "전력/에너지", "에너지장비및서비스": "전력/에너지",
+        # 금융
+        "은행": "금융", "증권": "금융", "생명보험": "금융", "손해보험": "금융",
+        "카드": "금융",
+        # 건설
+        "건설": "건설", "건축자재": "건설",
+        # 통신
+        "무선통신서비스": "통신", "다각화된통신서비스": "통신", "통신장비": "통신",
+        # 철강/소재
+        "철강": "철강/소재", "비철금속": "철강/소재", "화학": "화학",
+        # IT/플랫폼
+        "양방향미디어와서비스": "IT/플랫폼", "소프트웨어": "IT/플랫폼",
+        "IT서비스": "IT/플랫폼",
+        # 게임
+        "게임엔터테인먼트": "게임",
+        # 디스플레이
+        "디스플레이패널": "디스플레이", "디스플레이장비": "디스플레이",
+        # 화장품
+        "화장품": "화장품",
+        # 식품
+        "식품": "식품",
+        # 엔터
+        "방송과엔터테인먼트": "엔터",
+        # 전자/부품
+        "전자장비와기기": "전자부품", "전자제품": "전자부품",
+        # 항공/물류/해운
+        "항공사": "항공", "항공화물운송과물류": "물류", "해운사": "해운",
+        # 의료기기
+        "건강관리장비와용품": "의료기기",
+        # 패션
+        "섬유,의류,신발,호화품": "패션",
+        # 유통
+        "백화점과일반상점": "유통", "인터넷과카탈로그소매": "유통",
+        # 석유/가스
+        "석유와가스": "석유/가스",
+        # 기계 (로봇 등은 키워드로 추가 분류)
+        "기계": "기계",
+    }
+
+    # ── 기업개요 키워드 → 테마 매핑 (업종 보완용) ──
+    KEYWORD_TO_THEME = {
+        # 2차전지 (화학 업종 내 2차전지 기업 분류)
+        "2차전지": "2차전지", "배터리": "2차전지", "양극재": "2차전지", "음극재": "2차전지",
+        "리튬": "2차전지", "전해질": "2차전지", "분리막": "2차전지", "양극소재": "2차전지",
+        "이차전지": "2차전지", "전구체": "2차전지",
+        # 전기차
+        "전기차": "전기차", "전기자동차": "전기차",
+        # AI (엄격: 핵심 AI 사업 키워드만)
+        "HBM": "AI", "AI반도체": "AI", "생성형AI": "AI",
+        "NPU": "AI", "딥러닝": "AI", "LLM": "AI",
+        "AI서버": "AI", "AI데이터센터": "AI", "AI칩": "AI",
+        # 로봇 (기계 업종 내 로봇 기업 분류)
+        "로봇": "로봇", "로보틱스": "로봇", "코봇": "로봇", "자동화장비": "로봇",
+        # 원전
+        "원전": "원전", "원자력": "원전", "소형모듈원자로": "원전",
+        # 수소
+        "수소": "수소", "연료전지": "수소",
+        # 태양광
+        "태양광": "태양광", "태양전지": "태양광", "솔라셀": "태양광",
+        # 드론
+        "드론": "드론", "무인항공": "드론",
+        # 조선 (키워드 보강)
+        "선박": "조선", "LNG선": "조선",
+        # 방산 (키워드 보강)
+        "방산": "방산", "방위산업": "방산", "무기체계": "방산", "장갑차": "방산",
+    }
+
+    # 짧은 영문 키워드는 정규식으로 별도 처리 (단어 경계 매칭)
+    import re as _re
+    SHORT_KEYWORD_PATTERNS = [
+        (_re.compile(r'(?<![A-Za-z])GPU(?![A-Za-z])'), "AI"),
+        (_re.compile(r'(?<![A-Za-z])EV(?![A-Za-z])'), "전기차"),
+        (_re.compile(r'(?<![A-Za-z])SMR(?![A-Za-z])'), "원전"),
+        (_re.compile(r'(?<![A-Za-z])UAM(?![A-Za-z])'), "드론"),
+    ]
 
     # 시총 3000억+ 종목 필터 (우선주 제외)
     MIN_MARKET_CAP = 300_000_000_000
@@ -717,8 +806,7 @@ def build_theme_stock_map(krx_data):
 
     log(f"  📋 대상 종목: {len(eligible)}개 (시총 3000억+)")
 
-    # 기업개요 크롤링 (병렬)
-    import time
+    # 기업개요 병렬 크롤링
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     stock_infos = {}
@@ -737,96 +825,42 @@ def build_theme_stock_map(krx_data):
                 code, name, market, sector, overview = future.result()
                 stock_infos[code] = {
                     "name": name, "market": market,
-                    "sector": sector, "overview": overview[:300],
+                    "sector": sector, "overview": overview[:500],
                 }
                 done_count[0] += 1
-                if done_count[0] % 100 == 0:
+                if done_count[0] % 200 == 0:
                     log(f"     ... {done_count[0]}/{len(eligible)} 기업개요 수집")
             except Exception:
                 pass
 
     log(f"  ✅ 기업개요 수집 완료: {len(stock_infos)}개")
 
-    # AI로 배치 분류 (200개씩, rate limit 대응)
-    stock_themes = {}  # code → [테마1, 테마2, ...]
-    batch_size = 200  # 큰 배치로 API 호출 횟수 최소화
-    codes_list = list(stock_infos.keys())
-    total_batches = (len(codes_list) + batch_size - 1) // batch_size
+    # ── 룰 기반 테마 분류 ──
+    stock_themes = {}
+    for code, info in stock_infos.items():
+        themes = set()
+        sector = info.get("sector", "")
+        overview = info.get("overview", "")
 
-    for batch_idx, batch_start in enumerate(range(0, len(codes_list), batch_size)):
-        batch_codes = codes_list[batch_start:batch_start + batch_size]
-        batch_text = "\n".join(
-            f"- {stock_infos[c]['name']}({c}): 업종={stock_infos[c]['sector']}, 개요={stock_infos[c]['overview'][:150]}"
-            for c in batch_codes
-        )
+        # 1) 업종명 매핑 (정확히 일치하는 항목)
+        if sector in SECTOR_TO_THEME:
+            themes.add(SECTOR_TO_THEME[sector])
 
-        classify_prompt = f"""아래 기업들의 핵심 매출 사업을 기반으로 해당되는 증시 테마를 분류하라.
+        # 2) 기업개요 키워드 매핑 (공백 무시)
+        overview_nospace = overview.replace(" ", "")
+        for keyword, theme in KEYWORD_TO_THEME.items():
+            if keyword in overview_nospace:
+                themes.add(theme)
 
-## 분류 기준 (매우 엄격 적용):
-- 해당 기업의 "매출 50% 이상"을 차지하는 핵심 사업이 테마 밸류체인에 직접 포함되는 경우만 태깅
-- 사업 일부 진출, 부서 신설, 협약 체결, 계획 단계, R&D 수준은 제외
-- 단순 지분 보유, 자회사 투자는 제외
-- 간접 연관, AI 활용(도구로서), 디지털 전환 수준은 제외
+        # 3) 짧은 영문 키워드 정규식 매칭 (EV, GPU 등)
+        for pattern, theme in SHORT_KEYWORD_PATTERNS:
+            if pattern.search(overview):
+                themes.add(theme)
 
-## 오분류 방지 예시:
-- NAVER, 카카오 → "IT/플랫폼"이지 "AI" 아님 (AI를 활용하지만 핵심 매출은 광고/커머스)
-- SK텔레콤, KT, LG유플러스 → "통신"이지 "AI" 아님 (AI 서비스하지만 핵심 매출은 통신)
-- 삼성전자 → "반도체"이지 "AI" 아님 (AI 반도체를 만들지만 메모리/파운드리가 핵심)
-- SK하이닉스 → "반도체", "AI" 가능 (HBM이 AI 인프라 핵심 제품이고 매출 비중 높음)
-- 한화솔루션 → "태양광"이지 "2차전지" 아님
+        if themes:
+            stock_themes[code] = list(themes)
 
-## 사용 가능한 테마 목록:
-반도체, 2차전지, 전기차, 자동차, 방산, 조선, AI, 로봇, 제약/바이오, 전력/에너지,
-엔터, 화장품, 식품, 금융, 건설, 통신, 철강/소재, 게임, 태양광, 원전,
-IT/플랫폼, 디스플레이, 의료기기, 항공, 물류, 패션, 미디어, 수소, 드론
-
-## 기업 목록:
-{batch_text}
-
-## 출력 형식 (JSON):
-{{"종목코드": ["테마1", "테마2"], ...}}
-
-규칙: 핵심 매출 사업과 직접 관련된 테마만 1~2개 배정. 불확실하면 넣지 마라."""
-
-        # 429 rate limit 대응: 최대 3회 재시도
-        for retry in range(3):
-            try:
-                resp = requests.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {GROQ_API_KEY}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": "llama-3.3-70b-versatile",
-                        "messages": [{"role": "user", "content": classify_prompt}],
-                        "temperature": 0.1,
-                        "response_format": {"type": "json_object"},
-                    },
-                    timeout=120,
-                )
-                if resp.status_code == 200:
-                    result = json.loads(resp.json()["choices"][0]["message"]["content"])
-                    for code_key, themes_list in result.items():
-                        code_str = str(code_key).zfill(6)
-                        if code_str in stock_infos and isinstance(themes_list, list):
-                            stock_themes[code_str] = [t for t in themes_list if isinstance(t, str)]
-                    log(f"     ✅ 배치 {batch_idx+1}/{total_batches} 분류 완료 ({len(batch_codes)}개)")
-                    break
-                elif resp.status_code == 429:
-                    wait_sec = (retry + 1) * 15
-                    log(f"     ⏳ Rate limit - {wait_sec}초 대기 후 재시도 ({retry+1}/3)")
-                    time.sleep(wait_sec)
-                else:
-                    log(f"     ⚠️ Groq 배치 분류 오류: {resp.status_code}")
-                    break
-            except Exception as e:
-                log(f"     ⚠️ Groq 배치 분류 실패: {e}")
-                break
-
-        time.sleep(5)  # 배치 간 기본 대기
-
-    log(f"  ✅ AI 테마 분류 완료: {len(stock_themes)}개 종목")
+    log(f"  ✅ 테마 분류 완료: {len(stock_themes)}개 종목 (룰 기반)")
 
     # 테마 → 종목 역매핑
     theme_to_stocks = {}
@@ -853,7 +887,7 @@ IT/플랫폼, 디스플레이, 의료기기, 항공, 물류, 패션, 미디어, 
     except Exception as e:
         log(f"  ⚠️ 매핑 DB 저장 실패: {e}")
 
-    for theme, stocks in sorted(theme_to_stocks.items(), key=lambda x: -len(x[1]))[:10]:
+    for theme, stocks in sorted(theme_to_stocks.items(), key=lambda x: -len(x[1]))[:15]:
         names = ", ".join(s["name"] for s in stocks[:5])
         log(f"     {theme}({len(stocks)}개): {names}...")
 
