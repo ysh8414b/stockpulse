@@ -339,7 +339,7 @@ def fetch_naver_market_data():
                 change_pct = float(item.get("fluctuationsRatio", "0").replace(",", ""))
                 volume = int(item.get("accumulatedTradingVolume", "0").replace(",", ""))
                 trading_value = int(item.get("accumulatedTradingValue", "0").replace(",", ""))
-                market_cap = int(item.get("marketValue", "0").replace(",", ""))
+                market_cap = int(item.get("marketValue", "0").replace(",", "")) * 1_000_000  # 백만원→원
             except (ValueError, TypeError):
                 continue
 
