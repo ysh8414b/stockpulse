@@ -92,9 +92,9 @@ const FB_IDX=[
 
 // ═══ COMPONENTS ═══
 function Sparkline({trend,data,w=56,h=26}){
-  const c=trend==="up"?"#22c55e":"#ef4444";
-  const p=useMemo(()=>{if(data&&data.length>=2){const mn=Math.min(...data),mx=Math.max(...data),rng=mx-mn||1,pad=2;return data.map((v,i)=>`${(i/(data.length-1))*w},${h-pad-((v-mn)/rng)*(h-pad*2)}`).join(" ")}const a=[];let y=trend==="up"?20:6;for(let i=0;i<=10;i++){y=Math.max(2,Math.min(24,y+(Math.random()-(trend==="up"?.6:.4))*5));a.push(`${(i/10)*w},${y}`);}return a.join(" ")},[trend,data,w,h]);
-  return <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{overflow:"visible"}}><polyline points={p} fill="none" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>;
+  const c=trend==="up"?"#22c55e":trend==="down"?"#ef4444":"#6b7280";
+  const p=useMemo(()=>{if(data&&data.length>=2){const mn=Math.min(...data),mx=Math.max(...data),rng=mx-mn||1,pad=2;return data.map((v,i)=>`${(i/(data.length-1))*w},${h-pad-((v-mn)/rng)*(h-pad*2)}`).join(" ")}if(data&&data.length===1)return `0,${h/2} ${w},${h/2}`;const s=trend==="up"?h*.7:h*.3,e=trend==="up"?h*.3:h*.7,m=(s+e)/2+(trend==="up"?2:-2);return `0,${s} ${w*.3},${(s*2+m)/3} ${w*.5},${m} ${w*.7},${(e*2+m)/3} ${w},${e}`},[trend,data,w,h]);
+  return <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{overflow:"visible"}}><polyline points={p} fill="none" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity={data&&data.length>=2?1:0.4}/></svg>;
 }
 function MiniBar({trend}){
   const c=trend==="up"?"34,197,94":"239,68,68";

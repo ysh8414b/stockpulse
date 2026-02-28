@@ -212,23 +212,6 @@ def clear_today_data(table):
         supabase_request("DELETE", table, params={"date": f"eq.{TODAY}"})
 
 
-def get_existing_sparkline_data():
-    """기존 market_index에서 sparkline_data 읽기"""
-    rows = supabase_request("GET", "market_index", params={"select": "name,sparkline_data"})
-    if not rows:
-        return {}
-    result = {}
-    for row in rows:
-        name = row.get("name", "")
-        sd = row.get("sparkline_data") or {}
-        if isinstance(sd, dict):
-            result[name] = {"d": sd.get("d", ""), "v": sd.get("v", [])}
-        elif isinstance(sd, list):
-            result[name] = {"d": "", "v": sd}
-        else:
-            result[name] = {"d": "", "v": []}
-    return result
-
 
 # ─────────────────────────────────────────
 # 네이버 금융 API (메인 데이터 소스)
@@ -479,15 +462,25 @@ def build_stock_code_map(krx_data):
 # Yahoo Finance (시장 지수 전용)
 # ─────────────────────────────────────────
 def fetch_yahoo_chart(symbol):
-    """Yahoo Finance v8 chart API로 단일 지수/환율 조회"""
+    """Yahoo Finance v8 chart API로 단일 지수/환율 조회 + 스파크라인 데이터"""
     encoded = urllib.parse.quote(symbol)
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded}?interval=1d&range=1d"
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded}?interval=1d&range=1mo"
     resp = requests.get(url, headers=YAHOO_HEADERS, timeout=10)
     data = resp.json()
-    meta = data["chart"]["result"][0]["meta"]
+    result = data["chart"]["result"][0]
+    meta = result["meta"]
     price = meta.get("regularMarketPrice", 0)
     prev = meta.get("chartPreviousClose", 0) or meta.get("previousClose", 0)
-    return price, prev
+
+    # 스파크라인용 종가 데이터 추출
+    sparkline = []
+    quotes = result.get("indicators", {}).get("quote", [{}])[0]
+    closes = quotes.get("close", [])
+    for c in closes:
+        if c is not None:
+            sparkline.append(round(c, 2))
+
+    return price, prev, sparkline
 
 
 # ─────────────────────────────────────────
@@ -1226,7 +1219,7 @@ def crawl_market_index():
 
     for name, symbol in index_symbols:
         try:
-            price, prev = fetch_yahoo_chart(symbol)
+            price, prev, sparkline = fetch_yahoo_chart(symbol)
 
             if prev and prev > 0:
                 change = round(price - prev, 2)
@@ -1239,6 +1232,7 @@ def crawl_market_index():
                     "change_amount": f"{change:+,.2f}",
                     "change_pct": f"{pct:+.2f}%",
                     "trend": trend,
+                    "sparkline_data": {"v": sparkline},
                 })
             else:
                 indices.append({
@@ -1247,7 +1241,9 @@ def crawl_market_index():
                     "change_amount": "0",
                     "change_pct": "0.00%",
                     "trend": "up",
+                    "sparkline_data": {"v": sparkline},
                 })
+            log(f"  ✅ {name}: {price:,.2f} (스파크라인 {len(sparkline)}포인트)")
         except Exception as ex:
             log(f"  ⚠️ {name} ({symbol}) 조회 실패: {ex}")
 
@@ -1548,9 +1544,6 @@ def main():
     log("")
     log("💾 Supabase에 데이터 저장 중...")
 
-    # sparkline_data 읽기 (DELETE 전에!)
-    existing_sparkline = get_existing_sparkline_data()
-
     # 기존 데이터 정리
     clear_today_data("news")
     clear_today_data("issue_stocks")
@@ -1569,26 +1562,8 @@ def main():
         result = supabase_request("POST", "issue_stocks", data=stocks)
         log(f"  📈 종목 {len(stocks)}개 저장 {'✅' if result else '❌'}")
 
-    # 지수 저장 (sparkline_data 포함)
+    # 지수 저장 (sparkline_data는 Yahoo Finance API에서 직접 가져옴)
     if indices:
-        MAX_SPARKLINE_POINTS = 80
-        for idx_item in indices:
-            name = idx_item["name"]
-            try:
-                current_value = float(idx_item["value"].replace(",", ""))
-            except (ValueError, AttributeError):
-                current_value = 0
-            existing = existing_sparkline.get(name, {"d": "", "v": []})
-            prev_date = existing["d"]
-            prev_data = existing["v"]
-            if prev_date == TODAY:
-                if not prev_data or abs(current_value - prev_data[-1]) >= 0.01:
-                    prev_data.append(current_value)
-                idx_item["sparkline_data"] = {"d": TODAY, "v": prev_data[-MAX_SPARKLINE_POINTS:]}
-            elif prev_data and abs(current_value - prev_data[-1]) < 0.01:
-                idx_item["sparkline_data"] = {"d": prev_date, "v": prev_data}
-            else:
-                idx_item["sparkline_data"] = {"d": TODAY, "v": [current_value]}
         result = supabase_request("POST", "market_index", data=indices)
         log(f"  📊 지수 {len(indices)}개 저장 (sparkline 포함) {'✅' if result else '❌'}")
 
