@@ -415,10 +415,15 @@ def detect_themes_with_ai(news_titles):
     news_text = "\n".join(f"- {t}" for t in news_titles[:30])
 
     prompt = f"""당신은 한국 주식시장 전문 애널리스트입니다.
-오늘의 뉴스 헤드라인을 분석하여 현재 가장 주목받는 주식 테마 10개를 선정하고, 각 테마의 대표 종목을 추천해주세요.
+오늘의 뉴스를 분석하여 현재 증시에서 가장 주목받는 산업/섹터 테마 10개를 선정해주세요.
 
 ## 오늘의 뉴스 헤드라인:
 {news_text}
+
+## 테마 예시 (참고용):
+반도체, AI, 2차전지, 바이오, 전기차, 방산, 로봇, 원전, 태양광, 비만치료제,
+자율주행, HBM, 조선, 게임, 엔터, 화장품, 리튬, 수소, 클라우드, 핀테크,
+우주항공, 탄소중립, 스마트팜, 메타버스, NFT, 반려동물, K-푸드, OLED
 
 ## 출력 형식 (JSON):
 {{
@@ -435,12 +440,13 @@ def detect_themes_with_ai(news_titles):
 }}
 
 ## 규칙:
-1. 테마명은 짧고 명확하게 (2~4글자, 예: "반도체", "AI", "비만치료제")
-2. 각 테마에 관련 종목 3~8개. 코스피/코스닥 전체에서 자유롭게 선택
-3. 종목코드는 반드시 실제 존재하는 6자리 숫자 코드
-4. market은 "KOSPI" 또는 "KOSDAQ"
-5. search_query는 네이버 뉴스 검색에 최적화된 한국어 키워드
-6. 뉴스에서 화제인 테마 우선, 정확히 10개 테마"""
+1. 테마명은 실제 증시에서 통용되는 산업/섹터 테마여야 함 (예: "반도체", "AI", "바이오")
+2. "신용", "대기자금", "부자" 같은 추상적 단어는 테마가 아님. 반드시 투자 가능한 산업 테마만 선정
+3. 각 테마에 해당 산업의 대표 종목 3~8개. 코스피/코스닥 전체에서 자유 선택
+4. 종목코드는 반드시 실제 존재하는 6자리 숫자 코드
+5. market은 "KOSPI" 또는 "KOSDAQ"
+6. 각 테마의 종목은 서로 다르게 (중복 최소화)
+7. 뉴스에서 화제인 테마 우선, 정확히 10개"""
 
     try:
         resp = requests.post(
@@ -972,8 +978,8 @@ def crawl_themes(yahoo_quotes, news_titles=None):
                 "trend": trend, "date": TODAY,
             })
 
-    # 변동폭 큰 순으로 랭킹
-    themes.sort(key=lambda t: abs(float(t["change_pct"].replace("%", "").replace("+", ""))), reverse=True)
+    # 등락률 높은 순으로 랭킹 (상승 테마 우선)
+    themes.sort(key=lambda t: float(t["change_pct"].replace("%", "").replace("+", "")), reverse=True)
     for i, t in enumerate(themes, 1):
         t["rank"] = i
 
