@@ -233,7 +233,7 @@ def fetch_yahoo_batch_quotes(tickers):
             log(f"  📡 {idx+1}/{total} 종목 조회 중...")
         try:
             encoded = urllib.parse.quote(ticker)
-            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded}?interval=1d&range=5d"
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded}?interval=1d&range=1d"
             resp = requests.get(url, headers=YAHOO_HEADERS, timeout=10)
             data = resp.json()
             chart_result = data["chart"]["result"][0]
@@ -403,7 +403,7 @@ def _search_theme_news_api(query):
 
 
 def detect_themes_with_ai(news_titles):
-    """Groq API (Llama 3.3 70B)로 뉴스 헤드라인을 분석하여 인기 테마를 자동 감지"""
+    """Groq API (Llama 3.3 70B)로 뉴스 분석 → 인기 테마 + 관련 종목 자동 감지 (전체 한국 주식 대상)"""
     if not GROQ_API_KEY:
         log("  ⚠️ GROQ_API_KEY 미설정 - 정적 테마 사용")
         return None
@@ -412,38 +412,35 @@ def detect_themes_with_ai(news_titles):
         log("  ⚠️ 뉴스 데이터 없음 - 정적 테마 사용")
         return None
 
-    # STOCK_UNIVERSE에서 종목 목록 텍스트 생성
-    stock_list = "\n".join(
-        f"- {s['code']} {s['name']} (섹터: {s['sector']})"
-        for s in STOCK_UNIVERSE
-    )
-
     news_text = "\n".join(f"- {t}" for t in news_titles[:30])
 
-    prompt = f"""오늘의 주식 뉴스 헤드라인을 분석하여 현재 가장 주목받는 주식 테마 10개를 선정해주세요.
+    prompt = f"""당신은 한국 주식시장 전문 애널리스트입니다.
+오늘의 뉴스 헤드라인을 분석하여 현재 가장 주목받는 주식 테마 10개를 선정하고, 각 테마의 대표 종목을 추천해주세요.
 
 ## 오늘의 뉴스 헤드라인:
 {news_text}
 
-## 사용 가능한 종목 목록:
-{stock_list}
-
 ## 출력 형식 (JSON):
-정확히 아래 형식으로 JSON 배열만 출력하세요. 다른 텍스트 없이 JSON만 출력하세요.
-[
-  {{
-    "name": "테마명",
-    "search_query": "네이버 뉴스 검색 키워드",
-    "stocks": ["종목코드1", "종목코드2"]
-  }}
-]
+{{
+  "themes": [
+    {{
+      "name": "테마명",
+      "search_query": "네이버 뉴스 검색 키워드",
+      "stocks": [
+        {{"code": "005930", "name": "삼성전자", "market": "KOSPI"}},
+        {{"code": "000660", "name": "SK하이닉스", "market": "KOSPI"}}
+      ]
+    }}
+  ]
+}}
 
 ## 규칙:
-1. 테마명은 짧고 명확하게 (2~4글자, 예: "반도체", "AI", "2차전지")
-2. 각 테마에 관련 종목 코드를 3~8개 매핑 (위 종목 목록에서만 선택)
-3. search_query는 네이버 뉴스 검색에 최적화된 한국어 키워드 조합
-4. 뉴스에서 많이 언급되거나 시장에서 주목받는 테마 우선 선정
-5. 정확히 10개 테마를 선정"""
+1. 테마명은 짧고 명확하게 (2~4글자, 예: "반도체", "AI", "비만치료제")
+2. 각 테마에 관련 종목 3~8개. 코스피/코스닥 전체에서 자유롭게 선택
+3. 종목코드는 반드시 실제 존재하는 6자리 숫자 코드
+4. market은 "KOSPI" 또는 "KOSDAQ"
+5. search_query는 네이버 뉴스 검색에 최적화된 한국어 키워드
+6. 뉴스에서 화제인 테마 우선, 정확히 10개 테마"""
 
     try:
         resp = requests.post(
@@ -467,33 +464,45 @@ def detect_themes_with_ai(news_titles):
 
         result = resp.json()
         content = result["choices"][0]["message"]["content"]
+        parsed = json.loads(content)
 
-        # JSON 배열 추출
-        json_match = re.search(r'\[.*\]', content, re.DOTALL)
-        if json_match:
-            themes = json.loads(json_match.group())
+        # {"themes": [...]} 또는 [...] 형태 모두 처리
+        if isinstance(parsed, dict):
+            themes = None
+            for key in parsed:
+                if isinstance(parsed[key], list):
+                    themes = parsed[key]
+                    break
+            if themes is None:
+                themes = [parsed]
         else:
-            themes = json.loads(content)
-            # json_object 모드에서 {"themes": [...]} 형태일 수 있음
-            if isinstance(themes, dict) and "themes" in themes:
-                themes = themes["themes"]
+            themes = parsed
 
-        # 검증: STOCK_UNIVERSE에 존재하는 종목 코드만 허용
-        valid_codes = {s["code"] for s in STOCK_UNIVERSE}
+        # 검증: code, name, market 필드 확인
         validated = []
         for theme in themes:
             if not isinstance(theme, dict) or "name" not in theme or "stocks" not in theme:
                 continue
-            theme["stocks"] = [c for c in theme["stocks"] if c in valid_codes]
+            valid_stocks = []
+            for s in theme["stocks"]:
+                if isinstance(s, dict) and s.get("code") and s.get("name"):
+                    code = str(s["code"]).zfill(6)
+                    market = str(s.get("market", "KOSPI")).upper()
+                    if market not in ("KOSPI", "KOSDAQ"):
+                        market = "KOSPI"
+                    valid_stocks.append({"code": code, "name": s["name"], "market": market})
             if not theme.get("search_query"):
                 theme["search_query"] = theme["name"] + " 주식"
-            if theme["stocks"]:
+            if valid_stocks:
+                theme["stocks"] = valid_stocks
                 validated.append(theme)
 
         if validated:
-            log(f"  🤖 AI 테마 감지 완료: {len(validated)}개 테마")
+            total_stocks = sum(len(t["stocks"]) for t in validated)
+            log(f"  🤖 AI 테마 감지 완료: {len(validated)}개 테마, {total_stocks}개 종목")
             for t in validated:
-                log(f"     - {t['name']}: {len(t['stocks'])}종목")
+                names = ", ".join(s["name"] for s in t["stocks"][:3])
+                log(f"     - {t['name']}: {names}...")
             return validated[:10]
         else:
             log("  ⚠️ AI 결과 검증 실패 - 정적 테마 사용")
@@ -839,85 +848,129 @@ def crawl_sector_stocks(yahoo_quotes):
 
 
 # ─────────────────────────────────────────
-# 6. 테마 (Yahoo + 네이버 검색 API 하이브리드)
+# 6. 테마 (AI 동적 감지 + Yahoo + 네이버 검색 API)
 # ─────────────────────────────────────────
 def crawl_themes(yahoo_quotes, news_titles=None):
-    """테마별 성과 계산 + 네이버 검색 API로 관련 뉴스 (AI 동적 감지 우선)"""
+    """AI가 선정한 테마의 종목을 Yahoo에서 조회하여 성과 계산"""
     log("🔥 테마 크롤링 시작...")
 
-    # AI로 동적 테마 감지 시도, 실패 시 정적 정의 사용
     ai_themes = detect_themes_with_ai(news_titles)
-    theme_defs = ai_themes if ai_themes else THEME_DEFINITIONS
-    if not ai_themes:
+
+    if ai_themes:
+        # ── AI 테마: 전체 한국 주식에서 자유롭게 선정된 종목 ──
+        # 1) AI 종목 → Yahoo 티커 매핑
+        ai_stock_map = {}  # code -> {ticker, name}
+        for theme in ai_themes:
+            for s in theme["stocks"]:
+                code = s["code"]
+                if code not in ai_stock_map:
+                    suffix = ".KS" if s["market"] == "KOSPI" else ".KQ"
+                    ai_stock_map[code] = {"ticker": code + suffix, "name": s["name"]}
+
+        # 2) 기존 yahoo_quotes에 있으면 재활용, 없으면 추가 조회
+        missing_tickers = [
+            info["ticker"] for info in ai_stock_map.values()
+            if info["ticker"] not in yahoo_quotes
+        ]
+        if missing_tickers:
+            log(f"  📡 AI 테마 종목 {len(missing_tickers)}개 추가 조회...")
+            extra_quotes = fetch_yahoo_batch_quotes(missing_tickers)
+            yahoo_quotes.update(extra_quotes)
+
+        # 3) 테마별 성과 계산
+        themes = []
+        for theme_def in ai_themes:
+            theme_stocks = []
+            changes = []
+
+            for s in theme_def["stocks"]:
+                code = s["code"]
+                info = ai_stock_map.get(code)
+                if not info:
+                    continue
+                quote = yahoo_quotes.get(info["ticker"])
+                if quote:
+                    cp = quote.get("regularMarketChangePercent", 0) or 0
+                    changes.append(cp)
+                    theme_stocks.append({"name": s["name"], "code": code, "change_pct": cp})
+
+            avg_change = sum(changes) / len(changes) if changes else 0.0
+            up_count = sum(1 for c in changes if c > 0.005)
+            down_count = sum(1 for c in changes if c < -0.005)
+            flat_count = len(changes) - up_count - down_count
+
+            if avg_change > 0.005:
+                trend, pct_str = "up", f"+{avg_change:.2f}%"
+            elif avg_change < -0.005:
+                trend, pct_str = "down", f"{avg_change:.2f}%"
+            else:
+                trend, pct_str = "flat", "0.00%"
+
+            theme_stocks.sort(key=lambda x: abs(x["change_pct"]), reverse=True)
+            leaders = []
+            for ts in theme_stocks[:10]:
+                cp = ts["change_pct"]
+                pct_display = f"+{cp:.2f}%" if cp >= 0 else f"{cp:.2f}%"
+                leaders.append(f"{ts['name']}:{ts['code']}:{pct_display}")
+
+            news_title, news_url = _search_theme_news_api(theme_def.get("search_query", theme_def["name"]))
+
+            themes.append({
+                "rank": 0, "name": theme_def["name"], "change_pct": pct_str,
+                "avg_3day_pct": "", "up_count": up_count, "flat_count": flat_count,
+                "down_count": down_count, "leading_stocks": ", ".join(leaders),
+                "related_news": news_title, "news_url": news_url,
+                "trend": trend, "date": TODAY,
+            })
+
+    else:
+        # ── Fallback: 정적 THEME_DEFINITIONS (STOCK_UNIVERSE 기반) ──
         log("  📋 정적 테마 정의 사용")
+        code_to_data = {}
+        for stock in STOCK_UNIVERSE:
+            quote = yahoo_quotes.get(stock["ticker"])
+            if quote:
+                code_to_data[stock["code"]] = {"quote": quote, "stock": stock}
 
-    # code -> quote 룩업 테이블
-    code_to_data = {}
-    for stock in STOCK_UNIVERSE:
-        quote = yahoo_quotes.get(stock["ticker"])
-        if quote:
-            code_to_data[stock["code"]] = {"quote": quote, "stock": stock}
+        themes = []
+        for theme_def in THEME_DEFINITIONS:
+            theme_stocks = []
+            changes = []
+            for code in theme_def["stocks"]:
+                if code in code_to_data:
+                    cd = code_to_data[code]
+                    q = cd["quote"]
+                    cp = q.get("regularMarketChangePercent", 0) or 0
+                    changes.append(cp)
+                    theme_stocks.append({"name": cd["stock"]["name"], "code": code, "change_pct": cp})
 
-    themes = []
+            avg_change = sum(changes) / len(changes) if changes else 0.0
+            up_count = sum(1 for c in changes if c > 0.005)
+            down_count = sum(1 for c in changes if c < -0.005)
+            flat_count = len(changes) - up_count - down_count
 
-    for theme_def in theme_defs:
-        theme_stocks = []
-        changes = []
+            if avg_change > 0.005:
+                trend, pct_str = "up", f"+{avg_change:.2f}%"
+            elif avg_change < -0.005:
+                trend, pct_str = "down", f"{avg_change:.2f}%"
+            else:
+                trend, pct_str = "flat", "0.00%"
 
-        for code in theme_def["stocks"]:
-            if code in code_to_data:
-                cd = code_to_data[code]
-                q = cd["quote"]
-                cp = q.get("regularMarketChangePercent", 0) or 0
-                changes.append(cp)
-                theme_stocks.append({
-                    "name": cd["stock"]["name"],
-                    "code": code,
-                    "change_pct": cp,
-                })
+            theme_stocks.sort(key=lambda x: abs(x["change_pct"]), reverse=True)
+            leaders = []
+            for ts in theme_stocks[:10]:
+                cp = ts["change_pct"]
+                pct_display = f"+{cp:.2f}%" if cp >= 0 else f"{cp:.2f}%"
+                leaders.append(f"{ts['name']}:{ts['code']}:{pct_display}")
 
-        # 테마 평균 등락률
-        avg_change = sum(changes) / len(changes) if changes else 0.0
-
-        up_count = sum(1 for c in changes if c > 0.005)
-        down_count = sum(1 for c in changes if c < -0.005)
-        flat_count = len(changes) - up_count - down_count
-
-        if avg_change > 0.005:
-            trend = "up"
-            pct_str = f"+{avg_change:.2f}%"
-        elif avg_change < -0.005:
-            trend = "down"
-            pct_str = f"{avg_change:.2f}%"
-        else:
-            trend = "flat"
-            pct_str = "0.00%"
-
-        # 주도주 (변동폭 큰 순)
-        theme_stocks.sort(key=lambda x: abs(x["change_pct"]), reverse=True)
-        leaders = []
-        for ts in theme_stocks[:10]:
-            cp = ts["change_pct"]
-            pct_display = f"+{cp:.2f}%" if cp >= 0 else f"{cp:.2f}%"
-            leaders.append(f"{ts['name']}:{ts['code']}:{pct_display}")
-
-        # 관련 뉴스 (네이버 검색 API)
-        news_title, news_url = _search_theme_news_api(theme_def["search_query"])
-
-        themes.append({
-            "rank": 0,
-            "name": theme_def["name"],
-            "change_pct": pct_str,
-            "avg_3day_pct": "",
-            "up_count": up_count,
-            "flat_count": flat_count,
-            "down_count": down_count,
-            "leading_stocks": ", ".join(leaders),
-            "related_news": news_title,
-            "news_url": news_url,
-            "trend": trend,
-            "date": TODAY,
-        })
+            news_title, news_url = _search_theme_news_api(theme_def["search_query"])
+            themes.append({
+                "rank": 0, "name": theme_def["name"], "change_pct": pct_str,
+                "avg_3day_pct": "", "up_count": up_count, "flat_count": flat_count,
+                "down_count": down_count, "leading_stocks": ", ".join(leaders),
+                "related_news": news_title, "news_url": news_url,
+                "trend": trend, "date": TODAY,
+            })
 
     # 변동폭 큰 순으로 랭킹
     themes.sort(key=lambda t: abs(float(t["change_pct"].replace("%", "").replace("+", ""))), reverse=True)
