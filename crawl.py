@@ -1,6 +1,12 @@
 """
 STOCKPULSE 크롤러
-Yahoo Finance API + 네이버 검색 API로 주식 데이터를 수집하여 Supabase에 저장
+KRX(한국거래소) API + Yahoo Finance + 네이버 검색 API + Groq AI로 주식 데이터를 수집하여 Supabase에 저장
+
+데이터 소스:
+  - KRX: 전종목 시세 (코드, 이름, 업종, 가격, 등락률, 거래량, 시가총액) — 메인 데이터
+  - Yahoo Finance: 시장 지수 (코스피, 코스닥, 다우, 나스닥, S&P500, USD/KRW)
+  - 네이버 검색 API: 뉴스, 테마별 관련 뉴스
+  - Groq AI (Llama 3.3 70B): 뉴스 기반 인기 테마 자동 감지
 
 사용법:
   pip install requests
@@ -10,6 +16,7 @@ Yahoo Finance API + 네이버 검색 API로 주식 데이터를 수집하여 Sup
     SUPABASE_KEY=your-service-role-key  (⚠️ service_role key 사용!)
     NAVER_CLIENT_ID=네이버 검색 API 클라이언트 ID
     NAVER_CLIENT_SECRET=네이버 검색 API 시크릿
+    GROQ_API_KEY=Groq AI API 키
 
   python crawl.py
 """
@@ -18,7 +25,7 @@ import os
 import re
 import json
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 
 import requests
@@ -44,100 +51,78 @@ def log(msg):
 
 
 # ─────────────────────────────────────────
-# 종목 마스터 데이터
+# 섹터/테마 상수
 # ─────────────────────────────────────────
-STOCK_UNIVERSE = [
-    # 반도체
-    {"code": "005930", "name": "삼성전자",       "ticker": "005930.KS", "sector": "반도체",    "themes": ["반도체", "AI"]},
-    {"code": "000660", "name": "SK하이닉스",     "ticker": "000660.KS", "sector": "반도체",    "themes": ["반도체", "AI", "HBM"]},
-    {"code": "402340", "name": "SK스퀘어",       "ticker": "402340.KS", "sector": "반도체",    "themes": ["반도체"]},
-    {"code": "042700", "name": "한미반도체",     "ticker": "042700.KQ", "sector": "반도체",    "themes": ["반도체"]},
-    {"code": "166090", "name": "하나머티리얼즈", "ticker": "166090.KQ", "sector": "반도체",    "themes": ["반도체"]},
-    {"code": "058470", "name": "리노공업",       "ticker": "058470.KQ", "sector": "반도체",    "themes": ["반도체"]},
-    {"code": "357780", "name": "솔브레인",       "ticker": "357780.KQ", "sector": "반도체",    "themes": ["반도체"]},
-    {"code": "403870", "name": "HPSP",           "ticker": "403870.KQ", "sector": "반도체",    "themes": ["반도체"]},
-    {"code": "036930", "name": "주성엔지니어링", "ticker": "036930.KQ", "sector": "반도체",    "themes": ["반도체"]},
-    {"code": "240810", "name": "원익IPS",        "ticker": "240810.KQ", "sector": "반도체",    "themes": ["반도체"]},
-    {"code": "006400", "name": "삼성SDI",        "ticker": "006400.KS", "sector": "반도체",    "themes": ["반도체", "2차전지"]},
-    # 2차전지
-    {"code": "373220", "name": "LG에너지솔루션", "ticker": "373220.KS", "sector": "2차전지",   "themes": ["2차전지", "전기차"]},
-    {"code": "247540", "name": "에코프로비엠",   "ticker": "247540.KQ", "sector": "2차전지",   "themes": ["2차전지"]},
-    {"code": "086520", "name": "에코프로",       "ticker": "086520.KQ", "sector": "2차전지",   "themes": ["2차전지"]},
-    {"code": "003670", "name": "포스코퓨처엠",   "ticker": "003670.KS", "sector": "2차전지",   "themes": ["2차전지"]},
-    {"code": "066570", "name": "LG전자",         "ticker": "066570.KS", "sector": "2차전지",   "themes": ["2차전지"]},
-    {"code": "051910", "name": "LG화학",         "ticker": "051910.KS", "sector": "2차전지",   "themes": ["2차전지"]},
-    {"code": "112610", "name": "씨에스윈드",     "ticker": "112610.KS", "sector": "2차전지",   "themes": ["2차전지", "에너지"]},
-    {"code": "298050", "name": "엘앤에프",       "ticker": "298050.KQ", "sector": "2차전지",   "themes": ["2차전지"]},
-    {"code": "006260", "name": "LS",             "ticker": "006260.KS", "sector": "2차전지",   "themes": ["2차전지", "전력"]},
-    # 바이오
-    {"code": "068270", "name": "셀트리온",       "ticker": "068270.KS", "sector": "바이오",    "themes": ["바이오"]},
-    {"code": "207940", "name": "삼성바이오로직스","ticker": "207940.KS", "sector": "바이오",    "themes": ["바이오"]},
-    {"code": "000100", "name": "유한양행",       "ticker": "000100.KS", "sector": "바이오",    "themes": ["바이오"]},
-    {"code": "128940", "name": "한미약품",       "ticker": "128940.KS", "sector": "바이오",    "themes": ["바이오"]},
-    {"code": "196170", "name": "알테오젠",       "ticker": "196170.KQ", "sector": "바이오",    "themes": ["바이오"]},
-    {"code": "141080", "name": "리가켐바이오",   "ticker": "141080.KQ", "sector": "바이오",    "themes": ["바이오"]},
-    {"code": "145020", "name": "휴젤",           "ticker": "145020.KQ", "sector": "바이오",    "themes": ["바이오"]},
-    {"code": "302440", "name": "SK바이오팜",     "ticker": "302440.KS", "sector": "바이오",    "themes": ["바이오"]},
-    {"code": "326030", "name": "SK바이오사이언스","ticker": "326030.KS", "sector": "바이오",    "themes": ["바이오"]},
-    {"code": "950160", "name": "코오롱티슈진",   "ticker": "950160.KQ", "sector": "바이오",    "themes": ["바이오"]},
-    # 자동차
-    {"code": "005380", "name": "현대자동차",     "ticker": "005380.KS", "sector": "자동차",    "themes": ["자동차", "전기차"]},
-    {"code": "000270", "name": "기아",           "ticker": "000270.KS", "sector": "자동차",    "themes": ["자동차", "전기차"]},
-    {"code": "012330", "name": "현대모비스",     "ticker": "012330.KS", "sector": "자동차",    "themes": ["자동차"]},
-    {"code": "018880", "name": "한온시스템",     "ticker": "018880.KS", "sector": "자동차",    "themes": ["자동차", "전기차"]},
-    {"code": "204320", "name": "만도",           "ticker": "204320.KS", "sector": "자동차",    "themes": ["자동차"]},
-    {"code": "011210", "name": "현대위아",       "ticker": "011210.KS", "sector": "자동차",    "themes": ["자동차"]},
-    # IT/플랫폼
-    {"code": "035420", "name": "네이버",         "ticker": "035420.KS", "sector": "IT/플랫폼", "themes": ["IT", "AI"]},
-    {"code": "035720", "name": "카카오",         "ticker": "035720.KS", "sector": "IT/플랫폼", "themes": ["IT"]},
-    {"code": "263750", "name": "펄어비스",       "ticker": "263750.KS", "sector": "IT/플랫폼", "themes": ["IT", "게임"]},
-    {"code": "259960", "name": "크래프톤",       "ticker": "259960.KS", "sector": "IT/플랫폼", "themes": ["IT", "게임"]},
-    {"code": "036570", "name": "엔씨소프트",     "ticker": "036570.KS", "sector": "IT/플랫폼", "themes": ["IT", "게임"]},
-    {"code": "251270", "name": "넷마블",         "ticker": "251270.KS", "sector": "IT/플랫폼", "themes": ["IT", "게임"]},
-    {"code": "323410", "name": "카카오뱅크",     "ticker": "323410.KS", "sector": "IT/플랫폼", "themes": ["IT", "금융"]},
-    {"code": "377300", "name": "카카오페이",     "ticker": "377300.KS", "sector": "IT/플랫폼", "themes": ["IT", "금융"]},
-    # 금융
-    {"code": "105560", "name": "KB금융",         "ticker": "105560.KS", "sector": "금융",      "themes": ["금융"]},
-    {"code": "055550", "name": "신한지주",       "ticker": "055550.KS", "sector": "금융",      "themes": ["금융"]},
-    {"code": "086790", "name": "하나금융지주",   "ticker": "086790.KS", "sector": "금융",      "themes": ["금융"]},
-    {"code": "316140", "name": "우리금융지주",   "ticker": "316140.KS", "sector": "금융",      "themes": ["금융"]},
-    {"code": "032830", "name": "삼성생명",       "ticker": "032830.KS", "sector": "금융",      "themes": ["금융"]},
-    {"code": "000810", "name": "삼성화재",       "ticker": "000810.KS", "sector": "금융",      "themes": ["금융"]},
-    {"code": "024110", "name": "기업은행",       "ticker": "024110.KS", "sector": "금융",      "themes": ["금융"]},
-    {"code": "138930", "name": "BNK금융지주",    "ticker": "138930.KS", "sector": "금융",      "themes": ["금융"]},
-    {"code": "139130", "name": "DGB금융지주",    "ticker": "139130.KS", "sector": "금융",      "themes": ["금융"]},
-    {"code": "175330", "name": "JB금융지주",     "ticker": "175330.KS", "sector": "금융",      "themes": ["금융"]},
-    # 철강/소재
-    {"code": "005490", "name": "포스코홀딩스",   "ticker": "005490.KS", "sector": "철강/소재",  "themes": ["철강"]},
-    {"code": "004020", "name": "현대제철",       "ticker": "004020.KS", "sector": "철강/소재",  "themes": ["철강"]},
-    {"code": "010130", "name": "고려아연",       "ticker": "010130.KS", "sector": "철강/소재",  "themes": ["철강"]},
-    {"code": "096770", "name": "SK이노베이션",   "ticker": "096770.KS", "sector": "철강/소재",  "themes": ["에너지"]},
-    {"code": "010950", "name": "S-Oil",          "ticker": "010950.KS", "sector": "철강/소재",  "themes": ["에너지"]},
-    {"code": "011170", "name": "롯데케미칼",     "ticker": "011170.KS", "sector": "철강/소재",  "themes": ["화학"]},
-    {"code": "006800", "name": "미래에셋증권",   "ticker": "006800.KS", "sector": "철강/소재",  "themes": ["화학"]},
-    {"code": "009150", "name": "삼성전기",       "ticker": "009150.KS", "sector": "철강/소재",  "themes": ["전자부품"]},
-    # 건설
-    {"code": "000720", "name": "현대건설",       "ticker": "000720.KS", "sector": "건설",      "themes": ["건설"]},
-    {"code": "047040", "name": "대우건설",       "ticker": "047040.KS", "sector": "건설",      "themes": ["건설"]},
-    {"code": "006360", "name": "GS건설",         "ticker": "006360.KS", "sector": "건설",      "themes": ["건설"]},
-    {"code": "375500", "name": "DL이앤씨",       "ticker": "375500.KS", "sector": "건설",      "themes": ["건설"]},
-    {"code": "028260", "name": "삼성물산",       "ticker": "028260.KS", "sector": "건설",      "themes": ["건설", "지주"]},
-    {"code": "009830", "name": "한화솔루션",     "ticker": "009830.KS", "sector": "건설",      "themes": ["건설", "에너지"]},
-    # 방산/기타
-    {"code": "012450", "name": "한화에어로스페이스","ticker": "012450.KS","sector": "방산",     "themes": ["방산"]},
-    {"code": "079550", "name": "LIG넥스원",      "ticker": "079550.KS", "sector": "방산",      "themes": ["방산"]},
-    {"code": "047810", "name": "한국항공우주",   "ticker": "047810.KS", "sector": "방산",      "themes": ["방산"]},
-    {"code": "000880", "name": "한화",           "ticker": "000880.KS", "sector": "방산",      "themes": ["방산"]},
-    {"code": "017670", "name": "SK텔레콤",       "ticker": "017670.KS", "sector": "통신",      "themes": ["통신", "AI"]},
-    {"code": "030200", "name": "KT",             "ticker": "030200.KS", "sector": "통신",      "themes": ["통신", "AI"]},
-    {"code": "032640", "name": "LG유플러스",     "ticker": "032640.KS", "sector": "통신",      "themes": ["통신"]},
-    {"code": "015760", "name": "한국전력",       "ticker": "015760.KS", "sector": "에너지",    "themes": ["에너지", "전력"]},
-    {"code": "034730", "name": "SK",             "ticker": "034730.KS", "sector": "지주",      "themes": ["지주"]},
-    {"code": "003550", "name": "LG",             "ticker": "003550.KS", "sector": "지주",      "themes": ["지주"]},
-    {"code": "051900", "name": "LG생활건강",     "ticker": "051900.KS", "sector": "소비재",    "themes": ["소비재"]},
-    {"code": "090430", "name": "아모레퍼시픽",   "ticker": "090430.KS", "sector": "소비재",    "themes": ["소비재"]},
-]
+SECTOR_ICONS = {
+    "반도체":    "⚡",
+    "2차전지":   "🔋",
+    "바이오":    "🧬",
+    "자동차":    "🚗",
+    "IT/플랫폼": "💻",
+    "금융":      "🏦",
+    "철강/소재": "⚙️",
+    "건설":      "🏗️",
+}
 
+# KRX 업종 → 디스플레이 섹터 매핑
+KRX_SECTOR_MAP = {
+    # KOSPI 업종
+    "전기전자":   "반도체",
+    "의약품":     "바이오",
+    "의료정밀":   "바이오",
+    "운수장비":   "자동차",
+    "서비스업":   "IT/플랫폼",
+    "통신업":     "IT/플랫폼",
+    "은행":       "금융",
+    "증권":       "금융",
+    "보험":       "금융",
+    "기타금융":   "금융",
+    "철강금속":   "철강/소재",
+    "비금속광물": "철강/소재",
+    "화학":       "철강/소재",
+    "건설업":     "건설",
+    "기계":       "건설",
+    # KOSDAQ 업종
+    "IT S/W & SVC":        "IT/플랫폼",
+    "IT H/W":              "반도체",
+    "제조 - 전기전자":      "반도체",
+    "제조 - 화학":          "철강/소재",
+    "제조 - 의료/정밀기기": "바이오",
+    "제조 - 기계/장비":     "건설",
+    "제조 - 금속":          "철강/소재",
+    "오락/문화":            "IT/플랫폼",
+    "금융":                 "금융",
+}
+
+# 2차전지 종목 (KRX에 별도 업종이 없어 코드로 직접 지정)
+BATTERY_STOCK_CODES = {
+    "373220",  # LG에너지솔루션
+    "247540",  # 에코프로비엠
+    "086520",  # 에코프로
+    "003670",  # 포스코퓨처엠
+    "066570",  # LG전자
+    "051910",  # LG화학
+    "112610",  # 씨에스윈드
+    "298050",  # 엘앤에프
+    "006260",  # LS
+    "006400",  # 삼성SDI
+}
+
+# AI 종목명 별칭 (AI가 다른 이름으로 부를 수 있는 종목)
+STOCK_NAME_ALIASES = {
+    "현대차":         "현대자동차",
+    "POSCO홀딩스":    "포스코홀딩스",
+    "HL만도":         "만도",
+    "YG엔터":        "YG엔터테인먼트",
+    "JYP":           "JYP Ent.",
+    "JYP엔터테인먼트": "JYP Ent.",
+    "SK바이오팜":     "SK바이오팜",
+}
+
+# 동적 종목코드 매핑 — main()에서 KRX 데이터로 자동 구축
+KNOWN_STOCK_CODES = {}
+
+# 테마 정의 (AI 미사용 시 fallback)
 THEME_DEFINITIONS = [
     {"name": "반도체",   "search_query": "반도체 주식",
      "stocks": ["005930", "000660", "402340", "042700", "166090", "058470", "357780", "403870", "036930", "240810"]},
@@ -150,7 +135,7 @@ THEME_DEFINITIONS = [
     {"name": "전기차",   "search_query": "전기차 자율주행 주식",
      "stocks": ["005380", "000270", "373220", "018880", "012330"]},
     {"name": "방산",     "search_query": "방산 방위산업 주식",
-     "stocks": ["012450", "079550", "047810", "000880"]},
+     "stocks": ["012450", "079550", "047810", "000880", "064350"]},
     {"name": "금융",     "search_query": "금융 은행 주식",
      "stocks": ["105560", "055550", "086790", "316140", "032830", "000810"]},
     {"name": "게임",     "search_query": "게임 엔터 주식",
@@ -197,7 +182,6 @@ def supabase_request(method, table, data=None, params=None):
 def clear_today_data(table):
     """데이터 삭제 (중복 방지)"""
     if table in ("market_index", "sectors", "issue_stocks", "themes"):
-        # 항상 최신 데이터만 유지 (전체 교체)
         supabase_request("DELETE", table, params={"id": "gt.0"})
     else:
         supabase_request("DELETE", table, params={"date": f"eq.{TODAY}"})
@@ -222,43 +206,113 @@ def get_existing_sparkline_data():
 
 
 # ─────────────────────────────────────────
-# Yahoo Finance API 헬퍼
+# KRX 데이터 (메인 데이터 소스)
 # ─────────────────────────────────────────
-def fetch_yahoo_batch_quotes(tickers):
-    """Yahoo Finance v8 chart API로 종목 데이터 개별 조회 (v7 인증 차단 대응)"""
-    result = {}
-    total = len(tickers)
-    for idx, ticker in enumerate(tickers):
-        if (idx + 1) % 20 == 0:
-            log(f"  📡 {idx+1}/{total} 종목 조회 중...")
-        try:
-            encoded = urllib.parse.quote(ticker)
-            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded}?interval=1d&range=1d"
-            resp = requests.get(url, headers=YAHOO_HEADERS, timeout=10)
-            data = resp.json()
-            chart_result = data["chart"]["result"][0]
-            meta = chart_result["meta"]
-
-            price = meta.get("regularMarketPrice", 0)
-            prev = meta.get("chartPreviousClose", 0) or meta.get("previousClose", 0)
-            volume = meta.get("regularMarketVolume", 0)
-
-            change = round(price - prev, 2) if prev else 0
-            change_pct = round((change / prev) * 100, 2) if prev and prev > 0 else 0
-
-            result[ticker] = {
-                "symbol": ticker,
-                "regularMarketPrice": price,
-                "regularMarketChange": change,
-                "regularMarketChangePercent": change_pct,
-                "regularMarketVolume": volume,
-                "marketCap": 0,
-            }
-        except Exception as e:
-            log(f"  ⚠️ {ticker} 조회 실패: {e}")
-    return result
+def _fetch_krx_for_date(date_str, mkt_id, mkt_name):
+    """특정 날짜의 KRX 전종목 시세 조회"""
+    try:
+        resp = requests.post(
+            "http://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd",
+            data={
+                "bld": "dbms/MDC/STAT/standard/MDCSTAT01501",
+                "locale": "ko_KR",
+                "mktId": mkt_id,
+                "trdDd": date_str,
+                "share": "1",
+                "money": "1",
+                "csvxls_isNo": "false",
+            },
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer": "http://data.krx.co.kr/contents/MDC/MDI/mdiLoader/index.cmd?menuId=MDC0201020101",
+            },
+            timeout=15,
+        )
+        items = resp.json().get("OutBlock_1", [])
+        return items
+    except Exception as e:
+        log(f"  ⚠️ KRX {mkt_name} ({date_str}) 조회 실패: {e}")
+        return []
 
 
+def fetch_krx_market_data():
+    """KRX에서 전종목 시세 데이터 동적 조회 (코드+이름+업종+가격+거래량+시총)"""
+    log("📋 KRX 전종목 시세 조회 중...")
+    all_data = {}
+
+    # 오늘 → 최근 5영업일까지 시도
+    for days_back in range(5):
+        dt = datetime.now() - timedelta(days=days_back)
+        if dt.weekday() >= 5:  # 주말 건너뛰기
+            continue
+        date_str = dt.strftime("%Y%m%d")
+
+        for mkt_id, mkt_name in [("STK", "KOSPI"), ("KSQ", "KOSDAQ")]:
+            items = _fetch_krx_for_date(date_str, mkt_id, mkt_name)
+
+            for item in items:
+                code = item.get("ISU_SRT_CD", "").strip()
+                name = item.get("ISU_ABBRV", "").strip()
+                krx_sector = item.get("SECT_TP_NM", "").strip()
+
+                if not code or not name or len(code) != 6 or not code.isdigit():
+                    continue
+
+                try:
+                    price = int(item.get("TDD_CLSPRC", "0").replace(",", ""))
+                    change_pct = float(item.get("FLUC_RT", "0").replace(",", ""))
+                    volume = int(item.get("ACC_TRDVOL", "0").replace(",", ""))
+                    trading_value = int(item.get("ACC_TRDVAL", "0").replace(",", ""))
+                    market_cap = int(item.get("MKTCAP", "0").replace(",", ""))
+                except (ValueError, TypeError):
+                    continue
+
+                # 디스플레이 섹터 결정 (2차전지 특수 처리)
+                if code in BATTERY_STOCK_CODES:
+                    display_sector = "2차전지"
+                else:
+                    display_sector = KRX_SECTOR_MAP.get(krx_sector, "")
+
+                all_data[code] = {
+                    "code": code,
+                    "name": name,
+                    "market": mkt_name,
+                    "krx_sector": krx_sector,
+                    "display_sector": display_sector,
+                    "price": price,
+                    "change_pct": change_pct,
+                    "volume": volume,
+                    "trading_value": trading_value,
+                    "market_cap": market_cap,
+                }
+
+            if items:
+                log(f"  ✅ KRX {mkt_name} ({date_str}): {len(items)}개 종목")
+
+        if all_data:
+            break  # 데이터 있으면 더 이상 과거 날짜 시도 안함
+        else:
+            log(f"  ⚠️ {date_str} 데이터 없음 - 이전 날짜 시도...")
+
+    log(f"  📊 KRX 총 {len(all_data)}개 종목 로드 완료")
+    return all_data
+
+
+def build_stock_code_map(krx_data):
+    """KRX 데이터에서 종목명 → (코드, 시장) 매핑 구축 (AI 코드 보정용)"""
+    mapping = {}
+    for code, info in krx_data.items():
+        mapping[info["name"]] = (code, info["market"])
+    # 별칭 추가
+    for alias, real_name in STOCK_NAME_ALIASES.items():
+        if real_name in mapping:
+            mapping[alias] = mapping[real_name]
+    return mapping
+
+
+# ─────────────────────────────────────────
+# Yahoo Finance (시장 지수 전용)
+# ─────────────────────────────────────────
 def fetch_yahoo_chart(symbol):
     """Yahoo Finance v8 chart API로 단일 지수/환율 조회"""
     encoded = urllib.parse.quote(symbol)
@@ -272,7 +326,7 @@ def fetch_yahoo_chart(symbol):
 
 
 # ─────────────────────────────────────────
-# 헬퍼 함수 (유지)
+# 헬퍼 함수
 # ─────────────────────────────────────────
 def classify_news_category(title):
     """뉴스 제목으로 카테고리 분류"""
@@ -320,7 +374,7 @@ def format_trading_value(raw_text):
     """거래대금 포맷 (억원 단위 → 읽기 쉬운 형태)"""
     try:
         val = float(raw_text.replace(",", "").replace(" ", "").strip())
-        if val >= 10000:  # 1조 이상
+        if val >= 10000:
             return f"{val/10000:.1f}조"
         else:
             return f"{int(val):,}억"
@@ -347,7 +401,7 @@ def classify_stock_tags(name):
         "건설": ["현대건설", "대우건설", "GS건설", "DL이앤씨"],
         "AI": ["삼성전자", "SK하이닉스", "네이버", "카카오"],
         "전기차": ["현대자동차", "현대차", "기아", "LG에너지솔루션"],
-        "방산": ["한화에어로스페이스", "LIG넥스원", "한국항공우주"],
+        "방산": ["한화에어로스페이스", "LIG넥스원", "한국항공우주", "현대로템"],
     }
 
     tags = []
@@ -358,7 +412,7 @@ def classify_stock_tags(name):
     if not tags:
         tags = ["기타"]
 
-    return tags[:3]  # 최대 3개
+    return tags[:3]
 
 
 def _calc_time_ago(pub_date_str):
@@ -402,8 +456,11 @@ def _search_theme_news_api(query):
     return "", ""
 
 
+# ─────────────────────────────────────────
+# AI 테마 감지 (Groq / Llama 3.3 70B)
+# ─────────────────────────────────────────
 def detect_themes_with_ai(news_titles):
-    """Groq API (Llama 3.3 70B)로 뉴스 분석 → 인기 테마 + 관련 종목 자동 감지 (전체 한국 주식 대상)"""
+    """Groq API로 뉴스 분석 → 인기 테마 + 관련 종목 자동 감지 (전체 한국 주식 대상)"""
     if not GROQ_API_KEY:
         log("  ⚠️ GROQ_API_KEY 미설정 - 정적 테마 사용")
         return None
@@ -439,13 +496,28 @@ def detect_themes_with_ai(news_titles):
   ]
 }}
 
+## 주요 종목코드 참고 (정확한 코드 사용 필수):
+삼성전자=005930, SK하이닉스=000660, 삼성SDI=006400, LG에너지솔루션=373220,
+현대자동차=005380, 기아=000270, 현대모비스=012330,
+네이버=035420, 카카오=035720, 크래프톤=259960,
+셀트리온=068270, 삼성바이오로직스=207940, 알테오젠=196170, 유한양행=000100,
+한화에어로스페이스=012450, 현대로템=064350, LIG넥스원=079550, 한화시스템=272210, 한국항공우주=047810,
+HD한국조선해양=009540, 삼성중공업=010140, HD현대중공업=329180, 한화오션=042660,
+두산에너빌리티=034020, 한전기술=052690, 한국전력=015760,
+두산로보틱스=454910, 레인보우로보틱스=277810,
+에코프로비엠=247540, 에코프로=086520, 포스코퓨처엠=003670,
+하이브=352820, SM=041510, JYP Ent.=035900,
+아모레퍼시픽=090430, LG생활건강=051900, 코스맥스=192820,
+포스코홀딩스=005490, LG화학=051910, 삼양식품=003230,
+KB금융=105560, 신한지주=055550, HD현대일렉트릭=267260, LS일렉트릭=010120
+
 ## 규칙:
 1. 테마명은 실제 증시에서 통용되는 산업/섹터 테마여야 함 (예: "반도체", "AI", "바이오")
 2. "신용", "대기자금", "부자" 같은 추상적 단어는 테마가 아님. 반드시 투자 가능한 산업 테마만 선정
-3. 각 테마에 해당 산업의 대표 종목 5~10개. 코스피/코스닥 전체에서 자유 선택
-4. 종목코드는 반드시 실제 존재하는 6자리 숫자 코드
+3. 각 테마에 해당 산업의 대표 종목(대장주) 5~10개를 반드시 포함. 코스피/코스닥 전체에서 자유 선택
+4. 종목코드는 반드시 위 참고 리스트 또는 실제 존재하는 6자리 숫자 코드 사용
 5. market은 "KOSPI" 또는 "KOSDAQ"
-6. 각 테마의 종목은 서로 다르게 (중복 최소화)
+6. 동일 종목이 여러 테마에 중복 배치되지 않도록 주의
 7. 뉴스에서 화제인 테마 우선, 정확히 10개"""
 
     try:
@@ -484,7 +556,7 @@ def detect_themes_with_ai(news_titles):
         else:
             themes = parsed
 
-        # 검증: code, name, market 필드 확인
+        # 검증 + KNOWN_STOCK_CODES(KRX 기반)로 코드 보정
         validated = []
         for theme in themes:
             if not isinstance(theme, dict) or "name" not in theme or "stocks" not in theme:
@@ -492,11 +564,22 @@ def detect_themes_with_ai(news_titles):
             valid_stocks = []
             for s in theme["stocks"]:
                 if isinstance(s, dict) and s.get("code") and s.get("name"):
-                    code = str(s["code"]).zfill(6)
-                    market = str(s.get("market", "KOSPI")).upper()
-                    if market not in ("KOSPI", "KOSDAQ"):
-                        market = "KOSPI"
-                    valid_stocks.append({"code": code, "name": s["name"], "market": market})
+                    name = str(s["name"]).strip()
+                    ai_code = str(s["code"]).zfill(6)
+                    ai_market = str(s.get("market", "KOSPI")).upper()
+                    if ai_market not in ("KOSPI", "KOSDAQ"):
+                        ai_market = "KOSPI"
+                    # KNOWN_STOCK_CODES(KRX에서 구축)로 정확한 코드 조회
+                    if name in KNOWN_STOCK_CODES:
+                        known_code, known_market = KNOWN_STOCK_CODES[name]
+                        if known_code != ai_code:
+                            log(f"     🔧 종목코드 보정: {name} {ai_code} → {known_code}")
+                        code = known_code
+                        market = known_market
+                    else:
+                        code = ai_code
+                        market = ai_market
+                    valid_stocks.append({"code": code, "name": name, "market": market})
             if not theme.get("search_query"):
                 theme["search_query"] = theme["name"] + " 주식"
             if valid_stocks:
@@ -555,7 +638,6 @@ def crawl_news():
 
                 description = re.sub(r'<[^>]+>', '', item.get("description", "")).strip()
 
-                # 언론사 추출 (originallink 도메인에서)
                 source_name = "뉴스"
                 try:
                     domain = urllib.parse.urlparse(item.get("originallink", "")).netloc
@@ -586,47 +668,26 @@ def crawl_news():
 
 
 # ─────────────────────────────────────────
-# 2. 이슈 종목 (Yahoo Finance 거래량 기반)
+# 2. 이슈 종목 (KRX 거래대금 상위)
 # ─────────────────────────────────────────
-def crawl_issue_stocks(yahoo_quotes):
-    """Yahoo Finance 데이터에서 거래량 상위 종목 추출"""
+def crawl_issue_stocks(krx_data):
+    """KRX 거래대금 상위 종목 추출"""
     log("📈 이슈 종목 크롤링 시작...")
 
-    stock_data = []
-
-    for stock in STOCK_UNIVERSE:
-        ticker = stock["ticker"]
-        quote = yahoo_quotes.get(ticker)
-        if not quote:
+    candidates = []
+    for code, d in krx_data.items():
+        if d["volume"] == 0 or d["price"] == 0:
             continue
-
-        volume = quote.get("regularMarketVolume", 0) or 0
-        price = quote.get("regularMarketPrice", 0) or 0
-        change_pct = quote.get("regularMarketChangePercent", 0) or 0
-
-        if volume == 0 or price == 0:
+        if is_etf_etn(d["name"]):
             continue
-        if is_etf_etn(stock["name"]):
-            continue
+        candidates.append(d)
 
-        # 거래대금 (억원)
-        trading_value_eok = (price * volume) / 100_000_000
-
-        stock_data.append({
-            "stock": stock,
-            "volume": volume,
-            "price": price,
-            "change_pct": change_pct,
-            "trading_value_eok": trading_value_eok,
-        })
-
-    # 거래량 기준 정렬
-    stock_data.sort(key=lambda x: x["volume"], reverse=True)
+    # 거래대금 기준 정렬
+    candidates.sort(key=lambda x: x["trading_value"], reverse=True)
 
     stocks = []
-    for rank_idx, sd in enumerate(stock_data[:10], 1):
-        s = sd["stock"]
-        cp = sd["change_pct"]
+    for rank_idx, d in enumerate(candidates[:10], 1):
+        cp = d["change_pct"]
 
         if cp > 0.005:
             trend = "up"
@@ -639,26 +700,28 @@ def crawl_issue_stocks(yahoo_quotes):
             pct_str = "0.00%"
 
         try:
-            price_formatted = f"{int(sd['price']):,}"
+            price_formatted = f"{d['price']:,}"
         except:
-            price_formatted = str(sd["price"])
+            price_formatted = str(d["price"])
 
-        volume_str = format_trading_value(str(int(sd["trading_value_eok"])))
+        # 거래대금을 억원 단위로
+        trading_value_eok = d["trading_value"] / 100_000_000
+        volume_str = format_trading_value(str(int(trading_value_eok)))
 
         stocks.append({
             "rank": rank_idx,
-            "name": s["name"],
-            "code": s["code"],
+            "name": d["name"],
+            "code": d["code"],
             "price": price_formatted,
             "change_pct": pct_str,
             "volume": volume_str,
-            "reason": f"거래량 상위 {rank_idx}위",
-            "tags": classify_stock_tags(s["name"]),
+            "reason": f"거래대금 상위 {rank_idx}위",
+            "tags": classify_stock_tags(d["name"]),
             "trend": trend,
             "date": TODAY,
         })
 
-    log(f"  ✅ 거래량 상위 {len(stocks)}개 수집 완료")
+    log(f"  ✅ 거래대금 상위 {len(stocks)}개 수집 완료")
     return stocks
 
 
@@ -712,40 +775,24 @@ def crawl_market_index():
 
 
 # ─────────────────────────────────────────
-# 4. 섹터 데이터 (Yahoo 데이터 기반 계산)
+# 4. 섹터 데이터 (KRX 업종 기반)
 # ─────────────────────────────────────────
-SECTOR_ICONS = {
-    "반도체":    "⚡",
-    "2차전지":   "🔋",
-    "바이오":    "🧬",
-    "자동차":    "🚗",
-    "IT/플랫폼": "💻",
-    "금융":      "🏦",
-    "철강/소재": "⚙️",
-    "건설":      "🏗️",
-}
-
-def crawl_sectors(yahoo_quotes):
-    """Yahoo Finance 데이터에서 섹터별 등락률 계산"""
+def crawl_sectors(krx_data):
+    """KRX 데이터에서 섹터별 등락률 계산"""
     log("🏭 섹터 데이터 크롤링 시작...")
 
-    # 섹터별 통계 수집
     sector_stats = {}
-    for stock in STOCK_UNIVERSE:
-        sector = stock["sector"]
-        if sector not in SECTOR_ICONS:
+    for code, d in krx_data.items():
+        sector = d["display_sector"]
+        if not sector or sector not in SECTOR_ICONS:
             continue
-
-        quote = yahoo_quotes.get(stock["ticker"])
-        if not quote:
+        if d["price"] == 0 or is_etf_etn(d["name"]):
             continue
-
-        change_pct = quote.get("regularMarketChangePercent", 0) or 0
 
         if sector not in sector_stats:
             sector_stats[sector] = {"changes": [], "stocks": []}
-        sector_stats[sector]["changes"].append(change_pct)
-        sector_stats[sector]["stocks"].append(stock)
+        sector_stats[sector]["changes"].append(d["change_pct"])
+        sector_stats[sector]["stocks"].append(d)
 
     sectors = []
     for sname, icon in SECTOR_ICONS.items():
@@ -770,12 +817,9 @@ def crawl_sectors(yahoo_quotes):
         top_stock = ""
         best_pct = -999
         for s in stats["stocks"]:
-            q = yahoo_quotes.get(s["ticker"])
-            if q:
-                cp = q.get("regularMarketChangePercent", 0) or 0
-                if cp > best_pct:
-                    best_pct = cp
-                    top_stock = s["name"]
+            if s["change_pct"] > best_pct:
+                best_pct = s["change_pct"]
+                top_stock = s["name"]
 
         sectors.append({
             "name": sname,
@@ -792,35 +836,32 @@ def crawl_sectors(yahoo_quotes):
 
 
 # ─────────────────────────────────────────
-# 5. 섹터별 종목 (Yahoo 데이터 기반)
+# 5. 섹터별 종목 (KRX 시가총액 기반)
 # ─────────────────────────────────────────
-def crawl_sector_stocks(yahoo_quotes):
-    """Yahoo Finance 데이터에서 섹터별 종목 목록 생성"""
+def crawl_sector_stocks(krx_data):
+    """KRX 데이터에서 섹터별 종목 목록 생성 (시가총액 상위)"""
     log("🏷️ 섹터별 종목 크롤링 시작...")
 
-    target_sectors = list(SECTOR_ICONS.keys())
+    # 섹터별 그룹핑
+    sector_groups = {}
+    for code, d in krx_data.items():
+        sector = d["display_sector"]
+        if not sector or sector not in SECTOR_ICONS:
+            continue
+        if d["price"] == 0 or is_etf_etn(d["name"]):
+            continue
+        if sector not in sector_groups:
+            sector_groups[sector] = []
+        sector_groups[sector].append(d)
+
     all_stocks = []
+    for sector_name in SECTOR_ICONS.keys():
+        stocks_in_sector = sector_groups.get(sector_name, [])
+        # 시가총액 순 정렬
+        stocks_in_sector.sort(key=lambda x: x["market_cap"], reverse=True)
 
-    for sector_name in target_sectors:
-        sector_universe = [s for s in STOCK_UNIVERSE if s["sector"] == sector_name]
-
-        # Yahoo 데이터 매핑 (STOCK_UNIVERSE 정의 순서 유지 = 대형주 우선)
-        enriched = []
-        for stock in sector_universe:
-            quote = yahoo_quotes.get(stock["ticker"])
-            if not quote:
-                continue
-            price = quote.get("regularMarketPrice", 0) or 0
-            change_pct = quote.get("regularMarketChangePercent", 0) or 0
-            enriched.append({
-                "stock": stock,
-                "price": price,
-                "change_pct": change_pct,
-            })
-
-        for rank_idx, e in enumerate(enriched[:10], 1):
-            s = e["stock"]
-            cp = e["change_pct"]
+        for rank_idx, d in enumerate(stocks_in_sector[:10], 1):
+            cp = d["change_pct"]
 
             if cp > 0.005:
                 trend = "up"
@@ -833,72 +874,56 @@ def crawl_sector_stocks(yahoo_quotes):
                 pct_str = "0.00%"
 
             try:
-                price_formatted = f"{int(e['price']):,}"
+                price_formatted = f"{d['price']:,}"
             except:
-                price_formatted = str(e["price"])
+                price_formatted = str(d["price"])
 
             all_stocks.append({
                 "sector_name": sector_name,
-                "stock_name": s["name"],
-                "code": s["code"],
+                "stock_name": d["name"],
+                "code": d["code"],
                 "price": price_formatted,
                 "change_pct": pct_str,
                 "trend": trend,
                 "rank": rank_idx,
             })
 
-        log(f"  ✅ {sector_name}: {min(len(enriched), 10)}개 종목 수집")
+        log(f"  ✅ {sector_name}: {min(len(stocks_in_sector), 10)}개 종목 수집")
 
     log(f"  ✅ 섹터별 종목 총 {len(all_stocks)}개 수집 완료")
     return all_stocks
 
 
 # ─────────────────────────────────────────
-# 6. 테마 (AI 동적 감지 + Yahoo + 네이버 검색 API)
+# 6. 테마 (AI 동적 감지 + KRX + 네이버 검색 API)
 # ─────────────────────────────────────────
-def crawl_themes(yahoo_quotes, news_titles=None):
-    """AI가 선정한 테마의 종목을 Yahoo에서 조회하여 성과 계산"""
+def crawl_themes(krx_data, news_titles=None):
+    """AI가 선정한 테마의 종목을 KRX 데이터에서 조회하여 성과 계산"""
     log("🔥 테마 크롤링 시작...")
 
     ai_themes = detect_themes_with_ai(news_titles)
 
     if ai_themes:
-        # ── AI 테마: 전체 한국 주식에서 자유롭게 선정된 종목 ──
-        # 1) AI 종목 → Yahoo 티커 매핑
-        ai_stock_map = {}  # code -> {ticker, name}
-        for theme in ai_themes:
-            for s in theme["stocks"]:
-                code = s["code"]
-                if code not in ai_stock_map:
-                    suffix = ".KS" if s["market"] == "KOSPI" else ".KQ"
-                    ai_stock_map[code] = {"ticker": code + suffix, "name": s["name"]}
-
-        # 2) 기존 yahoo_quotes에 있으면 재활용, 없으면 추가 조회
-        missing_tickers = [
-            info["ticker"] for info in ai_stock_map.values()
-            if info["ticker"] not in yahoo_quotes
-        ]
-        if missing_tickers:
-            log(f"  📡 AI 테마 종목 {len(missing_tickers)}개 추가 조회...")
-            extra_quotes = fetch_yahoo_batch_quotes(missing_tickers)
-            yahoo_quotes.update(extra_quotes)
-
-        # 3) 테마별 성과 계산
+        # ── AI 테마: KRX 데이터에서 직접 가격 조회 ──
         themes = []
         for theme_def in ai_themes:
             theme_stocks = []
             changes = []
+            seen_codes = set()
 
             for s in theme_def["stocks"]:
                 code = s["code"]
-                info = ai_stock_map.get(code)
-                if not info:
+                if code in seen_codes:
                     continue
-                quote = yahoo_quotes.get(info["ticker"])
-                if quote:
-                    cp = quote.get("regularMarketChangePercent", 0) or 0
-                    changes.append(cp)
-                    theme_stocks.append({"name": s["name"], "code": code, "change_pct": cp})
+                seen_codes.add(code)
+
+                d = krx_data.get(code)
+                if not d:
+                    continue
+
+                cp = d["change_pct"]
+                changes.append(cp)
+                theme_stocks.append({"name": d["name"], "code": code, "change_pct": cp})
 
             avg_change = sum(changes) / len(changes) if changes else 0.0
             up_count = sum(1 for c in changes if c > 0.005)
@@ -930,25 +955,19 @@ def crawl_themes(yahoo_quotes, news_titles=None):
             })
 
     else:
-        # ── Fallback: 정적 THEME_DEFINITIONS (STOCK_UNIVERSE 기반) ──
+        # ── Fallback: 정적 THEME_DEFINITIONS (KRX 데이터 기반) ──
         log("  📋 정적 테마 정의 사용")
-        code_to_data = {}
-        for stock in STOCK_UNIVERSE:
-            quote = yahoo_quotes.get(stock["ticker"])
-            if quote:
-                code_to_data[stock["code"]] = {"quote": quote, "stock": stock}
-
         themes = []
         for theme_def in THEME_DEFINITIONS:
             theme_stocks = []
             changes = []
             for code in theme_def["stocks"]:
-                if code in code_to_data:
-                    cd = code_to_data[code]
-                    q = cd["quote"]
-                    cp = q.get("regularMarketChangePercent", 0) or 0
-                    changes.append(cp)
-                    theme_stocks.append({"name": cd["stock"]["name"], "code": code, "change_pct": cp})
+                d = krx_data.get(code)
+                if not d:
+                    continue
+                cp = d["change_pct"]
+                changes.append(cp)
+                theme_stocks.append({"name": d["name"], "code": code, "change_pct": cp})
 
             avg_change = sum(changes) / len(changes) if changes else 0.0
             up_count = sum(1 for c in changes if c > 0.005)
@@ -1001,33 +1020,35 @@ def main():
         log("  export SUPABASE_KEY='your-service-role-key'")
         return
 
-    # Yahoo Finance 일괄 조회
-    log("📡 Yahoo Finance 데이터 조회 중...")
-    all_tickers = list(set(s["ticker"] for s in STOCK_UNIVERSE))
-    yahoo_quotes = fetch_yahoo_batch_quotes(all_tickers)
-    log(f"  ✅ {len(yahoo_quotes)}개 종목 데이터 수신")
+    # 1. KRX 전종목 시세 조회 (메인 데이터 소스)
+    krx_data = fetch_krx_market_data()
+    if not krx_data:
+        log("❌ KRX 데이터 조회 실패 - 크롤링 중단")
+        return
 
-    if not yahoo_quotes:
-        log("  ❌ Yahoo Finance 데이터 수신 실패 - 종목/섹터/테마 데이터 없음")
+    # 2. 종목코드 매핑 구축 (AI 테마 코드 보정용)
+    global KNOWN_STOCK_CODES
+    KNOWN_STOCK_CODES = build_stock_code_map(krx_data)
+    log(f"  📋 종목코드 매핑: {len(KNOWN_STOCK_CODES)}개 종목")
 
-    # 1. 뉴스 (네이버 검색 API)
+    # 3. 뉴스 (네이버 검색 API)
     news = crawl_news()
 
-    # 2. 이슈 종목 (Yahoo 데이터 기반)
-    stocks = crawl_issue_stocks(yahoo_quotes)
+    # 4. 이슈 종목 (KRX 거래대금 기반)
+    stocks = crawl_issue_stocks(krx_data)
 
-    # 3. 시장 지수 (Yahoo Finance API)
+    # 5. 시장 지수 (Yahoo Finance API — 지수/환율만)
     indices = crawl_market_index()
 
-    # 4. 섹터 데이터 (Yahoo 데이터 기반)
-    sectors = crawl_sectors(yahoo_quotes)
+    # 6. 섹터 데이터 (KRX 업종 기반)
+    sectors = crawl_sectors(krx_data)
 
-    # 5. 섹터별 종목 (Yahoo 데이터 기반)
-    sector_stocks = crawl_sector_stocks(yahoo_quotes)
+    # 7. 섹터별 종목 (KRX 시가총액 기반)
+    sector_stocks = crawl_sector_stocks(krx_data)
 
-    # 6. 테마 (Yahoo + 네이버 검색 API + AI 동적 감지)
+    # 8. 테마 (AI + KRX + 네이버 검색 API)
     news_titles = [n["title"] for n in news]
-    themes = crawl_themes(yahoo_quotes, news_titles)
+    themes = crawl_themes(krx_data, news_titles)
 
     # ─── Supabase에 저장 ───
     log("")
@@ -1054,7 +1075,7 @@ def main():
         result = supabase_request("POST", "issue_stocks", data=stocks)
         log(f"  📈 종목 {len(stocks)}개 저장 {'✅' if result else '❌'}")
 
-    # 지수 저장 (sparkline_data 포함 — 하루치 전체, 장 시작시 리셋)
+    # 지수 저장 (sparkline_data 포함)
     if indices:
         MAX_SPARKLINE_POINTS = 80
         for idx_item in indices:
@@ -1067,15 +1088,12 @@ def main():
             prev_date = existing["d"]
             prev_data = existing["v"]
             if prev_date == TODAY:
-                # 같은 날: 값이 변했을 때만 추가 (장 마감 후 차트 보존)
                 if not prev_data or abs(current_value - prev_data[-1]) >= 0.01:
                     prev_data.append(current_value)
                 idx_item["sparkline_data"] = {"d": TODAY, "v": prev_data[-MAX_SPARKLINE_POINTS:]}
             elif prev_data and abs(current_value - prev_data[-1]) < 0.01:
-                # 날짜 다르지만 값 동일 = 장 안 열림 (주말/공휴일) → 기존 차트 유지
                 idx_item["sparkline_data"] = {"d": prev_date, "v": prev_data}
             else:
-                # 날짜 다르고 값 변동 = 새 거래일 → 리셋
                 idx_item["sparkline_data"] = {"d": TODAY, "v": [current_value]}
         result = supabase_request("POST", "market_index", data=indices)
         log(f"  📊 지수 {len(indices)}개 저장 (sparkline 포함) {'✅' if result else '❌'}")
