@@ -3,3 +3,4 @@ kis_token.json
 __pycache__/
 *.pyc
 theme_stock_map.json
+ai_themes_cache.json

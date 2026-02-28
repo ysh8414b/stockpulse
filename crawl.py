@@ -4,9 +4,10 @@ KRX(한국거래소) API + Yahoo Finance + 네이버 검색 API + Groq AI로 주
 
 데이터 소스:
   - KRX: 전종목 시세 (코드, 이름, 업종, 가격, 등락률, 거래량, 시가총액) — 메인 데이터
-  - Yahoo Finance: 시장 지수 (코스피, 코스닥, 다우, 나스닥, S&P500, USD/KRW)
+  - Yahoo Finance: 시장 지수 + 스파크라인 차트 (코스피, 코스닥, 다우, 나스닥, S&P500, USD/KRW)
   - 네이버 검색 API: 뉴스, 테마별 관련 뉴스
-  - Groq AI (Llama 3.3 70B): 뉴스 기반 인기 테마 자동 감지
+  - 네이버 금융: 기업개요 (테마-종목 매핑 DB 구축)
+  - Groq AI (주 1회): 뉴스 기반 인기 테마 감지 / 평소: 규칙 기반 키워드 매칭
 
 사용법:
   pip install requests
@@ -16,7 +17,7 @@ KRX(한국거래소) API + Yahoo Finance + 네이버 검색 API + Groq AI로 주
     SUPABASE_KEY=your-service-role-key  (⚠️ service_role key 사용!)
     NAVER_CLIENT_ID=네이버 검색 API 클라이언트 ID
     NAVER_CLIENT_SECRET=네이버 검색 API 시크릿
-    GROQ_API_KEY=Groq AI API 키
+    GROQ_API_KEY=Groq AI API 키 (주 1회 테마 감지용)
 
   python crawl.py
 """
@@ -888,34 +889,160 @@ def build_theme_stock_map(krx_data):
 
 
 # ─────────────────────────────────────────
-# AI 테마 감지 (Groq / Llama 3.3 70B)
+# 규칙 기반 테마 감지 (뉴스 키워드 매칭)
 # ─────────────────────────────────────────
-def detect_themes_with_ai(news_titles, krx_data=None, theme_map=None):
-    """뉴스 → AI로 핫 테마 선정 → 매핑 DB에서 종목 조회"""
-    if not GROQ_API_KEY:
-        log("  ⚠️ GROQ_API_KEY 미설정 - 정적 테마 사용")
-        return None
+# 뉴스 헤드라인 → 테마 매칭 키워드
+NEWS_THEME_KEYWORDS = {
+    "반도체": ["반도체", "HBM", "메모리", "파운드리", "삼성전자", "SK하이닉스", "DRAM", "낸드", "NAND", "D램"],
+    "2차전지": ["2차전지", "배터리", "리튬", "양극재", "음극재", "에코프로", "LG에너지", "전고체"],
+    "전기차": ["전기차", "EV", "테슬라", "자율주행", "전기자동차"],
+    "자동차": ["자동차", "현대차", "기아", "완성차"],
+    "방산": ["방산", "방위", "무기", "미사일", "K방산", "한화에어로", "LIG넥스원", "K9"],
+    "조선": ["조선", "선박", "LNG선", "HD한국조선", "한화오션", "수주"],
+    "AI": ["AI", "인공지능", "ChatGPT", "딥러닝", "생성형", "GPU", "엔비디아", "LLM", "챗봇"],
+    "로봇": ["로봇", "휴머노이드", "로보틱스", "코봇"],
+    "제약/바이오": ["바이오", "제약", "신약", "임상", "셀트리온", "삼성바이오", "FDA", "치료제"],
+    "전력/에너지": ["전력", "변압기", "송전", "전력망", "그리드", "한전"],
+    "금융": ["금융", "은행", "보험", "증권", "금리", "기준금리"],
+    "건설": ["건설", "아파트", "부동산", "분양", "재건축", "재개발"],
+    "통신": ["통신", "5G", "6G", "KT", "SKT", "LGU+"],
+    "철강/소재": ["철강", "포스코", "비철금속", "알루미늄"],
+    "화학": ["화학", "석유화학", "정밀화학"],
+    "IT/플랫폼": ["네이버", "카카오", "플랫폼", "IT기업"],
+    "게임": ["게임", "넥슨", "크래프톤", "엔씨소프트", "넷마블"],
+    "디스플레이": ["디스플레이", "OLED", "LCD", "LG디스플레이", "패널"],
+    "화장품": ["화장품", "뷰티", "K뷰티", "K-뷰티", "아모레"],
+    "식품": ["식품", "음식", "음료", "CJ제일제당"],
+    "엔터": ["엔터", "K-POP", "KPOP", "아이돌", "콘서트", "공연", "하이브", "SM"],
+    "원전": ["원전", "원자력", "SMR", "소형모듈원자로", "핵발전"],
+    "태양광": ["태양광", "태양전지", "솔라", "한화솔루션"],
+    "수소": ["수소", "연료전지", "수소차", "수전해"],
+    "드론": ["드론", "UAM", "무인항공", "도심항공"],
+    "항공": ["항공", "대한항공", "아시아나", "저비용항공"],
+    "물류": ["물류", "택배", "해운", "CJ대한통운"],
+    "해운": ["해운", "HMM", "컨테이너선", "벌크선"],
+    "의료기기": ["의료기기", "진단", "의료장비"],
+    "패션": ["패션", "의류", "브랜드"],
+    "유통": ["유통", "백화점", "이커머스", "쿠팡"],
+    "전자부품": ["전자부품", "MLCC", "PCB", "커넥터"],
+    "석유/가스": ["원유", "석유", "가스", "유가", "정유"],
+}
 
+
+def detect_themes_rule_based(news_titles, theme_map=None):
+    """뉴스 헤드라인 키워드 매칭으로 핫 테마 선정 (AI 불필요)"""
     if not news_titles:
         log("  ⚠️ 뉴스 데이터 없음 - 정적 테마 사용")
         return None
 
-    # 매핑 DB에서 사용 가능한 테마 목록 추출 (빈 경우 고정 목록 사용)
-    FIXED_THEMES = [
-        "반도체", "2차전지", "전기차", "자동차", "방산", "조선", "AI", "로봇",
-        "제약/바이오", "전력/에너지", "엔터", "화장품", "식품", "금융", "건설",
-        "통신", "철강/소재", "게임", "태양광", "원전", "IT/플랫폼", "디스플레이",
-        "의료기기", "항공", "물류", "패션", "미디어", "수소", "드론",
-    ]
-    available_themes = list(theme_map.keys()) if theme_map else FIXED_THEMES
-    themes_list_text = ", ".join(available_themes)
+    if not theme_map:
+        log("  ⚠️ 매핑 DB 없음 - 정적 테마 사용")
+        return None
 
-    has_map = theme_map and len(theme_map) > 0
+    # 뉴스 헤드라인에서 테마별 언급 빈도 계산
+    theme_scores = {}
+    for title in news_titles:
+        matched_themes = set()
+        for theme, keywords in NEWS_THEME_KEYWORDS.items():
+            for kw in keywords:
+                if kw in title:
+                    matched_themes.add(theme)
+                    break
+        for theme in matched_themes:
+            theme_scores[theme] = theme_scores.get(theme, 0) + 1
+
+    # theme_map에 존재하는 테마만 필터 (유사 이름 매칭 포함)
+    valid_scores = {}
+    for theme, score in theme_scores.items():
+        if theme in theme_map:
+            valid_scores[theme] = valid_scores.get(theme, 0) + score
+        else:
+            for map_key in theme_map:
+                if theme in map_key or map_key in theme:
+                    valid_scores[map_key] = valid_scores.get(map_key, 0) + score
+                    break
+
+    # 뉴스에 언급 안 된 테마도 종목 수 기반으로 최소 점수 부여 (10개 미만일 때 보충)
+    if len(valid_scores) < 10:
+        for map_key in theme_map:
+            if map_key not in valid_scores:
+                valid_scores[map_key] = 0
+
+    # 1차: 뉴스 점수 순, 2차: 종목 수 순 (동점 시)
+    sorted_themes = sorted(
+        valid_scores.items(),
+        key=lambda x: (x[1], len(theme_map.get(x[0], []))),
+        reverse=True,
+    )[:10]
+
+    result = []
+    for theme_name, score in sorted_themes:
+        stocks = theme_map.get(theme_name, [])[:10]
+        if len(stocks) >= 3:
+            result.append({
+                "name": theme_name,
+                "search_query": theme_name + " 주식",
+                "stocks": stocks,
+            })
+
+    if result:
+        total_stocks = sum(len(t["stocks"]) for t in result)
+        log(f"  🔍 규칙 기반 테마 감지: {len(result)}개 테마, {total_stocks}개 종목")
+        for t in result:
+            score = valid_scores.get(t["name"], 0)
+            names = ", ".join(s["name"] for s in t["stocks"][:3])
+            log(f"     - {t['name']} (뉴스 {score}건): {names}...")
+        return result
+    else:
+        log("  ⚠️ 규칙 기반 매칭 실패")
+        return None
+
+
+# ─────────────────────────────────────────
+# AI 테마 감지 (Groq / Llama 3.3 70B) — 주 1회
+# ─────────────────────────────────────────
+AI_THEME_CACHE_FILE = "ai_themes_cache.json"
+
+
+def _should_run_ai_themes():
+    """캐시 파일을 확인하여 AI 테마 감지를 실행할지 결정 (7일 경과 시 실행)"""
+    if not GROQ_API_KEY:
+        return False
+    try:
+        with open(AI_THEME_CACHE_FILE, "r", encoding="utf-8") as f:
+            cache = json.load(f)
+        cached_date = cache.get("date", "")
+        if cached_date:
+            from datetime import datetime as _dt
+            diff = (_dt.strptime(TODAY, "%Y-%m-%d") - _dt.strptime(cached_date, "%Y-%m-%d")).days
+            if diff < 7:
+                log(f"  ℹ️ AI 테마 캐시 유효 ({cached_date}, {diff}일 경과) - 규칙 기반 사용")
+                return False
+    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+        pass
+    return True
+
+
+def _save_ai_theme_cache(theme_names):
+    """AI 테마 결과를 캐시 파일에 저장"""
+    try:
+        with open(AI_THEME_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"date": TODAY, "themes": theme_names}, f, ensure_ascii=False)
+        log(f"  💾 AI 테마 캐시 저장: {AI_THEME_CACHE_FILE}")
+    except Exception as e:
+        log(f"  ⚠️ AI 테마 캐시 저장 실패: {e}")
+
+
+def detect_themes_with_ai(news_titles, theme_map=None):
+    """Groq AI로 핫 테마 선정 → 매핑 DB에서 종목 조회 (주 1회)"""
+    if not news_titles or not theme_map:
+        return None
+
+    available_themes = list(theme_map.keys())
+    themes_list_text = ", ".join(available_themes)
     news_text = "\n".join(f"- {t}" for t in news_titles[:30])
 
-    if has_map:
-        # ── 매핑 DB 있음: 테마명만 선정 ──
-        prompt = f"""너는 국내 증시 테마 분석가다.
+    prompt = f"""너는 국내 증시 테마 분석가다.
 
 ## 목표:
 아래 뉴스 헤드라인을 분석하여 현재 증시에서 가장 주목받는 테마 상위 10개를 선정하라.
@@ -941,37 +1068,6 @@ def detect_themes_with_ai(news_titles, krx_data=None, theme_map=None):
 3. search_query는 네이버 뉴스 검색용 키워드 (테마명 + "주식")
 4. 정확히 10개 선정
 5. 뉴스와 무관한 테마를 넣지 마라"""
-    else:
-        # ── 매핑 DB 없음: 테마명 + 종목명 같이 요청 (fallback) ──
-        log("  ⚠️ 매핑 DB 없음 - AI에게 종목명도 요청")
-        prompt = f"""너는 국내 증시 테마 분석가다.
-
-## 목표:
-아래 뉴스 헤드라인을 분석하여 현재 증시에서 가장 주목받는 테마 상위 10개를 선정하고, 각 테마별 핵심 관련 종목명을 나열하라.
-
-## 오늘의 뉴스 헤드라인:
-{news_text}
-
-## 사용 가능한 테마 목록:
-{themes_list_text}
-
-## 출력 형식 (JSON):
-{{
-  "themes": [
-    {{"name": "테마명", "search_query": "테마명 주식", "stocks": ["종목명1", "종목명2"]}}
-  ]
-}}
-
-## 종목 포함 기준 (엄격 적용):
-- "주요 매출 사업"이 해당 테마 밸류체인에 직접 포함되는 기업만
-- 사업 일부 진출, 협약, 계획 단계 기업 제외
-- 간접 연관 기업 제외
-
-## 규칙:
-1. 위 테마 목록에서만 선택
-2. 각 테마당 종목 5~10개. 종목명은 KRX 공식 명칭
-3. 뉴스에서 화제인 테마 우선, 정확히 10개
-4. 뉴스와 무관한 테마를 넣지 마라"""
 
     try:
         resp = requests.post(
@@ -997,7 +1093,6 @@ def detect_themes_with_ai(news_titles, krx_data=None, theme_map=None):
         content = result["choices"][0]["message"]["content"]
         parsed = json.loads(content)
 
-        # {"themes": [...]} 파싱
         if isinstance(parsed, dict):
             raw_themes = None
             for key in parsed:
@@ -1009,47 +1104,21 @@ def detect_themes_with_ai(news_titles, krx_data=None, theme_map=None):
         else:
             raw_themes = parsed
 
-        # ── 테마별 종목 조회 ──
         validated = []
         for theme in raw_themes:
             if not isinstance(theme, dict) or "name" not in theme:
                 continue
-
             theme_name = theme["name"].strip()
             search_query = theme.get("search_query", theme_name + " 주식")
 
             stocks = []
-
-            if has_map:
-                # 매핑 DB에서 종목 조회
-                if theme_name in theme_map:
-                    stocks = theme_map[theme_name][:10]
-                else:
-                    # 유사 테마명 매칭 시도
-                    for map_key in theme_map:
-                        if theme_name in map_key or map_key in theme_name:
-                            stocks = theme_map[map_key][:10]
-                            log(f"     🔧 유사 테마 매칭: {theme_name} → {map_key}")
-                            break
+            if theme_name in theme_map:
+                stocks = theme_map[theme_name][:10]
             else:
-                # 매핑 DB 없음 → AI가 준 종목명을 KNOWN_STOCK_CODES에서 코드 매칭
-                raw_stocks = theme.get("stocks", [])
-                seen_codes = set()
-                for s in raw_stocks:
-                    name = s.strip() if isinstance(s, str) else str(s.get("name", "")).strip() if isinstance(s, dict) else ""
-                    if not name:
-                        continue
-                    if name in KNOWN_STOCK_CODES:
-                        code, market = KNOWN_STOCK_CODES[name]
-                        if code not in seen_codes:
-                            stocks.append({"code": code, "name": name, "market": market})
-                            seen_codes.add(code)
-                    elif STOCK_NAME_ALIASES.get(name, "") in KNOWN_STOCK_CODES:
-                        real = STOCK_NAME_ALIASES[name]
-                        code, market = KNOWN_STOCK_CODES[real]
-                        if code not in seen_codes:
-                            stocks.append({"code": code, "name": real, "market": market})
-                            seen_codes.add(code)
+                for map_key in theme_map:
+                    if theme_name in map_key or map_key in theme_name:
+                        stocks = theme_map[map_key][:10]
+                        break
 
             if len(stocks) >= 3:
                 validated.append({
@@ -1057,18 +1126,17 @@ def detect_themes_with_ai(news_titles, krx_data=None, theme_map=None):
                     "search_query": search_query,
                     "stocks": stocks[:10],
                 })
-            else:
-                log(f"     ⏭️ 종목 부족: {theme_name} ({len(stocks)}개)")
 
         if validated:
             total_stocks = sum(len(t["stocks"]) for t in validated)
-            log(f"  🤖 테마 감지 완료 (매핑 DB 기반): {len(validated)}개 테마, {total_stocks}개 종목")
+            log(f"  🤖 AI 테마 감지 완료: {len(validated)}개 테마, {total_stocks}개 종목")
             for t in validated:
                 names = ", ".join(s["name"] for s in t["stocks"][:3])
                 log(f"     - {t['name']}: {names}...")
+            # 캐시 저장
+            _save_ai_theme_cache([t["name"] for t in validated])
             return validated[:10]
         else:
-            log("  ⚠️ 매핑 DB 기반 매칭 실패")
             return None
 
     except Exception as e:
@@ -1378,7 +1446,15 @@ def crawl_themes(krx_data, news_titles=None, theme_map=None):
     """AI가 선정한 테마의 종목을 KRX 데이터에서 조회하여 성과 계산"""
     log("🔥 테마 크롤링 시작...")
 
-    ai_themes = detect_themes_with_ai(news_titles, krx_data, theme_map)
+    # 주 1회: Groq AI로 테마 감지 / 나머지: 규칙 기반 키워드 매칭
+    if _should_run_ai_themes():
+        log("  🤖 AI 테마 감지 실행 (주 1회)")
+        ai_themes = detect_themes_with_ai(news_titles, theme_map)
+        if not ai_themes:
+            log("  ↩️ AI 실패 → 규칙 기반 폴백")
+            ai_themes = detect_themes_rule_based(news_titles, theme_map)
+    else:
+        ai_themes = detect_themes_rule_based(news_titles, theme_map)
 
     if ai_themes:
         # ── AI 테마: KRX 데이터에서 직접 가격 조회 ──
