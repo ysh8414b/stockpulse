@@ -463,10 +463,10 @@ def build_stock_code_map(krx_data):
 # ─────────────────────────────────────────
 # Yahoo Finance (시장 지수 전용)
 # ─────────────────────────────────────────
-def fetch_yahoo_chart(symbol):
+def fetch_yahoo_chart(symbol, interval="15m"):
     """Yahoo Finance v8 chart API로 단일 지수/환율 조회 + 당일 스파크라인 데이터"""
     encoded = urllib.parse.quote(symbol)
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded}?interval=15m&range=1d"
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded}?interval={interval}&range=1d"
     resp = requests.get(url, headers=YAHOO_HEADERS, timeout=10)
     data = resp.json()
     result = data["chart"]["result"][0]
@@ -1319,17 +1319,17 @@ def crawl_market_index():
     indices = []
 
     index_symbols = [
-        ("코스피",   "^KS11"),
-        ("코스닥",   "^KQ11"),
-        ("다우존스", "^DJI"),
-        ("나스닥",   "^IXIC"),
-        ("S&P 500",  "^GSPC"),
-        ("USD/KRW",  "USDKRW=X"),
+        ("코스피",   "^KS11",    "15m"),
+        ("코스닥",   "^KQ11",    "15m"),
+        ("다우존스", "^DJI",     "30m"),
+        ("나스닥",   "^IXIC",    "30m"),
+        ("S&P 500",  "^GSPC",    "30m"),
+        ("USD/KRW",  "USDKRW=X", "30m"),
     ]
 
-    for name, symbol in index_symbols:
+    for name, symbol, interval in index_symbols:
         try:
-            price, prev, sparkline = fetch_yahoo_chart(symbol)
+            price, prev, sparkline = fetch_yahoo_chart(symbol, interval)
 
             if prev and prev > 0:
                 change = round(price - prev, 2)
