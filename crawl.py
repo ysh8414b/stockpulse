@@ -492,11 +492,36 @@ def fetch_yahoo_chart(symbol):
             last_val = v
         filtered.append(v)
 
-    # 최대 30포인트로 다운샘플링 (시장별 데이터 밀도 균일화)
+    # 최대 30포인트로 다운샘플링 (LTTB - 차트 형태 보존)
     MAX_POINTS = 30
     if len(filtered) > MAX_POINTS:
-        step = len(filtered) / MAX_POINTS
-        filtered = [filtered[int(i * step)] for i in range(MAX_POINTS)]
+        src = filtered
+        n = len(src)
+        sampled = [src[0]]  # 첫 점 유지
+        bucket_size = (n - 2) / (MAX_POINTS - 2)
+        prev_idx = 0
+        for i in range(1, MAX_POINTS - 1):
+            b_start = int((i - 1) * bucket_size) + 1
+            b_end = int(i * bucket_size) + 1
+            b_end = min(b_end, n)
+            # 다음 버킷 평균
+            nb_start = int(i * bucket_size) + 1
+            nb_end = int((i + 1) * bucket_size) + 1
+            nb_end = min(nb_end, n)
+            avg_next = sum(src[nb_start:nb_end]) / max(1, nb_end - nb_start)
+            # 현재 버킷에서 삼각형 면적 최대인 점 선택
+            best_idx = b_start
+            max_area = -1
+            for j in range(b_start, b_end):
+                area = abs((j - prev_idx) * (avg_next - src[prev_idx])
+                           - (prev_idx - prev_idx) * (src[j] - src[prev_idx]))
+                if area > max_area:
+                    max_area = area
+                    best_idx = j
+            sampled.append(src[best_idx])
+            prev_idx = best_idx
+        sampled.append(src[-1])  # 마지막 점 유지
+        filtered = sampled
 
     return price, prev, filtered
 
