@@ -492,8 +492,8 @@ def fetch_yahoo_chart(symbol, interval="15m"):
             last_val = v
         filtered.append(v)
 
-    # 최대 30포인트로 다운샘플링 (LTTB - 차트 형태 보존)
-    MAX_POINTS = 30
+    # 최대 50포인트로 다운샘플링 (LTTB - 차트 형태 보존)
+    MAX_POINTS = 50
     if len(filtered) > MAX_POINTS:
         src = filtered
         n = len(src)
