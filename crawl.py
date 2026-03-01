@@ -474,26 +474,31 @@ def fetch_yahoo_chart(symbol):
     price = meta.get("regularMarketPrice", 0)
     prev = meta.get("previousClose", 0) or meta.get("chartPreviousClose", 0)
 
-    # 스파크라인용 당일 5분봉 종가 데이터 추출 (동일 가격 3봉 이상 연속 시 제외)
-    sparkline = []
+    # 스파크라인용 당일 15분봉 종가 데이터 추출
     quotes = result.get("indicators", {}).get("quote", [{}])[0]
-    closes = quotes.get("close", [])
+    closes = [round(c, 2) for c in quotes.get("close", []) if c is not None]
+
+    # 동일 가격 3봉 이상 연속 시 제외 (장 마감 후 평탄 구간 제거)
+    filtered = []
     repeat_count = 0
     last_val = None
-    for c in closes:
-        if c is None:
-            continue
-        rounded = round(c, 2)
-        if rounded == last_val:
+    for v in closes:
+        if v == last_val:
             repeat_count += 1
             if repeat_count >= 3:
                 continue
         else:
             repeat_count = 1
-            last_val = rounded
-        sparkline.append(rounded)
+            last_val = v
+        filtered.append(v)
 
-    return price, prev, sparkline
+    # 최대 30포인트로 다운샘플링 (시장별 데이터 밀도 균일화)
+    MAX_POINTS = 30
+    if len(filtered) > MAX_POINTS:
+        step = len(filtered) / MAX_POINTS
+        filtered = [filtered[int(i * step)] for i in range(MAX_POINTS)]
+
+    return price, prev, filtered
 
 
 # ─────────────────────────────────────────
