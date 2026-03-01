@@ -463,23 +463,34 @@ def build_stock_code_map(krx_data):
 # Yahoo Finance (시장 지수 전용)
 # ─────────────────────────────────────────
 def fetch_yahoo_chart(symbol):
-    """Yahoo Finance v8 chart API로 단일 지수/환율 조회 + 스파크라인 데이터"""
+    """Yahoo Finance v8 chart API로 단일 지수/환율 조회 + 당일 스파크라인 데이터"""
     encoded = urllib.parse.quote(symbol)
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded}?interval=1d&range=1mo"
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded}?interval=5m&range=1d"
     resp = requests.get(url, headers=YAHOO_HEADERS, timeout=10)
     data = resp.json()
     result = data["chart"]["result"][0]
     meta = result["meta"]
     price = meta.get("regularMarketPrice", 0)
-    prev = meta.get("chartPreviousClose", 0) or meta.get("previousClose", 0)
+    prev = meta.get("previousClose", 0) or meta.get("chartPreviousClose", 0)
 
-    # 스파크라인용 종가 데이터 추출
+    # 스파크라인용 당일 5분봉 종가 데이터 추출 (동일 가격 3봉 이상 연속 시 제외)
     sparkline = []
     quotes = result.get("indicators", {}).get("quote", [{}])[0]
     closes = quotes.get("close", [])
+    repeat_count = 0
+    last_val = None
     for c in closes:
-        if c is not None:
-            sparkline.append(round(c, 2))
+        if c is None:
+            continue
+        rounded = round(c, 2)
+        if rounded == last_val:
+            repeat_count += 1
+            if repeat_count >= 3:
+                continue
+        else:
+            repeat_count = 1
+            last_val = rounded
+        sparkline.append(rounded)
 
     return price, prev, sparkline
 
