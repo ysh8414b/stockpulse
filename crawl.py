@@ -25,6 +25,7 @@ KRX(한국거래소) API + Yahoo Finance + 네이버 검색 API + Groq AI로 주
 import os
 import re
 import json
+import html
 import urllib.parse
 from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
@@ -465,7 +466,7 @@ def build_stock_code_map(krx_data):
 def fetch_yahoo_chart(symbol):
     """Yahoo Finance v8 chart API로 단일 지수/환율 조회 + 당일 스파크라인 데이터"""
     encoded = urllib.parse.quote(symbol)
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded}?interval=5m&range=1d"
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded}?interval=15m&range=1d"
     resp = requests.get(url, headers=YAHOO_HEADERS, timeout=10)
     data = resp.json()
     result = data["chart"]["result"][0]
@@ -623,7 +624,7 @@ def _search_theme_news_api(query, theme_name=""):
         # 테마명 키워드가 제목에 포함된 뉴스 우선 선택
         theme_keywords = theme_name.replace(" ", "").lower() if theme_name else ""
         for item in items:
-            title = re.sub(r'<[^>]+>', '', item.get("title", "")).strip()
+            title = html.unescape(re.sub(r'<[^>]+>', '', item.get("title", ""))).strip()
             title_lower = title.replace(" ", "").lower()
             if theme_keywords and theme_keywords in title_lower:
                 return title, item.get("link", "")
@@ -631,12 +632,12 @@ def _search_theme_news_api(query, theme_name=""):
         # 매칭 없으면 search_query 핵심 키워드로 재시도
         core_kw = query.replace("주식", "").replace("관련", "").strip().lower()
         for item in items:
-            title = re.sub(r'<[^>]+>', '', item.get("title", "")).strip()
+            title = html.unescape(re.sub(r'<[^>]+>', '', item.get("title", ""))).strip()
             if core_kw and core_kw in title.replace(" ", "").lower():
                 return title, item.get("link", "")
 
         # 그래도 없으면 첫 번째 반환
-        title = re.sub(r'<[^>]+>', '', items[0].get("title", "")).strip()
+        title = html.unescape(re.sub(r'<[^>]+>', '', items[0].get("title", ""))).strip()
         return title, items[0].get("link", "")
     except:
         pass
@@ -1184,12 +1185,12 @@ def crawl_news():
             data = resp.json()
 
             for item in data.get("items", []):
-                title = re.sub(r'<[^>]+>', '', item.get("title", "")).strip()
+                title = html.unescape(re.sub(r'<[^>]+>', '', item.get("title", ""))).strip()
                 if not title or title in seen_titles:
                     continue
                 seen_titles.add(title)
 
-                description = re.sub(r'<[^>]+>', '', item.get("description", "")).strip()
+                description = html.unescape(re.sub(r'<[^>]+>', '', item.get("description", ""))).strip()
 
                 source_name = "뉴스"
                 try:
