@@ -73,7 +73,93 @@ SECTOR_ICONS = {
     "건설":      "🏗️",
 }
 
-# KRX 업종 → 디스플레이 섹터 매핑
+# 네이버 업종 ID → 디스플레이 섹터 매핑
+# (네이버 금융 sise_group_detail.naver?type=upjong&no=XX)
+NAVER_SECTOR_MAP = {
+    # 반도체
+    278: "반도체",   # 반도체와반도체장비
+    269: "반도체",   # 디스플레이장비및부품
+    327: "반도체",   # 디스플레이패널
+    # 바이오
+    286: "바이오",   # 생물공학
+    261: "바이오",   # 제약
+    281: "바이오",   # 건강관리장비와용품
+    262: "바이오",   # 생명과학도구및서비스
+    288: "바이오",   # 건강관리기술
+    316: "바이오",   # 건강관리업체및서비스
+    # 자동차
+    273: "자동차",   # 자동차
+    270: "자동차",   # 자동차부품
+    # IT/플랫폼
+    267: "IT/플랫폼", # IT서비스
+    287: "IT/플랫폼", # 소프트웨어
+    293: "IT/플랫폼", # 컴퓨터와주변기기
+    300: "IT/플랫폼", # 양방향미디어와서비스
+    308: "IT/플랫폼", # 인터넷과카탈로그소매
+    263: "IT/플랫폼", # 게임엔터테인먼트
+    285: "IT/플랫폼", # 방송과엔터테인먼트
+    292: "IT/플랫폼", # 핸드셋
+    294: "IT/플랫폼", # 통신장비
+    336: "IT/플랫폼", # 다각화된통신서비스
+    333: "IT/플랫폼", # 무선통신서비스
+    310: "IT/플랫폼", # 광고
+    338: "IT/플랫폼", # 사무용전자제품
+    314: "IT/플랫폼", # 출판
+    # 금융
+    301: "금융",     # 은행
+    321: "금융",     # 증권
+    330: "금융",     # 생명보험
+    315: "금융",     # 손해보험
+    319: "금융",     # 기타금융
+    337: "금융",     # 카드
+    280: "금융",     # 부동산
+    277: "금융",     # 창업투자
+    # 소비재
+    266: "소비재",   # 화장품
+    268: "소비재",   # 식품
+    309: "소비재",   # 음료
+    275: "소비재",   # 담배
+    274: "소비재",   # 섬유,의류,신발,호화품
+    297: "소비재",   # 가정용품
+    298: "소비재",   # 가정용기기와용품
+    303: "소비재",   # 가구
+    302: "소비재",   # 식품과기본식료품소매
+    264: "소비재",   # 백화점과일반상점
+    328: "소비재",   # 전문소매
+    339: "소비재",   # 다각화된소비자서비스
+    317: "소비재",   # 호텔,레스토랑,레저
+    271: "소비재",   # 레저용장비와제품
+    332: "소비재",   # 문구류
+    # 철강/소재
+    272: "철강/소재", # 화학
+    304: "철강/소재", # 철강
+    322: "철강/소재", # 비철금속
+    318: "철강/소재", # 종이와목재
+    311: "철강/소재", # 포장재
+    289: "철강/소재", # 건축자재
+    320: "철강/소재", # 건축제품
+    # 에너지
+    313: "에너지",   # 석유와가스
+    312: "에너지",   # 가스유틸리티
+    325: "에너지",   # 전기유틸리티
+    295: "에너지",   # 에너지장비및서비스
+    # 건설
+    279: "건설",     # 건설
+    299: "건설",     # 기계
+    291: "건설",     # 조선
+    284: "건설",     # 우주항공과국방
+    283: "건설",     # 전기제품
+    306: "건설",     # 전기장비
+    307: "건설",     # 전자제품
+    282: "건설",     # 전자장비와기기
+    296: "건설",     # 운송인프라
+    329: "건설",     # 도로와철도운송
+    326: "건설",     # 항공화물운송과물류
+    305: "건설",     # 항공사
+    323: "건설",     # 해운사
+}
+
+# KRX 업종 → 디스플레이 섹터 매핑 (KRX fallback용)
 KRX_SECTOR_MAP = {
     # KOSPI 업종
     "전기전자":   "반도체",
@@ -270,11 +356,11 @@ def _fetch_naver_stocks(market_type, page_size=100):
     return all_stocks
 
 
-def fetch_naver_market_data(krx_sector_map=None):
+def fetch_naver_market_data(sector_map=None):
     """네이버 금융 API에서 전종목 시세 데이터 조회 (KRX 대체)"""
     log("📋 네이버 금융 API 전종목 시세 조회 중...")
-    if krx_sector_map is None:
-        krx_sector_map = {}
+    if sector_map is None:
+        sector_map = {}
     all_data = {}
 
     for market_type, market_name in [("KOSPI", "KOSPI"), ("KOSDAQ", "KOSDAQ")]:
@@ -302,22 +388,16 @@ def fetch_naver_market_data(krx_sector_map=None):
             except (ValueError, TypeError):
                 continue
 
-            # 업종 매핑 (KRX 섹터 데이터 활용)
-            krx_sector = krx_sector_map.get(code, "")
+            # 업종 매핑 (네이버 섹터 매핑 활용)
             if code in BATTERY_STOCK_CODES:
                 display_sector = "2차전지"
             else:
-                override = _sub_classify_sector(name, krx_sector)
-                if override:
-                    display_sector = override
-                else:
-                    display_sector = KRX_SECTOR_MAP.get(krx_sector, "")
+                display_sector = sector_map.get(code, "")
 
             all_data[code] = {
                 "code": code,
                 "name": name,
                 "market": market_name,
-                "krx_sector": krx_sector,
                 "display_sector": display_sector,
                 "price": price,
                 "change_pct": change_pct,
@@ -431,7 +511,7 @@ def fetch_krx_market_data():
 # ─────────────────────────────────────────
 # KRX 섹터 매핑 (종목코드 → 업종)
 # ─────────────────────────────────────────
-SECTOR_MAP_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "krx_sector_map.json")
+SECTOR_MAP_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sector_map.json")
 
 # 화학 업종 내 소비재 재분류 키워드 (종목명 기반)
 CONSUMER_GOODS_KEYWORDS = [
@@ -443,8 +523,8 @@ CONSUMER_GOODS_KEYWORDS = [
 ]
 
 
-def fetch_krx_sector_map():
-    """KRX에서 종목코드 → 업종(SECT_TP_NM) 매핑 조회 (일 1회 캐시, 7일 유효)"""
+def fetch_naver_sector_map():
+    """네이버 금융 업종별 종목 페이지에서 종목코드 → 디스플레이 섹터 매핑 구축 (일 1회 캐시, 7일 유효)"""
     # 캐시 확인
     if os.path.exists(SECTOR_MAP_FILE):
         try:
@@ -452,9 +532,8 @@ def fetch_krx_sector_map():
                 cached = json.load(f)
             cached_date = cached.get("date", "")
             if cached_date == TODAY and cached.get("map"):
-                log(f"  📂 KRX 섹터 매핑 캐시 사용 ({len(cached['map'])}개 종목)")
+                log(f"  📂 섹터 매핑 캐시 사용 ({len(cached['map'])}개 종목)")
                 return cached["map"]
-            # 7일 이내 캐시는 fallback으로 보관
             days_old = (datetime.now() - datetime.strptime(cached_date, "%Y-%m-%d")).days if cached_date else 999
             if days_old <= 7 and cached.get("map"):
                 stale_cache = cached["map"]
@@ -465,40 +544,39 @@ def fetch_krx_sector_map():
     else:
         stale_cache = None
 
-    log("  🏗️ KRX 섹터 매핑 조회 중...")
-    sector_map = {}
+    log("  🏗️ 네이버 업종별 섹터 매핑 조회 중...")
+    sector_map = {}  # code → display_sector
 
-    for days_back in range(5):
-        dt = datetime.now() - timedelta(days=days_back)
-        if dt.weekday() >= 5:
+    for naver_id, display_sector in NAVER_SECTOR_MAP.items():
+        try:
+            resp = requests.get(
+                f"https://finance.naver.com/sise/sise_group_detail.naver?type=upjong&no={naver_id}",
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+                timeout=10,
+            )
+            html = resp.content.decode("euc-kr", errors="replace")
+            codes = re.findall(r'main\.naver\?code=(\d{6})', html)
+            for code in codes:
+                if code not in sector_map:
+                    sector_map[code] = display_sector
+        except Exception as e:
+            log(f"  ⚠️ 네이버 업종 {naver_id} 조회 실패: {e}")
             continue
-        date_str = dt.strftime("%Y%m%d")
-
-        for mkt_id, mkt_name in [("STK", "KOSPI"), ("KSQ", "KOSDAQ")]:
-            items = _fetch_krx_for_date(date_str, mkt_id, mkt_name)
-            for item in items:
-                code = item.get("ISU_SRT_CD", "").strip()
-                sect = item.get("SECT_TP_NM", "").strip()
-                if code and len(code) == 6 and code.isdigit() and sect:
-                    sector_map[code] = sect
-            if items:
-                log(f"  ✅ KRX 섹터 {mkt_name} ({date_str}): {len(items)}개")
-
-        if sector_map:
-            break
 
     if not sector_map:
         if stale_cache:
-            log(f"  ⚠️ KRX 섹터 조회 실패 - 이전 캐시 사용 ({len(stale_cache)}개)")
+            log(f"  ⚠️ 섹터 조회 실패 - 이전 캐시 사용 ({len(stale_cache)}개)")
             return stale_cache
-        log("  ❌ KRX 섹터 매핑 조회 실패")
+        log("  ❌ 섹터 매핑 조회 실패")
         return {}
+
+    log(f"  ✅ 네이버 섹터 매핑 완료: {len(sector_map)}개 종목")
 
     # 캐시 저장
     try:
         with open(SECTOR_MAP_FILE, "w", encoding="utf-8") as f:
             json.dump({"date": TODAY, "map": sector_map}, f, ensure_ascii=False)
-        log(f"  💾 KRX 섹터 매핑 저장: {len(sector_map)}개 종목")
+        log(f"  💾 섹터 매핑 캐시 저장")
     except Exception:
         pass
 
@@ -1690,12 +1768,12 @@ def main():
         log("  export SUPABASE_KEY='your-service-role-key'")
         return
 
-    # 1. KRX 섹터 매핑 조회 (일 1회 캐시)
-    krx_sector_map = fetch_krx_sector_map()
-    log(f"  📋 KRX 섹터 매핑: {len(krx_sector_map)}개 종목")
+    # 1. 섹터 매핑 조회 (네이버 업종별 종목, 일 1회 캐시)
+    sector_map = fetch_naver_sector_map()
+    log(f"  📋 섹터 매핑: {len(sector_map)}개 종목")
 
     # 2. 전종목 시세 조회 (네이버 금융 → KRX fallback)
-    krx_data = fetch_naver_market_data(krx_sector_map)
+    krx_data = fetch_naver_market_data(sector_map)
     if not krx_data:
         log("  ⚠️ 네이버 금융 실패 - KRX fallback 시도...")
         krx_data = fetch_krx_market_data()
