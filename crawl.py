@@ -782,14 +782,19 @@ def _calc_time_ago(pub_date_str):
         return "오늘"
 
 
-def _is_similar_title(new_title, existing_titles, threshold=0.5):
-    """제목 유사도 체크 — 단어 겹침이 threshold 이상이면 유사"""
-    new_words = set(new_title.replace(" ", ""))
+def _is_similar_title(new_title, existing_titles, threshold=0.65):
+    """제목 유사도 체크 — 2글자 단위(bigram) 겹침이 threshold 이상이면 유사"""
+    def _bigrams(s):
+        s = re.sub(r'[^\w]', '', s)
+        return set(s[i:i+2] for i in range(len(s)-1)) if len(s) >= 2 else set()
+    new_bg = _bigrams(new_title)
+    if not new_bg:
+        return False
     for t in existing_titles:
-        old_words = set(t.replace(" ", ""))
-        if not new_words or not old_words:
+        old_bg = _bigrams(t)
+        if not old_bg:
             continue
-        overlap = len(new_words & old_words) / min(len(new_words), len(old_words))
+        overlap = len(new_bg & old_bg) / min(len(new_bg), len(old_bg))
         if overlap > threshold:
             return True
     return False
@@ -866,8 +871,8 @@ def _search_theme_news_api(query, theme_name=""):
         first_title = news_list[0]["title"] if news_list else ""
         first_url = news_list[0]["url"] if news_list else ""
         return first_title, first_url, json.dumps(news_list, ensure_ascii=False)
-    except:
-        pass
+    except Exception as e:
+        log(f"  ⚠️ 테마뉴스 검색 실패 ({query}): {e}")
     return "", "", "[]"
 
 
