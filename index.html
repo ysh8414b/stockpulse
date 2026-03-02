@@ -152,10 +152,14 @@ function TabOverview({idx,stk,nws,sec,loading}){
 }
 
 // ═══ TAB: STOCKS ═══
-function TabStocks({stk,loading}){
+function TabStocks({stk,nws,loading}){
   const[q,setQ]=useState("");const[hov,setHov]=useState(null);const[exp,setExp]=useState(null);
   if(loading)return <Loader/>;if(!stk.length)return <Empty msg="이슈 종목 데이터 없음"/>;
   const f=q?stk.filter(s=>s.name.includes(q)||s.code.includes(q)||(s.tags||[]).some(t=>t.includes(q))):stk;
+  const getRelatedNews=(name)=>{
+    if(!nws||!nws.length||!name||name.length<2)return[];
+    return nws.filter(n=>n.title&&n.title.includes(name)).slice(0,5);
+  };
   return <div className="fade-up">
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"18px",flexWrap:"wrap",gap:"12px"}}>
       <h2 style={{fontSize:"17px",fontWeight:700}}><span style={{color:"#f59e0b"}}>◆</span> 오늘의 이슈 종목 <span style={{fontSize:"12px",color:"var(--dim)",fontWeight:400}}>{f.length}종목</span></h2>
@@ -163,18 +167,26 @@ function TabStocks({stk,loading}){
     </div>
     <Box style={{overflow:"hidden"}} hover={false}>
       <div className="stock-row" style={{display:"grid",gridTemplateColumns:"44px 1.2fr 110px 90px 120px 1.5fr 100px",padding:"13px 20px",background:"var(--row-head)",borderBottom:"1px solid var(--div3)",fontSize:"11px",color:"var(--muted)",fontWeight:600}}><span>#</span><span>종목</span><span style={{textAlign:"right"}}>현재가</span><span style={{textAlign:"right"}}>등락률</span><span style={{textAlign:"right"}}>거래대금</span><span style={{paddingLeft:"16px"}}>이슈 사유</span><span>테마</span></div>
-      {f.map((s,i)=><React.Fragment key={s.code||i}>
-        <div onClick={()=>setExp(exp===s.code?null:s.code)} onMouseEnter={()=>setHov(s.code)} onMouseLeave={()=>setHov(null)} className="stock-row" style={{display:"grid",gridTemplateColumns:"44px 1.2fr 110px 90px 120px 1.5fr 100px",padding:"15px 20px",borderBottom:"1px solid var(--div)",background:hov===s.code?"var(--hover)":"transparent",cursor:"pointer",alignItems:"center",transition:"background .15s"}}>
+      {f.map((s,i)=>{const related=exp===s.code?getRelatedNews(s.name):[];return <React.Fragment key={s.code||i}>
+        <div onClick={()=>setExp(exp===s.code?null:s.code)} onMouseEnter={()=>setHov(s.code)} onMouseLeave={()=>setHov(null)} className="stock-row" style={{display:"grid",gridTemplateColumns:"44px 1.2fr 110px 90px 120px 1.5fr 100px",padding:"15px 20px",borderBottom:exp===s.code?"none":"1px solid var(--div)",background:hov===s.code?"var(--hover)":"transparent",cursor:"pointer",alignItems:"center",transition:"background .15s"}}>
           <span style={{width:28,height:28,borderRadius:"7px",fontSize:"11px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",background:s.rank<=3?"rgba(245,158,11,0.14)":"var(--badge-bg2)",color:s.rank<=3?"#f59e0b":"var(--muted)"}}>{s.rank}</span>
           <div><span style={{fontWeight:600,fontSize:"14px"}}>{s.name}</span><span style={{color:"var(--dim)",fontSize:"11px",marginLeft:"6px"}}>{s.code}</span></div>
           <span style={{textAlign:"right",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>₩{s.price}</span>
           <span style={{textAlign:"right",fontWeight:700,fontSize:"13px",color:s.trend==="up"?"#22c55e":(s.trend==="down"?"#ef4444":"#6b7280")}}>{s.trend==="up"?"▲":(s.trend==="down"?"▼":"─")} {s.change_pct}</span>
           <span style={{textAlign:"right",color:"var(--muted)",fontSize:"12px",fontVariantNumeric:"tabular-nums"}}>{s.volume}</span>
           <span style={{paddingLeft:"16px",color:"var(--text-sub)",fontSize:"12px",lineHeight:1.4}}>{s.reason}</span>
-          <div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>{(s.tags||[]).map(t=><Tag key={t}>{t}</Tag>)}</div>
+          <div style={{display:"flex",gap:"4px",flexWrap:"wrap",alignItems:"center"}}>{(s.tags||[]).map(t=><Tag key={t}>{t}</Tag>)}<span style={{color:"var(--dimmer)",fontSize:"14px",marginLeft:"auto",transform:exp===s.code?"rotate(90deg)":"none",transition:"transform .2s"}}>›</span></div>
         </div>
-        {exp===s.code&&<div style={{padding:"16px 20px 16px 76px",background:"var(--hover2)",borderBottom:"1px solid var(--div3)",animation:"fadeUp .3s ease both"}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"16px",fontSize:"12px"}}><div><div style={{color:"var(--muted)",marginBottom:"4px"}}>이슈 상세</div><div style={{color:"var(--text-sub)",lineHeight:1.6}}>{s.reason}</div></div><div><div style={{color:"var(--muted)",marginBottom:"4px"}}>테마</div><div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>{(s.tags||[]).map(t=><Tag key={t} color="cyan">{t}</Tag>)}</div></div><div><div style={{color:"var(--muted)",marginBottom:"4px"}}>추세</div><Sparkline trend={s.trend} w={100} h={28}/></div></div></div>}
-      </React.Fragment>)}
+        {exp===s.code&&<div style={{padding:"18px 20px 18px 76px",background:"var(--hover2)",borderBottom:"1px solid var(--div3)",animation:"fadeUp .3s ease both"}}>
+          <div style={{display:"flex",gap:"24px",marginBottom:related.length?"16px":"0"}}>
+            <div style={{flex:1}}><div style={{color:"var(--muted)",fontSize:"11px",fontWeight:600,marginBottom:"8px"}}>📌 이슈 사유</div><div style={{color:"var(--text-sub)",fontSize:"13px",lineHeight:1.7}}>{s.reason.split(" · ").map((r,ri)=><span key={ri} style={{display:"inline-block",padding:"4px 10px",background:"rgba(245,158,11,0.08)",border:"1px solid rgba(245,158,11,0.15)",borderRadius:"6px",fontSize:"12px",marginRight:"6px",marginBottom:"4px",color:"#f59e0b",fontWeight:500}}>{r}</span>)}</div></div>
+            <div><div style={{color:"var(--muted)",fontSize:"11px",fontWeight:600,marginBottom:"8px"}}>🏷️ 테마</div><div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>{(s.tags||[]).map(t=><Tag key={t} color="cyan">{t}</Tag>)}</div></div>
+            <div style={{textAlign:"right"}}><div style={{color:"var(--muted)",fontSize:"11px",fontWeight:600,marginBottom:"8px"}}>💰 거래대금</div><div style={{fontSize:"14px",fontWeight:700,color:"var(--text)"}}>{s.volume}</div></div>
+          </div>
+          {related.length>0&&<div><div style={{color:"var(--muted)",fontSize:"11px",fontWeight:600,marginBottom:"8px"}}>📰 관련 뉴스</div><div style={{display:"grid",gap:"6px"}}>{related.map((n,ni)=><a key={ni} href={n.link||n.url||"#"} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{display:"flex",alignItems:"center",gap:"8px",padding:"8px 12px",background:"var(--card-bg)",border:"1px solid var(--div2)",borderRadius:"8px",textDecoration:"none",color:"inherit",transition:"all .2s"}} onMouseEnter={e=>{e.currentTarget.style.borderColor="rgba(59,130,246,0.3)";e.currentTarget.style.background="rgba(59,130,246,0.04)"}} onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--div2)";e.currentTarget.style.background="var(--card-bg)"}}><span style={{color:"#3b82f6",fontSize:"11px",flexShrink:0}}>▸</span><span style={{fontSize:"12px",lineHeight:1.5,color:"var(--text-sub)",flex:1}}>{n.title}</span><span style={{fontSize:"10px",color:"var(--dim)",flexShrink:0,whiteSpace:"nowrap"}}>{n.source} · {n.time_ago}</span></a>)}</div></div>}
+          {related.length===0&&<div style={{display:"flex",alignItems:"center",gap:"6px",padding:"10px 12px",background:"var(--card-bg)",border:"1px solid var(--div2)",borderRadius:"8px"}}><span style={{fontSize:"11px",color:"var(--dim)"}}>📰</span><span style={{fontSize:"12px",color:"var(--dim)"}}>관련 뉴스가 없습니다</span><a href={`https://finance.naver.com/item/news.naver?code=${s.code}`} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{fontSize:"11px",color:"#3b82f6",textDecoration:"none",marginLeft:"auto"}}>네이버 뉴스 보기 →</a></div>}
+        </div>}
+      </React.Fragment>})}
     </Box>
   </div>;
 }
@@ -350,7 +362,7 @@ function App(){
 
     <main className="main-wrap" style={{maxWidth:1440,margin:"0 auto",padding:"22px 40px 60px"}}>
       {tab==="overview"&&<TabOverview idx={idx} stk={stk} nws={nws} sec={sec} loading={loading}/>}
-      {tab==="issues"&&<TabStocks stk={stk} loading={loading}/>}
+      {tab==="issues"&&<TabStocks stk={stk} nws={nws} loading={loading}/>}
       {tab==="themes"&&<TabThemes thm={thm} loading={loading}/>}
       {tab==="news"&&<TabNews nws={nws} loading={loading}/>}
       {tab==="ai"&&<TabAI aiSum={aiSum} loading={loading}/>}

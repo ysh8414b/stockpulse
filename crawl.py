@@ -1389,27 +1389,32 @@ def generate_ai_summary(indices, stocks, sectors, themes, news):
         log("  ⚠️ GROQ_API_KEY 미설정 - AI 요약 건너뜀")
         return None
 
-    # 컨텍스트 구성
-    idx_text = ", ".join(
-        f"{m['name']} {m['value']}({m['change_pct']})" for m in (indices or [])
+    # 컨텍스트 구성 (풍부한 데이터 제공)
+    idx_text = "\n".join(
+        f"- {m['name']}: {m['value']} ({m['change_pct']})" for m in (indices or [])
     )
-    stk_text = ", ".join(
-        f"{s['name']}({s['change_pct']})" for s in (stocks or [])[:5]
+    stk_text = "\n".join(
+        f"- {s['name']}({s['code']}): {s['price']}원, {s['change_pct']}, 거래대금 {s.get('volume','N/A')}, 사유: {s.get('reason','N/A')}"
+        for s in (stocks or [])[:10]
     )
-    sec_text = ", ".join(
-        f"{s['name']}({s['change_pct']})" for s in (sectors or [])
-    )
-    thm_text = ", ".join(
-        f"{t['name']}({t['change_pct']})" for t in (themes or [])[:5]
+    # 상승/하락 섹터 분리
+    up_sectors = [s for s in (sectors or []) if s.get("trend") == "up"]
+    down_sectors = [s for s in (sectors or []) if s.get("trend") == "down"]
+    sec_text = "상승 섹터: " + ", ".join(f"{s['name']}({s['change_pct']})" for s in up_sectors)
+    sec_text += "\n하락 섹터: " + ", ".join(f"{s['name']}({s['change_pct']})" for s in down_sectors)
+    thm_text = "\n".join(
+        f"- {t['name']}: {t['change_pct']}, 대장주: {t.get('leading_stocks','N/A')}"
+        for t in (themes or [])[:5]
     )
     news_text = "\n".join(
-        f"- {n['title']}" for n in (news or [])[:10]
+        f"- {n['title']} ({n.get('source','')}, {n.get('time_ago','')})"
+        for n in (news or [])[:15]
     )
 
     from datetime import datetime
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    prompt = f"""너는 한국 증시 전문 브리핑 앵커다.
+    prompt = f"""너는 한국 증시 전문 애널리스트이자 시장 브리핑 앵커다. 데이터를 분석하여 인사이트 있는 시장 브리핑을 작성하라.
 
 ## 기준 시각: {now_str}
 
@@ -1418,7 +1423,7 @@ def generate_ai_summary(indices, stocks, sectors, themes, news):
 ### 주요 지수:
 {idx_text}
 
-### 거래대금 상위 종목:
+### 이슈 종목 (거래대금 상위 + 복합 점수 기반):
 {stk_text}
 
 ### 섹터 동향:
@@ -1427,22 +1432,38 @@ def generate_ai_summary(indices, stocks, sectors, themes, news):
 ### 인기 테마:
 {thm_text}
 
-### 주요 뉴스:
+### 주요 뉴스 헤드라인:
 {news_text}
 
 ## 작성 규칙:
-1. 위 데이터만 사용하여 객관적 시장 브리핑 작성
-2. 투자 추천/조언 절대 금지
-3. 반드시 한글과 숫자만 사용 — 한자(漢字), 일본어, 중국어 절대 사용 금지
-4. 아래 4개 섹션으로 구분하여 작성:
-   [시장 요약] 코스피·코스닥 등 주요 지수 수치와 등락 요약 (1~2문장, 간결하게)
-   [거래 동향] 거래대금 상위 종목과 특징적 움직임 (2~3문장)
-   [주요 뉴스] 시장에 영향을 주는 핵심 뉴스 요약 (2~3문장)
-   [AI 총평] 오늘 시장을 한 문장으로 총평 (예: "외국인 매도세 속 반도체 업종 약세가 두드러진 하루")
-5. 총 300~500자 분량으로 작성
-6. 간결하고 전문적인 뉴스 앵커 톤
-7. 숫자는 데이터 그대로 인용
-8. 각 섹션 제목은 대괄호로 표시 (예: [시장 요약])
+1. 위 데이터를 종합 분석하여 인사이트 있는 시장 브리핑 작성
+2. 단순 나열이 아닌, 원인→결과 연결 분석 (예: "뉴스 A로 인해 B 섹터가 강세")
+3. 투자 추천/조언 절대 금지 (특정 종목 매수/매도 권유 금지)
+4. 반드시 한글과 숫자만 사용 — 한자(漢字), 일본어, 중국어 절대 사용 금지
+5. 아래 4개 섹션으로 구분하여 작성:
+
+   [시장 요약] (2~3문장)
+   - 코스피·코스닥 등 주요 지수 흐름과 그 배경
+   - 글로벌 증시(다우·나스닥·S&P500)와의 연관성 분석
+
+   [주요 이슈] (3~5문장)
+   - 오늘 시장을 움직이는 핵심 이슈 (뉴스 기반)
+   - 거래대금 상위 종목들의 급등/급락 원인 연결
+   - 어떤 테마/섹터가 왜 강세/약세인지 원인 분석
+
+   [섹터·종목 동향] (3~4문장)
+   - 상승/하락 섹터와 대표 종목
+   - 인기 테마의 흐름과 대장주 움직임
+   - 특이 종목 (상한가/하한가, 거래 급증 등)
+
+   [AI 총평] (2~3문장)
+   - 오늘 시장의 핵심 키워드와 방향성 요약
+   - 내일 주목할 포인트 (데이터 기반 객관적 전망만)
+
+6. 총 700~1000자 분량으로 충분히 자세하게 작성
+7. 전문적이면서도 읽기 쉬운 톤
+8. 숫자는 데이터 그대로 정확히 인용
+9. 각 섹션 제목은 대괄호로 표시
 
 ## 출력 형식 (JSON):
 {{
@@ -1462,10 +1483,11 @@ market_mood 판단: 코스피·코스닥 모두 상승이면 bullish, 모두 하
             json={
                 "model": "llama-3.3-70b-versatile",
                 "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3,
+                "temperature": 0.4,
+                "max_tokens": 2048,
                 "response_format": {"type": "json_object"},
             },
-            timeout=30,
+            timeout=60,
         )
 
         if resp.status_code != 200:
