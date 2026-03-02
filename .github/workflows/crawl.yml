@@ -26,12 +26,13 @@ jobs:
       - name: 패키지 설치
         run: pip install requests
 
-      - name: 캐시 복원 (테마 매핑 DB + AI 테마 캐시)
+      - name: 캐시 복원 (테마 매핑 DB + AI 테마 캐시 + KRX 섹터 매핑)
         uses: actions/cache@v4
         with:
           path: |
             theme_stock_map.json
             ai_themes_cache.json
+            krx_sector_map.json
           key: theme-cache-${{ hashFiles('crawl.py') }}-${{ github.run_id }}
           restore-keys: |
             theme-cache-${{ hashFiles('crawl.py') }}-
