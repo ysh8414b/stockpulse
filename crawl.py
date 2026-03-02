@@ -1332,6 +1332,103 @@ def detect_themes_with_ai(news_titles, theme_map=None):
         return None
 
 
+def generate_ai_summary(indices, stocks, sectors, themes, news):
+    """Groq AI로 시장 브리핑 생성 (매 크롤링 시 1회)"""
+    if not GROQ_API_KEY:
+        log("  ⚠️ GROQ_API_KEY 미설정 - AI 요약 건너뜀")
+        return None
+
+    # 컨텍스트 구성
+    idx_text = ", ".join(
+        f"{m['name']} {m['value']}({m['change_pct']})" for m in (indices or [])
+    )
+    stk_text = ", ".join(
+        f"{s['name']}({s['change_pct']})" for s in (stocks or [])[:5]
+    )
+    sec_text = ", ".join(
+        f"{s['name']}({s['change_pct']})" for s in (sectors or [])
+    )
+    thm_text = ", ".join(
+        f"{t['name']}({t['change_pct']})" for t in (themes or [])[:5]
+    )
+    news_text = "\n".join(
+        f"- {n['title']}" for n in (news or [])[:10]
+    )
+
+    prompt = f"""너는 한국 증시 전문 브리핑 앵커다.
+
+## 오늘의 시장 데이터:
+
+### 주요 지수:
+{idx_text}
+
+### 거래대금 상위 종목:
+{stk_text}
+
+### 섹터 동향:
+{sec_text}
+
+### 인기 테마:
+{thm_text}
+
+### 주요 뉴스:
+{news_text}
+
+## 작성 규칙:
+1. 위 데이터만 사용하여 객관적 시장 브리핑 작성
+2. 투자 추천/조언 절대 금지
+3. 3개 섹션으로 구분: [시장 요약] [주요 이슈] [섹터·테마 동향]
+4. 각 섹션 2~3문장, 총 200자 내외
+5. 간결하고 전문적인 뉴스 앵커 톤
+6. 숫자는 데이터 그대로 인용
+
+## 출력 형식 (JSON):
+{{
+  "summary": "시장 브리핑 전문 (섹션별 줄바꿈 포함)",
+  "market_mood": "bullish 또는 bearish 또는 neutral"
+}}
+
+market_mood 판단: 코스피·코스닥 모두 상승이면 bullish, 모두 하락이면 bearish, 혼조면 neutral"""
+
+    try:
+        resp = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "llama-3.3-70b-versatile",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=30,
+        )
+
+        if resp.status_code != 200:
+            log(f"  ⚠️ Groq AI 요약 오류: {resp.status_code} - {resp.text[:200]}")
+            return None
+
+        result = resp.json()
+        content = result["choices"][0]["message"]["content"]
+        parsed = json.loads(content)
+
+        summary = parsed.get("summary", "")
+        mood = parsed.get("market_mood", "neutral")
+        if mood not in ("bullish", "bearish", "neutral"):
+            mood = "neutral"
+
+        if summary:
+            log(f"  🤖 AI 시장 브리핑 생성 완료 (mood: {mood}, {len(summary)}자)")
+            return {"summary": summary, "market_mood": mood, "date": TODAY}
+        return None
+
+    except Exception as e:
+        log(f"  ⚠️ AI 요약 생성 실패: {e}")
+        return None
+
+
 # ─────────────────────────────────────────
 # 1. 뉴스 수집 (네이버 검색 API)
 # ─────────────────────────────────────────
@@ -1808,6 +1905,9 @@ def main():
     news_titles = [n["title"] for n in news]
     themes = crawl_themes(krx_data, news_titles, theme_map)
 
+    # 11. AI 시장 브리핑 (Groq)
+    ai_summary = generate_ai_summary(indices, stocks, sectors, themes, news)
+
     # ─── Supabase에 저장 ───
     log("")
     log("💾 Supabase에 데이터 저장 중...")
@@ -1818,6 +1918,7 @@ def main():
     clear_today_data("market_index")
     clear_today_data("sectors")
     clear_today_data("themes")
+    clear_today_data("ai_summary")
     supabase_request("DELETE", "sector_stocks", params={"id": "gt.0"})
 
     # 뉴스 저장
@@ -1849,6 +1950,11 @@ def main():
     if themes:
         result = supabase_request("POST", "themes", data=themes)
         log(f"  🔥 테마 {len(themes)}개 저장 {'✅' if result else '❌'}")
+
+    # AI 요약 저장
+    if ai_summary:
+        result = supabase_request("POST", "ai_summary", data=[ai_summary])
+        log(f"  🤖 AI 요약 저장 {'✅' if result else '❌'}")
 
     log("")
     log("=" * 50)

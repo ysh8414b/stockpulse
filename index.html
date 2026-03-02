@@ -107,17 +107,28 @@ function Box({children,style:s={},hover=true,onClick}){const[h,setH]=useState(fa
 function Loader(){return <div style={{display:"flex",justifyContent:"center",alignItems:"center",padding:"60px",gap:"12px"}}><div style={{width:20,height:20,border:"2px solid rgba(6,182,212,0.2)",borderTop:"2px solid #06b6d4",borderRadius:"50%",animation:"spin .8s linear infinite"}}/><span style={{color:"var(--muted)",fontSize:"13px"}}>데이터 로딩 중...</span></div>;}
 function Empty({msg}){return <div style={{textAlign:"center",padding:"60px 20px",color:"var(--dim)"}}><div style={{fontSize:"36px",marginBottom:"12px"}}>📭</div><div style={{fontSize:"14px",lineHeight:1.6}}>{msg}</div><div style={{fontSize:"12px",marginTop:"8px",color:"var(--dimmer)"}}>GitHub Actions에서 크롤링을 실행하면 데이터가 채워집니다</div></div>;}
 
+// ═══ NEWS ROW (호버 + 링크) ═══
+function NewsRow({n,isLast}){
+  const[h,setH]=useState(false);
+  const inner=<div onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)} style={{padding:"13px 4px",borderBottom:isLast?"none":"1px solid var(--div)",background:h?"rgba(59,130,246,0.06)":"transparent",borderRadius:h?"6px":"0",transition:"all .2s ease",cursor:n.url?"pointer":"default"}}>
+    <div style={{display:"flex",gap:"10px",alignItems:"flex-start"}}><Dot s={n.sentiment} size={7}/><div style={{marginTop:"-2px"}}><div style={{fontSize:h?"14px":"13px",fontWeight:h?600:500,lineHeight:1.55,marginBottom:"5px",color:h?"#60a5fa":"inherit",transition:"all .2s ease"}}>{n.title}</div>
+    <div style={{display:"flex",gap:"8px",alignItems:"center",color:"var(--muted)",fontSize:"11px"}}><span style={{fontWeight:500}}>{n.source}</span><span style={{opacity:.4}}>·</span><span>{n.time_ago}</span><Tag color="blue">{n.category}</Tag></div></div></div>
+  </div>;
+  if(n.url)return <a href={n.url} target="_blank" rel="noopener noreferrer" style={{textDecoration:"none",color:"inherit",display:"block"}}>{inner}</a>;
+  return inner;
+}
+
 // ═══ TAB: OVERVIEW ═══
 function TabOverview({idx,stk,nws,sec,loading}){
   const[expSec,setExpSec]=useState(null);
   if(loading)return <Loader/>;
   return <div>
     <div className="grid-index" style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(idx.length||3,6)},1fr)`,gap:"10px",marginBottom:"28px"}}>
-      {idx.map((m,i)=><Box key={m.name} style={{padding:"18px"}}><div className={`fade-up fade-up-d${Math.min(i+1,4)}`}>
+      {idx.map((m,i)=>{const urls={"코스피":"https://m.stock.naver.com/domestic/index/KOSPI/total","코스닥":"https://m.stock.naver.com/domestic/index/KOSDAQ/total","다우존스":"https://m.stock.naver.com/worldstock/index/.DJI/total","나스닥":"https://m.stock.naver.com/worldstock/index/.IXIC/total","S&P 500":"https://m.stock.naver.com/worldstock/index/.SPX/total","USD/KRW":"https://m.stock.naver.com/marketindex/exchange/FX_USDKRW"};const url=urls[m.name];return <a key={m.name} href={url||"#"} target="_blank" rel="noopener noreferrer" style={{textDecoration:"none",color:"inherit"}}><Box style={{padding:"18px"}}><div className={`fade-up fade-up-d${Math.min(i+1,4)}`}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"10px"}}><span style={{color:"var(--muted)",fontSize:"11px",fontWeight:500}}>{m.name}</span><Sparkline trend={m.trend} data={(m.sparkline_data&&m.sparkline_data.v)||m.sparkline_data} w={44} h={20}/></div>
         <div style={{fontSize:"18px",fontWeight:700,marginBottom:"2px",fontVariantNumeric:"tabular-nums"}}>{m.value}</div>
         <div style={{display:"flex",gap:"8px",alignItems:"baseline"}}><span style={{color:m.trend==="up"?"#22c55e":(m.trend==="down"?"#ef4444":"#6b7280"),fontSize:"13px",fontWeight:600}}>{m.trend==="up"?"▲":(m.trend==="down"?"▼":"─")} {m.change_pct}</span><span style={{color:"var(--dim)",fontSize:"11px"}}>{m.change_amount}</span></div>
-      </div></Box>)}
+      </div></Box></a>})}
     </div>
     <div className="grid-2col" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"16px",marginBottom:"16px"}}>
       <Box style={{padding:"22px 24px"}} hover={false}><div className="fade-up fade-up-d2">
@@ -130,10 +141,7 @@ function TabOverview({idx,stk,nws,sec,loading}){
       </div></Box>
       <Box style={{padding:"22px 24px"}} hover={false}><div className="fade-up fade-up-d3">
         <h3 style={{fontSize:"15px",fontWeight:700,marginBottom:"18px",display:"flex",alignItems:"center",gap:"8px"}}><span style={{width:24,height:24,borderRadius:"6px",display:"inline-flex",alignItems:"center",justifyContent:"center",background:"rgba(59,130,246,0.12)",color:"#3b82f6",fontSize:"11px"}}>◇</span>최신 주요 뉴스</h3>
-        {nws.length===0?<Empty msg="뉴스 데이터 없음"/>:nws.slice(0,5).map((n,i)=><div key={n.id||i} style={{padding:"13px 0",borderBottom:i<4?"1px solid var(--div)":"none"}}>
-          <div style={{display:"flex",gap:"10px",alignItems:"flex-start"}}><Dot s={n.sentiment} size={7}/><div style={{marginTop:"-2px"}}><div style={{fontSize:"13px",fontWeight:500,lineHeight:1.55,marginBottom:"5px"}}>{n.title}</div>
-          <div style={{display:"flex",gap:"8px",alignItems:"center",color:"var(--muted)",fontSize:"11px"}}><span style={{fontWeight:500}}>{n.source}</span><span style={{opacity:.4}}>·</span><span>{n.time_ago}</span><Tag color="blue">{n.category}</Tag></div></div></div>
-        </div>)}
+        {nws.length===0?<Empty msg="뉴스 데이터 없음"/>:nws.slice(0,5).map((n,i)=><NewsRow key={n.id||i} n={n} isLast={i===4||i===nws.slice(0,5).length-1}/>)}
       </div></Box>
     </div>
     {sec.length>0&&<Box style={{padding:"22px 24px"}} hover={false}><div className="fade-up fade-up-d4">
@@ -212,18 +220,6 @@ function SectorStockList({sectorName}){
   if(!stocks.length)return <div style={{padding:"12px 0",color:"var(--dim)",fontSize:"12px"}}>종목 데이터 없음</div>;
   return <div style={{marginTop:"12px",animation:"fadeUp .3s ease both"}}>{stocks.map((st,i)=><SectorStockRow key={st.code||i} st={st} i={i} isLast={i===stocks.length-1}/>)}</div>;
 }
-function TabSectors({sec,loading}){
-  const[expSec,setExpSec]=useState(null);
-  if(loading)return <Loader/>;if(!sec.length)return <Empty msg="섹터 데이터 없음"/>;
-  return <div className="fade-up"><h2 style={{fontSize:"17px",fontWeight:700,marginBottom:"18px"}}><span style={{color:"#8b5cf6"}}>▣</span> 섹터별 분석</h2>
-    <div className="grid-2col" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px"}}>{sec.map(s=>{const u=s.trend==="up";const f=s.trend==="flat";const isExp=expSec===s.name;return <Box key={s.name} style={{padding:"22px",cursor:"pointer"}} onClick={()=>setExpSec(isExp?null:s.name)}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"14px"}}><div style={{display:"flex",gap:"12px",alignItems:"center"}}><span style={{width:44,height:44,borderRadius:"11px",fontSize:"22px",display:"flex",alignItems:"center",justifyContent:"center",background:u?"rgba(34,197,94,0.08)":(f?"rgba(107,114,128,0.08)":"rgba(239,68,68,0.08)")}}>{s.icon}</span><div><div style={{fontWeight:700,fontSize:"15px"}}>{s.name}</div><div style={{color:"var(--muted)",fontSize:"11px",marginTop:"2px"}}>{s.stock_count}개 종목 <span style={{color:"#8b5cf6",fontSize:"10px"}}>{isExp?"▲ 접기":"▼ 종목보기"}</span></div></div></div><div style={{fontSize:"22px",fontWeight:800,color:u?"#22c55e":(f?"#6b7280":"#ef4444")}}>{s.change_pct}</div></div>
-      <MiniBar trend={s.trend}/><div style={{display:"flex",justifyContent:"space-between",marginTop:"8px",fontSize:"10px",color:"var(--dim)"}}><span>5일 전</span><span>오늘</span></div>
-      {isExp&&<SectorStockList sectorName={s.name}/>}
-    </Box>})}</div>
-  </div>;
-}
-
 // ═══ TAB: THEMES ═══
 function TabThemes({thm,loading}){
   if(loading)return <Loader/>;if(!thm.length)return <Empty msg="테마 데이터 없음"/>;
@@ -263,24 +259,29 @@ function TabThemes({thm,loading}){
 }
 
 // ═══ TAB: AI ═══
-function TabAI({stk,nws,sec}){
-  const[q,setQ]=useState("");const[res,setRes]=useState("");const[ld,setLd]=useState(false);
-  const go=async()=>{if(!q.trim()||ld)return;setLd(true);setRes("");try{
-    const ctx=`종목:${stk.map(s=>`${s.name}(${s.change_pct},${s.reason})`).join(",")}.뉴스:${nws.map(n=>n.title).join(",")}.섹터:${sec.map(s=>`${s.name}(${s.change_pct})`).join(",")}`;
-    const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,system:`한국 주식 시장 분석 AI. 투자 추천/조언 절대 금지. 객관적 데이터만 전달. 마지막에 "※ 본 분석은 정보 제공 목적이며 투자 권유가 아닙니다." 포함. 데이터:${ctx}`,messages:[{role:"user",content:q}]})});
-    const d=await r.json();setRes(d.content?.map(c=>c.text||"").join("\n")||"응답 오류");}catch(e){setRes("AI 응답 오류")}setLd(false);};
+function TabAI({aiSum,loading}){
+  if(loading)return <Loader/>;
+  const moodMap={bullish:{emoji:"🟢",label:"강세",color:"#22c55e"},bearish:{emoji:"🔴",label:"약세",color:"#ef4444"},neutral:{emoji:"⚪",label:"보합",color:"#6b7280"}};
+  const mood=aiSum?moodMap[aiSum.market_mood]||moodMap.neutral:null;
   return <div className="fade-up">
-    <h2 style={{fontSize:"17px",fontWeight:700,marginBottom:"4px"}}><span style={{color:"#06b6d4"}}>⬡</span> AI 시장 분석</h2>
-    <p style={{color:"var(--muted)",fontSize:"13px",marginBottom:"22px"}}>시장 데이터 기반 객관적 분석. 투자 추천 아닌 정보 제공 목적.</p>
-    <Box style={{padding:"22px"}} hover={false}>
-      <div style={{display:"flex",gap:"10px",marginBottom:"12px"}}><input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="예: 오늘 반도체 섹터 동향 분석해줘" style={{flex:1,background:"var(--inp-bg)",fontFamily:"inherit",border:"1px solid var(--inp-bd)",borderRadius:"10px",padding:"13px 16px",color:"var(--text)",fontSize:"14px",outline:"none"}}/>
-      <button onClick={go} disabled={ld} style={{padding:"13px 26px",border:"none",borderRadius:"10px",fontFamily:"inherit",background:ld?"rgba(6,182,212,0.15)":"linear-gradient(135deg,#0891b2,#06b6d4)",color:"#fff",fontSize:"14px",fontWeight:600,cursor:ld?"wait":"pointer",animation:ld?"glowPulse 1.5s infinite":"none"}}>{ld?"분석 중…":"분석하기"}</button></div>
-      <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{["오늘 시장 요약","이슈 종목 TOP3","섹터 동향","주요 뉴스 브리핑"].map(p=><button key={p} onClick={()=>setQ(p)} style={{padding:"6px 12px",background:"var(--badge-bg2)",border:"1px solid var(--div3)",borderRadius:"6px",color:"var(--muted)",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}}>{p}</button>)}</div>
-    </Box>
-    {(ld||res)&&<div style={{marginTop:"16px",background:"rgba(6,182,212,0.03)",border:"1px solid rgba(6,182,212,0.12)",borderRadius:"14px",padding:"22px",animation:"fadeUp .4s ease both"}}>
-      <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"14px"}}><span style={{width:26,height:26,borderRadius:"7px",background:"rgba(6,182,212,0.15)",color:"#06b6d4",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px"}}>⬡</span><span style={{fontSize:"13px",fontWeight:600,color:"#06b6d4"}}>AI 분석 결과</span></div>
-      {ld?<div style={{display:"grid",gap:"10px"}}>{[90,75,82,60].map((w,i)=><div key={i} className="skeleton" style={{height:"14px",width:`${w}%`}}/>)}</div>:<div style={{fontSize:"14px",lineHeight:1.85,color:"var(--text-sub)",whiteSpace:"pre-wrap"}}>{res}</div>}
-    </div>}
+    <h2 style={{fontSize:"17px",fontWeight:700,marginBottom:"4px"}}><span style={{color:"#06b6d4"}}>⬡</span> AI 시장 브리핑</h2>
+    <p style={{color:"var(--muted)",fontSize:"13px",marginBottom:"22px"}}>Groq AI 기반 시장 데이터 자동 분석 · 크롤링 시 자동 갱신</p>
+    {aiSum?<div>
+      <Box style={{padding:"24px"}} hover={false}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"18px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
+            <span style={{width:36,height:36,borderRadius:"10px",background:"rgba(6,182,212,0.12)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"18px"}}>⬡</span>
+            <div><div style={{fontWeight:700,fontSize:"15px"}}>오늘의 시장 브리핑</div><div style={{color:"var(--muted)",fontSize:"11px",marginTop:"2px"}}>{aiSum.date} 기준</div></div>
+          </div>
+          {mood&&<span style={{padding:"5px 14px",borderRadius:"20px",fontSize:"12px",fontWeight:600,background:`rgba(${mood.color==="var(--muted)"?"107,114,128":mood.color==="#22c55e"?"34,197,94":"239,68,68"},0.1)`,color:mood.color,display:"flex",alignItems:"center",gap:"5px"}}>{mood.emoji} {mood.label}</span>}
+        </div>
+        <div style={{fontSize:"14px",lineHeight:1.9,color:"var(--text-sub)",whiteSpace:"pre-wrap"}}>{aiSum.summary}</div>
+      </Box>
+    </div>:<Box style={{padding:"40px",textAlign:"center"}} hover={false}>
+      <div style={{fontSize:"36px",marginBottom:"12px",opacity:0.4}}>⬡</div>
+      <div style={{fontWeight:600,fontSize:"15px",color:"var(--muted)",marginBottom:"6px"}}>AI 브리핑 준비 중</div>
+      <div style={{fontSize:"12px",color:"var(--dim)"}}>다음 크롤링 시 자동 생성됩니다</div>
+    </Box>}
     <div style={{marginTop:"20px",padding:"14px 18px",background:"rgba(245,158,11,0.04)",border:"1px solid rgba(245,158,11,0.1)",borderRadius:"10px",fontSize:"12px",color:"#b4940f",lineHeight:1.6}}>⚠️ 본 AI 분석은 정보 제공 목적입니다. 투자 판단은 본인 책임이며 투자 추천/권유가 아닙니다.</div>
   </div>;
 }
@@ -295,6 +296,7 @@ function App(){
   const[nws,setNws]=useState([]);
   const[sec,setSec]=useState([]);
   const[thm,setThm]=useState([]);
+  const[aiSum,setAiSum]=useState(null);
   const[lastUp,setLastUp]=useState(null);
   const[theme,setTheme]=useState(()=>{try{return localStorage.getItem("sp-theme")||"dark"}catch(e){return "dark"}});
 
@@ -305,13 +307,13 @@ function App(){
 
   useEffect(()=>{(async()=>{
     setLoading(true);
-    const[a,b,c,d,e]=await Promise.all([db("market_index","order=id"),db("issue_stocks","order=rank&limit=15"),db("news","order=created_at.desc&limit=20"),db("sectors","order=id"),db("themes","order=rank&limit=10")]);
-    if(a?.length)setIdx(a);if(b?.length)setStk(b);if(c?.length){setNws(c);setLastUp(c[0].date)}if(d?.length)setSec(d);if(e?.length)setThm(e);
+    const[a,b,c,d,e,f]=await Promise.all([db("market_index","order=id"),db("issue_stocks","order=rank&limit=15"),db("news","order=created_at.desc&limit=20"),db("sectors","order=id"),db("themes","order=rank&limit=10"),db("ai_summary","order=id.desc&limit=1")]);
+    if(a?.length)setIdx(a);if(b?.length)setStk(b);if(c?.length){setNws(c);setLastUp(c[0].date)}if(d?.length)setSec(d);if(e?.length)setThm(e);if(f?.length)setAiSum(f[0]);
     setLoading(false);
   })()},[]);
 
   useEffect(()=>{const t=setInterval(()=>setTime(new Date()),1000);return()=>clearInterval(t)},[]);
-  const tabs=[{id:"overview",l:"시장 개요",ic:"◈"},{id:"issues",l:"이슈 종목",ic:"◆"},{id:"themes",l:"인기 테마",ic:"◈"},{id:"news",l:"주요 뉴스",ic:"◇"},{id:"sectors",l:"섹터 분석",ic:"▣"},{id:"ai",l:"AI 분석",ic:"⬡"}];
+  const tabs=[{id:"overview",l:"시장 개요",ic:"◈"},{id:"issues",l:"이슈 종목",ic:"◆"},{id:"themes",l:"인기 테마",ic:"◈"},{id:"news",l:"주요 뉴스",ic:"◇"},{id:"ai",l:"AI 브리핑",ic:"⬡"}];
 
   return <div>
     <div style={{background:"var(--ticker-bg)",borderBottom:"1px solid var(--div2)",padding:"9px 0",overflow:"hidden",position:"relative",transition:"background .3s"}}><div style={{display:"inline-flex",gap:"40px",whiteSpace:"nowrap",animation:"tickerScroll 150s linear infinite"}}>{[...idx,...idx,...idx,...idx].map((m,i)=><span key={i} style={{display:"inline-flex",alignItems:"center",gap:"7px",fontSize:"12px",paddingRight:"20px"}}><span style={{color:"var(--muted)",fontWeight:500}}>{m.name}</span><span style={{color:"var(--text)",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{m.value}</span><span style={{color:m.trend==="up"?"#22c55e":"#ef4444",fontWeight:600}}>{m.change_pct}</span></span>)}</div></div>
@@ -333,8 +335,7 @@ function App(){
       {tab==="issues"&&<TabStocks stk={stk} loading={loading}/>}
       {tab==="themes"&&<TabThemes thm={thm} loading={loading}/>}
       {tab==="news"&&<TabNews nws={nws} loading={loading}/>}
-      {tab==="sectors"&&<TabSectors sec={sec} loading={loading}/>}
-      {tab==="ai"&&<TabAI stk={stk} nws={nws} sec={sec}/>}
+      {tab==="ai"&&<TabAI aiSum={aiSum} loading={loading}/>}
     </main>
 
     <footer style={{borderTop:"1px solid var(--div2)",maxWidth:1440,margin:"0 auto",padding:"18px 40px",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:"8px",color:"var(--dimmer)",fontSize:"11px"}}><div><span style={{fontWeight:600,color:"var(--dim)"}}>STOCKPULSE</span> © 2026 · 투자 권유 목적이 아닌 정보 제공 목적</div><div>데이터: 네이버 금융 크롤링</div></footer>

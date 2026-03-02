@@ -15,6 +15,7 @@
 - Yahoo Finance API: 시장 지수/환율 + 스파크라인 데이터
 - 네이버 검색 API: 뉴스, 테마 관련 뉴스
 - Groq AI (주 1회): 뉴스 기반 인기 테마 감지
+- Groq AI (매 크롤링): 시장 브리핑 자동 생성 → `ai_summary` 테이블
 
 ## 주요 수정 이력
 
@@ -36,8 +37,24 @@
 - 순위: 1차 뉴스 언급 빈도, 2차 평균 등락률
 - 장 마감 후에도 뉴스 변동으로 테마 구성 바뀔 수 있음
 
-### 종목 클릭 → 네이버 증권 이동
-- 섹터별 종목 클릭 시 `m.stock.naver.com/domestic/stock/{code}/total` 새 탭 열림
+### AI 분석 탭 → AI 브리핑 탭 전환 (2026-03-02)
+- 기존: 브라우저에서 Anthropic API 직접 호출 (작동 안 됨 — API 키 없음 + CORS 차단)
+- 변경: 크롤링 시 Groq AI로 시장 브리핑 생성 → Supabase `ai_summary` 저장 → 프론트에서 읽기만
+- `generate_ai_summary()`: Groq llama-3.3-70b 모델, 지수/종목/섹터/테마/뉴스 데이터 입력
+- 출력: `{summary, market_mood(bullish/bearish/neutral), date}`
+- 탭 이름: "AI 분석" → "AI 브리핑"
+- Supabase 테이블 `ai_summary` 필요 (id, summary, market_mood, date)
+
+### 섹터 분석 탭 삭제 (2026-03-02)
+- `TabSectors` 컴포넌트 및 탭 네비게이션에서 "섹터 분석" 항목 제거
+- 시장 개요(TabOverview)의 섹터별 등락 카드(SectorCard)는 유지
+- SectorStockList, SectorStockRow 컴포넌트도 유지 (시장 개요에서 사용)
+
+### 호버 효과 + 링크 이동 (2026-03-02)
+- `SectorStockRow` 컴포넌트: 섹터 종목 호버 시 이름 확대(14px, bold, 보라색) + 배경 하이라이트, 클릭 시 네이버 증권 이동
+- `NewsRow` 컴포넌트: 시장개요 뉴스 호버 시 제목 확대(14px, bold, 파란색) + 배경 하이라이트, 클릭 시 뉴스 기사 링크 새 탭
+- 시장 지수 카드 클릭 시 네이버 증권 지수/환율 페이지로 이동 (코스피, 코스닥, 다우, 나스닥, S&P500, USD/KRW)
+- 섹터별 종목 클릭: `m.stock.naver.com/domestic/stock/{code}/total`
 - `e.stopPropagation()`으로 섹터 카드 접기/펼치기와 충돌 방지
 
 ## 알려진 이슈
