@@ -289,11 +289,11 @@ function TabAI({aiSum,loading}){
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"18px"}}>
           <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
             <span style={{width:36,height:36,borderRadius:"10px",background:"rgba(6,182,212,0.12)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"18px"}}>⬡</span>
-            <div><div style={{fontWeight:700,fontSize:"15px"}}>오늘의 시장 브리핑</div><div style={{color:"var(--muted)",fontSize:"11px",marginTop:"2px"}}>{aiSum.date} 기준</div></div>
+            <div><div style={{fontWeight:700,fontSize:"15px"}}>오늘의 시장 브리핑</div><div style={{color:"var(--muted)",fontSize:"11px",marginTop:"2px"}}>{aiSum.date} {aiSum.generated_time?aiSum.generated_time+"":""}기준</div></div>
           </div>
           {mood&&<span style={{padding:"5px 14px",borderRadius:"20px",fontSize:"12px",fontWeight:600,background:`rgba(${mood.color==="var(--muted)"?"107,114,128":mood.color==="#22c55e"?"34,197,94":"239,68,68"},0.1)`,color:mood.color,display:"flex",alignItems:"center",gap:"5px"}}>{mood.emoji} {mood.label}</span>}
         </div>
-        <div style={{fontSize:"14px",lineHeight:1.9,color:"var(--text-sub)",whiteSpace:"pre-wrap"}}>{aiSum.summary}</div>
+        <div style={{fontSize:"14px",lineHeight:1.9,color:"var(--text-sub)",whiteSpace:"pre-wrap"}}>{aiSum.summary.split(/(\[[^\]]+\])/).map((part,i)=>/^\[.+\]$/.test(part)?<span key={i} style={{fontWeight:700,color:"var(--text)",display:"inline-block",marginTop:i>0?"6px":"0"}}>{part}</span>:<span key={i}>{part}</span>)}</div>
       </Box>
     </div>:<Box style={{padding:"40px",textAlign:"center"}} hover={false}>
       <div style={{fontSize:"36px",marginBottom:"12px",opacity:0.4}}>⬡</div>

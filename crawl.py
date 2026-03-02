@@ -1404,7 +1404,12 @@ def generate_ai_summary(indices, stocks, sectors, themes, news):
         f"- {n['title']}" for n in (news or [])[:10]
     )
 
+    from datetime import datetime
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+
     prompt = f"""너는 한국 증시 전문 브리핑 앵커다.
+
+## 기준 시각: {now_str}
 
 ## 오늘의 시장 데이터:
 
@@ -1426,10 +1431,17 @@ def generate_ai_summary(indices, stocks, sectors, themes, news):
 ## 작성 규칙:
 1. 위 데이터만 사용하여 객관적 시장 브리핑 작성
 2. 투자 추천/조언 절대 금지
-3. 3개 섹션으로 구분: [시장 요약] [주요 이슈] [섹터·테마 동향]
-4. 각 섹션 2~3문장, 총 200자 내외
-5. 간결하고 전문적인 뉴스 앵커 톤
-6. 숫자는 데이터 그대로 인용
+3. 반드시 한글과 숫자만 사용 — 한자(漢字), 일본어, 중국어 절대 사용 금지
+4. 아래 5개 섹션으로 구분하여 작성:
+   [시장 요약] 코스피·코스닥 등 주요 지수 흐름 요약 (2~3문장)
+   [거래 동향] 거래대금 상위 종목과 특징적 움직임 (2~3문장)
+   [섹터 동향] 상승/하락 섹터와 원인 분석 (2~3문장)
+   [테마 동향] 인기 테마와 관련 종목 흐름 (2~3문장)
+   [주요 뉴스] 시장에 영향을 주는 핵심 뉴스 요약 (2~3문장)
+5. 총 500~700자 분량으로 작성
+6. 간결하고 전문적인 뉴스 앵커 톤
+7. 숫자는 데이터 그대로 인용
+8. 각 섹션 제목은 대괄호로 표시 (예: [시장 요약])
 
 ## 출력 형식 (JSON):
 {{
@@ -1470,7 +1482,8 @@ market_mood 판단: 코스피·코스닥 모두 상승이면 bullish, 모두 하
 
         if summary:
             log(f"  🤖 AI 시장 브리핑 생성 완료 (mood: {mood}, {len(summary)}자)")
-            return {"summary": summary, "market_mood": mood, "date": TODAY}
+            generated_time = datetime.now().strftime("%H:%M")
+            return {"summary": summary, "market_mood": mood, "date": TODAY, "generated_time": generated_time}
         return None
 
     except Exception as e:
