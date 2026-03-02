@@ -846,13 +846,15 @@ def _search_theme_news_api(query, theme_name=""):
                 if len(part) >= 2:
                     theme_kws.add(part.lower())
 
-        # 제목에 테마 키워드 포함된 뉴스만 선별
+        # 제목에 테마 키워드 포함된 뉴스만 선별 (언론사명 제외)
         relevant = []
         for item in all_items:
             title = html.unescape(re.sub(r'<[^>]+>', '', item.get("title", ""))).strip()
             if not title:
                 continue
-            title_lower = title.replace(" ", "").lower()
+            # [데일리국제금융], (매일경제) 등 언론사명 제거 후 키워드 매칭
+            title_for_match = re.sub(r'[\[\(【].*?[\]\)】]', '', title)
+            title_lower = title_for_match.replace(" ", "").lower()
             if any(kw in title_lower for kw in theme_kws):
                 relevant.append({"title": title, "url": item.get("link", "")})
 
@@ -2199,7 +2201,6 @@ def main():
     clear_today_data("market_index")
     clear_today_data("sectors")
     clear_today_data("themes")
-    clear_today_data("ai_summary")
     supabase_request("DELETE", "sector_stocks", params={"id": "gt.0"})
 
     # 뉴스 저장
@@ -2232,10 +2233,13 @@ def main():
         result = supabase_request("POST", "themes", data=themes)
         log(f"  🔥 테마 {len(themes)}개 저장 {'✅' if result else '❌'}")
 
-    # AI 요약 저장
+    # AI 요약 저장 (성공 시에만 기존 데이터 교체 — 실패 시 기존 유지)
     if ai_summary:
+        clear_today_data("ai_summary")
         result = supabase_request("POST", "ai_summary", data=[ai_summary])
         log(f"  🤖 AI 요약 저장 {'✅' if result else '❌'}")
+    else:
+        log("  ℹ️ AI 요약 생성 실패 — 기존 데이터 유지")
 
     log("")
     log("=" * 50)
