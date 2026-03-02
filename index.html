@@ -197,16 +197,20 @@ function SectorCard({s,u,isExp,onClick}){
   const[h,setH]=useState(false);const f=s.trend==="flat";const clr=u?"34,197,94":(f?"107,114,128":"239,68,68");
   return <div onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)} onClick={onClick} style={{background:f?"linear-gradient(145deg,rgba(107,114,128,0.07),rgba(107,114,128,0.02))":(u?"linear-gradient(145deg,rgba(34,197,94,0.07),rgba(34,197,94,0.02))":"linear-gradient(145deg,rgba(239,68,68,0.07),rgba(239,68,68,0.02))"),border:"1px solid",borderColor:isExp?"rgba(139,92,246,0.3)":(h?`rgba(${clr},0.25)`:`rgba(${clr},0.12)`),borderRadius:"10px",padding:"16px",textAlign:"center",cursor:"pointer",transition:"all .25s",transform:h?"translateY(-2px)":"none",boxShadow:h?`0 4px 16px rgba(${clr},0.1)`:"none",gridColumn:isExp?"1/-1":"auto"}}><div style={{fontSize:"22px",marginBottom:"4px"}}>{s.icon}</div><div style={{fontWeight:600,fontSize:"13px",marginBottom:"4px"}}>{s.name}</div><div style={{fontWeight:700,fontSize:"17px",color:u?"#22c55e":(f?"#6b7280":"#ef4444")}}>{s.change_pct}</div>{isExp&&<SectorStockList sectorName={s.name}/>}</div>;
 }
+function SectorStockRow({st,i,isLast}){
+  const[h,setH]=useState(false);
+  return <a href={`https://m.stock.naver.com/domestic/stock/${st.code}/total`} target="_blank" rel="noopener noreferrer" onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:isLast?"none":"1px solid var(--div)",textDecoration:"none",color:"inherit",cursor:"pointer",background:h?"rgba(139,92,246,0.06)":"transparent",borderRadius:h?"6px":"0",paddingLeft:h?"8px":"0",paddingRight:h?"8px":"0",transition:"all .2s ease"}} onClick={e=>e.stopPropagation()}>
+    <div style={{display:"flex",alignItems:"center",gap:"10px"}}><span style={{width:22,height:22,borderRadius:"6px",fontSize:"10px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",background:i<3?"rgba(139,92,246,0.12)":"var(--badge-bg)",color:i<3?"#8b5cf6":"var(--muted)"}}>{st.rank}</span>
+    <div><span style={{fontWeight:h?700:600,fontSize:h?"14px":"13px",transition:"all .2s ease",color:h?"#a78bfa":"inherit"}}>{st.stock_name}</span><span style={{color:"var(--dim)",fontSize:"10px",marginLeft:"5px"}}>{st.code}</span></div></div>
+    <div style={{display:"flex",alignItems:"center",gap:"14px"}}><span style={{fontWeight:600,fontSize:"13px",fontVariantNumeric:"tabular-nums"}}>₩{st.price}</span><span style={{fontWeight:700,fontSize:"12px",color:st.trend==="up"?"#22c55e":(st.trend==="down"?"#ef4444":"#6b7280"),minWidth:"60px",textAlign:"right"}}>{st.trend==="up"?"▲":(st.trend==="down"?"▼":"─")} {st.change_pct}</span></div>
+  </a>;
+}
 function SectorStockList({sectorName}){
   const[stocks,setStocks]=useState([]);const[ld,setLd]=useState(true);
   useEffect(()=>{(async()=>{setLd(true);const d=await db("sector_stocks",`sector_name=eq.${encodeURIComponent(sectorName)}&order=rank&limit=10`);if(d?.length)setStocks(d);setLd(false);})()},[sectorName]);
   if(ld)return <div style={{padding:"12px 0",display:"flex",alignItems:"center",gap:"8px"}}><div style={{width:14,height:14,border:"2px solid rgba(139,92,246,0.2)",borderTop:"2px solid #8b5cf6",borderRadius:"50%",animation:"spin .8s linear infinite"}}/><span style={{color:"var(--muted)",fontSize:"12px"}}>종목 로딩 중...</span></div>;
   if(!stocks.length)return <div style={{padding:"12px 0",color:"var(--dim)",fontSize:"12px"}}>종목 데이터 없음</div>;
-  return <div style={{marginTop:"12px",animation:"fadeUp .3s ease both"}}>{stocks.map((st,i)=><a key={st.code||i} href={`https://m.stock.naver.com/domestic/stock/${st.code}/total`} target="_blank" rel="noopener noreferrer" style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:i<stocks.length-1?"1px solid var(--div)":"none",textDecoration:"none",color:"inherit",cursor:"pointer"}} onClick={e=>e.stopPropagation()}>
-    <div style={{display:"flex",alignItems:"center",gap:"10px"}}><span style={{width:22,height:22,borderRadius:"6px",fontSize:"10px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",background:i<3?"rgba(139,92,246,0.12)":"var(--badge-bg)",color:i<3?"#8b5cf6":"var(--muted)"}}>{st.rank}</span>
-    <div><span style={{fontWeight:600,fontSize:"13px"}}>{st.stock_name}</span><span style={{color:"var(--dim)",fontSize:"10px",marginLeft:"5px"}}>{st.code}</span></div></div>
-    <div style={{display:"flex",alignItems:"center",gap:"14px"}}><span style={{fontWeight:600,fontSize:"13px",fontVariantNumeric:"tabular-nums"}}>₩{st.price}</span><span style={{fontWeight:700,fontSize:"12px",color:st.trend==="up"?"#22c55e":(st.trend==="down"?"#ef4444":"#6b7280"),minWidth:"60px",textAlign:"right"}}>{st.trend==="up"?"▲":(st.trend==="down"?"▼":"─")} {st.change_pct}</span></div>
-  </a>)}</div>;
+  return <div style={{marginTop:"12px",animation:"fadeUp .3s ease both"}}>{stocks.map((st,i)=><SectorStockRow key={st.code||i} st={st} i={i} isLast={i===stocks.length-1}/>)}</div>;
 }
 function TabSectors({sec,loading}){
   const[expSec,setExpSec]=useState(null);
