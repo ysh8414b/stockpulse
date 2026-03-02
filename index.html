@@ -305,7 +305,7 @@ function TabAI({aiSum,loading}){
           </div>
           {mood&&<span style={{padding:"5px 14px",borderRadius:"20px",fontSize:"12px",fontWeight:600,background:`rgba(${mood.color==="var(--muted)"?"107,114,128":mood.color==="#22c55e"?"34,197,94":"239,68,68"},0.1)`,color:mood.color,display:"flex",alignItems:"center",gap:"5px"}}>{mood.emoji} {mood.label}</span>}
         </div>
-        <div style={{fontSize:"14px",lineHeight:1.9,color:"var(--text-sub)",whiteSpace:"pre-wrap"}}>{aiSum.summary.split(/(\[[^\]]+\])/).map((part,i)=>/^\[.+\]$/.test(part)?<span key={i} style={{fontWeight:700,color:"var(--text)",display:"inline-block",marginTop:i>0?"6px":"0"}}>{part}</span>:<span key={i}>{part}</span>)}</div>
+        <div style={{fontSize:"14px",lineHeight:1.9,color:"var(--text-sub)",whiteSpace:"pre-wrap"}}>{aiSum.summary.split(/(\n)/).map((line,i)=>{const sec=/^\d\)/.test(line.trim())||/^정리[:：]/.test(line.trim());const bracket=/^\[.+\]$/.test(line.trim());return sec?<div key={i} style={{fontWeight:700,fontSize:"15px",color:"var(--text)",marginTop:i>0?"14px":"0",marginBottom:"2px"}}>{line}</div>:bracket?<span key={i} style={{fontWeight:700,color:"var(--text)",display:"inline-block",marginTop:i>0?"6px":"0"}}>{line}</span>:<span key={i}>{line}</span>})}</div>
       </Box>
     </div>:<Box style={{padding:"40px",textAlign:"center"}} hover={false}>
       <div style={{fontSize:"36px",marginBottom:"12px",opacity:0.4}}>⬡</div>
