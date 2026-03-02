@@ -825,28 +825,34 @@ def _search_theme_news_api(query, theme_name=""):
         if not all_items:
             return "", "", "[]"
 
-        theme_keywords = theme_name.replace(" ", "").lower() if theme_name else ""
-        core_kw_lower = core_kw.lower()
+        # 테마 관련 키워드 목록 (테마명 + 핵심 단어들)
+        theme_kws = set()
+        if theme_name:
+            theme_kws.add(theme_name.replace(" ", "").lower())
+            # "제약/바이오" → {"제약바이오", "제약", "바이오"}
+            for part in re.split(r'[/·\s]', theme_name):
+                if len(part) >= 2:
+                    theme_kws.add(part.lower())
+        if core_kw:
+            theme_kws.add(core_kw.lower())
+            for part in re.split(r'[/·\s]', core_kw):
+                if len(part) >= 2:
+                    theme_kws.add(part.lower())
 
-        # 테마명 매칭 우선, 나머지 후순위
-        priority = []
-        normal = []
+        # 제목에 테마 키워드 포함된 뉴스만 선별
+        relevant = []
         for item in all_items:
             title = html.unescape(re.sub(r'<[^>]+>', '', item.get("title", ""))).strip()
             if not title:
                 continue
             title_lower = title.replace(" ", "").lower()
-            if theme_keywords and theme_keywords in title_lower:
-                priority.append({"title": title, "url": item.get("link", "")})
-            elif core_kw_lower and core_kw_lower in title_lower:
-                priority.append({"title": title, "url": item.get("link", "")})
-            else:
-                normal.append({"title": title, "url": item.get("link", "")})
+            if any(kw in title_lower for kw in theme_kws):
+                relevant.append({"title": title, "url": item.get("link", "")})
 
         # 유사도 필터링하며 5개 선별
         cleaned = []
         used_titles = []
-        for item in priority + normal:
+        for item in relevant:
             if _is_similar_title(item["title"], used_titles):
                 continue
             cleaned.append(item)
