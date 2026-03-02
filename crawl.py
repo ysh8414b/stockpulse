@@ -1546,41 +1546,125 @@ def crawl_news():
 # ─────────────────────────────────────────
 # 2. 이슈 종목 (KRX 거래대금 상위)
 # ─────────────────────────────────────────
-def crawl_issue_stocks(krx_data):
-    """KRX 거래대금 상위 종목 추출"""
+def crawl_issue_stocks(krx_data, themes=None, sectors=None, news=None):
+    """복합 점수 기반 이슈 종목 선정 (거래대금+등락률+테마+뉴스+섹터)"""
     log("📈 이슈 종목 크롤링 시작...")
 
+    # ── 1단계: 후보 필터링 (거래대금 1000억 이상, ETF 제외) ──
+    MIN_TRADING_VALUE = 100_000_000_000  # 1000억 원
     candidates = []
     for code, d in krx_data.items():
         if d["volume"] == 0 or d["price"] == 0:
             continue
         if is_etf_etn(d["name"]):
             continue
-        candidates.append(d)
+        if d["trading_value"] >= MIN_TRADING_VALUE:
+            candidates.append(d)
 
-    # 거래대금 기준 정렬
+    if not candidates:
+        # fallback: 거래대금 상위 50개
+        all_stocks = [d for d in krx_data.values() if d["volume"] > 0 and d["price"] > 0 and not is_etf_etn(d["name"])]
+        all_stocks.sort(key=lambda x: x["trading_value"], reverse=True)
+        candidates = all_stocks[:50]
+
+    log(f"  📋 후보 종목: {len(candidates)}개 (거래대금 1000억+)")
+
+    # ── 2단계: 보조 데이터 구축 ──
+    # 인기 테마 소속 종목 코드 세트
+    theme_stock_codes = set()
+    if themes:
+        for t in themes:
+            ls = t.get("leading_stocks", "")
+            for part in ls.split(","):
+                parts = part.strip().split(":")
+                if len(parts) >= 2 and parts[1].strip().isdigit():
+                    theme_stock_codes.add(parts[1].strip())
+
+    # 상승 섹터 이름 세트
+    rising_sectors = set()
+    if sectors:
+        for s in sectors:
+            if s.get("trend") == "up":
+                rising_sectors.add(s.get("name", ""))
+
+    # 뉴스 제목에서 종목명 언급 횟수
+    news_mention_count = {}
+    if news:
+        news_titles = " ".join(n.get("title", "") for n in news)
+        for d in candidates:
+            name = d["name"]
+            # 2글자 이상 종목명만 매칭 (오탐 방지)
+            if len(name) >= 2 and name in news_titles:
+                news_mention_count[d["code"]] = news_titles.count(name)
+
+    # ── 3단계: 종합 점수 계산 ──
+    # 거래대금 순위 점수 (정규화)
     candidates.sort(key=lambda x: x["trading_value"], reverse=True)
+    max_tv_rank = len(candidates)
+    tv_rank_map = {d["code"]: i for i, d in enumerate(candidates)}
+
+    # 등락률 절대값 순위
+    candidates_by_change = sorted(candidates, key=lambda x: abs(x["change_pct"]), reverse=True)
+    change_rank_map = {d["code"]: i for i, d in enumerate(candidates_by_change)}
+
+    scored = []
+    for d in candidates:
+        code = d["code"]
+        n = max_tv_rank if max_tv_rank > 0 else 1
+
+        # 거래대금 점수 (25점) — 순위가 높을수록 점수 높음
+        tv_score = (1 - tv_rank_map[code] / n) * 25
+
+        # 등락률 점수 (25점) — 절대값 순위
+        change_score = (1 - change_rank_map[code] / n) * 25
+
+        # 인기 테마 소속 (20점) — 소속이면 20점
+        theme_score = 20 if code in theme_stock_codes else 0
+
+        # 뉴스 언급 (20점) — 언급 횟수에 따라
+        mentions = news_mention_count.get(code, 0)
+        news_score = min(mentions * 10, 20)  # 1회=10점, 2회+=20점
+
+        # 상승 섹터 소속 (10점)
+        sector_score = 10 if d.get("display_sector", "") in rising_sectors else 0
+
+        total = tv_score + change_score + theme_score + news_score + sector_score
+
+        # 선정 사유 생성
+        reasons = []
+        if theme_score > 0:
+            reasons.append("인기테마")
+        if news_score > 0:
+            reasons.append("뉴스언급")
+        if change_score >= 20:
+            cp = d["change_pct"]
+            reasons.append("급등" if cp > 0 else "급락")
+        if tv_score >= 20:
+            reasons.append("거래폭발")
+        if sector_score > 0:
+            reasons.append("상승섹터")
+        reason_str = " · ".join(reasons) if reasons else "거래대금 상위"
+
+        scored.append((total, d, reason_str))
+
+    # ── 4단계: 랭킹 ──
+    scored.sort(key=lambda x: x[0], reverse=True)
 
     stocks = []
-    for rank_idx, d in enumerate(candidates[:10], 1):
+    for rank_idx, (score, d, reason_str) in enumerate(scored[:15], 1):
         cp = d["change_pct"]
-
         if cp > 0.005:
-            trend = "up"
-            pct_str = f"+{cp:.2f}%"
+            trend, pct_str = "up", f"+{cp:.2f}%"
         elif cp < -0.005:
-            trend = "down"
-            pct_str = f"{cp:.2f}%"
+            trend, pct_str = "down", f"{cp:.2f}%"
         else:
-            trend = "flat"
-            pct_str = "0.00%"
+            trend, pct_str = "flat", "0.00%"
 
         try:
             price_formatted = f"{d['price']:,}"
         except:
             price_formatted = str(d["price"])
 
-        # 거래대금을 억원 단위로
         trading_value_eok = d["trading_value"] / 100_000_000
         volume_str = format_trading_value(str(int(trading_value_eok)))
 
@@ -1591,13 +1675,15 @@ def crawl_issue_stocks(krx_data):
             "price": price_formatted,
             "change_pct": pct_str,
             "volume": volume_str,
-            "reason": f"거래대금 상위 {rank_idx}위",
+            "reason": reason_str,
             "tags": classify_stock_tags(d["name"]),
             "trend": trend,
             "date": TODAY,
         })
 
-    log(f"  ✅ 거래대금 상위 {len(stocks)}개 수집 완료")
+    log(f"  ✅ 이슈 종목 {len(stocks)}개 선정 (복합 점수 기반)")
+    for s in stocks[:5]:
+        log(f"     {s['rank']}. {s['name']} ({s['change_pct']}) — {s['reason']}")
     return stocks
 
 
@@ -1937,24 +2023,24 @@ def main():
     # 4. 뉴스 (네이버 검색 API)
     news = crawl_news()
 
-    # 5. 이슈 종목 (KRX 거래대금 기반)
-    stocks = crawl_issue_stocks(krx_data)
-
-    # 6. 시장 지수 (Yahoo Finance API — 지수/환율만)
+    # 5. 시장 지수 (Yahoo Finance API — 지수/환율만)
     indices = crawl_market_index()
 
-    # 7. 섹터 데이터 (KRX 업종 기반)
+    # 6. 섹터 데이터 (KRX 업종 기반)
     sectors = crawl_sectors(krx_data)
 
-    # 8. 섹터별 종목 (KRX 시가총액 기반)
+    # 7. 섹터별 종목 (KRX 시가총액 기반)
     sector_stocks = crawl_sector_stocks(krx_data)
 
-    # 9. 테마-종목 매핑 DB 구축 (기업개요 기반, 하루 1회 캐싱)
+    # 8. 테마-종목 매핑 DB 구축 (기업개요 기반, 하루 1회 캐싱)
     theme_map, stock_themes = build_theme_stock_map(krx_data)
 
-    # 10. 테마 (AI 핫테마 선정 + 매핑 DB 종목 조회)
+    # 9. 테마 (AI 핫테마 선정 + 매핑 DB 종목 조회)
     news_titles = [n["title"] for n in news]
     themes = crawl_themes(krx_data, news_titles, theme_map)
+
+    # 10. 이슈 종목 (복합 점수 랭킹: 등락률+거래대금+테마+뉴스+섹터)
+    stocks = crawl_issue_stocks(krx_data, themes, sectors, news)
 
     # 11. AI 시장 브리핑 (Groq)
     ai_summary = generate_ai_summary(indices, stocks, sectors, themes, news)

@@ -54,8 +54,25 @@
 - `SectorStockRow` 컴포넌트: 섹터 종목 호버 시 이름 확대(14px, bold, 보라색) + 배경 하이라이트, 클릭 시 네이버 증권 이동
 - `NewsRow` 컴포넌트: 시장개요 뉴스 호버 시 제목 확대(14px, bold, 파란색) + 배경 하이라이트, 클릭 시 뉴스 기사 링크 새 탭
 - 시장 지수 카드 클릭 시 네이버 증권 지수/환율 페이지로 이동 (코스피, 코스닥, 다우, 나스닥, S&P500, USD/KRW)
-- 섹터별 종목 클릭: `m.stock.naver.com/domestic/stock/{code}/total`
+- 섹터별 종목 클릭: `finance.naver.com/item/main.naver?code={code}` (PC 버전)
 - `e.stopPropagation()`으로 섹터 카드 접기/펼치기와 충돌 방지
+
+### 인기테마 뉴스 드롭다운 (2026-03-02)
+- `ThemeNewsDropdown` 컴포넌트: 테마 뉴스 제목 호버 시 관련 최신뉴스 5개 드롭다운
+- `ThemeItem` 래퍼 컴포넌트: 드롭다운 열릴 때 z-index:50으로 겹침 방지
+- `_search_theme_news_api()`: 멀티 쿼리 검색 (테마+종목, 테마단독, 테마+관련주)
+- `_is_similar_title()`: 제목 유사도 필터 (threshold 0.5) — 중복 뉴스 제거
+- 키워드 필터링: 뉴스 제목에 테마 키워드가 포함된 것만 노출
+- Supabase `themes` 테이블에 `news_list` (jsonb) 컬럼 추가 필요
+
+### 이슈 종목 복합 점수 랭킹 (2026-03-02)
+- 기존: 거래대금 상위 10개 단순 정렬
+- 변경: 5가지 기준 종합 점수 랭킹 (TOP 15)
+- 필터: 거래대금 1000억 이상
+- 점수 비중: 등락률 절대값(25%) + 거래대금 순위(25%) + 인기테마 소속(20%) + 뉴스 언급(20%) + 상승섹터 소속(10%)
+- `reason` 필드에 선정 사유 표시 (예: "인기테마 · 뉴스언급 · 급등")
+- `main()` 호출 순서: themes/sectors/news 이후로 이동 (데이터 의존성)
+- 함수 시그니처: `crawl_issue_stocks(krx_data, themes=None, sectors=None, news=None)`
 
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
