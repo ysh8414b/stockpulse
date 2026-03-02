@@ -781,9 +781,9 @@ def _calc_time_ago(pub_date_str):
 
 
 def _search_theme_news_api(query, theme_name=""):
-    """Naver Search API로 테마 관련 뉴스 1건 검색 (테마명 매칭 우선)"""
+    """Naver Search API로 테마 관련 뉴스 검색 (최대 5건, 테마명 매칭 우선)"""
     if not NAVER_CLIENT_ID or not NAVER_CLIENT_SECRET:
-        return "", ""
+        return "", "", "[]"
     try:
         url = "https://openapi.naver.com/v1/search/news.json"
         params = {"query": query, "display": 10, "sort": "date"}
@@ -795,29 +795,43 @@ def _search_theme_news_api(query, theme_name=""):
         data = resp.json()
         items = data.get("items", [])
         if not items:
-            return "", ""
+            return "", "", "[]"
 
-        # 테마명 키워드가 제목에 포함된 뉴스 우선 선택
+        # 모든 뉴스 항목 정리
+        cleaned = []
+        seen_titles = set()
         theme_keywords = theme_name.replace(" ", "").lower() if theme_name else ""
+        core_kw = query.replace("주식", "").replace("관련", "").strip().lower()
+
+        # 테마명 매칭 뉴스 우선
         for item in items:
             title = html.unescape(re.sub(r'<[^>]+>', '', item.get("title", ""))).strip()
+            if title in seen_titles:
+                continue
             title_lower = title.replace(" ", "").lower()
             if theme_keywords and theme_keywords in title_lower:
-                return title, item.get("link", "")
+                cleaned.insert(0, {"title": title, "url": item.get("link", "")})
+                seen_titles.add(title)
+            elif core_kw and core_kw in title_lower:
+                cleaned.append({"title": title, "url": item.get("link", "")})
+                seen_titles.add(title)
 
-        # 매칭 없으면 search_query 핵심 키워드로 재시도
-        core_kw = query.replace("주식", "").replace("관련", "").strip().lower()
+        # 나머지 뉴스 추가 (5개 채우기)
         for item in items:
             title = html.unescape(re.sub(r'<[^>]+>', '', item.get("title", ""))).strip()
-            if core_kw and core_kw in title.replace(" ", "").lower():
-                return title, item.get("link", "")
+            if title not in seen_titles:
+                cleaned.append({"title": title, "url": item.get("link", "")})
+                seen_titles.add(title)
+            if len(cleaned) >= 5:
+                break
 
-        # 그래도 없으면 첫 번째 반환
-        title = html.unescape(re.sub(r'<[^>]+>', '', items[0].get("title", ""))).strip()
-        return title, items[0].get("link", "")
+        news_list = cleaned[:5]
+        first_title = news_list[0]["title"] if news_list else ""
+        first_url = news_list[0]["url"] if news_list else ""
+        return first_title, first_url, json.dumps(news_list, ensure_ascii=False)
     except:
         pass
-    return "", ""
+    return "", "", "[]"
 
 
 # ─────────────────────────────────────────
@@ -1789,13 +1803,14 @@ def crawl_themes(krx_data, news_titles=None, theme_map=None):
 
             # 네이버 뉴스 검색
             search_kw = theme_def.get("search_query", theme_def["name"] + " 주식")
-            news_title, news_url = _search_theme_news_api(search_kw, theme_def["name"])
+            news_title, news_url, news_list_json = _search_theme_news_api(search_kw, theme_def["name"])
 
             themes.append({
                 "rank": 0, "name": theme_def["name"], "change_pct": pct_str,
                 "avg_3day_pct": "", "up_count": up_count, "flat_count": flat_count,
                 "down_count": down_count, "leading_stocks": ", ".join(leaders),
                 "related_news": news_title, "news_url": news_url,
+                "news_list": news_list_json,
                 "trend": trend, "date": TODAY,
             })
 
@@ -1833,12 +1848,13 @@ def crawl_themes(krx_data, news_titles=None, theme_map=None):
                 pct_display = f"+{cp:.2f}%" if cp >= 0 else f"{cp:.2f}%"
                 leaders.append(f"{ts['name']}:{ts['code']}:{pct_display}")
 
-            news_title, news_url = _search_theme_news_api(theme_def["search_query"], theme_def["name"])
+            news_title, news_url, news_list_json = _search_theme_news_api(theme_def["search_query"], theme_def["name"])
             themes.append({
                 "rank": 0, "name": theme_def["name"], "change_pct": pct_str,
                 "avg_3day_pct": "", "up_count": up_count, "flat_count": flat_count,
                 "down_count": down_count, "leading_stocks": ", ".join(leaders),
                 "related_news": news_title, "news_url": news_url,
+                "news_list": news_list_json,
                 "trend": trend, "date": TODAY,
             })
 

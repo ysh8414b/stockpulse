@@ -221,6 +221,19 @@ function SectorStockList({sectorName}){
   return <div style={{marginTop:"12px",animation:"fadeUp .3s ease both"}}>{stocks.map((st,i)=><SectorStockRow key={st.code||i} st={st} i={i} isLast={i===stocks.length-1}/>)}</div>;
 }
 // ═══ TAB: THEMES ═══
+function ThemeNewsDropdown({newsList,mainTitle,mainUrl}){
+  const[show,setShow]=useState(false);const ref=React.useRef(null);
+  let news=[];try{news=typeof newsList==="string"?JSON.parse(newsList):newsList||[]}catch(e){news=[]}
+  if(!news.length&&mainTitle)news=[{title:mainTitle,url:mainUrl}];
+  if(!news.length)return null;
+  return <div style={{position:"relative",display:"inline-block",maxWidth:"500px"}} ref={ref} onMouseEnter={()=>setShow(true)} onMouseLeave={()=>setShow(false)}>
+    <a href={mainUrl||"#"} target="_blank" rel="noopener noreferrer" onClick={e=>{e.stopPropagation();if(!mainUrl)e.preventDefault()}} style={{display:"block",fontSize:"12px",color:"var(--text-sub)",lineHeight:1.5,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:"none",transition:"color .15s",cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.color="#f97316"} onMouseLeave={e=>e.currentTarget.style.color="var(--text-sub)"}>{mainTitle||news[0]?.title} {news.length>1&&<span style={{fontSize:"10px",color:"var(--dim)",marginLeft:"4px"}}>+{news.length-1}</span>}</a>
+    {show&&news.length>1&&<div style={{position:"absolute",top:"100%",left:0,zIndex:100,marginTop:"6px",background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:"10px",boxShadow:"0 8px 30px rgba(0,0,0,0.25)",padding:"8px 0",minWidth:"340px",maxWidth:"480px",animation:"fadeUp .2s ease both"}} onClick={e=>e.stopPropagation()}>
+      <div style={{padding:"6px 14px 8px",fontSize:"11px",fontWeight:600,color:"var(--muted)",borderBottom:"1px solid var(--div)"}}>📰 관련 뉴스 {news.length}건</div>
+      {news.map((n,i)=><a key={i} href={n.url} target="_blank" rel="noopener noreferrer" style={{display:"block",padding:"8px 14px",fontSize:"12px",color:"var(--text-sub)",textDecoration:"none",lineHeight:1.5,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",transition:"all .15s",borderBottom:i<news.length-1?"1px solid var(--div)":"none"}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(249,115,22,0.06)";e.currentTarget.style.color="#f97316"}} onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color="var(--text-sub)"}}><span style={{color:"var(--dim)",fontSize:"10px",marginRight:"6px"}}>{i+1}</span>{n.title}</a>)}
+    </div>}
+  </div>;
+}
 function TabThemes({thm,loading}){
   if(loading)return <Loader/>;if(!thm.length)return <Empty msg="테마 데이터 없음"/>;
   return <div className="fade-up">
@@ -233,7 +246,7 @@ function TabThemes({thm,loading}){
             <span style={{width:32,height:32,borderRadius:"8px",fontSize:"14px",fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",background:i<3?"rgba(249,115,22,0.14)":"var(--badge-bg)",color:i<3?"#f97316":"var(--muted)",flexShrink:0}}>{t.rank}</span>
             <div style={{minWidth:0}}>
               <div style={{fontWeight:700,fontSize:"15px",marginBottom:"4px"}}>{t.name}</div>
-              {t.related_news&&(t.news_url?<a href={t.news_url} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{display:"block",fontSize:"12px",color:"var(--text-sub)",lineHeight:1.5,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"500px",textDecoration:"none",transition:"color .15s"}} onMouseEnter={e=>e.currentTarget.style.color="#f97316"} onMouseLeave={e=>e.currentTarget.style.color="var(--text-sub)"}>{t.related_news}</a>:<div style={{fontSize:"12px",color:"var(--text-sub)",lineHeight:1.5,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"500px"}}>{t.related_news}</div>)}
+              {(t.related_news||t.news_list)&&<ThemeNewsDropdown newsList={t.news_list} mainTitle={t.related_news} mainUrl={t.news_url}/>}
             </div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:"20px",flexShrink:0}}>
@@ -313,7 +326,7 @@ function App(){
   })()},[]);
 
   useEffect(()=>{const t=setInterval(()=>setTime(new Date()),1000);return()=>clearInterval(t)},[]);
-  const tabs=[{id:"overview",l:"시장 개요",ic:"◈"},{id:"issues",l:"이슈 종목",ic:"◆"},{id:"themes",l:"인기 테마",ic:"◈"},{id:"news",l:"주요 뉴스",ic:"◇"},{id:"ai",l:"AI 브리핑",ic:"⬡"}];
+  const tabs=[{id:"overview",l:"시장 개요",ic:"◈"},{id:"themes",l:"인기 테마",ic:"◈"},{id:"issues",l:"이슈 종목",ic:"◆"},{id:"news",l:"주요 뉴스",ic:"◇"},{id:"ai",l:"AI 브리핑",ic:"⬡"}];
 
   return <div>
     <div style={{background:"var(--ticker-bg)",borderBottom:"1px solid var(--div2)",padding:"9px 0",overflow:"hidden",position:"relative",transition:"background .3s"}}><div style={{display:"inline-flex",gap:"40px",whiteSpace:"nowrap",animation:"tickerScroll 150s linear infinite"}}>{[...idx,...idx,...idx,...idx].map((m,i)=><span key={i} style={{display:"inline-flex",alignItems:"center",gap:"7px",fontSize:"12px",paddingRight:"20px"}}><span style={{color:"var(--muted)",fontWeight:500}}>{m.name}</span><span style={{color:"var(--text)",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{m.value}</span><span style={{color:m.trend==="up"?"#22c55e":"#ef4444",fontWeight:600}}>{m.change_pct}</span></span>)}</div></div>
