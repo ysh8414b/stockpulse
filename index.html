@@ -202,11 +202,11 @@ function SectorStockList({sectorName}){
   useEffect(()=>{(async()=>{setLd(true);const d=await db("sector_stocks",`sector_name=eq.${encodeURIComponent(sectorName)}&order=rank&limit=10`);if(d?.length)setStocks(d);setLd(false);})()},[sectorName]);
   if(ld)return <div style={{padding:"12px 0",display:"flex",alignItems:"center",gap:"8px"}}><div style={{width:14,height:14,border:"2px solid rgba(139,92,246,0.2)",borderTop:"2px solid #8b5cf6",borderRadius:"50%",animation:"spin .8s linear infinite"}}/><span style={{color:"var(--muted)",fontSize:"12px"}}>종목 로딩 중...</span></div>;
   if(!stocks.length)return <div style={{padding:"12px 0",color:"var(--dim)",fontSize:"12px"}}>종목 데이터 없음</div>;
-  return <div style={{marginTop:"12px",animation:"fadeUp .3s ease both"}}>{stocks.map((st,i)=><div key={st.code||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:i<stocks.length-1?"1px solid var(--div)":"none"}}>
+  return <div style={{marginTop:"12px",animation:"fadeUp .3s ease both"}}>{stocks.map((st,i)=><a key={st.code||i} href={`https://m.stock.naver.com/domestic/stock/${st.code}/total`} target="_blank" rel="noopener noreferrer" style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:i<stocks.length-1?"1px solid var(--div)":"none",textDecoration:"none",color:"inherit",cursor:"pointer"}} onClick={e=>e.stopPropagation()}>
     <div style={{display:"flex",alignItems:"center",gap:"10px"}}><span style={{width:22,height:22,borderRadius:"6px",fontSize:"10px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",background:i<3?"rgba(139,92,246,0.12)":"var(--badge-bg)",color:i<3?"#8b5cf6":"var(--muted)"}}>{st.rank}</span>
     <div><span style={{fontWeight:600,fontSize:"13px"}}>{st.stock_name}</span><span style={{color:"var(--dim)",fontSize:"10px",marginLeft:"5px"}}>{st.code}</span></div></div>
     <div style={{display:"flex",alignItems:"center",gap:"14px"}}><span style={{fontWeight:600,fontSize:"13px",fontVariantNumeric:"tabular-nums"}}>₩{st.price}</span><span style={{fontWeight:700,fontSize:"12px",color:st.trend==="up"?"#22c55e":(st.trend==="down"?"#ef4444":"#6b7280"),minWidth:"60px",textAlign:"right"}}>{st.trend==="up"?"▲":(st.trend==="down"?"▼":"─")} {st.change_pct}</span></div>
-  </div>)}</div>;
+  </a>)}</div>;
 }
 function TabSectors({sec,loading}){
   const[expSec,setExpSec]=useState(null);
