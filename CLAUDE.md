@@ -74,6 +74,14 @@
 - `main()` 호출 순서: themes/sectors/news 이후로 이동 (데이터 의존성)
 - 함수 시그니처: `crawl_issue_stocks(krx_data, themes=None, sectors=None, news=None)`
 
+### 이슈 종목 관련 뉴스 (2026-03-02)
+- 기존: 클라이언트에서 일반 뉴스 제목에 종목명 포함 여부로 매칭 → 거의 매칭 안 됨
+- 변경: `crawl_issue_stocks()`에서 종목별 관련 뉴스를 직접 수집하여 `related_news` JSON 필드에 저장
+- `fetch_stock_news()`: 네이버 검색 API로 "{종목명} 주가" 쿼리, 종목당 최대 3건
+- 2단계 매칭: 1) 기존 뉴스 목록에서 제목/요약 매칭 → 2) 부족하면 네이버 API 추가 검색
+- Supabase `issue_stocks` 테이블에 `related_news` (text) 컬럼 추가 필요
+- 프론트엔드: `related_news` JSON 파싱 우선 사용, fallback으로 클라이언트 매칭
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)

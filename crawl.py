@@ -1604,6 +1604,44 @@ def crawl_news():
     return news_list
 
 
+def fetch_stock_news(stock_name, max_count=3):
+    """특정 종목의 관련 뉴스를 네이버 검색 API로 조회"""
+    if not NAVER_CLIENT_ID or not NAVER_CLIENT_SECRET:
+        return []
+    try:
+        url = "https://openapi.naver.com/v1/search/news.json"
+        params = {"query": f"{stock_name} 주가", "display": 5, "sort": "date"}
+        headers = {
+            "X-Naver-Client-Id": NAVER_CLIENT_ID,
+            "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
+        }
+        resp = requests.get(url, headers=headers, params=params, timeout=5)
+        data = resp.json()
+        results = []
+        for item in data.get("items", []):
+            title = html.unescape(re.sub(r'<[^>]+>', '', item.get("title", ""))).strip()
+            if not title:
+                continue
+            source_name = "뉴스"
+            try:
+                domain = urllib.parse.urlparse(item.get("originallink", "")).netloc
+                source_name = domain.replace("www.", "").split(".")[0]
+            except:
+                pass
+            results.append({
+                "title": title,
+                "source": source_name or "뉴스",
+                "time_ago": _calc_time_ago(item.get("pubDate", "")),
+                "url": item.get("link", ""),
+            })
+            if len(results) >= max_count:
+                break
+        return results
+    except Exception as e:
+        log(f"  ⚠️ {stock_name} 관련 뉴스 조회 실패: {e}")
+        return []
+
+
 # ─────────────────────────────────────────
 # 2. 이슈 종목 (KRX 거래대금 상위)
 # ─────────────────────────────────────────
@@ -1753,9 +1791,38 @@ def crawl_issue_stocks(krx_data, themes=None, sectors=None, news=None):
             "date": TODAY,
         })
 
+    # ── 5단계: 종목별 관련 뉴스 수집 ──
+    log("  📰 종목별 관련 뉴스 수집 중...")
+    for s in stocks:
+        name = s["name"]
+        matched = []
+
+        # 1) 기존 뉴스 목록에서 매칭 (제목 또는 요약에 종목명 포함)
+        if news:
+            for n in news:
+                title_text = n.get("title", "")
+                summary_text = n.get("summary", "")
+                if len(name) >= 2 and name in (title_text + " " + summary_text):
+                    matched.append({
+                        "title": n["title"],
+                        "source": n.get("source", "뉴스"),
+                        "time_ago": n.get("time_ago", ""),
+                        "url": n.get("url", ""),
+                    })
+                    if len(matched) >= 3:
+                        break
+
+        # 2) 부족하면 네이버 뉴스 API로 종목 전용 검색
+        if len(matched) < 3:
+            extra = fetch_stock_news(name, 3 - len(matched))
+            matched.extend(extra)
+
+        s["related_news"] = json.dumps(matched[:5], ensure_ascii=False)
+
     log(f"  ✅ 이슈 종목 {len(stocks)}개 선정 (복합 점수 기반)")
     for s in stocks[:5]:
-        log(f"     {s['rank']}. {s['name']} ({s['change_pct']}) — {s['reason']}")
+        news_cnt = len(json.loads(s["related_news"])) if s.get("related_news") else 0
+        log(f"     {s['rank']}. {s['name']} ({s['change_pct']}) — {s['reason']} [뉴스 {news_cnt}건]")
     return stocks
 
 

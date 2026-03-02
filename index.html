@@ -49,6 +49,7 @@
     ::selection{background:rgba(6,182,212,0.3)}
     @keyframes tickerScroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
     @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.85)}}
+    @keyframes liveBounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
     @keyframes fadeUp{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
     @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
     @keyframes glowPulse{0%,100%{box-shadow:0 0 8px rgba(6,182,212,0.2)}50%{box-shadow:0 0 20px rgba(6,182,212,0.4)}}
@@ -156,7 +157,16 @@ function TabStocks({stk,nws,loading}){
   const[q,setQ]=useState("");const[hov,setHov]=useState(null);const[exp,setExp]=useState(null);
   if(loading)return <Loader/>;if(!stk.length)return <Empty msg="이슈 종목 데이터 없음"/>;
   const f=q?stk.filter(s=>s.name.includes(q)||s.code.includes(q)||(s.tags||[]).some(t=>t.includes(q))):stk;
-  const getRelatedNews=(name)=>{
+  const getRelatedNews=(stock)=>{
+    // 1) crawl.py에서 수집한 related_news 사용
+    if(stock.related_news){
+      try{
+        const parsed=typeof stock.related_news==='string'?JSON.parse(stock.related_news):stock.related_news;
+        if(parsed&&parsed.length)return parsed;
+      }catch(e){}
+    }
+    // 2) fallback: 일반 뉴스에서 종목명 매칭
+    const name=stock.name;
     if(!nws||!nws.length||!name||name.length<2)return[];
     return nws.filter(n=>n.title&&n.title.includes(name)).slice(0,5);
   };
@@ -167,7 +177,7 @@ function TabStocks({stk,nws,loading}){
     </div>
     <Box style={{overflow:"hidden"}} hover={false}>
       <div className="stock-row" style={{display:"grid",gridTemplateColumns:"44px 1.2fr 110px 90px 120px 1.5fr 100px",padding:"13px 20px",background:"var(--row-head)",borderBottom:"1px solid var(--div3)",fontSize:"11px",color:"var(--muted)",fontWeight:600}}><span>#</span><span>종목</span><span style={{textAlign:"right"}}>현재가</span><span style={{textAlign:"right"}}>등락률</span><span style={{textAlign:"right"}}>거래대금</span><span style={{paddingLeft:"16px"}}>이슈 사유</span><span>테마</span></div>
-      {f.map((s,i)=>{const related=exp===s.code?getRelatedNews(s.name):[];return <React.Fragment key={s.code||i}>
+      {f.map((s,i)=>{const related=exp===s.code?getRelatedNews(s):[];return <React.Fragment key={s.code||i}>
         <div onClick={()=>setExp(exp===s.code?null:s.code)} onMouseEnter={()=>setHov(s.code)} onMouseLeave={()=>setHov(null)} className="stock-row" style={{display:"grid",gridTemplateColumns:"44px 1.2fr 110px 90px 120px 1.5fr 100px",padding:"15px 20px",borderBottom:exp===s.code?"none":"1px solid var(--div)",background:hov===s.code?"var(--hover)":"transparent",cursor:"pointer",alignItems:"center",transition:"background .15s"}}>
           <span style={{width:28,height:28,borderRadius:"7px",fontSize:"11px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",background:s.rank<=3?"rgba(245,158,11,0.14)":"var(--badge-bg2)",color:s.rank<=3?"#f59e0b":"var(--muted)"}}>{s.rank}</span>
           <div><span style={{fontWeight:600,fontSize:"14px"}}>{s.name}</span><span style={{color:"var(--dim)",fontSize:"11px",marginLeft:"6px"}}>{s.code}</span></div>
@@ -385,7 +395,7 @@ function App(){
       </div>
     </header>
 
-    <nav className="nav-wrap" style={{maxWidth:1440,margin:"0 auto",padding:"0 40px 18px",display:"flex",gap:"3px",borderBottom:"1px solid var(--div2)"}}>{tabs.map(t=><button key={t.id} onClick={()=>setTab(t.id)} style={{padding:"9px 18px",fontFamily:"inherit",fontSize:"13px",fontWeight:tab===t.id?600:400,cursor:"pointer",background:tab===t.id?"var(--tab-bg)":"transparent",border:"1px solid",borderColor:tab===t.id?"var(--tab-bd)":"transparent",borderRadius:"8px",color:tab===t.id?"var(--text)":"var(--dim)",transition:"all .2s",display:"flex",alignItems:"center",gap:"5px",whiteSpace:"nowrap"}}><span style={{fontSize:"10px",opacity:tab===t.id?1:.6}}>{t.ic}</span>{t.l}{t.live&&<span style={{fontSize:"9px",fontWeight:700,color:"#ef4444",display:"flex",alignItems:"center",gap:"3px"}}><span style={{width:6,height:6,borderRadius:"50%",background:"#ef4444",animation:"pulse 1.5s infinite"}}/> LIVE</span>}</button>)}</nav>
+    <nav className="nav-wrap" style={{maxWidth:1440,margin:"0 auto",padding:"0 40px 18px",display:"flex",gap:"3px",borderBottom:"1px solid var(--div2)",overflow:"visible"}}>{tabs.map(t=><button key={t.id} onClick={()=>setTab(t.id)} style={{padding:"9px 18px",fontFamily:"inherit",fontSize:"13px",fontWeight:tab===t.id?600:400,cursor:"pointer",background:tab===t.id?"var(--tab-bg)":"transparent",border:"1px solid",borderColor:tab===t.id?"var(--tab-bd)":"transparent",borderRadius:"8px",color:tab===t.id?"var(--text)":"var(--dim)",transition:"all .2s",display:"flex",alignItems:"center",gap:"5px",whiteSpace:"nowrap",position:t.live?"relative":"static"}}><span style={{fontSize:"10px",opacity:tab===t.id?1:.6}}>{t.ic}</span>{t.l}{t.live&&<span style={{position:"absolute",top:"-20px",left:"50%",transform:"translateX(-50%)",background:"#ef4444",color:"#fff",fontSize:"9px",fontWeight:800,padding:"3px 8px",borderRadius:"6px",letterSpacing:"0.5px",lineHeight:"14px",boxShadow:"0 2px 8px rgba(239,68,68,0.35)",animation:"liveBounce 2s ease-in-out infinite",zIndex:10,pointerEvents:"none"}}><span style={{position:"absolute",bottom:"-4px",left:"50%",transform:"translateX(-50%)",width:0,height:0,borderLeft:"5px solid transparent",borderRight:"5px solid transparent",borderTop:"5px solid #ef4444"}}/>LIVE</span>}</button>)}</nav>
 
     <main className="main-wrap" style={{maxWidth:1440,margin:"0 auto",padding:"22px 40px 60px"}}>
       {tab==="overview"&&<TabOverview idx={idx} stk={stk} nws={nws} sec={sec} loading={loading}/>}
