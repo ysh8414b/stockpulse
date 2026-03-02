@@ -383,7 +383,7 @@ def fetch_naver_market_data(sector_map=None):
                 price = int(item.get("closePrice", "0").replace(",", ""))
                 change_pct = float(item.get("fluctuationsRatio", "0").replace(",", ""))
                 volume = int(item.get("accumulatedTradingVolume", "0").replace(",", ""))
-                trading_value = int(item.get("accumulatedTradingValue", "0").replace(",", ""))
+                trading_value = int(item.get("accumulatedTradingValue", "0").replace(",", "")) * 1_000_000  # 백만원→원
                 market_cap = int(item.get("marketValue", "0").replace(",", "")) * 100_000_000  # 억원→원
             except (ValueError, TypeError):
                 continue
@@ -735,25 +735,27 @@ def is_etf_etn(name):
     return any(kw in name for kw in skip)
 
 
-def classify_stock_tags(name):
-    """종목명으로 태그 자동 분류"""
-    tag_map = {
-        "반도체": ["삼성전자", "SK하이닉스", "삼성SDI", "DB하이텍", "리노공업", "한미반도체", "HPSP", "주성엔지니어링"],
-        "2차전지": ["LG에너지솔루션", "에코프로", "에코프로비엠", "포스코퓨처엠", "엘앤에프", "천보"],
-        "바이오": ["셀트리온", "삼성바이오로직스", "유한양행", "한미약품", "알테오젠", "리가켐바이오"],
-        "자동차": ["현대자동차", "현대차", "기아", "현대모비스", "만도"],
-        "IT": ["네이버", "카카오", "카카오뱅크", "크래프톤", "엔씨소프트"],
-        "금융": ["KB금융", "신한지주", "하나금융지주", "우리금융지주", "삼성생명", "삼성화재"],
-        "철강": ["포스코홀딩스", "현대제철", "세아베스틸"],
-        "건설": ["현대건설", "대우건설", "GS건설", "DL이앤씨"],
+def classify_stock_tags(name, display_sector="", theme_names=None):
+    """종목 태그 분류 (섹터 기반 + 테마 소속)"""
+    tags = []
+
+    # 1) display_sector 활용 (네이버 업종 기반)
+    if display_sector:
+        tags.append(display_sector)
+
+    # 2) 인기 테마 소속이면 테마명 추가
+    if theme_names:
+        for t in theme_names:
+            if t not in tags:
+                tags.append(t)
+
+    # 3) 특수 태그 (종목명 기반, display_sector에 없는 분류)
+    special_tags = {
         "AI": ["삼성전자", "SK하이닉스", "네이버", "카카오"],
-        "전기차": ["현대자동차", "현대차", "기아", "LG에너지솔루션"],
         "방산": ["한화에어로스페이스", "LIG넥스원", "한국항공우주", "현대로템"],
     }
-
-    tags = []
-    for tag, names in tag_map.items():
-        if any(n in name for n in names):
+    for tag, names in special_tags.items():
+        if tag not in tags and any(n in name for n in names):
             tags.append(tag)
 
     if not tags:
@@ -1432,13 +1434,12 @@ def generate_ai_summary(indices, stocks, sectors, themes, news):
 1. 위 데이터만 사용하여 객관적 시장 브리핑 작성
 2. 투자 추천/조언 절대 금지
 3. 반드시 한글과 숫자만 사용 — 한자(漢字), 일본어, 중국어 절대 사용 금지
-4. 아래 5개 섹션으로 구분하여 작성:
-   [시장 요약] 코스피·코스닥 등 주요 지수 흐름 요약 (2~3문장)
+4. 아래 4개 섹션으로 구분하여 작성:
+   [시장 요약] 코스피·코스닥 등 주요 지수 수치와 등락 요약 (1~2문장, 간결하게)
    [거래 동향] 거래대금 상위 종목과 특징적 움직임 (2~3문장)
-   [섹터 동향] 상승/하락 섹터와 원인 분석 (2~3문장)
-   [테마 동향] 인기 테마와 관련 종목 흐름 (2~3문장)
    [주요 뉴스] 시장에 영향을 주는 핵심 뉴스 요약 (2~3문장)
-5. 총 500~700자 분량으로 작성
+   [AI 총평] 오늘 시장을 한 문장으로 총평 (예: "외국인 매도세 속 반도체 업종 약세가 두드러진 하루")
+5. 총 300~500자 분량으로 작성
 6. 간결하고 전문적인 뉴스 앵커 톤
 7. 숫자는 데이터 그대로 인용
 8. 각 섹션 제목은 대괄호로 표시 (예: [시장 요약])
@@ -1565,6 +1566,7 @@ def crawl_issue_stocks(krx_data, themes=None, sectors=None, news=None):
 
     # ── 1단계: 후보 필터링 (거래대금 1000억 이상, ETF 제외) ──
     MIN_TRADING_VALUE = 100_000_000_000  # 1000억 원
+    LIMIT_PCT = 29.5  # 상한가/하한가 기준 (±29.5% 이상)
     candidates = []
     for code, d in krx_data.items():
         if d["volume"] == 0 or d["price"] == 0:
@@ -1580,18 +1582,26 @@ def crawl_issue_stocks(krx_data, themes=None, sectors=None, news=None):
         all_stocks.sort(key=lambda x: x["trading_value"], reverse=True)
         candidates = all_stocks[:50]
 
-    log(f"  📋 후보 종목: {len(candidates)}개 (거래대금 1000억+)")
+    limit_count = sum(1 for d in candidates if abs(d["change_pct"]) >= LIMIT_PCT)
+    log(f"  📋 후보 종목: {len(candidates)}개 (거래대금 1000억+, 상한가/하한가 {limit_count}개)")
 
     # ── 2단계: 보조 데이터 구축 ──
-    # 인기 테마 소속 종목 코드 세트
+    # 인기 테마 소속 종목 코드 → 테마명 매핑
     theme_stock_codes = set()
+    stock_theme_names = {}  # code → [테마명, ...]
     if themes:
         for t in themes:
+            tname = t.get("name", "")
             ls = t.get("leading_stocks", "")
             for part in ls.split(","):
                 parts = part.strip().split(":")
                 if len(parts) >= 2 and parts[1].strip().isdigit():
-                    theme_stock_codes.add(parts[1].strip())
+                    code = parts[1].strip()
+                    theme_stock_codes.add(code)
+                    if code not in stock_theme_names:
+                        stock_theme_names[code] = []
+                    if tname and tname not in stock_theme_names[code]:
+                        stock_theme_names[code].append(tname)
 
     # 상승 섹터 이름 세트
     rising_sectors = set()
@@ -1645,12 +1655,14 @@ def crawl_issue_stocks(krx_data, themes=None, sectors=None, news=None):
 
         # 선정 사유 생성
         reasons = []
+        cp = d["change_pct"]
+        if abs(cp) >= LIMIT_PCT:
+            reasons.append("상한가" if cp > 0 else "하한가")
         if theme_score > 0:
             reasons.append("인기테마")
         if news_score > 0:
             reasons.append("뉴스언급")
-        if change_score >= 20:
-            cp = d["change_pct"]
+        if abs(cp) < LIMIT_PCT and change_score >= 20:
             reasons.append("급등" if cp > 0 else "급락")
         if tv_score >= 20:
             reasons.append("거래폭발")
@@ -1689,7 +1701,7 @@ def crawl_issue_stocks(krx_data, themes=None, sectors=None, news=None):
             "change_pct": pct_str,
             "volume": volume_str,
             "reason": reason_str,
-            "tags": classify_stock_tags(d["name"]),
+            "tags": classify_stock_tags(d["name"], d.get("display_sector", ""), stock_theme_names.get(d["code"])),
             "trend": trend,
             "date": TODAY,
         })
