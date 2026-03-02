@@ -293,20 +293,47 @@ function TabAI({aiSum,loading}){
   if(loading)return <Loader/>;
   const moodMap={bullish:{emoji:"🟢",label:"강세",color:"#22c55e"},bearish:{emoji:"🔴",label:"약세",color:"#ef4444"},neutral:{emoji:"⚪",label:"보합",color:"#6b7280"}};
   const mood=aiSum?moodMap[aiSum.market_mood]||moodMap.neutral:null;
+  const secIcons={"핵심":"🔥","자금":"💰","금리":"📈","섹터":"📊","시나리오":"🔮","결론":"🧠"};
+  const secColors={"핵심":"239,68,68","자금":"59,130,246","금리":"245,158,11","섹터":"139,92,246","시나리오":"6,182,212","결론":"34,197,94"};
+  const getSecMeta=(title)=>{for(const[k,v]of Object.entries(secIcons)){if(title.includes(k))return{icon:v,clr:secColors[k]}}return{icon:"📌",clr:"107,114,128"}};
+  const parseSections=(text)=>{
+    if(!text)return[];
+    const lines=text.split("\n");
+    const sections=[];let cur=null;
+    for(const line of lines){
+      const t=line.trim();if(!t)continue;
+      if(/^\d[\.\)]/.test(t)){
+        if(cur)sections.push(cur);
+        const title=t.replace(/^\d[\.\)]\s*/,"");
+        cur={title,lines:[]};
+      }else if(cur){cur.lines.push(t)}
+      else{if(!sections.length){cur={title:"",lines:[t]}}}
+    }
+    if(cur)sections.push(cur);
+    return sections;
+  };
   return <div className="fade-up">
     <h2 style={{fontSize:"17px",fontWeight:700,marginBottom:"4px"}}><span style={{color:"#06b6d4"}}>⬡</span> AI 시장 브리핑</h2>
-    <p style={{color:"var(--muted)",fontSize:"13px",marginBottom:"22px"}}>Groq AI 기반 시장 데이터 자동 분석 · 크롤링 시 자동 갱신</p>
+    <p style={{color:"var(--muted)",fontSize:"13px",marginBottom:"22px"}}>Groq AI 기반 매크로 전략 분석 · 크롤링 시 자동 갱신</p>
     {aiSum?<div>
-      <Box style={{padding:"24px"}} hover={false}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"18px"}}>
-          <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
-            <span style={{width:36,height:36,borderRadius:"10px",background:"rgba(6,182,212,0.12)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"18px"}}>⬡</span>
-            <div><div style={{fontWeight:700,fontSize:"15px"}}>오늘의 시장 브리핑</div><div style={{color:"var(--muted)",fontSize:"11px",marginTop:"2px"}}>{aiSum.date} {aiSum.generated_time?aiSum.generated_time+"":""}기준</div></div>
-          </div>
-          {mood&&<span style={{padding:"5px 14px",borderRadius:"20px",fontSize:"12px",fontWeight:600,background:`rgba(${mood.color==="var(--muted)"?"107,114,128":mood.color==="#22c55e"?"34,197,94":"239,68,68"},0.1)`,color:mood.color,display:"flex",alignItems:"center",gap:"5px"}}>{mood.emoji} {mood.label}</span>}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"16px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
+          <span style={{width:36,height:36,borderRadius:"10px",background:"rgba(6,182,212,0.12)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"18px"}}>⬡</span>
+          <div><div style={{fontWeight:700,fontSize:"15px"}}>오늘의 시장 브리핑</div><div style={{color:"var(--muted)",fontSize:"11px",marginTop:"2px"}}>{aiSum.date} {aiSum.generated_time?aiSum.generated_time+" ":""}기준</div></div>
         </div>
-        <div style={{fontSize:"14px",lineHeight:1.9,color:"var(--text-sub)",whiteSpace:"pre-wrap"}}>{aiSum.summary.split(/(\n)/).map((line,i)=>{const sec=/^\d\)/.test(line.trim())||/^정리[:：]/.test(line.trim());const bracket=/^\[.+\]$/.test(line.trim());return sec?<div key={i} style={{fontWeight:700,fontSize:"15px",color:"var(--text)",marginTop:i>0?"14px":"0",marginBottom:"2px"}}>{line}</div>:bracket?<span key={i} style={{fontWeight:700,color:"var(--text)",display:"inline-block",marginTop:i>0?"6px":"0"}}>{line}</span>:<span key={i}>{line}</span>})}</div>
-      </Box>
+        {mood&&<span style={{padding:"5px 14px",borderRadius:"20px",fontSize:"12px",fontWeight:600,background:`rgba(${mood.color==="#22c55e"?"34,197,94":mood.color==="#ef4444"?"239,68,68":"107,114,128"},0.1)`,color:mood.color,display:"flex",alignItems:"center",gap:"5px"}}>{mood.emoji} {mood.label}</span>}
+      </div>
+      <div style={{display:"grid",gap:"12px"}}>{parseSections(aiSum.summary).map((sec,si)=>{
+        const meta=getSecMeta(sec.title);
+        const isConclusion=sec.title.includes("결론");
+        return <Box key={si} style={{padding:isConclusion?"20px 22px":"18px 22px",borderLeft:`3px solid rgba(${meta.clr},0.5)`,background:isConclusion?`rgba(${meta.clr},0.04)`:"transparent"}} hover={false}>
+          {sec.title&&<div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"10px"}}><span style={{fontSize:"16px"}}>{meta.icon}</span><span style={{fontWeight:700,fontSize:"14px",color:"var(--text)"}}>{sec.title}</span></div>}
+          <div style={{fontSize:"13px",lineHeight:1.8,color:"var(--text-sub)"}}>{sec.lines.map((l,li)=>{
+            const isArrow=l.includes("→");const isBullet=/^[↘↗📌👉·\-\*]/.test(l);
+            return <div key={li} style={{marginBottom:li<sec.lines.length-1?"6px":"0",paddingLeft:isBullet?"4px":"0",color:isArrow?"var(--text)":"inherit",fontWeight:isArrow?500:"normal"}}>{l}</div>
+          })}</div>
+        </Box>
+      })}</div>
     </div>:<Box style={{padding:"40px",textAlign:"center"}} hover={false}>
       <div style={{fontSize:"36px",marginBottom:"12px",opacity:0.4}}>⬡</div>
       <div style={{fontWeight:600,fontSize:"15px",color:"var(--muted)",marginBottom:"6px"}}>AI 브리핑 준비 중</div>

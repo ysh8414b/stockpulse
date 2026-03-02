@@ -1769,12 +1769,12 @@ def crawl_market_index():
     indices = []
 
     index_symbols = [
-        ("코스피",   "^KS11",    "15m"),
-        ("코스닥",   "^KQ11",    "15m"),
-        ("다우존스", "^DJI",     "30m"),
-        ("나스닥",   "^IXIC",    "30m"),
-        ("S&P 500",  "^GSPC",    "30m"),
-        ("USD/KRW",  "USDKRW=X", "30m"),
+        ("코스피",   "^KS11",    "5m"),
+        ("코스닥",   "^KQ11",    "5m"),
+        ("다우존스", "^DJI",     "5m"),
+        ("나스닥",   "^IXIC",    "5m"),
+        ("S&P 500",  "^GSPC",    "5m"),
+        ("USD/KRW",  "USDKRW=X", "5m"),
     ]
 
     for name, symbol, interval in index_symbols:
