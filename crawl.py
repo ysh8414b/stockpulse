@@ -1411,8 +1411,10 @@ def generate_ai_summary(indices, stocks, sectors, themes, news):
         for n in (news or [])[:15]
     )
 
-    from datetime import datetime
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    from datetime import datetime, timezone, timedelta
+    kst = timezone(timedelta(hours=9))
+    now_kst = datetime.now(kst)
+    now_str = now_kst.strftime("%Y-%m-%d %H:%M")
 
     prompt = f"""너는 증권사 수석 애널리스트다. 아래 시장 데이터를 종합 분석하여 전문적인 시장 브리핑을 작성하라.
 
@@ -1536,7 +1538,7 @@ market_mood 판단: 코스피·코스닥 모두 상승이면 bullish, 모두 하
 
         if summary:
             log(f"  🤖 AI 시장 브리핑 생성 완료 (mood: {mood}, {len(summary)}자)")
-            generated_time = datetime.now().strftime("%H:%M")
+            generated_time = now_kst.strftime("%H:%M")
             return {"summary": summary, "market_mood": mood, "date": TODAY, "generated_time": generated_time}
         return None
 
