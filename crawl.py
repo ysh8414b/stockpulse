@@ -2188,8 +2188,20 @@ def main():
     # 10. 이슈 종목 (복합 점수 랭킹: 등락률+거래대금+테마+뉴스+섹터)
     stocks = crawl_issue_stocks(krx_data, themes, sectors, news)
 
-    # 11. AI 시장 브리핑 (Groq)
-    ai_summary = generate_ai_summary(indices, stocks, sectors, themes, news)
+    # 11. AI 시장 브리핑 (Groq) — 하루 3회만 생성 (09:05, 12:05, 15:35)
+    from datetime import datetime, timezone, timedelta
+    kst_now = datetime.now(timezone(timedelta(hours=9)))
+    ai_hours = [(9, 5), (12, 5), (15, 35)]
+    should_gen_ai = any(
+        h == kst_now.hour and abs(kst_now.minute - m) <= 5
+        for h, m in ai_hours
+    )
+    if should_gen_ai:
+        log("  🤖 AI 브리핑 생성 시간대 — Groq 호출")
+        ai_summary = generate_ai_summary(indices, stocks, sectors, themes, news)
+    else:
+        log(f"  ℹ️ AI 브리핑 스킵 (현재 {kst_now.strftime('%H:%M')}, 생성 시간: 09:05/12:05/15:35)")
+        ai_summary = None
 
     # ─── Supabase에 저장 ───
     log("")
