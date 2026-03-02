@@ -1390,40 +1390,108 @@ def detect_themes_with_ai(news_titles, theme_map=None):
         return None
 
 
-def generate_ai_summary(indices, stocks, sectors, themes, news):
-    """Groq AI로 시장 브리핑 생성 (매 크롤링 시 1회)"""
+def generate_ai_summary(indices, stocks, sectors, themes, news, mode="market"):
+    """Groq AI로 시장 브리핑 생성. mode: 'premarket'(장전 해외시장) / 'market'(장중) / 'close'(마감)"""
     if not GROQ_API_KEY:
         log("  ⚠️ GROQ_API_KEY 미설정 - AI 요약 건너뜀")
         return None
-
-    # 컨텍스트 구성 (풍부한 데이터 제공)
-    idx_text = "\n".join(
-        f"- {m['name']}: {m['value']} ({m['change_pct']})" for m in (indices or [])
-    )
-    stk_text = "\n".join(
-        f"- {s['name']}({s['code']}): {s['price']}원, {s['change_pct']}, 거래대금 {s.get('volume','N/A')}, 사유: {s.get('reason','N/A')}"
-        for s in (stocks or [])[:10]
-    )
-    # 상승/하락 섹터 분리
-    up_sectors = [s for s in (sectors or []) if s.get("trend") == "up"]
-    down_sectors = [s for s in (sectors or []) if s.get("trend") == "down"]
-    sec_text = "상승 섹터: " + ", ".join(f"{s['name']}({s['change_pct']})" for s in up_sectors)
-    sec_text += "\n하락 섹터: " + ", ".join(f"{s['name']}({s['change_pct']})" for s in down_sectors)
-    thm_text = "\n".join(
-        f"- {t['name']}: {t['change_pct']}, 대장주: {t.get('leading_stocks','N/A')}"
-        for t in (themes or [])[:5]
-    )
-    news_text = "\n".join(
-        f"- {n['title']} ({n.get('source','')}, {n.get('time_ago','')})"
-        for n in (news or [])[:15]
-    )
 
     from datetime import datetime, timezone, timedelta
     kst = timezone(timedelta(hours=9))
     now_kst = datetime.now(kst)
     now_str = now_kst.strftime("%Y-%m-%d %H:%M")
 
-    prompt = f"""너는 매크로 전략가다.
+    # 컨텍스트 구성
+    idx_text = "\n".join(
+        f"- {m['name']}: {m['value']} ({m['change_pct']})" for m in (indices or [])
+    )
+    news_text = "\n".join(
+        f"- {n['title']} ({n.get('source','')}, {n.get('time_ago','')})"
+        for n in (news or [])[:15]
+    )
+
+    if mode == "premarket":
+        # ── 장 시작 전: 해외시장 위주 브리핑 ──
+        # 해외 지수만 필터 (다우, 나스닥, S&P500, USD/KRW)
+        global_names = {"다우", "나스닥", "S&P500", "USD/KRW"}
+        global_idx = [m for m in (indices or []) if m["name"] in global_names]
+        kr_idx = [m for m in (indices or []) if m["name"] in {"코스피", "코스닥"}]
+        global_text = "\n".join(f"- {m['name']}: {m['value']} ({m['change_pct']})" for m in global_idx)
+        kr_text = "\n".join(f"- {m['name']}: {m['value']} ({m['change_pct']})" for m in kr_idx)
+
+        prompt = f"""너는 매크로 전략가다.
+기준 시각: {now_str} (장 시작 전)
+
+아래 전일 해외시장 데이터와 뉴스를 기반으로, 오늘 국내 시장에 미칠 영향을 분석하라.
+
+## 시장 데이터:
+
+[해외 지수 (전일 종가)]
+{global_text}
+
+[국내 지수 (전일 종가)]
+{kr_text}
+
+[주요 뉴스]
+{news_text}
+
+## 분석 구조 (5개 섹션, 반드시 이 순서와 번호를 따를 것):
+
+1) 전일 해외시장 요약
+- 미국 3대 지수(다우·나스닥·S&P500) 흐름과 주요 재료
+- 유럽·아시아 시장 동향이 뉴스에 있으면 포함
+- 3~4문장
+
+2) 환율·원자재 동향
+- USD/KRW 환율 방향과 배경
+- 유가·금 등 원자재 흐름이 뉴스에 있으면 포함
+- 원인 → 결과를 화살표(→)로 연결
+- 2~3문장
+
+3) 국내 시장 영향 전망
+- 해외 흐름이 오늘 코스피·코스닥에 미칠 영향
+- 수혜/피해 예상 섹터·업종 언급
+- 3~4문장
+
+4) 장전 주요 체크포인트
+- 오늘 장에서 주목할 이벤트·발표·이슈 (뉴스 기반)
+- 2~3문장
+
+5) 한 줄 결론
+- 오늘 시장 전망을 한 문장으로 요약
+
+## 절대 규칙:
+- 한글과 숫자만 사용 (한자/일본어/중국어 금지)
+- 감정적 표현 금지. 객관적·분석적 톤 유지
+- "~입니다" 존댓말 금지. "~다/~했다" 간결체 사용
+- 같은 내용 반복 금지, 근거 없는 추측 금지
+- 숫자는 데이터 그대로 인용
+- 총 800~1200자 분량
+
+## 출력 형식 (JSON):
+{{
+  "summary": "브리핑 전문 (섹션 번호와 제목 포함, 줄바꿈으로 구분)",
+  "market_mood": "bullish 또는 bearish 또는 neutral"
+}}
+
+market_mood 판단: 해외시장 전반 상승+원화 강세면 bullish, 하락+원화 약세면 bearish, 혼조면 neutral"""
+
+    else:
+        # ── 장중 / 장 마감: 국내시장 위주 브리핑 ──
+        stk_text = "\n".join(
+            f"- {s['name']}({s['code']}): {s['price']}원, {s['change_pct']}, 거래대금 {s.get('volume','N/A')}, 사유: {s.get('reason','N/A')}"
+            for s in (stocks or [])[:10]
+        )
+        up_sectors = [s for s in (sectors or []) if s.get("trend") == "up"]
+        down_sectors = [s for s in (sectors or []) if s.get("trend") == "down"]
+        sec_text = "상승 섹터: " + ", ".join(f"{s['name']}({s['change_pct']})" for s in up_sectors)
+        sec_text += "\n하락 섹터: " + ", ".join(f"{s['name']}({s['change_pct']})" for s in down_sectors)
+        thm_text = "\n".join(
+            f"- {t['name']}: {t['change_pct']}, 대장주: {t.get('leading_stocks','N/A')}"
+            for t in (themes or [])[:5]
+        )
+
+        prompt = f"""너는 매크로 전략가다.
 기준 시각: {now_str}
 
 아래 시장 데이터를 기반으로 시장을 분석하되, 반드시 지정된 구조를 따라라.
@@ -2188,19 +2256,21 @@ def main():
     # 10. 이슈 종목 (복합 점수 랭킹: 등락률+거래대금+테마+뉴스+섹터)
     stocks = crawl_issue_stocks(krx_data, themes, sectors, news)
 
-    # 11. AI 시장 브리핑 (Groq) — 하루 3회만 생성 (09:05, 12:05, 15:35)
+    # 11. AI 시장 브리핑 (Groq) — 하루 3회만 생성 (08:00 해외시장/12:05 장중/15:35 마감)
     from datetime import datetime, timezone, timedelta
     kst_now = datetime.now(timezone(timedelta(hours=9)))
-    ai_hours = [(9, 5), (12, 5), (15, 35)]
-    should_gen_ai = any(
-        h == kst_now.hour and abs(kst_now.minute - m) <= 5
-        for h, m in ai_hours
-    )
-    if should_gen_ai:
-        log("  🤖 AI 브리핑 생성 시간대 — Groq 호출")
-        ai_summary = generate_ai_summary(indices, stocks, sectors, themes, news)
+    ai_schedule = [(8, 0, "premarket"), (12, 5, "market"), (15, 35, "close")]
+    ai_mode = None
+    for h, m, mode in ai_schedule:
+        if h == kst_now.hour and abs(kst_now.minute - m) <= 5:
+            ai_mode = mode
+            break
+    if ai_mode:
+        label = {"premarket": "장전 해외시장", "market": "장중", "close": "장 마감"}[ai_mode]
+        log(f"  🤖 AI 브리핑 생성 ({label}) — Groq 호출")
+        ai_summary = generate_ai_summary(indices, stocks, sectors, themes, news, mode=ai_mode)
     else:
-        log(f"  ℹ️ AI 브리핑 스킵 (현재 {kst_now.strftime('%H:%M')}, 생성 시간: 09:05/12:05/15:35)")
+        log(f"  ℹ️ AI 브리핑 스킵 (현재 {kst_now.strftime('%H:%M')}, 생성 시간: 08:00/12:05/15:35)")
         ai_summary = None
 
     # ─── Supabase에 저장 ───
