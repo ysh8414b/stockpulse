@@ -780,48 +780,77 @@ def _calc_time_ago(pub_date_str):
         return "오늘"
 
 
+def _is_similar_title(new_title, existing_titles, threshold=0.5):
+    """제목 유사도 체크 — 단어 겹침이 threshold 이상이면 유사"""
+    new_words = set(new_title.replace(" ", ""))
+    for t in existing_titles:
+        old_words = set(t.replace(" ", ""))
+        if not new_words or not old_words:
+            continue
+        overlap = len(new_words & old_words) / min(len(new_words), len(old_words))
+        if overlap > threshold:
+            return True
+    return False
+
+
 def _search_theme_news_api(query, theme_name=""):
-    """Naver Search API로 테마 관련 뉴스 검색 (최대 5건, 테마명 매칭 우선)"""
+    """Naver Search API로 테마 관련 뉴스 검색 (최대 5건, 다양성 확보)"""
     if not NAVER_CLIENT_ID or not NAVER_CLIENT_SECRET:
         return "", "", "[]"
     try:
         url = "https://openapi.naver.com/v1/search/news.json"
-        params = {"query": query, "display": 10, "sort": "date"}
         headers = {
             "X-Naver-Client-Id": NAVER_CLIENT_ID,
             "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
         }
-        resp = requests.get(url, headers=headers, params=params, timeout=5)
-        data = resp.json()
-        items = data.get("items", [])
-        if not items:
+        core_kw = query.replace("주식", "").replace("관련", "").strip()
+
+        # 다양한 쿼리로 검색 (테마명 주식 + 테마명 단독 + 테마명 관련주)
+        queries = [query]
+        if core_kw and core_kw != query:
+            queries.append(core_kw)
+        if core_kw:
+            queries.append(f"{core_kw} 관련주")
+
+        all_items = []
+        seen_urls = set()
+        for q in queries:
+            resp = requests.get(url, headers=headers, params={"query": q, "display": 10, "sort": "date"}, timeout=5)
+            for item in resp.json().get("items", []):
+                link = item.get("link", "")
+                if link not in seen_urls:
+                    all_items.append(item)
+                    seen_urls.add(link)
+
+        if not all_items:
             return "", "", "[]"
 
-        # 모든 뉴스 항목 정리
-        cleaned = []
-        seen_titles = set()
         theme_keywords = theme_name.replace(" ", "").lower() if theme_name else ""
-        core_kw = query.replace("주식", "").replace("관련", "").strip().lower()
+        core_kw_lower = core_kw.lower()
 
-        # 테마명 매칭 뉴스 우선
-        for item in items:
+        # 테마명 매칭 우선, 나머지 후순위
+        priority = []
+        normal = []
+        for item in all_items:
             title = html.unescape(re.sub(r'<[^>]+>', '', item.get("title", ""))).strip()
-            if title in seen_titles:
+            if not title:
                 continue
             title_lower = title.replace(" ", "").lower()
             if theme_keywords and theme_keywords in title_lower:
-                cleaned.insert(0, {"title": title, "url": item.get("link", "")})
-                seen_titles.add(title)
-            elif core_kw and core_kw in title_lower:
-                cleaned.append({"title": title, "url": item.get("link", "")})
-                seen_titles.add(title)
+                priority.append({"title": title, "url": item.get("link", "")})
+            elif core_kw_lower and core_kw_lower in title_lower:
+                priority.append({"title": title, "url": item.get("link", "")})
+            else:
+                normal.append({"title": title, "url": item.get("link", "")})
 
-        # 나머지 뉴스 추가 (5개 채우기)
-        for item in items:
-            title = html.unescape(re.sub(r'<[^>]+>', '', item.get("title", ""))).strip()
-            if title not in seen_titles:
-                cleaned.append({"title": title, "url": item.get("link", "")})
-                seen_titles.add(title)
+        # 유사도 필터링하며 5개 선별
+        cleaned = []
+        used_titles = []
+        for item in priority + normal:
+            if _is_similar_title(item["title"], used_titles):
+                continue
+            cleaned.append(item)
+            used_titles.append(item["title"])
             if len(cleaned) >= 5:
                 break
 

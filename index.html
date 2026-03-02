@@ -221,12 +221,13 @@ function SectorStockList({sectorName}){
   return <div style={{marginTop:"12px",animation:"fadeUp .3s ease both"}}>{stocks.map((st,i)=><SectorStockRow key={st.code||i} st={st} i={i} isLast={i===stocks.length-1}/>)}</div>;
 }
 // ═══ TAB: THEMES ═══
-function ThemeNewsDropdown({newsList,mainTitle,mainUrl}){
-  const[show,setShow]=useState(false);const ref=React.useRef(null);
+function ThemeNewsDropdown({newsList,mainTitle,mainUrl,onOpen}){
+  const[show,setShow]=useState(false);
   let news=[];try{news=typeof newsList==="string"?JSON.parse(newsList):newsList||[]}catch(e){news=[]}
   if(!news.length&&mainTitle)news=[{title:mainTitle,url:mainUrl}];
   if(!news.length)return null;
-  return <div style={{position:"relative",display:"inline-block",maxWidth:"500px",zIndex:show?50:1}} ref={ref} onMouseEnter={()=>setShow(true)} onMouseLeave={()=>setShow(false)}>
+  const open=v=>{setShow(v);if(onOpen)onOpen(v)};
+  return <div style={{position:"relative",display:"inline-block",maxWidth:"500px"}} onMouseEnter={()=>open(true)} onMouseLeave={()=>open(false)}>
     <a href={mainUrl||"#"} target="_blank" rel="noopener noreferrer" onClick={e=>{e.stopPropagation();if(!mainUrl)e.preventDefault()}} style={{display:"block",fontSize:"12px",color:"var(--text-sub)",lineHeight:1.5,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:"none",transition:"color .15s",cursor:"pointer",paddingBottom:show?"6px":"0"}} onMouseEnter={e=>e.currentTarget.style.color="#f97316"} onMouseLeave={e=>e.currentTarget.style.color="var(--text-sub)"}>{mainTitle||news[0]?.title} {news.length>1&&<span style={{fontSize:"10px",color:"var(--dim)",marginLeft:"4px"}}>+{news.length-1}</span>}</a>
     {show&&news.length>1&&<div style={{position:"absolute",top:"100%",left:0,zIndex:9999,background:"var(--bg)",border:"1px solid var(--card-bd)",borderRadius:"10px",boxShadow:"0 8px 30px rgba(0,0,0,0.4)",padding:"8px 0",minWidth:"340px",maxWidth:"480px",animation:"fadeUp .2s ease both"}} onClick={e=>e.stopPropagation()}>
       <div style={{padding:"6px 14px 8px",fontSize:"11px",fontWeight:600,color:"var(--muted)",borderBottom:"1px solid var(--div)"}}>📰 관련 뉴스 {news.length}건</div>
@@ -234,19 +235,17 @@ function ThemeNewsDropdown({newsList,mainTitle,mainUrl}){
     </div>}
   </div>;
 }
-function TabThemes({thm,loading}){
-  if(loading)return <Loader/>;if(!thm.length)return <Empty msg="테마 데이터 없음"/>;
-  return <div className="fade-up">
-    <h2 style={{fontSize:"17px",fontWeight:700,marginBottom:"18px"}}><span style={{color:"#f97316"}}>◈</span> 인기 테마 TOP 10</h2>
-    <div style={{display:"grid",gap:"10px"}}>{thm.map((t,i)=>{
-      const u=t.trend==="up";const f=t.trend==="flat";const clr=u?"#22c55e":(f?"#6b7280":"#ef4444");
-      return <Box key={t.name||i} style={{padding:"20px 22px"}} hover={true}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"16px"}}>
-          <div style={{display:"flex",alignItems:"center",gap:"14px",flex:1,minWidth:0}}>
-            <span style={{width:32,height:32,borderRadius:"8px",fontSize:"14px",fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",background:i<3?"rgba(249,115,22,0.14)":"var(--badge-bg)",color:i<3?"#f97316":"var(--muted)",flexShrink:0}}>{t.rank}</span>
-            <div style={{minWidth:0}}>
-              <div style={{fontWeight:700,fontSize:"15px",marginBottom:"4px"}}>{t.name}</div>
-              {(t.related_news||t.news_list)&&<ThemeNewsDropdown newsList={t.news_list} mainTitle={t.related_news} mainUrl={t.news_url}/>}
+function ThemeItem({t,i}){
+  const[newsOpen,setNewsOpen]=useState(false);
+  const u=t.trend==="up";const f=t.trend==="flat";const clr=u?"#22c55e":(f?"#6b7280":"#ef4444");
+  return <div style={{position:"relative",zIndex:newsOpen?50:1}}>
+    <Box style={{padding:"20px 22px",overflow:newsOpen?"visible":"hidden"}} hover={!newsOpen}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"16px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:"14px",flex:1,minWidth:0}}>
+          <span style={{width:32,height:32,borderRadius:"8px",fontSize:"14px",fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",background:i<3?"rgba(249,115,22,0.14)":"var(--badge-bg)",color:i<3?"#f97316":"var(--muted)",flexShrink:0}}>{t.rank}</span>
+          <div style={{minWidth:0}}>
+            <div style={{fontWeight:700,fontSize:"15px",marginBottom:"4px"}}>{t.name}</div>
+            {(t.related_news||t.news_list)&&<ThemeNewsDropdown newsList={t.news_list} mainTitle={t.related_news} mainUrl={t.news_url} onOpen={setNewsOpen}/>}
             </div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:"20px",flexShrink:0}}>
@@ -266,8 +265,14 @@ function TabThemes({thm,loading}){
         {t.leading_stocks&&<div style={{marginTop:"10px",paddingTop:"10px",borderTop:"1px solid var(--div)",display:"flex",gap:"6px",flexWrap:"wrap"}}>
           {t.leading_stocks.split(",").map((s,j)=>{const parts=s.trim().split(":");const nm=parts[0];const cd=parts[1]||"";const pct=parts[2]||"";const pctVal=parseFloat(pct)||0;const pctClr=pctVal<0?"#ef4444":pctVal>0?"#22c55e":"var(--text-sub)";const validCode=cd&&/^\d{6}$/.test(cd);return validCode?<a key={j} href={`https://finance.naver.com/item/main.naver?code=${cd}`} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{padding:"3px 9px",background:"var(--badge-bg)",borderRadius:"5px",fontSize:"11px",color:"var(--text-sub)",fontWeight:500,textDecoration:"none",cursor:"pointer",transition:"all .15s",border:"1px solid transparent"}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(249,115,22,0.12)";e.currentTarget.style.color="#f97316";e.currentTarget.style.borderColor="rgba(249,115,22,0.3)"}} onMouseLeave={e=>{e.currentTarget.style.background="var(--badge-bg)";e.currentTarget.style.color="var(--text-sub)";e.currentTarget.style.borderColor="transparent"}}>{nm}<span style={{color:"var(--dim)",fontSize:"9px",marginLeft:"3px"}}>{cd}</span>{pct&&<span style={{marginLeft:"4px",color:pctClr,fontSize:"10px",fontWeight:600}}>{pct}</span>}</a>:<span key={j} style={{padding:"3px 9px",background:"var(--badge-bg)",borderRadius:"5px",fontSize:"11px",color:"var(--text-sub)",fontWeight:500}}>{nm}{pct&&<span style={{marginLeft:"4px",color:pctClr,fontSize:"10px",fontWeight:600}}>{pct}</span>}</span>})}
         </div>}
-      </Box>})}
-    </div>
+      </Box>
+    </div>;
+}
+function TabThemes({thm,loading}){
+  if(loading)return <Loader/>;if(!thm.length)return <Empty msg="테마 데이터 없음"/>;
+  return <div className="fade-up">
+    <h2 style={{fontSize:"17px",fontWeight:700,marginBottom:"18px"}}><span style={{color:"#f97316"}}>◈</span> 인기 테마 TOP 10</h2>
+    <div style={{display:"grid",gap:"10px"}}>{thm.map((t,i)=><ThemeItem key={t.name||i} t={t} i={i}/>)}</div>
   </div>;
 }
 
