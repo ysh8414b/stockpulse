@@ -855,6 +855,10 @@ def _search_theme_news_api(query, theme_name=""):
             # [데일리국제금융], (매일경제) 등 언론사명 제거 후 키워드 매칭
             title_for_match = re.sub(r'[\[\(【].*?[\]\)】]', '', title)
             title_lower = title_for_match.replace(" ", "").lower()
+            # 제외 키워드 체크 (동음이의어 오매칭 방지)
+            excludes = THEME_EXCLUDE_KEYWORDS.get(theme_name, [])
+            if excludes and any(ex.replace(" ", "").lower() in title_lower for ex in excludes):
+                continue
             if any(kw in title_lower for kw in theme_kws):
                 relevant.append({"title": title, "url": item.get("link", "")})
 
@@ -1138,6 +1142,11 @@ def build_theme_stock_map(krx_data):
 # 규칙 기반 테마 감지 (뉴스 키워드 매칭)
 # ─────────────────────────────────────────
 # 뉴스 헤드라인 → 테마 매칭 키워드
+# 테마별 제외 키워드 (동음이의어 오매칭 방지)
+THEME_EXCLUDE_KEYWORDS = {
+    "조선": ["조선학교", "조선일보", "조선시대", "조선왕조", "조선족", "조선대", "북조선"],
+}
+
 NEWS_THEME_KEYWORDS = {
     "반도체": ["반도체", "HBM", "메모리", "파운드리", "삼성전자", "SK하이닉스", "DRAM", "낸드", "NAND", "D램",
                "AI서버", "CXL", "첨단패키징", "유리기판", "HBM4",
@@ -1257,6 +1266,9 @@ def detect_themes_rule_based(news_titles, theme_map=None):
     for title in news_titles:
         matched_themes = set()
         for theme, keywords in NEWS_THEME_KEYWORDS.items():
+            excludes = THEME_EXCLUDE_KEYWORDS.get(theme, [])
+            if excludes and any(ex in title for ex in excludes):
+                continue
             for kw in keywords:
                 if kw in title:
                     matched_themes.add(theme)
