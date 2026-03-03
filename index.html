@@ -60,8 +60,64 @@
     body::before{content:'';position:fixed;top:-40%;left:-20%;width:80%;height:80%;background:radial-gradient(ellipse,var(--glow1) 0%,transparent 70%);pointer-events:none;z-index:0;transition:background .5s}
     body::after{content:'';position:fixed;bottom:-30%;right:-15%;width:60%;height:60%;background:radial-gradient(ellipse,var(--glow2) 0%,transparent 70%);pointer-events:none;z-index:0;transition:background .5s}
     #root{position:relative;z-index:1}
-    @media(max-width:900px){.grid-2col{grid-template-columns:1fr!important}.grid-index{grid-template-columns:repeat(2,1fr)!important}.grid-sector{grid-template-columns:repeat(2,1fr)!important}.header-wrap{padding:20px 16px 14px!important}.main-wrap{padding:16px 16px 40px!important}.nav-wrap{padding:0 16px 14px!important;overflow-x:auto}.stock-row{font-size:12px!important}}
-    @media(max-width:600px){.grid-index{grid-template-columns:1fr 1fr!important}.grid-sector{grid-template-columns:1fr!important}}
+    /* === Tablet (900px) === */
+    @media(max-width:900px){
+      .grid-2col{grid-template-columns:1fr!important}
+      .grid-index{grid-template-columns:repeat(3,1fr)!important}
+      .grid-sector{grid-template-columns:repeat(2,1fr)!important}
+      .header-wrap{padding:20px 16px 14px!important;flex-wrap:wrap!important}
+      .main-wrap{padding:16px 16px 40px!important}
+      .nav-wrap{padding:0 16px 14px!important;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+      .nav-wrap::-webkit-scrollbar{display:none}
+      .nav-btn{padding:12px 16px!important;min-height:44px!important}
+      .stock-row{font-size:12px!important}
+      .search-wrap{width:100%!important;margin-bottom:12px!important}
+      .search-wrap input{width:100%!important}
+      .theme-dropdown{min-width:0!important;max-width:calc(100vw - 32px)!important}
+      .card-pad{padding:16px 18px!important}
+    }
+    /* === Phone (600px) === */
+    @media(max-width:600px){
+      .grid-index{grid-template-columns:repeat(3,1fr)!important;gap:8px!important}
+      .grid-sector{grid-template-columns:1fr!important}
+      .header-wrap{padding:14px 16px 10px!important}
+      .header-title{font-size:20px!important}
+      .header-subtitle{display:none!important}
+      .header-time-large{font-size:16px!important}
+      .nav-wrap{gap:2px!important;padding:0 12px 12px!important}
+      .nav-btn{padding:10px 12px!important;font-size:12px!important;min-height:44px!important}
+      .stock-row{display:flex!important;flex-wrap:wrap!important;padding:14px 16px!important;gap:4px 8px!important;font-size:13px!important}
+      .stock-row.stock-row-header{display:none!important}
+      .stock-col-rank{order:0;flex-shrink:0;min-width:28px}
+      .stock-col-name{order:1;flex:1;min-width:0;font-size:14px!important;font-weight:600!important}
+      .stock-col-price{order:2;text-align:right!important;flex-shrink:0;font-size:14px!important;font-weight:700!important}
+      .stock-col-change{order:3;margin-left:36px}
+      .stock-col-volume{order:4;margin-left:auto;font-size:11px!important;color:var(--muted)}
+      .stock-col-reason{order:5;width:100%!important;font-size:11px!important;padding-left:0!important;margin-top:2px}
+      .stock-col-tags{order:6;width:100%!important;margin-top:4px}
+      .stock-detail{padding:12px 16px!important;flex-direction:column!important;gap:12px!important}
+      .card-pad{padding:14px!important}
+      .idx-value{font-size:16px!important}
+      .idx-label{font-size:10px!important}
+      .theme-layout{flex-wrap:wrap!important;gap:10px!important}
+      .theme-right{width:100%!important;flex-direction:row!important;justify-content:flex-start!important;gap:16px!important}
+      .theme-pct{font-size:16px!important}
+      .ai-section{padding:14px 16px!important}
+      .news-filter-btn{padding:8px 12px!important;font-size:11px!important;min-height:40px!important}
+      .sector-stock-row{padding:12px 0!important}
+      footer{flex-direction:column!important;text-align:center!important;padding:18px 16px!important}
+    }
+    /* === Small phone (400px) === */
+    @media(max-width:400px){
+      .grid-index{grid-template-columns:1fr 1fr!important}
+      .idx-value{font-size:15px!important}
+      .nav-btn-label{display:none!important}
+      .nav-btn{padding:10px 14px!important}
+      .nav-btn-icon{font-size:14px!important}
+      .header-title{font-size:18px!important}
+      .header-time-large{font-size:14px!important}
+      .theme-pct{font-size:14px!important}
+    }
   </style>
 </head>
 <body>
@@ -104,7 +160,7 @@ function MiniBar({trend}){
 }
 function Dot({s,size=8}){const c={positive:"#22c55e",negative:"#ef4444",neutral:"#6b7280"}[s]||"#6b7280";return <span style={{display:"inline-block",width:size,height:size,borderRadius:"50%",background:c,boxShadow:`0 0 ${size}px ${c}44`,flexShrink:0}}/>;}
 function Tag({children,color="purple"}){const m={purple:{b:"rgba(139,92,246,0.12)",t:"#a78bfa"},blue:{b:"rgba(59,130,246,0.12)",t:"#60a5fa"},cyan:{b:"rgba(6,182,212,0.12)",t:"#22d3ee"}}[color]||{b:"rgba(139,92,246,0.12)",t:"#a78bfa"};return <span style={{display:"inline-block",padding:"2px 8px",background:m.b,color:m.t,borderRadius:"4px",fontSize:"10px",fontWeight:600}}>{children}</span>;}
-function Box({children,style:s={},hover=true,onClick}){const[h,setH]=useState(false);return <div onClick={onClick} onMouseEnter={()=>hover&&setH(true)} onMouseLeave={()=>hover&&setH(false)} style={{background:h?"var(--card-hbg)":"var(--card-bg)",border:"1px solid",borderColor:h?"var(--card-hbd)":"var(--card-bd)",borderRadius:"14px",transition:"all .25s",transform:h?"translateY(-1px)":"none",cursor:onClick?"pointer":"default",...s}}>{children}</div>;}
+function Box({children,style:s={},hover=true,onClick,className:cn}){const[h,setH]=useState(false);return <div className={cn} onClick={onClick} onMouseEnter={()=>hover&&setH(true)} onMouseLeave={()=>hover&&setH(false)} style={{background:h?"var(--card-hbg)":"var(--card-bg)",border:"1px solid",borderColor:h?"var(--card-hbd)":"var(--card-bd)",borderRadius:"14px",transition:"all .25s",transform:h?"translateY(-1px)":"none",cursor:onClick?"pointer":"default",...s}}>{children}</div>;}
 function Loader(){return <div style={{display:"flex",justifyContent:"center",alignItems:"center",padding:"60px",gap:"12px"}}><div style={{width:20,height:20,border:"2px solid rgba(6,182,212,0.2)",borderTop:"2px solid #06b6d4",borderRadius:"50%",animation:"spin .8s linear infinite"}}/><span style={{color:"var(--muted)",fontSize:"13px"}}>데이터 로딩 중...</span></div>;}
 function Empty({msg}){return <div style={{textAlign:"center",padding:"60px 20px",color:"var(--dim)"}}><div style={{fontSize:"36px",marginBottom:"12px"}}>📭</div><div style={{fontSize:"14px",lineHeight:1.6}}>{msg}</div><div style={{fontSize:"12px",marginTop:"8px",color:"var(--dimmer)"}}>GitHub Actions에서 크롤링을 실행하면 데이터가 채워집니다</div></div>;}
 
@@ -125,14 +181,14 @@ function TabOverview({idx,stk,nws,sec,loading}){
   if(loading)return <Loader/>;
   return <div>
     <div className="grid-index" style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(idx.length||3,6)},1fr)`,gap:"10px",marginBottom:"28px"}}>
-      {idx.map((m,i)=>{const urls={"코스피":"https://finance.naver.com/sise/sise_index.naver?code=KOSPI","코스닥":"https://finance.naver.com/sise/sise_index.naver?code=KOSDAQ","다우존스":"https://finance.naver.com/world/sise.naver?symbol=DJI@DJI","나스닥":"https://finance.naver.com/world/sise.naver?symbol=NAS@IXIC","S&P 500":"https://finance.naver.com/world/sise.naver?symbol=SPI@SPX","USD/KRW":"https://finance.naver.com/marketindex/exchangeDailyQuote.naver?marketindexCd=FX_USDKRW"};const url=urls[m.name];return <a key={m.name} href={url||"#"} target="_blank" rel="noopener noreferrer" style={{textDecoration:"none",color:"inherit"}}><Box style={{padding:"18px"}}><div className={`fade-up fade-up-d${Math.min(i+1,4)}`}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"10px"}}><span style={{color:"var(--muted)",fontSize:"11px",fontWeight:500}}>{m.name}</span><Sparkline trend={m.trend} data={(m.sparkline_data&&m.sparkline_data.v)||m.sparkline_data} w={44} h={20}/></div>
-        <div style={{fontSize:"18px",fontWeight:700,marginBottom:"2px",fontVariantNumeric:"tabular-nums"}}>{m.value}</div>
+      {idx.map((m,i)=>{const urls={"코스피":"https://finance.naver.com/sise/sise_index.naver?code=KOSPI","코스닥":"https://finance.naver.com/sise/sise_index.naver?code=KOSDAQ","다우존스":"https://finance.naver.com/world/sise.naver?symbol=DJI@DJI","나스닥":"https://finance.naver.com/world/sise.naver?symbol=NAS@IXIC","S&P 500":"https://finance.naver.com/world/sise.naver?symbol=SPI@SPX","USD/KRW":"https://investing.com/currencies/usd-krw"};const url=urls[m.name];return <a key={m.name} href={url||"#"} target="_blank" rel="noopener noreferrer" style={{textDecoration:"none",color:"inherit"}}><Box style={{padding:"18px"}}><div className={`fade-up fade-up-d${Math.min(i+1,4)}`}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"10px"}}><span className="idx-label" style={{color:"var(--muted)",fontSize:"11px",fontWeight:500}}>{m.name}</span><Sparkline trend={m.trend} data={(m.sparkline_data&&m.sparkline_data.v)||m.sparkline_data} w={44} h={20}/></div>
+        <div className="idx-value" style={{fontSize:"18px",fontWeight:700,marginBottom:"2px",fontVariantNumeric:"tabular-nums"}}>{m.value}</div>
         <div style={{display:"flex",gap:"8px",alignItems:"baseline"}}><span style={{color:m.trend==="up"?"#22c55e":(m.trend==="down"?"#ef4444":"#6b7280"),fontSize:"13px",fontWeight:600}}>{m.trend==="up"?"▲":(m.trend==="down"?"▼":"─")} {m.change_pct}</span><span style={{color:"var(--dim)",fontSize:"11px"}}>{m.change_amount}</span></div>
       </div></Box></a>})}
     </div>
     <div className="grid-2col" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"16px",marginBottom:"16px"}}>
-      <Box style={{padding:"22px 24px"}} hover={false}><div className="fade-up fade-up-d2">
+      <Box className="card-pad" style={{padding:"22px 24px"}} hover={false}><div className="fade-up fade-up-d2">
         <h3 style={{fontSize:"15px",fontWeight:700,marginBottom:"18px",display:"flex",alignItems:"center",gap:"8px"}}><span style={{width:24,height:24,borderRadius:"6px",display:"inline-flex",alignItems:"center",justifyContent:"center",background:"rgba(245,158,11,0.12)",color:"#f59e0b",fontSize:"11px"}}>◆</span>이슈 종목 TOP 5</h3>
         {stk.length===0?<Empty msg="이슈 종목 데이터 없음"/>:stk.slice(0,5).map((s,i)=><div key={s.code||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"13px 0",borderBottom:i<4?"1px solid var(--div)":"none"}}>
           <div style={{display:"flex",alignItems:"center",gap:"12px"}}><span style={{width:26,height:26,borderRadius:"7px",fontSize:"11px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",background:i<3?"rgba(245,158,11,0.12)":"var(--badge-bg)",color:i<3?"#f59e0b":"var(--muted)"}}>{s.rank}</span>
@@ -140,12 +196,12 @@ function TabOverview({idx,stk,nws,sec,loading}){
           <div style={{textAlign:"right"}}><div style={{fontWeight:600,fontSize:"14px",fontVariantNumeric:"tabular-nums"}}>₩{s.price}</div><div style={{color:s.trend==="up"?"#22c55e":(s.trend==="down"?"#ef4444":"#6b7280"),fontSize:"12px",fontWeight:600}}>{s.trend==="up"?"▲":(s.trend==="down"?"▼":"─")} {s.change_pct}</div></div>
         </div>)}
       </div></Box>
-      <Box style={{padding:"22px 24px"}} hover={false}><div className="fade-up fade-up-d3">
+      <Box className="card-pad" style={{padding:"22px 24px"}} hover={false}><div className="fade-up fade-up-d3">
         <h3 style={{fontSize:"15px",fontWeight:700,marginBottom:"18px",display:"flex",alignItems:"center",gap:"8px"}}><span style={{width:24,height:24,borderRadius:"6px",display:"inline-flex",alignItems:"center",justifyContent:"center",background:"rgba(59,130,246,0.12)",color:"#3b82f6",fontSize:"11px"}}>◇</span>최신 주요 뉴스</h3>
         {nws.length===0?<Empty msg="뉴스 데이터 없음"/>:nws.slice(0,5).map((n,i)=><NewsRow key={n.id||i} n={n} isLast={i===4||i===nws.slice(0,5).length-1}/>)}
       </div></Box>
     </div>
-    {sec.length>0&&<Box style={{padding:"22px 24px"}} hover={false}><div className="fade-up fade-up-d4">
+    {sec.length>0&&<Box className="card-pad" style={{padding:"22px 24px"}} hover={false}><div className="fade-up fade-up-d4">
       <h3 style={{fontSize:"15px",fontWeight:700,marginBottom:"16px",display:"flex",alignItems:"center",gap:"8px"}}><span style={{width:24,height:24,borderRadius:"6px",display:"inline-flex",alignItems:"center",justifyContent:"center",background:"rgba(139,92,246,0.12)",color:"#8b5cf6",fontSize:"11px"}}>▣</span>섹터별 등락</h3>
       <div className="grid-sector" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"10px"}}>{sec.map(s=>{const u=s.trend==="up";const isExp=expSec===s.name;return <SectorCard key={s.name} s={s} u={u} isExp={isExp} onClick={()=>setExpSec(isExp?null:s.name)}/>})}</div>
     </div></Box>}
@@ -173,22 +229,22 @@ function TabStocks({stk,nws,loading}){
   return <div className="fade-up">
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"18px",flexWrap:"wrap",gap:"12px"}}>
       <h2 style={{fontSize:"17px",fontWeight:700}}><span style={{color:"#f59e0b"}}>◆</span> 오늘의 이슈 종목 <span style={{fontSize:"12px",color:"var(--dim)",fontWeight:400}}>{f.length}종목</span></h2>
-      <div style={{position:"relative"}}><input value={q} onChange={e=>setQ(e.target.value)} placeholder="종목명, 코드, 테마 검색" style={{background:"var(--inp-bg)",border:"1px solid var(--inp-bd)",borderRadius:"8px",padding:"10px 14px 10px 34px",color:"var(--text)",fontSize:"13px",width:240,outline:"none",fontFamily:"inherit"}}/><span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"var(--dim)",fontSize:"13px"}}>⌕</span></div>
+      <div className="search-wrap" style={{position:"relative"}}><input value={q} onChange={e=>setQ(e.target.value)} placeholder="종목명, 코드, 테마 검색" style={{background:"var(--inp-bg)",border:"1px solid var(--inp-bd)",borderRadius:"8px",padding:"10px 14px 10px 34px",color:"var(--text)",fontSize:"13px",width:240,outline:"none",fontFamily:"inherit"}}/><span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"var(--dim)",fontSize:"13px"}}>⌕</span></div>
     </div>
     <Box style={{overflow:"hidden"}} hover={false}>
-      <div className="stock-row" style={{display:"grid",gridTemplateColumns:"44px 1.2fr 110px 90px 120px 1.5fr 100px",padding:"13px 20px",background:"var(--row-head)",borderBottom:"1px solid var(--div3)",fontSize:"11px",color:"var(--muted)",fontWeight:600}}><span>#</span><span>종목</span><span style={{textAlign:"right"}}>현재가</span><span style={{textAlign:"right"}}>등락률</span><span style={{textAlign:"right"}}>거래대금</span><span style={{paddingLeft:"16px"}}>이슈 사유</span><span>테마</span></div>
+      <div className="stock-row stock-row-header" style={{display:"grid",gridTemplateColumns:"44px 1.2fr 110px 90px 120px 1.5fr 100px",padding:"13px 20px",background:"var(--row-head)",borderBottom:"1px solid var(--div3)",fontSize:"11px",color:"var(--muted)",fontWeight:600}}><span>#</span><span>종목</span><span style={{textAlign:"right"}}>현재가</span><span style={{textAlign:"right"}}>등락률</span><span style={{textAlign:"right"}}>거래대금</span><span style={{paddingLeft:"16px"}}>이슈 사유</span><span>테마</span></div>
       {f.map((s,i)=>{const related=exp===s.code?getRelatedNews(s):[];return <React.Fragment key={s.code||i}>
         <div onClick={()=>setExp(exp===s.code?null:s.code)} onMouseEnter={()=>setHov(s.code)} onMouseLeave={()=>setHov(null)} className="stock-row" style={{display:"grid",gridTemplateColumns:"44px 1.2fr 110px 90px 120px 1.5fr 100px",padding:"15px 20px",borderBottom:exp===s.code?"none":"1px solid var(--div)",background:hov===s.code?"var(--hover)":"transparent",cursor:"pointer",alignItems:"center",transition:"background .15s"}}>
-          <span style={{width:28,height:28,borderRadius:"7px",fontSize:"11px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",background:s.rank<=3?"rgba(245,158,11,0.14)":"var(--badge-bg2)",color:s.rank<=3?"#f59e0b":"var(--muted)"}}>{s.rank}</span>
-          <div><span style={{fontWeight:600,fontSize:"14px"}}>{s.name}</span><span style={{color:"var(--dim)",fontSize:"11px",marginLeft:"6px"}}>{s.code}</span></div>
-          <span style={{textAlign:"right",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>₩{s.price}</span>
-          <span style={{textAlign:"right",fontWeight:700,fontSize:"13px",color:s.trend==="up"?"#22c55e":(s.trend==="down"?"#ef4444":"#6b7280")}}>{s.trend==="up"?"▲":(s.trend==="down"?"▼":"─")} {s.change_pct}</span>
-          <span style={{textAlign:"right",color:"var(--muted)",fontSize:"12px",fontVariantNumeric:"tabular-nums"}}>{s.volume}</span>
-          <span style={{paddingLeft:"16px",color:"var(--text-sub)",fontSize:"12px",lineHeight:1.4}}>{s.reason}</span>
-          <div style={{display:"flex",gap:"4px",flexWrap:"wrap",alignItems:"center"}}>{(s.tags||[]).map(t=><Tag key={t}>{t}</Tag>)}<span style={{color:"var(--dimmer)",fontSize:"14px",marginLeft:"auto",transform:exp===s.code?"rotate(90deg)":"none",transition:"transform .2s"}}>›</span></div>
+          <span className="stock-col-rank" style={{width:28,height:28,borderRadius:"7px",fontSize:"11px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",background:s.rank<=3?"rgba(245,158,11,0.14)":"var(--badge-bg2)",color:s.rank<=3?"#f59e0b":"var(--muted)"}}>{s.rank}</span>
+          <div className="stock-col-name"><span style={{fontWeight:600,fontSize:"14px"}}>{s.name}</span><span style={{color:"var(--dim)",fontSize:"11px",marginLeft:"6px"}}>{s.code}</span></div>
+          <span className="stock-col-price" style={{textAlign:"right",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>₩{s.price}</span>
+          <span className="stock-col-change" style={{textAlign:"right",fontWeight:700,fontSize:"13px",color:s.trend==="up"?"#22c55e":(s.trend==="down"?"#ef4444":"#6b7280")}}>{s.trend==="up"?"▲":(s.trend==="down"?"▼":"─")} {s.change_pct}</span>
+          <span className="stock-col-volume" style={{textAlign:"right",color:"var(--muted)",fontSize:"12px",fontVariantNumeric:"tabular-nums"}}>{s.volume}</span>
+          <span className="stock-col-reason" style={{paddingLeft:"16px",color:"var(--text-sub)",fontSize:"12px",lineHeight:1.4}}>{s.reason}</span>
+          <div className="stock-col-tags" style={{display:"flex",gap:"4px",flexWrap:"wrap",alignItems:"center"}}>{(s.tags||[]).map(t=><Tag key={t}>{t}</Tag>)}<span style={{color:"var(--dimmer)",fontSize:"14px",marginLeft:"auto",transform:exp===s.code?"rotate(90deg)":"none",transition:"transform .2s"}}>›</span></div>
         </div>
-        {exp===s.code&&<div style={{padding:"18px 20px 18px 76px",background:"var(--hover2)",borderBottom:"1px solid var(--div3)",animation:"fadeUp .3s ease both"}}>
-          <div style={{display:"flex",gap:"24px",marginBottom:related.length?"16px":"0"}}>
+        {exp===s.code&&<div className="stock-detail" style={{padding:"18px 20px 18px 76px",background:"var(--hover2)",borderBottom:"1px solid var(--div3)",animation:"fadeUp .3s ease both"}}>
+          <div className="stock-detail" style={{display:"flex",gap:"24px",marginBottom:related.length?"16px":"0"}}>
             <div style={{flex:1}}><div style={{color:"var(--muted)",fontSize:"11px",fontWeight:600,marginBottom:"8px"}}>📌 이슈 사유</div><div style={{color:"var(--text-sub)",fontSize:"13px",lineHeight:1.7}}>{s.reason.split(" · ").map((r,ri)=><span key={ri} style={{display:"inline-block",padding:"4px 10px",background:"rgba(245,158,11,0.08)",border:"1px solid rgba(245,158,11,0.15)",borderRadius:"6px",fontSize:"12px",marginRight:"6px",marginBottom:"4px",color:"#f59e0b",fontWeight:500}}>{r}</span>)}</div></div>
             <div><div style={{color:"var(--muted)",fontSize:"11px",fontWeight:600,marginBottom:"8px"}}>🏷️ 테마</div><div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>{(s.tags||[]).map(t=><Tag key={t} color="cyan">{t}</Tag>)}</div></div>
             <div style={{textAlign:"right"}}><div style={{color:"var(--muted)",fontSize:"11px",fontWeight:600,marginBottom:"8px"}}>💰 거래대금</div><div style={{fontSize:"14px",fontWeight:700,color:"var(--text)"}}>{s.volume}</div></div>
@@ -210,7 +266,7 @@ function TabNews({nws,loading}){
   return <div className="fade-up">
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"18px",flexWrap:"wrap",gap:"12px"}}>
       <h2 style={{fontSize:"17px",fontWeight:700}}><span style={{color:"#3b82f6"}}>◇</span> 주요 뉴스</h2>
-      <div style={{display:"flex",gap:"5px"}}>{[{id:"all",l:"전체",c:null},{id:"positive",l:"호재",c:"#22c55e"},{id:"negative",l:"악재",c:"#ef4444"},{id:"neutral",l:"중립",c:"#6b7280"}].map(x=><button key={x.id} onClick={()=>setFil(x.id)} style={{padding:"7px 13px",fontFamily:"inherit",fontSize:"12px",fontWeight:500,background:fil===x.id?"var(--tab-bg)":"var(--hover)",border:"1px solid",cursor:"pointer",display:"flex",alignItems:"center",gap:"5px",borderColor:fil===x.id?"var(--tab-bd)":"transparent",borderRadius:"7px",color:fil===x.id?(x.c||"var(--text)"):"var(--muted)",transition:"all .2s"}}>{x.c&&<Dot s={x.id} size={6}/>}{x.l}<span style={{color:"var(--dim)",fontSize:"10px"}}>({cnt[x.id]})</span></button>)}</div>
+      <div style={{display:"flex",gap:"5px"}}>{[{id:"all",l:"전체",c:null},{id:"positive",l:"호재",c:"#22c55e"},{id:"negative",l:"악재",c:"#ef4444"},{id:"neutral",l:"중립",c:"#6b7280"}].map(x=><button key={x.id} className="news-filter-btn" onClick={()=>setFil(x.id)} style={{padding:"7px 13px",fontFamily:"inherit",fontSize:"12px",fontWeight:500,background:fil===x.id?"var(--tab-bg)":"var(--hover)",border:"1px solid",cursor:"pointer",display:"flex",alignItems:"center",gap:"5px",borderColor:fil===x.id?"var(--tab-bd)":"transparent",borderRadius:"7px",color:fil===x.id?(x.c||"var(--text)"):"var(--muted)",transition:"all .2s"}}>{x.c&&<Dot s={x.id} size={6}/>}{x.l}<span style={{color:"var(--dim)",fontSize:"10px"}}>({cnt[x.id]})</span></button>)}</div>
     </div>
     <div style={{display:"grid",gap:"8px"}}>{f.map(n=><Box key={n.id} style={{padding:"20px 22px"}} onClick={()=>setExp(exp===n.id?null:n.id)}>
       <div style={{display:"flex",gap:"12px",alignItems:"flex-start"}}><div style={{paddingTop:"5px"}}><Dot s={n.sentiment} size={9}/></div><div style={{flex:1}}>
@@ -251,7 +307,7 @@ function ThemeNewsDropdown({newsList,mainTitle,mainUrl,onOpen}){
   const open=v=>{setShow(v);if(onOpen)onOpen(v)};
   return <div style={{position:"relative",display:"inline-block",maxWidth:"500px"}} onMouseEnter={()=>open(true)} onMouseLeave={()=>open(false)}>
     <a href={mainUrl||"#"} target="_blank" rel="noopener noreferrer" onClick={e=>{e.stopPropagation();if(!mainUrl)e.preventDefault()}} style={{display:"block",fontSize:"12px",color:"var(--text-sub)",lineHeight:1.5,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:"none",transition:"color .15s",cursor:"pointer",paddingBottom:show?"6px":"0"}} onMouseEnter={e=>e.currentTarget.style.color="#f97316"} onMouseLeave={e=>e.currentTarget.style.color="var(--text-sub)"}>{mainTitle||news[0]?.title} {news.length>1&&<span style={{fontSize:"10px",color:"var(--dim)",marginLeft:"4px"}}>+{news.length-1}</span>}</a>
-    {show&&news.length>1&&<div style={{position:"absolute",top:"100%",left:0,zIndex:9999,background:"var(--bg)",border:"1px solid var(--card-bd)",borderRadius:"10px",boxShadow:"0 8px 30px rgba(0,0,0,0.4)",padding:"8px 0",minWidth:"340px",maxWidth:"480px",animation:"fadeUp .2s ease both"}} onClick={e=>e.stopPropagation()}>
+    {show&&news.length>1&&<div className="theme-dropdown" style={{position:"absolute",top:"100%",left:0,zIndex:9999,background:"var(--bg)",border:"1px solid var(--card-bd)",borderRadius:"10px",boxShadow:"0 8px 30px rgba(0,0,0,0.4)",padding:"8px 0",minWidth:"340px",maxWidth:"480px",animation:"fadeUp .2s ease both"}} onClick={e=>e.stopPropagation()}>
       <div style={{padding:"6px 14px 8px",fontSize:"11px",fontWeight:600,color:"var(--muted)",borderBottom:"1px solid var(--div)"}}>📰 관련 뉴스 {news.length}건</div>
       {news.map((n,i)=><a key={i} href={n.url} target="_blank" rel="noopener noreferrer" style={{display:"block",padding:"8px 14px",fontSize:"12px",color:"var(--text-sub)",textDecoration:"none",lineHeight:1.5,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",transition:"all .15s",borderBottom:i<news.length-1?"1px solid var(--div)":"none"}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(249,115,22,0.08)";e.currentTarget.style.color="#f97316"}} onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color="var(--text-sub)"}}><span style={{color:"var(--dim)",fontSize:"10px",marginRight:"6px"}}>{i+1}</span>{n.title}</a>)}
     </div>}
@@ -262,7 +318,7 @@ function ThemeItem({t,i}){
   const u=t.trend==="up";const f=t.trend==="flat";const clr=u?"#22c55e":(f?"#6b7280":"#ef4444");
   return <div style={{position:"relative",zIndex:newsOpen?50:1}}>
     <Box style={{padding:"20px 22px",overflow:newsOpen?"visible":"hidden"}} hover={!newsOpen}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"16px"}}>
+      <div className="theme-layout" style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"16px"}}>
         <div style={{display:"flex",alignItems:"center",gap:"14px",flex:1,minWidth:0}}>
           <span style={{width:32,height:32,borderRadius:"8px",fontSize:"14px",fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",background:i<3?"rgba(249,115,22,0.14)":"var(--badge-bg)",color:i<3?"#f97316":"var(--muted)",flexShrink:0}}>{t.rank}</span>
           <div style={{minWidth:0}}>
@@ -270,7 +326,7 @@ function ThemeItem({t,i}){
             {(t.related_news||t.news_list)&&<ThemeNewsDropdown newsList={t.news_list} mainTitle={t.related_news} mainUrl={t.news_url} onOpen={setNewsOpen}/>}
             </div>
           </div>
-          <div style={{display:"flex",alignItems:"center",gap:"20px",flexShrink:0}}>
+          <div className="theme-right" style={{display:"flex",alignItems:"center",gap:"20px",flexShrink:0}}>
             <div style={{display:"flex",gap:"8px",fontSize:"11px",color:"var(--muted)"}}>
               <span style={{color:"#22c55e"}}>{u?"▲":""}{t.up_count||0}</span>
               <span>·</span>
@@ -279,7 +335,7 @@ function ThemeItem({t,i}){
               <span style={{color:"#ef4444"}}>{!u&&!f?"▼":""}{t.down_count||0}</span>
             </div>
             <div style={{textAlign:"right",minWidth:"80px"}}>
-              <div style={{fontWeight:800,fontSize:"18px",color:clr}}>{t.change_pct}</div>
+              <div className="theme-pct" style={{fontWeight:800,fontSize:"18px",color:clr}}>{t.change_pct}</div>
               {t.avg_3day_pct&&<div style={{fontSize:"11px",color:"var(--muted)",marginTop:"2px"}}>3일 {t.avg_3day_pct}</div>}
             </div>
           </div>
@@ -336,7 +392,7 @@ function TabAI({aiSum,loading}){
       <div style={{display:"grid",gap:"12px"}}>{parseSections(aiSum.summary).map((sec,si)=>{
         const meta=getSecMeta(sec.title);
         const isConclusion=sec.title.includes("결론");
-        return <Box key={si} style={{padding:isConclusion?"20px 22px":"18px 22px",borderLeft:`3px solid rgba(${meta.clr},0.5)`,background:isConclusion?`rgba(${meta.clr},0.04)`:"transparent"}} hover={false}>
+        return <Box key={si} className="ai-section" style={{padding:isConclusion?"20px 22px":"18px 22px",borderLeft:`3px solid rgba(${meta.clr},0.5)`,background:isConclusion?`rgba(${meta.clr},0.04)`:"transparent"}} hover={false}>
           {sec.title&&<div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"10px"}}><span style={{fontSize:"16px"}}>{meta.icon}</span><span style={{fontWeight:700,fontSize:"14px",color:"var(--text)"}}>{sec.title}</span></div>}
           <div style={{fontSize:"13px",lineHeight:1.8,color:"var(--text-sub)"}}>{sec.lines.map((l,li)=>{
             const isArrow=l.includes("→");const isBullet=/^[↘↗📌👉·\-\*]/.test(l);
@@ -386,16 +442,16 @@ function App(){
     <div style={{background:"var(--ticker-bg)",borderBottom:"1px solid var(--div2)",padding:"9px 0",overflow:"hidden",position:"relative",transition:"background .3s"}}><div style={{display:"inline-flex",gap:"40px",whiteSpace:"nowrap",animation:"tickerScroll 150s linear infinite"}}>{[...idx,...idx,...idx,...idx].map((m,i)=><span key={i} style={{display:"inline-flex",alignItems:"center",gap:"7px",fontSize:"12px",paddingRight:"20px"}}><span style={{color:"var(--muted)",fontWeight:500}}>{m.name}</span><span style={{color:"var(--text)",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{m.value}</span><span style={{color:m.trend==="up"?"#22c55e":"#ef4444",fontWeight:600}}>{m.change_pct}</span></span>)}</div></div>
 
     <header className="header-wrap" style={{padding:"24px 40px 18px",maxWidth:1440,margin:"0 auto",display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-      <div className="fade-up"><div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"3px"}}><div style={{width:8,height:8,borderRadius:"50%",background:"#22c55e",boxShadow:"0 0 10px rgba(34,197,94,0.4)",animation:"pulse 2s infinite"}}/><h1 style={{fontSize:"24px",fontWeight:800,letterSpacing:"-0.03em",background:"var(--h-grad)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>STOCKPULSE</h1><span style={{fontSize:"9px",padding:"3px 7px",background:"rgba(34,197,94,0.12)",color:"#22c55e",borderRadius:"4px",fontWeight:700}}>BETA</span></div>
-        <div style={{color:"var(--muted)",fontSize:"12px",letterSpacing:"0.01em",marginLeft:"18px"}}>금융시장 정보 및 데이터 분석 플랫폼</div>
+      <div className="fade-up"><div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"3px"}}><div style={{width:8,height:8,borderRadius:"50%",background:"#22c55e",boxShadow:"0 0 10px rgba(34,197,94,0.4)",animation:"pulse 2s infinite"}}/><h1 className="header-title" style={{fontSize:"24px",fontWeight:800,letterSpacing:"-0.03em",background:"var(--h-grad)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>STOCKPULSE</h1><span style={{fontSize:"9px",padding:"3px 7px",background:"rgba(34,197,94,0.12)",color:"#22c55e",borderRadius:"4px",fontWeight:700}}>BETA</span></div>
+        <div className="header-subtitle" style={{color:"var(--muted)",fontSize:"12px",letterSpacing:"0.01em",marginLeft:"18px"}}>금융시장 정보 및 데이터 분석 플랫폼</div>
       </div>
       <div className="fade-up fade-up-d1" style={{display:"flex",alignItems:"center",gap:"12px"}}>
-        <div style={{textAlign:"right"}}><div style={{color:"var(--muted)",fontSize:"12px"}}>{time.toLocaleDateString("ko-KR",{year:"numeric",month:"long",day:"numeric",weekday:"short"})}</div><div style={{color:"var(--text)",fontSize:"20px",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{time.toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</div></div>
+        <div style={{textAlign:"right"}}><div style={{color:"var(--muted)",fontSize:"12px"}}>{time.toLocaleDateString("ko-KR",{year:"numeric",month:"long",day:"numeric",weekday:"short"})}</div><div className="header-time-large" style={{color:"var(--text)",fontSize:"20px",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{time.toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</div></div>
         <button onClick={()=>setTheme(t=>t==="dark"?"light":"dark")} title={theme==="dark"?"라이트 모드로 전환":"다크 모드로 전환"} style={{width:38,height:38,borderRadius:"10px",border:"1px solid var(--card-bd)",background:"var(--card-bg)",cursor:"pointer",fontSize:"18px",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .25s",flexShrink:0}} onMouseEnter={e=>{e.currentTarget.style.background="var(--card-hbg)";e.currentTarget.style.borderColor="var(--card-hbd)";e.currentTarget.style.transform="translateY(-1px)"}} onMouseLeave={e=>{e.currentTarget.style.background="var(--card-bg)";e.currentTarget.style.borderColor="var(--card-bd)";e.currentTarget.style.transform="none"}}>{theme==="dark"?"☀️":"🌙"}</button>
       </div>
     </header>
 
-    <nav className="nav-wrap" style={{maxWidth:1440,margin:"0 auto",padding:"0 40px 18px",display:"flex",gap:"3px",borderBottom:"1px solid var(--div2)",overflow:"visible"}}>{tabs.map(t=><button key={t.id} onClick={()=>setTab(t.id)} style={{padding:"9px 18px",fontFamily:"inherit",fontSize:"13px",fontWeight:tab===t.id?600:400,cursor:"pointer",background:tab===t.id?"var(--tab-bg)":"transparent",border:"1px solid",borderColor:tab===t.id?"var(--tab-bd)":"transparent",borderRadius:"8px",color:tab===t.id?"var(--text)":"var(--dim)",transition:"all .2s",display:"flex",alignItems:"center",gap:"5px",whiteSpace:"nowrap",position:t.live?"relative":"static"}}><span style={{fontSize:"10px",opacity:tab===t.id?1:.6}}>{t.ic}</span>{t.l}{t.live&&<span style={{position:"absolute",top:"-20px",left:"50%",transform:"translateX(-50%)",background:"linear-gradient(135deg, #ff6b6b, #ef4444, #dc2626)",color:"#fff",fontSize:"9px",fontWeight:800,padding:"3px 8px",borderRadius:"6px",letterSpacing:"0.5px",lineHeight:"14px",boxShadow:"0 2px 10px rgba(239,68,68,0.45), 0 0 20px rgba(239,68,68,0.2)",animation:"liveBounce 2s ease-in-out infinite",zIndex:10,pointerEvents:"none"}}><span style={{position:"absolute",bottom:"-4px",left:"50%",transform:"translateX(-50%)",width:0,height:0,borderLeft:"5px solid transparent",borderRight:"5px solid transparent",borderTop:"5px solid #ef4444"}}/>LIVE</span>}</button>)}</nav>
+    <nav className="nav-wrap" style={{maxWidth:1440,margin:"0 auto",padding:"0 40px 18px",display:"flex",gap:"3px",borderBottom:"1px solid var(--div2)",overflow:"visible"}}>{tabs.map(t=><button key={t.id} className="nav-btn" onClick={()=>setTab(t.id)} style={{padding:"9px 18px",fontFamily:"inherit",fontSize:"13px",fontWeight:tab===t.id?600:400,cursor:"pointer",background:tab===t.id?"var(--tab-bg)":"transparent",border:"1px solid",borderColor:tab===t.id?"var(--tab-bd)":"transparent",borderRadius:"8px",color:tab===t.id?"var(--text)":"var(--dim)",transition:"all .2s",display:"flex",alignItems:"center",gap:"5px",whiteSpace:"nowrap",position:t.live?"relative":"static"}}><span className="nav-btn-icon" style={{fontSize:"10px",opacity:tab===t.id?1:.6}}>{t.ic}</span><span className="nav-btn-label">{t.l}</span>{t.live&&<span style={{position:"absolute",top:"-20px",left:"50%",transform:"translateX(-50%)",background:"linear-gradient(135deg, #ff6b6b, #ef4444, #dc2626)",color:"#fff",fontSize:"9px",fontWeight:800,padding:"3px 8px",borderRadius:"6px",letterSpacing:"0.5px",lineHeight:"14px",boxShadow:"0 2px 10px rgba(239,68,68,0.45), 0 0 20px rgba(239,68,68,0.2)",animation:"liveBounce 2s ease-in-out infinite",zIndex:10,pointerEvents:"none"}}><span style={{position:"absolute",bottom:"-4px",left:"50%",transform:"translateX(-50%)",width:0,height:0,borderLeft:"5px solid transparent",borderRight:"5px solid transparent",borderTop:"5px solid #ef4444"}}/>LIVE</span>}</button>)}</nav>
 
     <main className="main-wrap" style={{maxWidth:1440,margin:"0 auto",padding:"22px 40px 60px"}}>
       {tab==="overview"&&<TabOverview idx={idx} stk={stk} nws={nws} sec={sec} loading={loading}/>}
