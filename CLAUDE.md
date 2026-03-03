@@ -82,6 +82,30 @@
 - Supabase `issue_stocks` 테이블에 `related_news` (text) 컬럼 추가 필요
 - 프론트엔드: `related_news` JSON 파싱 우선 사용, fallback으로 클라이언트 매칭
 
+### 테마 키워드 DB 관리 시스템 (2026-03-03)
+- 기존: `NEWS_THEME_KEYWORDS` 딕셔너리에 키워드 하드코딩 → 수정 시 코드 변경 필요
+- 변경: Supabase `theme_keywords` 테이블에서 추가 키워드를 읽어와 코드 키워드와 병합
+- `load_theme_keywords_from_db()`: 크롤링 시 DB에서 `enabled=true`인 키워드 로딩 → `NEWS_THEME_KEYWORDS`에 병합
+- `detect_themes_rule_based()` 시작 시 자동 호출
+- 코드 키워드(기본) + DB 키워드(추가분) 병합 구조 → DB 실패 시 코드 키워드만으로 정상 작동
+- Supabase `theme_keywords` 테이블 필요 (id, theme, keyword, enabled, memo, created_at)
+- `setup_theme_keywords.sql` 파일에 테이블 생성 + 초기 데이터 SQL 포함
+
+### 방산 테마 키워드 대폭 확장 (2026-03-03)
+- 기존: 8개 (방산, 방위, 무기, 미사일, K방산, 한화에어로, LIG넥스원, K9)
+- 변경: 38개 — 기업명(한화시스템, 현대로템, 한국항공우주, 한화디펜스, 풍산), 무기체계(KF-21, K2전차, 천무, FA-50, 잠수함, 이지스, 천궁, L-SAM), 지정학(우크라이나, 폴란드, NATO), 일반(국방, 군사, 군수, 전투기, 방위사업, 방사청, 요격, 스텔스, 정찰위성 등)
+- 원인: 뉴스 매칭 키워드 부족으로 방산 테마가 상위 10위 안에 진입 못함 → 이슈 종목에서 방산주 누락
+
+### 전체 테마 검색/탐색 기능 (2026-03-03)
+- 기존: 인기 테마 TOP 10만 표시, 그 외 테마는 볼 수 없음
+- 변경: `all_themes` 테이블에 전체 테마 데이터 저장 + 검색 UI 추가
+- `build_all_themes_data()`: `theme_map`의 모든 테마를 KRX 데이터로 enrichment (뉴스 제외)
+- 데이터: rank, name, change_pct, up/flat/down_count, leading_stocks, stock_count, trend, is_top, date
+- Supabase `all_themes` 테이블 필요 (`setup_theme_keywords.sql`에 CREATE TABLE 포함)
+- 프론트엔드: 검색 input + TOP 10 (기존) + 전체 테마 접기/펼치기 + AllThemeItem 컴포넌트
+- 검색 모드: TOP 10 + 전체 테마 동시 필터링, 결과 없으면 Empty 메시지
+- `main()`에서 `crawl_themes()` 직후 `build_all_themes_data()` 호출
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)

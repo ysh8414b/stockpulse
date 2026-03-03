@@ -67,7 +67,7 @@
       .grid-sector{grid-template-columns:repeat(2,1fr)!important}
       .header-wrap{padding:20px 16px 14px!important;flex-wrap:wrap!important}
       .main-wrap{padding:16px 16px 40px!important}
-      .nav-wrap{padding:0 16px 14px!important;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+      .nav-wrap{padding:22px 16px 14px!important;margin-top:-22px!important;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
       .nav-wrap::-webkit-scrollbar{display:none}
       .nav-btn{padding:12px 16px!important;min-height:44px!important}
       .stock-row{font-size:12px!important}
@@ -86,7 +86,7 @@
       .header-date{font-size:12px!important}
       .header-time-large{font-size:17px!important}
       /* Nav: 가로 스크롤 + 라벨 항상 표시 */
-      .nav-wrap{gap:4px!important;padding:0 16px 12px!important;overflow-x:auto!important;flex-wrap:nowrap!important}
+      .nav-wrap{gap:4px!important;padding:22px 16px 12px!important;margin-top:-22px!important;overflow-x:auto!important;flex-wrap:nowrap!important}
       .nav-btn{padding:10px 14px!important;font-size:13px!important;min-height:44px!important;white-space:nowrap!important;flex-shrink:0!important}
       .nav-btn-icon{font-size:12px!important}
       /* Index: 2열 + 카드 패딩 축소 */
@@ -353,11 +353,70 @@ function ThemeItem({t,i}){
       </Box>
     </div>;
 }
-function TabThemes({thm,loading}){
-  if(loading)return <Loader/>;if(!thm.length)return <Empty msg="테마 데이터 없음"/>;
+function AllThemeItem({t}){
+  const[open,setOpen]=useState(false);
+  const u=t.trend==="up";const f=t.trend==="flat";const clr=u?"#22c55e":(f?"#6b7280":"#ef4444");
+  return <Box style={{padding:"14px 18px",cursor:"pointer"}} onClick={()=>setOpen(v=>!v)}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"12px"}}>
+      <div style={{display:"flex",alignItems:"center",gap:"12px",flex:1,minWidth:0}}>
+        <span style={{width:28,height:28,borderRadius:"7px",fontSize:"13px",fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",background:"var(--badge-bg)",color:"var(--muted)",flexShrink:0}}>{t.rank}</span>
+        <div style={{minWidth:0}}>
+          <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+            <span style={{fontWeight:700,fontSize:"15px"}}>{t.name}</span>
+            {t.is_top&&<span style={{fontSize:"10px",padding:"2px 6px",background:"rgba(249,115,22,0.12)",color:"#f97316",borderRadius:"4px",fontWeight:700}}>인기</span>}
+            <span style={{fontSize:"12px",color:"var(--muted)"}}>{t.stock_count||0}종목</span>
+          </div>
+        </div>
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:"16px",flexShrink:0}}>
+        <div style={{display:"flex",gap:"6px",fontSize:"12px",color:"var(--muted)"}}>
+          <span style={{color:"#22c55e"}}>{t.up_count||0}</span>
+          <span>·</span>
+          <span>{t.flat_count||0}</span>
+          <span>·</span>
+          <span style={{color:"#ef4444"}}>{t.down_count||0}</span>
+        </div>
+        <div style={{textAlign:"right",minWidth:"70px"}}>
+          <span style={{fontWeight:800,fontSize:"16px",color:clr}}>{t.change_pct}</span>
+        </div>
+        <span style={{fontSize:"12px",color:"var(--dim)",transition:"transform .2s",transform:open?"rotate(180deg)":"rotate(0deg)"}}>▼</span>
+      </div>
+    </div>
+    {open&&t.leading_stocks&&<div style={{marginTop:"10px",paddingTop:"10px",borderTop:"1px solid var(--div)",display:"flex",gap:"6px",flexWrap:"wrap"}}>
+      {t.leading_stocks.split(",").map((s,j)=>{const parts=s.trim().split(":");const nm=parts[0];const cd=parts[1]||"";const pct=parts[2]||"";const pctVal=parseFloat(pct)||0;const pctClr=pctVal<0?"#ef4444":pctVal>0?"#22c55e":"var(--text-sub)";const validCode=cd&&/^\d{6}$/.test(cd);return validCode?<a key={j} href={`https://finance.naver.com/item/main.naver?code=${cd}`} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{padding:"3px 9px",background:"var(--badge-bg)",borderRadius:"5px",fontSize:"12px",color:"var(--text-sub)",fontWeight:500,textDecoration:"none",cursor:"pointer",transition:"all .15s",border:"1px solid transparent"}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(249,115,22,0.12)";e.currentTarget.style.color="#f97316";e.currentTarget.style.borderColor="rgba(249,115,22,0.3)"}} onMouseLeave={e=>{e.currentTarget.style.background="var(--badge-bg)";e.currentTarget.style.color="var(--text-sub)";e.currentTarget.style.borderColor="transparent"}}>{nm}<span style={{color:"var(--dim)",fontSize:"10px",marginLeft:"3px"}}>{cd}</span>{pct&&<span style={{marginLeft:"4px",color:pctClr,fontSize:"11px",fontWeight:600}}>{pct}</span>}</a>:<span key={j} style={{padding:"3px 9px",background:"var(--badge-bg)",borderRadius:"5px",fontSize:"12px",color:"var(--text-sub)",fontWeight:500}}>{nm}{pct&&<span style={{marginLeft:"4px",color:pctClr,fontSize:"11px",fontWeight:600}}>{pct}</span>}</span>})}
+    </div>}
+  </Box>;
+}
+function TabThemes({thm,allThm,loading}){
+  const[q,setQ]=useState("");
+  const[showAll,setShowAll]=useState(false);
+  if(loading)return <Loader/>;if(!thm.length&&!allThm.length)return <Empty msg="테마 데이터 없음"/>;
+  const query=q.trim().toLowerCase();
+  const filteredAll=query?allThm.filter(t=>t.name.toLowerCase().includes(query)):allThm;
+  const filteredTop=query?thm.filter(t=>t.name.toLowerCase().includes(query)):thm;
+  const nonTopThemes=filteredAll.filter(t=>!t.is_top);
+  const isSearching=query.length>0;
   return <div className="fade-up">
-    <h2 style={{fontSize:"18px",fontWeight:700,marginBottom:"18px"}}><span style={{color:"#f97316"}}>◈</span> 인기 테마 TOP 10</h2>
-    <div style={{display:"grid",gap:"10px"}}>{thm.map((t,i)=><ThemeItem key={t.name||i} t={t} i={i}/>)}</div>
+    <div style={{marginBottom:"18px",position:"relative"}}>
+      <input value={q} onChange={e=>setQ(e.target.value)} placeholder="테마 검색... (예: 방산, 반도체, AI)" className="search-wrap" style={{width:"100%",padding:"12px 18px 12px 42px",fontSize:"14px",background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:"10px",color:"var(--text)",outline:"none",fontFamily:"inherit",transition:"border-color .2s",boxSizing:"border-box"}} onFocus={e=>e.target.style.borderColor="#f97316"} onBlur={e=>e.target.style.borderColor="var(--card-bd)"}/>
+      <span style={{position:"absolute",left:"16px",top:"50%",transform:"translateY(-50%)",fontSize:"16px",color:"var(--muted)",pointerEvents:"none"}}>🔍</span>
+      {q&&<button onClick={()=>setQ("")} style={{position:"absolute",right:"12px",top:"50%",transform:"translateY(-50%)",background:"none",border:"none",fontSize:"16px",color:"var(--muted)",cursor:"pointer",padding:"4px"}}>✕</button>}
+    </div>
+    {(isSearching?filteredTop.length>0:true)&&<div>
+      <h2 style={{fontSize:"18px",fontWeight:700,marginBottom:"18px"}}><span style={{color:"#f97316"}}>◈</span> 인기 테마 TOP 10 {isSearching&&<span style={{fontSize:"13px",color:"var(--muted)",fontWeight:400}}>({filteredTop.length}건)</span>}</h2>
+      <div style={{display:"grid",gap:"10px"}}>{(isSearching?filteredTop:thm).map((t,i)=><ThemeItem key={t.name||i} t={t} i={i}/>)}</div>
+    </div>}
+    {isSearching&&filteredTop.length===0&&filteredAll.length===0&&<Empty msg={`"${q}" 관련 테마 없음`}/>}
+    {allThm.length>0&&<div style={{marginTop:"24px"}}>
+      {!isSearching&&<button onClick={()=>setShowAll(v=>!v)} style={{width:"100%",padding:"14px",background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:"10px",cursor:"pointer",fontSize:"14px",fontWeight:600,color:"var(--text)",fontFamily:"inherit",display:"flex",justifyContent:"space-between",alignItems:"center",transition:"all .2s"}} onMouseEnter={e=>{e.currentTarget.style.borderColor="#f97316";e.currentTarget.style.background="var(--card-hbg)"}} onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--card-bd)";e.currentTarget.style.background="var(--card-bg)"}}>
+        <span><span style={{color:"#f97316"}}>◈</span> 전체 테마 ({allThm.length}개)</span>
+        <span style={{fontSize:"12px",color:"var(--dim)",transition:"transform .2s",transform:showAll?"rotate(180deg)":"rotate(0deg)"}}>▼</span>
+      </button>}
+      {(isSearching||showAll)&&<div style={{display:"grid",gap:"8px",marginTop:isSearching?"0":"10px"}}>
+        {isSearching&&nonTopThemes.length>0&&<h3 style={{fontSize:"15px",fontWeight:600,color:"var(--muted)",marginTop:"4px",marginBottom:"4px"}}>기타 테마 ({nonTopThemes.length}건)</h3>}
+        {(isSearching?nonTopThemes:filteredAll.filter(t=>!t.is_top)).map((t,i)=><AllThemeItem key={t.name||i} t={t}/>)}
+      </div>}
+    </div>}
   </div>;
 }
 
@@ -426,6 +485,7 @@ function App(){
   const[nws,setNws]=useState([]);
   const[sec,setSec]=useState([]);
   const[thm,setThm]=useState([]);
+  const[allThm,setAllThm]=useState([]);
   const[aiSum,setAiSum]=useState(null);
   const[lastUp,setLastUp]=useState(null);
   const[theme,setTheme]=useState(()=>{try{return localStorage.getItem("sp-theme")||"dark"}catch(e){return "dark"}});
@@ -437,8 +497,8 @@ function App(){
 
   useEffect(()=>{(async()=>{
     setLoading(true);
-    const[a,b,c,d,e,f]=await Promise.all([db("market_index","order=id"),db("issue_stocks","order=rank&limit=15"),db("news","order=created_at.desc&limit=20"),db("sectors","order=id"),db("themes","order=rank&limit=10"),db("ai_summary","order=id.desc&limit=1")]);
-    if(a?.length)setIdx(a);if(b?.length)setStk(b);if(c?.length){setNws(c);setLastUp(c[0].date)}if(d?.length)setSec(d);if(e?.length)setThm(e);if(f?.length)setAiSum(f[0]);
+    const[a,b,c,d,e,f,g]=await Promise.all([db("market_index","order=id"),db("issue_stocks","order=rank&limit=15"),db("news","order=created_at.desc&limit=20"),db("sectors","order=id"),db("themes","order=rank&limit=10"),db("ai_summary","order=id.desc&limit=1"),db("all_themes","order=rank")]);
+    if(a?.length)setIdx(a);if(b?.length)setStk(b);if(c?.length){setNws(c);setLastUp(c[0].date)}if(d?.length)setSec(d);if(e?.length)setThm(e);if(f?.length)setAiSum(f[0]);if(g?.length)setAllThm(g);
     setLoading(false);
   })()},[]);
 
@@ -463,7 +523,7 @@ function App(){
     <main className="main-wrap" style={{maxWidth:1440,margin:"0 auto",padding:"22px 40px 60px"}}>
       {tab==="overview"&&<TabOverview idx={idx} stk={stk} nws={nws} sec={sec} loading={loading}/>}
       {tab==="issues"&&<TabStocks stk={stk} nws={nws} loading={loading}/>}
-      {tab==="themes"&&<TabThemes thm={thm} loading={loading}/>}
+      {tab==="themes"&&<TabThemes thm={thm} allThm={allThm} loading={loading}/>}
       {tab==="news"&&<TabNews nws={nws} loading={loading}/>}
       {tab==="ai"&&<TabAI aiSum={aiSum} loading={loading}/>}
     </main>

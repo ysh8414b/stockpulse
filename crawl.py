@@ -1143,7 +1143,7 @@ NEWS_THEME_KEYWORDS = {
     "2차전지": ["2차전지", "배터리", "리튬", "양극재", "음극재", "에코프로", "LG에너지", "전고체"],
     "전기차": ["전기차", "EV", "테슬라", "자율주행", "전기자동차"],
     "자동차": ["자동차", "현대차", "기아", "완성차"],
-    "방산": ["방산", "방위", "무기", "미사일", "K방산", "한화에어로", "LIG넥스원", "K9"],
+    "방산": ["방산", "방위", "무기", "미사일", "K방산", "K-방산", "한화에어로", "LIG넥스원", "K9", "국방", "군사", "군수", "전투기", "방위사업", "방사청", "한화시스템", "현대로템", "한국항공우주", "한화디펜스", "풍산", "KF-21", "K2전차", "천무", "폴란드", "NATO", "무장", "우크라이나", "국방비", "군비", "FA-50", "잠수함", "이지스", "천궁", "L-SAM", "요격", "스텔스", "정찰위성"],
     "조선": ["조선", "선박", "LNG선", "HD한국조선", "한화오션", "수주"],
     "AI": ["AI", "인공지능", "ChatGPT", "딥러닝", "생성형", "GPU", "엔비디아", "LLM", "챗봇"],
     "로봇": ["로봇", "휴머노이드", "로보틱스", "코봇"],
@@ -1175,6 +1175,32 @@ NEWS_THEME_KEYWORDS = {
 }
 
 
+def load_theme_keywords_from_db():
+    """Supabase theme_keywords 테이블에서 추가 키워드를 읽어와 NEWS_THEME_KEYWORDS에 병합"""
+    try:
+        rows = supabase_request("GET", "theme_keywords", params={
+            "select": "theme,keyword",
+            "enabled": "eq.true",
+        })
+        if not rows:
+            return
+        added = 0
+        for row in rows:
+            theme = row.get("theme", "").strip()
+            keyword = row.get("keyword", "").strip()
+            if not theme or not keyword:
+                continue
+            if theme not in NEWS_THEME_KEYWORDS:
+                NEWS_THEME_KEYWORDS[theme] = []
+            if keyword not in NEWS_THEME_KEYWORDS[theme]:
+                NEWS_THEME_KEYWORDS[theme].append(keyword)
+                added += 1
+        if added:
+            log(f"  📥 DB 키워드 {added}개 병합 완료 (theme_keywords 테이블)")
+    except Exception as e:
+        log(f"  ⚠️ DB 키워드 로딩 실패 (코드 키워드 사용): {e}")
+
+
 def detect_themes_rule_based(news_titles, theme_map=None):
     """뉴스 헤드라인 키워드 매칭으로 핫 테마 선정 (AI 불필요)"""
     if not news_titles:
@@ -1184,6 +1210,9 @@ def detect_themes_rule_based(news_titles, theme_map=None):
     if not theme_map:
         log("  ⚠️ 매핑 DB 없음 - 정적 테마 사용")
         return None
+
+    # DB에서 추가 키워드 병합 (코드 키워드 + DB 키워드)
+    load_theme_keywords_from_db()
 
     # 뉴스 헤드라인에서 테마별 언급 빈도 계산
     theme_scores = {}
@@ -2202,6 +2231,76 @@ def crawl_themes(krx_data, news_titles=None, theme_map=None):
     return themes
 
 
+def build_all_themes_data(krx_data, theme_map, top_theme_names):
+    """theme_map의 전체 테마를 KRX 데이터로 enrichment (뉴스 제외, 종목+등락률만)"""
+    log("📊 전체 테마 데이터 구축 중...")
+    all_themes = []
+    top_set = set(top_theme_names)
+
+    for theme_name, stocks in theme_map.items():
+        changes = []
+        theme_stocks = []
+        seen_codes = set()
+
+        for s in stocks:
+            code = s["code"]
+            if code in seen_codes:
+                continue
+            seen_codes.add(code)
+
+            d = krx_data.get(code)
+            if not d:
+                continue
+
+            cp = d["change_pct"]
+            changes.append(cp)
+            theme_stocks.append({"name": d["name"], "code": code, "change_pct": cp})
+
+        if len(theme_stocks) < 3:
+            continue
+
+        avg_change = sum(changes) / len(changes) if changes else 0.0
+        up_count = sum(1 for c in changes if c > 0.005)
+        down_count = sum(1 for c in changes if c < -0.005)
+        flat_count = len(changes) - up_count - down_count
+
+        if avg_change > 0.005:
+            trend, pct_str = "up", f"+{avg_change:.2f}%"
+        elif avg_change < -0.005:
+            trend, pct_str = "down", f"{avg_change:.2f}%"
+        else:
+            trend, pct_str = "flat", "0.00%"
+
+        theme_stocks.sort(key=lambda x: abs(x["change_pct"]), reverse=True)
+        leaders = []
+        for ts in theme_stocks[:10]:
+            cp = ts["change_pct"]
+            pct_display = f"+{cp:.2f}%" if cp >= 0 else f"{cp:.2f}%"
+            leaders.append(f"{ts['name']}:{ts['code']}:{pct_display}")
+
+        all_themes.append({
+            "rank": 0,
+            "name": theme_name,
+            "change_pct": pct_str,
+            "up_count": up_count,
+            "flat_count": flat_count,
+            "down_count": down_count,
+            "leading_stocks": ", ".join(leaders),
+            "stock_count": len(theme_stocks),
+            "trend": trend,
+            "is_top": theme_name in top_set,
+            "date": TODAY,
+        })
+
+    # 등락률 순 정렬 + rank 부여
+    all_themes.sort(key=lambda t: float(t["change_pct"].replace("%", "").replace("+", "")), reverse=True)
+    for i, t in enumerate(all_themes, 1):
+        t["rank"] = i
+
+    log(f"  ✅ 전체 테마 {len(all_themes)}개 구축 완료 (TOP {len(top_set)}개 포함)")
+    return all_themes
+
+
 # ─────────────────────────────────────────
 # 메인 실행
 # ─────────────────────────────────────────
@@ -2253,6 +2352,10 @@ def main():
     news_titles = [n["title"] for n in news]
     themes = crawl_themes(krx_data, news_titles, theme_map)
 
+    # 9-1. 전체 테마 데이터 구축 (theme_map 전체를 KRX 데이터로 enrichment)
+    top_theme_names = [t["name"] for t in themes] if themes else []
+    all_themes_data = build_all_themes_data(krx_data, theme_map, top_theme_names)
+
     # 10. 이슈 종목 (복합 점수 랭킹: 등락률+거래대금+테마+뉴스+섹터)
     stocks = crawl_issue_stocks(krx_data, themes, sectors, news)
 
@@ -2283,6 +2386,7 @@ def main():
     clear_today_data("market_index")
     clear_today_data("sectors")
     clear_today_data("themes")
+    supabase_request("DELETE", "all_themes", params={"id": "gt.0"})
     supabase_request("DELETE", "sector_stocks", params={"id": "gt.0"})
 
     # 뉴스 저장
@@ -2314,6 +2418,11 @@ def main():
     if themes:
         result = supabase_request("POST", "themes", data=themes)
         log(f"  🔥 테마 {len(themes)}개 저장 {'✅' if result else '❌'}")
+
+    # 전체 테마 저장
+    if all_themes_data:
+        result = supabase_request("POST", "all_themes", data=all_themes_data)
+        log(f"  📊 전체 테마 {len(all_themes_data)}개 저장 {'✅' if result else '❌'}")
 
     # AI 요약 저장 (성공 시에만 기존 데이터 교체 — 실패 시 기존 유지)
     if ai_summary:
