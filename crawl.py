@@ -1469,7 +1469,7 @@ def detect_themes_with_ai(news_titles, theme_map=None):
         return None
 
 
-def generate_ai_summary(indices, stocks, sectors, themes, news, mode="market"):
+def generate_ai_summary(indices, stocks, sectors, themes, news, mode="market", krx_data=None):
     """Groq AI로 시장 브리핑 생성. mode: 'premarket'(장전 해외시장) / 'market'(장중) / 'close'(마감)"""
     if not GROQ_API_KEY:
         log("  ⚠️ GROQ_API_KEY 미설정 - AI 요약 건너뜀")
@@ -1488,6 +1488,52 @@ def generate_ai_summary(indices, stocks, sectors, themes, news, mode="market"):
         f"- {n['title']} ({n.get('source','')}, {n.get('time_ago','')})"
         for n in (news or [])[:15]
     )
+
+    # ── 시장 breadth 지표 계산 (krx_data 활용) ──
+    breadth_text = ""
+    if krx_data and mode != "premarket":
+        all_stocks = [d for d in krx_data.values() if d["price"] > 0 and not is_etf_etn(d["name"])]
+        total = len(all_stocks)
+        up_cnt = sum(1 for d in all_stocks if d["change_pct"] > 0)
+        down_cnt = sum(1 for d in all_stocks if d["change_pct"] < 0)
+        flat_cnt = total - up_cnt - down_cnt
+
+        # 등락률 분포
+        surge = sum(1 for d in all_stocks if d["change_pct"] >= 3)  # 3%이상 급등
+        mild_up = sum(1 for d in all_stocks if 0 < d["change_pct"] < 3)
+        mild_dn = sum(1 for d in all_stocks if -3 < d["change_pct"] < 0)
+        plunge = sum(1 for d in all_stocks if d["change_pct"] <= -3)  # 3%이상 급락
+        limit_up = sum(1 for d in all_stocks if d["change_pct"] >= 29)  # 상한가
+        limit_dn = sum(1 for d in all_stocks if d["change_pct"] <= -29)  # 하한가
+
+        # 총 거래대금
+        total_val = sum(d["trading_value"] for d in all_stocks)
+        total_val_str = f"{total_val / 1e12:.1f}조원"
+
+        # KOSPI / KOSDAQ 분리 평균
+        kospi = [d for d in all_stocks if d.get("market") == "KOSPI"]
+        kosdaq = [d for d in all_stocks if d.get("market") == "KOSDAQ"]
+        kospi_avg = sum(d["change_pct"] for d in kospi) / len(kospi) if kospi else 0
+        kosdaq_avg = sum(d["change_pct"] for d in kosdaq) / len(kosdaq) if kosdaq else 0
+
+        # 거래대금 TOP 5
+        by_val = sorted(all_stocks, key=lambda x: x["trading_value"], reverse=True)[:5]
+        val_top = ", ".join(f"{d['name']}({d['change_pct']:+.1f}%, {d['trading_value']/1e8:.0f}억)" for d in by_val)
+
+        # 시총 TOP 10 등락률
+        by_cap = sorted(all_stocks, key=lambda x: x["market_cap"], reverse=True)[:10]
+        cap_top = ", ".join(f"{d['name']}({d['change_pct']:+.1f}%)" for d in by_cap)
+
+        ad_ratio = f"{up_cnt/down_cnt:.2f}" if down_cnt > 0 else "N/A"
+
+        breadth_text = f"""[시장 체력 지표]
+전체 종목: {total}개 | 상승 {up_cnt} : 하락 {down_cnt} : 보합 {flat_cnt} | AD비율 {ad_ratio}
+등락분포: 급등(+3%↑) {surge}개, 상승 {mild_up}개, 하락 {mild_dn}개, 급락(-3%↓) {plunge}개
+상한가 {limit_up}개 / 하한가 {limit_dn}개
+총 거래대금: {total_val_str}
+KOSPI 평균 등락률: {kospi_avg:+.2f}% | KOSDAQ 평균: {kosdaq_avg:+.2f}%
+거래대금 TOP5: {val_top}
+시총 TOP10 등락: {cap_top}"""
 
     if mode == "premarket":
         # ── 장 시작 전: 해외시장 위주 브리핑 ──
@@ -1559,94 +1605,122 @@ market_mood 판단: 해외시장 전반 상승+원화 강세면 bullish, 하락+
         # ── 장중 / 장 마감: 국내시장 위주 브리핑 ──
         stk_text = "\n".join(
             f"- {s['name']}({s['code']}): {s['price']}원, {s['change_pct']}, 거래대금 {s.get('volume','N/A')}, 사유: {s.get('reason','N/A')}"
-            for s in (stocks or [])[:10]
+            for s in (stocks or [])[:15]
         )
         up_sectors = [s for s in (sectors or []) if s.get("trend") == "up"]
         down_sectors = [s for s in (sectors or []) if s.get("trend") == "down"]
-        sec_text = "상승 섹터: " + ", ".join(f"{s['name']}({s['change_pct']})" for s in up_sectors)
-        sec_text += "\n하락 섹터: " + ", ".join(f"{s['name']}({s['change_pct']})" for s in down_sectors)
+        sec_text = "상승 섹터: " + ", ".join(f"{s['name']}({s['change_pct']}, {s.get('stock_count',0)}종목)" for s in up_sectors)
+        sec_text += "\n하락 섹터: " + ", ".join(f"{s['name']}({s['change_pct']}, {s.get('stock_count',0)}종목)" for s in down_sectors)
         thm_text = "\n".join(
-            f"- {t['name']}: {t['change_pct']}, 대장주: {t.get('leading_stocks','N/A')}"
-            for t in (themes or [])[:5]
+            f"- {t['name']}: {t['change_pct']}, 상승{t.get('up_count',0)}/하락{t.get('down_count',0)}, 대장주: {t.get('leading_stocks','N/A')}"
+            for t in (themes or [])[:7]
         )
 
-        prompt = f"""너는 매크로 전략가다.
+        # breadth 데이터 블록
+        breadth_block = f"\n\n{breadth_text}" if breadth_text else ""
+
+        prompt = f"""너는 10년차 매크로 전략가 겸 트레이더다. 기관 리서치센터 수준의 시장 분석을 수행하라.
 기준 시각: {now_str}
 
-아래 시장 데이터를 기반으로 시장을 분석하되, 반드시 지정된 구조를 따라라.
+아래 시장 데이터를 기반으로 깊이 있는 분석을 작성하라. 단순 나열이 아닌, 인과관계 연쇄와 행동 가능한 시사점을 포함해야 한다.
 
 ## 시장 데이터:
 
 [지수]
 {idx_text}
+{breadth_block}
 
-[이슈 종목]
+[이슈 종목 TOP 15]
 {stk_text}
 
 [섹터]
 {sec_text}
 
-[인기 테마]
+[인기 테마 TOP 7]
 {thm_text}
 
 [뉴스]
 {news_text}
 
-## 분석 구조 (6개 섹션, 반드시 이 순서와 번호를 따를 것):
+## 분석 구조 (8개 섹션, 반드시 이 순서와 번호를 따를 것):
 
 1) 핵심 촉발 요인
-- 오늘 시장을 움직이는 팩트 3가지를 뉴스 헤드라인에서 뽑아 서술
-- 각 팩트가 시장에 미치는 영향을 구체적으로 연결
+- 오늘 시장을 움직이는 핵심 팩트 2~3가지를 뉴스에서 뽑아 서술
+- 각 팩트의 시장 영향을 구체적 수치와 함께 연결
+- 수치에 반드시 맥락 부여 (예: "코스피 -3.5%는 올해 최대 낙폭", "거래대금 20조는 평소의 1.5배 수준")
+- 과거 유사 사례가 있으면 비교 (예: 코로나, 금융위기, 우크라 전쟁 당시와 비교)
 - 3~4문장
 
-2) 자금 흐름 방향
-- Risk-On(위험자산 선호) 또는 Risk-Off(위험자산 회피) 판단
-- 판단 근거를 지수·환율·종목 데이터에서 뽑아 제시
-- 2~3문장
-
-3) 금리·달러·유가 영향 연결
-- 환율(USD/KRW)과 글로벌 지수 흐름이 한국 시장에 미치는 영향
-- 원인 → 결과를 화살표(→)로 연결
-- 2~3문장
-
-4) 섹터별 강약 구조
-- ↗ 강세 섹터와 그 이유 (뉴스·테마와 연결)
-- ↘ 약세 섹터와 그 이유 (뉴스·종목과 연결)
-- 개별 종목을 섹터 전체와 혼동하지 말 것
+2) 시장 체력 진단
+- 상승/하락 종목 비율과 AD비율로 시장 전반의 체력 판단
+- 급등(+3%↑) vs 급락(-3%↓) 종목 수 비교 → 투매/패닉 수준 진단
+- 대형주(시총 TOP10) vs 전체 평균 등락률 비교 → 대형주가 방어하는지 동반 하락인지
+- 거래대금 집중도: TOP5 거래대금이 전체에서 차지하는 비중 → 쏠림/분산 판단
 - 3~4문장
 
-5) 단기 시나리오 2개
-- 상승 시나리오: 어떤 조건이 충족되면 반등 가능한지
-- 하락 시나리오: 어떤 리스크가 현실화되면 추가 하락인지
-- 각 1~2문장
+3) 자금 흐름 구조
+- Risk-On/Off 판단 + 근거 (지수, 환율, 종목 데이터)
+- 거래대금 집중 섹터/종목에서 자금 이동 방향 추정 (어디서 빠져 어디로 몰리는지)
+- 환율 수준 → 외국인 자금 유출입 압력 연결 (예: "원/달러 1,470원대 → 외인 매도 압력 지속 구간")
+- 2~3문장
 
-6) 한 줄 결론
-- 오늘 시장을 한 문장으로 요약 (핵심 키워드 포함)
+4) 금리·달러·유가 연쇄 구조
+- 단선적 설명 금지. 반드시 다단계 연쇄 구조로 서술
+- 예시: 유가 급등 → 인플레 기대 상승 → 금리 인하 기대 후퇴 → 성장주 밸류에이션 부담 → 기술주 약세
+- 환율 수준별 시장 의미 (1,400 이하/1,400~1,450/1,450 이상 등 구간별 해석)
+- 2~3문장
+
+5) 섹터별 강약 구조
+- ↗ 강세 섹터: 상승 원인을 뉴스·테마와 구체적으로 연결
+- ↘ 약세 섹터: 하락 원인 분석 (수급 이탈? 업황 악화? 글로벌 연동?)
+- 섹터 내 종목 분화 여부 (대장주만 가는지, 전체가 동반 상승/하락인지)
+- 자금 로테이션 방향 (방어주↔성장주, 내수↔수출주 등)
+- 3~4문장
+
+6) 테마 모멘텀
+- 인기 테마의 상승 종목 비율로 과열/건전 판단 (상승 비율 80%+ → 과열 주의)
+- 테마 간 자금 순환 구조 (어떤 테마에서 이탈해서 어디로 이동 중인지)
+- 지속 가능한 테마 vs 단기 이벤트성 테마 구분
+- 2~3문장
+
+7) 대응 전략
+- 현금 비중 시사점 (적극 매수 구간 / 관망 구간 / 현금 확대 구간)
+- 낙폭과대 기술적 반등 관점에서 유망 섹터/종목군 언급
+- 스윙 트레이딩 관점 유의 포인트 (지지선, 추세 전환 시그널 등)
+- 반대매매/마진콜 리스크 수준 진단 (급락 시)
+- 2~3문장
+
+8) 다음 트리거 + 한 줄 결론
+- 향후 1~3일 시장을 움직일 이벤트/데이터 (경제지표 발표, 정책 결정, 글로벌 이벤트 등)
+- 한 문장 결론 (핵심 키워드 포함, 행동 시사점 포함)
 
 ## 절대 규칙:
 - 한글과 숫자만 사용 (한자/일본어/중국어 금지)
 - 감정적 표현 금지. 객관적·분석적 톤 유지
-- 뉴스 단순 나열 금지. 반드시 '원인 → 자금 → 섹터 → 전략' 구조로 작성
 - "~입니다" 존댓말 금지. "~다/~했다" 간결체 사용
-- 같은 내용 반복 금지
+- 단순 나열 금지. 인과관계를 최소 2단계 이상 연쇄로 서술
+- 같은 내용을 다른 섹션에서 반복 금지
 - 섹션 간 논리적 모순 금지
-- 근거 없는 추측 금지. 뉴스 데이터에서 근거를 찾을 것
-- 숫자는 데이터 그대로 인용
-- 총 1000~1500자 분량
+- 근거 없는 추측 금지. 반드시 제공된 데이터에서 근거를 찾을 것
+- 숫자는 데이터 그대로 인용하되 반드시 맥락 부여
+- 읽는 사람이 당장 포지션을 조정할 수 있는 구체적 시사점 포함
+- 총 1500~2500자 분량
 
 ## 나쁜 예시 (절대 금지):
-❌ "상승 섹터로는 2차전지와 철강 섹터가 있습니다"
-❌ "오늘 시장의 핵심은 리스크 오프 심리입니다"
-→ 단순 나열, 수치만 읽기, 뻔한 서술
+❌ "상승 섹터로는 2차전지와 철강 섹터가 있습니다" → 단순 나열
+❌ "오늘 시장의 핵심은 리스크 오프 심리입니다" → 뻔한 서술
+❌ "코스피가 12% 폭락했다. 유가 쇼크 때문이다." → 인과 1단계, 맥락 없음
+❌ "향후 시장은 불확실하다" → 누구나 아는 말
 
 ## 좋은 예시:
-✅ "2차전지 섹터는 유럽 전기차 보조금 확대 뉴스에 LG에너지솔루션(+3.2%)을 필두로 반등했다"
-✅ "원/달러 1,460원 돌파 → 외국인 자금 이탈 가속 → 코스피 하방 압력 확대"
-✅ "상승 조건: 미중 무역협상 진전 시그널 + 외국인 순매수 전환"
+✅ "코스피 -3.5%는 2022년 9월 이후 일간 최대 낙폭이다. 당시에도 달러 강세 + 에너지 쇼크가 겹쳤고, 이후 2주간 추가 -5% 하락 후 기술적 반등이 나왔다."
+✅ "원/달러 1,470원 → 외국인 선물 매도 유입 구간 → 프로그램 차익 매도 동반 → 코스피 하방 가속 구조"
+✅ "거래대금 25조원은 평소(15~18조)의 1.5배 → 투매가 아닌 교체매매 성격. 반도체에서 빠진 자금이 방산·정유로 이동 중"
+✅ "현 구간은 현금 비중 30% 이상 유지 권장. 낙폭과대 반등 노리려면 거래대금 급증 + 외인 선물 순매수 전환 확인 후 진입"
 
 ## 출력 형식 (JSON):
 {{
-  "summary": "시장 브리핑 전문 (섹션 번호와 제목 포함, 줄바꿈으로 구분)",
+  "summary": "브리핑 전문 (섹션 번호와 제목 포함, 줄바꿈으로 구분)",
   "market_mood": "bullish 또는 bearish 또는 neutral"
 }}
 
@@ -1663,7 +1737,7 @@ market_mood 판단: 코스피·코스닥 모두 상승이면 bullish, 모두 하
                 "model": "llama-3.3-70b-versatile",
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.4,
-                "max_tokens": 2048,
+                "max_tokens": 4096,
                 "response_format": {"type": "json_object"},
             },
             timeout=60,
@@ -2421,7 +2495,7 @@ def main():
     if ai_mode:
         label = {"premarket": "장전 해외시장", "market": "장중", "close": "장 마감"}[ai_mode]
         log(f"  🤖 AI 브리핑 생성 ({label}) — Groq 호출")
-        ai_summary = generate_ai_summary(indices, stocks, sectors, themes, news, mode=ai_mode)
+        ai_summary = generate_ai_summary(indices, stocks, sectors, themes, news, mode=ai_mode, krx_data=krx_data)
     else:
         log(f"  ℹ️ AI 브리핑 스킵 (현재 {kst_now.strftime('%H:%M')}, 생성 시간: 08:00/12:05/15:35)")
         ai_summary = None
