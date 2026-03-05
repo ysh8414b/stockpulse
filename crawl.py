@@ -672,6 +672,37 @@ def fetch_yahoo_chart(symbol, interval="15m"):
     return price, prev, filtered
 
 
+def fetch_naver_index_basic(code):
+    """네이버 금융 API로 한국 시장 지수 조회 (KOSPI/KOSDAQ)
+    Returns: (price, change, pct, trend) or None on failure
+    """
+    try:
+        resp = requests.get(
+            f"https://m.stock.naver.com/api/index/{code}/basic",
+            headers=NAVER_STOCK_HEADERS, timeout=10
+        )
+        if resp.status_code != 200:
+            return None
+        d = resp.json()
+
+        price = float(str(d.get("closePrice", "0")).replace(",", ""))
+        change_abs = float(str(d.get("compareToPreviousClosePrice", "0")).replace(",", "").lstrip("+-"))
+        pct_abs = float(str(d.get("fluctuationsRatio", "0")).replace(",", "").lstrip("+-"))
+
+        cmp = d.get("compareToPreviousPrice", {})
+        cmp_code = cmp.get("code", "3") if isinstance(cmp, dict) else "3"
+
+        if cmp_code in ("4", "5"):  # 하락/하한
+            return price, -change_abs, -pct_abs, "down"
+        elif cmp_code in ("1", "2"):  # 상한/상승
+            return price, change_abs, pct_abs, "up"
+        else:
+            return price, 0.0, 0.0, "flat"
+    except Exception as e:
+        log(f"  ⚠️ 네이버 {code} 지수 조회 실패: {e}")
+        return None
+
+
 # ─────────────────────────────────────────
 # 헬퍼 함수
 # ─────────────────────────────────────────
@@ -2063,24 +2094,44 @@ def crawl_issue_stocks(krx_data, themes=None, sectors=None, news=None):
 # 3. 시장 지수 (Yahoo Finance API)
 # ─────────────────────────────────────────
 def crawl_market_index():
-    """Yahoo Finance API로 시장 지수 + 환율 조회"""
+    """시장 지수 + 환율 조회 (한국: 네이버+Yahoo 스파크라인, 해외: Yahoo)"""
     log("📊 시장 지수 크롤링 시작...")
 
     indices = []
 
+    # naver_code가 있으면 네이버에서 가격/등락 조회, Yahoo는 스파크라인만
     index_symbols = [
-        ("코스피",   "^KS11",    "5m"),
-        ("코스닥",   "^KQ11",    "5m"),
-        ("다우존스", "^DJI",     "5m"),
-        ("나스닥",   "^IXIC",    "5m"),
-        ("S&P 500",  "^GSPC",    "5m"),
-        ("USD/KRW",  "USDKRW=X", "5m"),
+        ("코스피",   "^KS11",    "5m", "KOSPI"),
+        ("코스닥",   "^KQ11",    "5m", "KOSDAQ"),
+        ("다우존스", "^DJI",     "5m", None),
+        ("나스닥",   "^IXIC",    "5m", None),
+        ("S&P 500",  "^GSPC",    "5m", None),
+        ("USD/KRW",  "USDKRW=X", "5m", None),
     ]
 
-    for name, symbol, interval in index_symbols:
+    for name, symbol, interval, naver_code in index_symbols:
         try:
+            # Yahoo에서 스파크라인 데이터 (+ 해외지수는 가격도)
             price, prev, sparkline = fetch_yahoo_chart(symbol, interval)
 
+            # 한국 지수: 네이버에서 정확한 가격/등락 데이터
+            if naver_code:
+                naver = fetch_naver_index_basic(naver_code)
+                if naver:
+                    n_price, n_change, n_pct, n_trend = naver
+                    indices.append({
+                        "name": name,
+                        "value": f"{n_price:,.2f}",
+                        "change_amount": f"{n_change:+,.2f}",
+                        "change_pct": f"{n_pct:+.2f}%",
+                        "trend": n_trend,
+                        "sparkline_data": {"v": sparkline},
+                    })
+                    log(f"  ✅ {name}: {n_price:,.2f} ({n_pct:+.2f}%) (네이버, 스파크라인 {len(sparkline)}pt)")
+                    continue
+                log(f"  ⚠️ {name} 네이버 실패 → Yahoo 폴백")
+
+            # 해외 지수 또는 네이버 실패 시 Yahoo 데이터
             if prev and prev > 0:
                 change = round(price - prev, 2)
                 pct = round((change / prev) * 100, 2)
