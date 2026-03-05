@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>서비스 소개 — STOCKPULSE</title>
+  <meta name="description" content="STOCKPULSE는 AI 기반 금융시장 정보 플랫폼입니다. 실시간 시장 데이터, 테마/섹터 분석, AI 브리핑을 제공합니다." />
+  <meta property="og:title" content="서비스 소개 — STOCKPULSE" />
+  <meta property="og:description" content="AI 기반 금융시장 정보 플랫폼. 실시간 시장 데이터와 AI 분석을 제공합니다." />
+  <link rel="canonical" href="https://ysh8414b.github.io/stockpulse/about.html" />
+  <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="shared.js"></script>
+  <style>
+    .feature-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+    .feature-card{padding:20px;border-radius:12px;background:var(--card-bg);border:1px solid var(--card-bd);transition:all .25s}
+    .feature-card:hover{background:var(--card-hbg);border-color:var(--card-hbd);transform:translateY(-2px)}
+    .feature-icon{font-size:28px;margin-bottom:10px}
+    .feature-title{font-weight:700;font-size:15px;margin-bottom:6px}
+    .feature-desc{font-size:13px;color:var(--text-sub);line-height:1.6}
+    .source-badge{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;background:var(--card-bg);border:1px solid var(--card-bd);font-size:13px;color:var(--text-sub)}
+    @media(max-width:600px){.feature-grid{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<div id="root">
+  <header class="page-header">
+    <a href="index.html" class="page-back">← 대시보드</a>
+    <a href="index.html" style="display:flex;align-items:center;gap:8px">
+      <div style="width:8px;height:8px;border-radius:50%;background:#22c55e;box-shadow:0 0 10px rgba(34,197,94,0.4)"></div>
+      <span style="font-size:18px;font-weight:800;letter-spacing:-0.03em;background:var(--h-grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent">STOCKPULSE</span>
+    </a>
+  </header>
+
+  <main class="page-wrap">
+    <div class="fade-up">
+      <h1 style="font-size:24px;font-weight:800;margin-bottom:8px">STOCKPULSE 소개</h1>
+      <p style="color:var(--muted);font-size:15px;margin-bottom:32px;line-height:1.7">STOCKPULSE는 국내외 금융시장 데이터를 실시간으로 수집하고, AI 기반 분석을 자동 생성하여 제공하는 정보 플랫폼입니다. 투자 추천이 아닌 <strong style="color:var(--text)">객관적 정보 제공</strong>을 목표로 합니다.</p>
+
+      <div class="page-section">
+        <h2>주요 기능</h2>
+        <div class="feature-grid">
+          <div class="feature-card">
+            <div class="feature-icon">◈</div>
+            <div class="feature-title">시장 개요</div>
+            <div class="feature-desc">코스피, 코스닥, 다우존스, 나스닥, S&P 500, USD/KRW 실시간 지수와 스파크라인 차트. 섹터별 등락 현황과 주요 뉴스를 한눈에 파악할 수 있습니다.</div>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">◈</div>
+            <div class="feature-title">인기 테마</div>
+            <div class="feature-desc">뉴스 키워드 분석 기반 실시간 인기 테마 TOP 10. 테마별 대장주, 평균 등락률, 관련 뉴스를 제공합니다. 전체 테마 검색 기능도 지원합니다.</div>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">◆</div>
+            <div class="feature-title">이슈 종목</div>
+            <div class="feature-desc">5가지 복합 점수 기준 (등락률, 거래대금, 테마 소속, 뉴스 언급, 섹터 강도) 랭킹 TOP 15. 종목별 관련 뉴스와 선정 사유를 함께 제공합니다.</div>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">⬡</div>
+            <div class="feature-title">AI 시장 브리핑</div>
+            <div class="feature-desc">Groq AI가 시장 데이터를 종합 분석하여 자동 생성하는 전문 수준의 시장 브리핑. 하루 3회 (장전 해외시장, 장중, 장 마감) 업데이트됩니다.</div>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">📅</div>
+            <div class="feature-title">브리핑 아카이브</div>
+            <div class="feature-desc">과거 AI 브리핑을 최대 1년간 보관하여 캘린더 형태로 탐색할 수 있습니다. 시장 무드 변화 추이를 한눈에 확인하세요.</div>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">📖</div>
+            <div class="feature-title">투자 가이드</div>
+            <div class="feature-desc">시장 지표 읽는 법, 섹터/테마 분석 기초, 투자 용어 사전 등 초보 투자자를 위한 교육 콘텐츠를 제공합니다.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="page-section">
+        <h2>데이터 소스</h2>
+        <div style="display:flex;flex-wrap:wrap;gap:8px">
+          <span class="source-badge">📊 네이버 금융 API</span>
+          <span class="source-badge">🌍 Yahoo Finance API</span>
+          <span class="source-badge">📰 네이버 검색 API</span>
+          <span class="source-badge">🤖 Groq AI (LLaMA 3.3)</span>
+          <span class="source-badge">💾 Supabase (PostgreSQL)</span>
+        </div>
+      </div>
+
+      <div class="page-section">
+        <h2>업데이트 주기</h2>
+        <ul>
+          <li><strong>시장 데이터:</strong> 장중 5분 간격 자동 크롤링 (GitHub Actions)</li>
+          <li><strong>AI 브리핑:</strong> 하루 3회 — 08:00 (장전 해외시장), 12:05 (장중), 15:35 (장 마감)</li>
+          <li><strong>테마/섹터:</strong> 매 크롤링마다 뉴스 기반 동적 갱신</li>
+        </ul>
+      </div>
+
+      <div class="page-section">
+        <h2>기술 스택</h2>
+        <ul>
+          <li><strong>프론트엔드:</strong> React 18 (CDN), Babel Standalone, SVG 차트</li>
+          <li><strong>백엔드:</strong> Python 크롤러, GitHub Actions 자동화</li>
+          <li><strong>데이터베이스:</strong> Supabase (PostgreSQL)</li>
+          <li><strong>AI 엔진:</strong> Groq API (LLaMA 3.3 70B)</li>
+          <li><strong>호스팅:</strong> GitHub Pages</li>
+        </ul>
+      </div>
+
+      <div class="page-section">
+        <h2>연락처</h2>
+        <p>서비스 관련 문의, 버그 리포트, 제안 사항은 아래로 보내주세요.</p>
+        <ul>
+          <li>이메일: ysh8414b@gmail.com</li>
+          <li>GitHub: <a href="https://github.com/ysh8414b/stockpulse" target="_blank" rel="noopener noreferrer" style="color:#06b6d4;text-decoration:underline">ysh8414b/stockpulse</a></li>
+        </ul>
+      </div>
+
+      <div style="margin-top:24px;padding:14px 18px;background:rgba(245,158,11,0.04);border:1px solid rgba(245,158,11,0.1);border-radius:10px;font-size:14px;color:#b4940f;line-height:1.6">
+        ⚠️ 본 서비스는 정보 제공 목적으로만 운영됩니다. 투자 판단은 이용자 본인의 책임이며, 투자 추천 또는 자문을 목적으로 하지 않습니다.
+      </div>
+    </div>
+  </main>
+
+  <footer style="border-top:1px solid var(--div2);max-width:900px;margin:0 auto;padding:18px 40px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;color:var(--dimmer);font-size:13px">
+    <div><span style="font-weight:600;color:var(--dim)">STOCKPULSE</span> © 2026</div>
+    <div class="footer-links">
+      <a href="index.html">대시보드</a>
+      <a href="archive.html">AI 브리핑 아카이브</a>
+      <a href="guide.html">투자 가이드</a>
+      <a href="privacy.html">개인정보처리방침</a>
+      <a href="terms.html">이용약관</a>
+    </div>
+  </footer>
+</div>
+<script>applyTheme(getStoredTheme())</script>
+</body>
+</html>

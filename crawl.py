@@ -2604,13 +2604,23 @@ def main():
         result = supabase_request("POST", "all_themes", data=all_themes_data)
         log(f"  📊 전체 테마 {len(all_themes_data)}개 저장 {'✅' if result else '❌'}")
 
-    # AI 요약 저장 (성공 시에만 기존 데이터 교체 — 실패 시 기존 유지)
+    # AI 요약 저장 (과거 데이터 보존 — 오늘 같은 시간대만 교체)
     if ai_summary:
-        clear_today_data("ai_summary")
+        supabase_request("DELETE", "ai_summary", params={
+            "date": f"eq.{TODAY}",
+            "generated_time": f"eq.{ai_summary['generated_time']}"
+        })
         result = supabase_request("POST", "ai_summary", data=[ai_summary])
         log(f"  🤖 AI 요약 저장 {'✅' if result else '❌'}")
     else:
         log("  ℹ️ AI 요약 생성 실패 — 기존 데이터 유지")
+
+    # 365일 초과 AI 요약 정리 (close 모드에서만)
+    if ai_mode == "close":
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+        supabase_request("DELETE", "ai_summary", params={"date": f"lt.{cutoff}"})
+        log(f"  🧹 {cutoff} 이전 AI 요약 정리")
 
     log("")
     log("=" * 50)

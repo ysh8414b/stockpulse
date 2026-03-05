@@ -3,7 +3,15 @@
 > **규칙**: 대화 중 코드 수정, 새로운 기능 추가, 버그 수정, 알려진 이슈 등 중요한 변경이 발생하면 이 파일을 즉시 업데이트할 것. 수정 이력 섹션에 날짜와 함께 기록.
 
 ## 프로젝트 구조
-- `index.html` — React 18 SPA (프론트엔드 전체, CDN 기반)
+- `index.html` — React 18 SPA (메인 대시보드, CDN 기반)
+- `archive.html` — AI 브리핑 아카이브 (캘린더 기반 과거 브리핑 탐색)
+- `guide.html` — 투자 정보 가이드 (독창적 교육 콘텐츠)
+- `about.html` — 서비스 소개 + 연락처
+- `privacy.html` — 개인정보처리방침
+- `terms.html` — 이용약관
+- `style.css` — 공통 CSS (다크/라이트 테마, 반응형)
+- `shared.js` — 공통 JS (Supabase 설정, db() 함수, 테마 유틸)
+- `sitemap.xml` — SEO용 사이트맵
 - `crawl.py` — Python 크롤러 (데이터 수집/가공, GitHub Actions로 실행)
 - `.github/workflows/crawl.yml` — 장중 5분 간격 + 장 마감 후 1회 실행
 - 데이터 저장: Supabase (PostgreSQL)
@@ -115,6 +123,21 @@
 - 프론트엔드: 검색 input + TOP 10 (기존) + 전체 테마 접기/펼치기 + AllThemeItem 컴포넌트
 - 검색 모드: TOP 10 + 전체 테마 동시 필터링, 결과 없으면 Empty 메시지
 - `main()`에서 `crawl_themes()` 직후 `build_all_themes_data()` 호출
+
+### AI 브리핑 아카이브 + 멀티페이지 구조 (2026-03-05)
+- 기존: `index.html` 단일 SPA, ai_summary 매일 덮어쓰기(clear_today_data)
+- 변경: 멀티페이지 구조 + ai_summary 과거 데이터 보존(1년)
+- **crawl.py 변경**: `clear_today_data("ai_summary")` → `date+generated_time` 기준 교체 (과거 보존)
+- **365일 cleanup**: close 모드 실행 시 365일 초과 데이터 자동 삭제
+- **CSS/JS 분리**: `style.css` (공통 CSS), `shared.js` (Supabase 설정+db함수+테마 유틸)
+- **archive.html**: 캘린더 UI로 과거 AI 브리핑 탐색, 날짜별 무드 도트, 하루 최대 3개 브리핑
+- **guide.html**: 시장 지표/섹터/테마/AI 브리핑 활용법 + 투자 용어 사전 (AdSense용 독창적 콘텐츠)
+- **about.html**: 서비스 소개, 기능 카드, 데이터 소스, 기술 스택, 연락처
+- **privacy.html**: 개인정보처리방침 (AdSense 필수)
+- **terms.html**: 이용약관 + 투자 면책 조항
+- **sitemap.xml**: SEO용 (6개 페이지)
+- index.html 푸터에 모든 페이지 링크 추가
+- TabAI 하단에 "과거 AI 브리핑 아카이브" 링크 추가
 
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용

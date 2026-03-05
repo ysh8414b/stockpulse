@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>투자 정보 가이드 — STOCKPULSE</title>
+  <meta name="description" content="주식 투자 초보자를 위한 시장 지표, 섹터 분석, 테마주 이해, 투자 용어 가이드. STOCKPULSE가 제공하는 교육 콘텐츠." />
+  <meta property="og:title" content="투자 정보 가이드 — STOCKPULSE" />
+  <meta property="og:description" content="시장 지표 읽는 법, 섹터/테마 분석, 투자 용어까지. 초보 투자자를 위한 가이드." />
+  <link rel="canonical" href="https://ysh8414b.github.io/stockpulse/guide.html" />
+  <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="shared.js"></script>
+  <style>
+    .guide-toc{list-style:none;padding:0;display:flex;flex-wrap:wrap;gap:6px;margin-bottom:32px}
+    .guide-toc a{display:inline-block;padding:8px 14px;border-radius:8px;background:var(--card-bg);border:1px solid var(--card-bd);font-size:13px;color:var(--text-sub);transition:all .2s}
+    .guide-toc a:hover{background:var(--card-hbg);border-color:var(--card-hbd);color:var(--text)}
+    .term-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+    .term-item{padding:14px 16px;border-radius:10px;background:var(--card-bg);border:1px solid var(--card-bd)}
+    .term-name{font-weight:700;font-size:14px;color:#06b6d4;margin-bottom:4px}
+    .term-desc{font-size:13px;color:var(--text-sub);line-height:1.6}
+    .tip-box{padding:16px 18px;border-radius:10px;border-left:3px solid rgba(6,182,212,0.5);background:rgba(6,182,212,0.04);margin:12px 0;font-size:14px;line-height:1.7;color:var(--text-sub)}
+    @media(max-width:600px){.term-grid{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<div id="root">
+  <header class="page-header">
+    <a href="index.html" class="page-back">← 대시보드</a>
+    <a href="index.html" style="display:flex;align-items:center;gap:8px">
+      <div style="width:8px;height:8px;border-radius:50%;background:#22c55e;box-shadow:0 0 10px rgba(34,197,94,0.4)"></div>
+      <span style="font-size:18px;font-weight:800;letter-spacing:-0.03em;background:var(--h-grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent">STOCKPULSE</span>
+    </a>
+  </header>
+
+  <main class="page-wrap">
+    <div class="fade-up">
+      <h1 style="font-size:24px;font-weight:800;margin-bottom:8px">투자 정보 가이드</h1>
+      <p style="color:var(--muted);font-size:15px;margin-bottom:24px">STOCKPULSE의 데이터를 더 잘 이해하고 활용하기 위한 가이드입니다.</p>
+
+      <ul class="guide-toc">
+        <li><a href="#indices">시장 지표 읽는 법</a></li>
+        <li><a href="#sectors">섹터 분석 기초</a></li>
+        <li><a href="#themes">테마주 투자 이해</a></li>
+        <li><a href="#ai-briefing">AI 브리핑 활용법</a></li>
+        <li><a href="#terms">투자 용어 사전</a></li>
+      </ul>
+
+      <!-- 1. 시장 지표 -->
+      <div class="page-section" id="indices">
+        <h2>1. 시장 지표 읽는 법</h2>
+        <p>STOCKPULSE 대시보드 상단의 시장 지표들은 글로벌 금융시장의 현재 상태를 보여줍니다.</p>
+
+        <h3>코스피 (KOSPI)</h3>
+        <p>한국거래소에 상장된 전체 종목의 시가총액 가중 지수입니다. 삼성전자, SK하이닉스 등 대형주의 영향이 큽니다. 코스피가 상승하면 시장 전체가 강세, 하락하면 약세로 해석합니다.</p>
+
+        <h3>코스닥 (KOSDAQ)</h3>
+        <p>중소형 성장주 중심의 시장입니다. 바이오, IT, 게임 등 성장 산업 비중이 높아 코스피보다 변동성이 큽니다. 코스닥의 상승은 위험자산 선호, 하락은 안전자산 선호로 해석되기도 합니다.</p>
+
+        <h3>다우존스 / 나스닥 / S&P 500</h3>
+        <p>미국 시장의 3대 지수입니다.</p>
+        <ul>
+          <li><strong>다우존스:</strong> 미국 대표 30개 우량기업. 전통 산업 비중이 높습니다.</li>
+          <li><strong>나스닥:</strong> 기술주 중심. 애플, 마이크로소프트, 엔비디아 등 빅테크 기업이 포함됩니다.</li>
+          <li><strong>S&P 500:</strong> 미국 500대 기업. 가장 광범위한 시장 대표 지수입니다.</li>
+        </ul>
+        <div class="tip-box">미국 시장은 한국 장 마감 후 개장하며, 전일 미국 시장의 흐름이 다음 날 한국 시장에 영향을 미치는 경우가 많습니다.</div>
+
+        <h3>USD/KRW (원/달러 환율)</h3>
+        <p>1달러당 원화 가격입니다. 환율이 상승하면 원화 약세(수출 기업에 유리), 하락하면 원화 강세(수입 기업에 유리)로 해석합니다. 외국인 투자자의 매매 동향과 밀접한 관련이 있습니다.</p>
+        <div class="tip-box">환율과 외국인 매매는 역의 관계를 보이는 경우가 많습니다. 환율 상승(원화 약세) 시 외국인은 환차손 우려로 순매도하는 경향이 있습니다.</div>
+      </div>
+
+      <!-- 2. 섹터 분석 -->
+      <div class="page-section" id="sectors">
+        <h2>2. 섹터 분석 기초</h2>
+        <p>STOCKPULSE는 전 종목을 10개 섹터로 분류하여 시장 자금 흐름을 파악할 수 있게 합니다.</p>
+
+        <h3>10대 섹터</h3>
+        <ul>
+          <li><strong>반도체:</strong> 삼성전자, SK하이닉스 등. 글로벌 IT 수요와 AI 투자에 민감.</li>
+          <li><strong>2차전지:</strong> LG에너지솔루션, 삼성SDI 등. 전기차 시장과 연동.</li>
+          <li><strong>바이오:</strong> 셀트리온, 삼성바이오로직스 등. 임상 결과에 따른 변동성이 큼.</li>
+          <li><strong>자동차:</strong> 현대차, 기아 등. 완성차와 부품사 포함.</li>
+          <li><strong>IT/플랫폼:</strong> 네이버, 카카오 등. 디지털 경제 성장에 민감.</li>
+          <li><strong>금융:</strong> KB금융, 신한지주 등. 금리 변동에 영향.</li>
+          <li><strong>소비재:</strong> 아모레퍼시픽, CJ제일제당 등. 내수 경기에 민감.</li>
+          <li><strong>철강/소재:</strong> POSCO홀딩스, 현대제철 등. 원자재 가격과 연동.</li>
+          <li><strong>에너지:</strong> SK이노베이션, S-Oil 등. 유가 변동에 민감.</li>
+          <li><strong>건설:</strong> 현대건설, 대우건설 등. 부동산 정책과 SOC 투자에 영향.</li>
+        </ul>
+        <div class="tip-box">섹터 로테이션(자금이 특정 섹터에서 다른 섹터로 이동하는 현상)을 관찰하면 시장 사이클의 단계를 파악할 수 있습니다. 예를 들어, 경기 회복기에는 소재/산업재 → 성장기에는 IT/반도체 → 후반기에는 금융/에너지로 자금이 이동하는 패턴이 나타나곤 합니다.</div>
+      </div>
+
+      <!-- 3. 테마주 -->
+      <div class="page-section" id="themes">
+        <h2>3. 테마주 투자 이해</h2>
+        <p>테마주는 특정 이슈나 트렌드에 관련된 종목들의 묶음입니다. STOCKPULSE의 인기 테마는 뉴스 키워드 분석을 통해 실시간으로 선정됩니다.</p>
+
+        <h3>테마가 형성되는 과정</h3>
+        <ul>
+          <li><strong>이슈 발생:</strong> 정책 발표, 기술 혁신, 지정학적 이벤트 등</li>
+          <li><strong>뉴스 확산:</strong> 관련 키워드가 뉴스에서 반복 언급</li>
+          <li><strong>테마 형성:</strong> 관련 종목들이 동반 상승/하락</li>
+          <li><strong>쇠퇴:</strong> 이슈 소멸 또는 차익 실현으로 테마 해소</li>
+        </ul>
+
+        <h3>테마주 투자의 주의점</h3>
+        <ul>
+          <li>테마주는 변동성이 높아 단기간에 급등·급락할 수 있습니다.</li>
+          <li>뉴스 기반이므로 테마의 수명이 짧을 수 있습니다.</li>
+          <li>대장주(테마 내 시총 1위)와 후발주의 수익률 차이가 큽니다.</li>
+          <li>"소문에 사고 뉴스에 팔아라" — 테마가 이미 뉴스에 보도될 때는 초기 상승 구간이 지난 경우가 많습니다.</li>
+        </ul>
+        <div class="tip-box">STOCKPULSE의 테마 순위는 뉴스 언급 빈도와 관련 종목 등락률을 기반으로 합니다. 순위가 높다고 해서 투자 추천이 아니며, 시장의 관심도를 나타내는 지표로만 활용하세요.</div>
+      </div>
+
+      <!-- 4. AI 브리핑 -->
+      <div class="page-section" id="ai-briefing">
+        <h2>4. AI 브리핑 활용법</h2>
+        <p>STOCKPULSE의 AI 브리핑은 Groq AI가 시장 데이터를 종합 분석하여 자동 생성합니다. 하루 3회 업데이트되며, 다음 7개 섹션으로 구성됩니다.</p>
+
+        <h3>브리핑 구조</h3>
+        <ul>
+          <li><strong>🔥 핵심 촉발/파급:</strong> 시장을 움직인 핵심 이벤트와 연쇄 영향 분석</li>
+          <li><strong>💱 환율·금리·유가:</strong> 매크로 변수들의 연쇄 반응 분석</li>
+          <li><strong>💰 수급 분석:</strong> 외국인·기관·개인의 매매 동향과 의미</li>
+          <li><strong>🩺 시장 체력 진단:</strong> 상승/하락 종목 비율, AD비율, 패닉 단계 진단</li>
+          <li><strong>📊 섹터·테마:</strong> 자금이 몰리는/빠지는 섹터와 테마 분석</li>
+          <li><strong>⚔️ 매매 전략:</strong> 구체적인 대응 전략과 리스크 관리</li>
+          <li><strong>🧠 결론:</strong> 반등 조건, 추가 하락 트리거, 최종 판단</li>
+        </ul>
+
+        <h3>시장 무드 (Market Mood)</h3>
+        <ul>
+          <li>🟢 <strong>강세 (Bullish):</strong> 시장 전체가 상승 추세로 판단</li>
+          <li>🔴 <strong>약세 (Bearish):</strong> 시장 전체가 하락 추세로 판단</li>
+          <li>⚪ <strong>보합 (Neutral):</strong> 방향성이 불분명한 상태</li>
+        </ul>
+        <div class="tip-box">AI 브리핑은 자동 생성된 콘텐츠로, 정확성이나 수익을 보장하지 않습니다. 시장 상황을 빠르게 파악하는 참고자료로만 활용하세요. 아카이브 페이지에서 과거 브리핑의 시장 무드 적중률을 직접 확인해볼 수 있습니다.</div>
+      </div>
+
+      <!-- 5. 용어 사전 -->
+      <div class="page-section" id="terms">
+        <h2>5. 주요 투자 용어 사전</h2>
+        <div class="term-grid">
+          <div class="term-item">
+            <div class="term-name">AD비율 (Advance-Decline Ratio)</div>
+            <div class="term-desc">상승 종목 수와 하락 종목 수의 비율. 1보다 크면 상승 종목이 많아 시장이 건강, 1 미만이면 약세 신호.</div>
+          </div>
+          <div class="term-item">
+            <div class="term-name">시장 브레드쓰 (Market Breadth)</div>
+            <div class="term-desc">시장의 전반적인 강도를 나타내는 지표. 상승 종목 수, 거래량 분포 등을 종합적으로 분석합니다.</div>
+          </div>
+          <div class="term-item">
+            <div class="term-name">거래대금</div>
+            <div class="term-desc">일정 기간 동안 거래된 주식의 총 금액. 거래대금이 높을수록 시장의 관심이 집중되고 있음을 의미합니다.</div>
+          </div>
+          <div class="term-item">
+            <div class="term-name">시가총액</div>
+            <div class="term-desc">주가 × 발행주식 수. 기업의 시장가치를 나타내며, 시가총액이 높을수록 대형주로 분류됩니다.</div>
+          </div>
+          <div class="term-item">
+            <div class="term-name">외국인 순매수/순매도</div>
+            <div class="term-desc">외국인 투자자의 매수와 매도 차이. 순매수는 외국인이 한국 시장에 자금을 유입, 순매도는 자금 유출을 의미합니다.</div>
+          </div>
+          <div class="term-item">
+            <div class="term-name">서킷브레이커</div>
+            <div class="term-desc">주가가 전일 대비 8% 이상 급락하면 20분간 거래를 일시 중단하는 제도. 시장 패닉을 방지합니다.</div>
+          </div>
+          <div class="term-item">
+            <div class="term-name">프로그램 매매</div>
+            <div class="term-desc">컴퓨터가 자동으로 대량의 주문을 실행하는 매매. 차익거래와 비차익거래로 나뉘며, 시장 변동성에 영향을 줍니다.</div>
+          </div>
+          <div class="term-item">
+            <div class="term-name">수급</div>
+            <div class="term-desc">매수(수요)와 매도(공급)의 균형. "수급이 좋다"는 것은 매수 세력이 매도 세력보다 강하다는 의미입니다.</div>
+          </div>
+          <div class="term-item">
+            <div class="term-name">갭 상승 / 갭 하락</div>
+            <div class="term-desc">전일 종가와 당일 시가 사이에 가격 차이(갭)가 발생하는 것. 장 시작 전 호재/악재에 의해 발생합니다.</div>
+          </div>
+          <div class="term-item">
+            <div class="term-name">볼린저 밴드</div>
+            <div class="term-desc">이동평균선 위아래로 표준편차 밴드를 그린 기술적 지표. 밴드 상단 터치는 과매수, 하단 터치는 과매도 신호로 해석합니다.</div>
+          </div>
+          <div class="term-item">
+            <div class="term-name">PER (주가수익비율)</div>
+            <div class="term-desc">주가 ÷ 주당순이익. 기업의 수익력 대비 주가가 적정한지 판단하는 지표. 낮을수록 저평가, 높을수록 고평가로 해석합니다.</div>
+          </div>
+          <div class="term-item">
+            <div class="term-name">PBR (주가순자산비율)</div>
+            <div class="term-desc">주가 ÷ 주당순자산. 기업의 순자산 대비 주가 수준을 나타냅니다. 1 미만이면 자산가치 대비 저평가로 해석합니다.</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:24px;padding:14px 18px;background:rgba(245,158,11,0.04);border:1px solid rgba(245,158,11,0.1);border-radius:10px;font-size:14px;color:#b4940f;line-height:1.6">
+        ⚠️ 본 가이드는 교육 목적으로 작성되었으며, 투자 추천이나 자문을 목적으로 하지 않습니다. 투자 판단은 본인 책임하에 이루어져야 합니다.
+      </div>
+    </div>
+  </main>
+
+  <footer style="border-top:1px solid var(--div2);max-width:900px;margin:0 auto;padding:18px 40px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;color:var(--dimmer);font-size:13px">
+    <div><span style="font-weight:600;color:var(--dim)">STOCKPULSE</span> © 2026</div>
+    <div class="footer-links">
+      <a href="index.html">대시보드</a>
+      <a href="archive.html">AI 브리핑 아카이브</a>
+      <a href="about.html">서비스 소개</a>
+      <a href="privacy.html">개인정보처리방침</a>
+      <a href="terms.html">이용약관</a>
+    </div>
+  </footer>
+</div>
+<script>applyTheme(getStoredTheme())</script>
+</body>
+</html>

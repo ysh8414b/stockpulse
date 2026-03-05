@@ -6,9 +6,11 @@
   <title>STOCKPULSE — 주식 시장 정보 대시보드</title>
   <meta name="description" content="주식 시장 정보, 뉴스, 이슈 종목을 한눈에. 투자 추천이 아닌 객관적 정보 제공 서비스." />
   <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <script src="shared.js"></script>
   <style>
     :root{
       --bg:#07070c;--text:#e0ded8;--text-sub:#b0b0b0;--muted:#6b7280;--dim:#555;--dimmer:#444;
@@ -472,6 +474,7 @@ function TabAI({aiSum,loading}){
       <div style={{fontSize:"14px",color:"var(--dim)"}}>다음 크롤링 시 자동 생성됩니다</div>
     </Box>}
     <div style={{marginTop:"20px",padding:"14px 18px",background:"rgba(245,158,11,0.04)",border:"1px solid rgba(245,158,11,0.1)",borderRadius:"10px",fontSize:"14px",color:"#b4940f",lineHeight:1.6}}>⚠️ 본 AI 분석은 정보 제공 목적입니다. 투자 판단은 본인 책임이며 투자 추천/권유가 아닙니다.</div>
+    <a href="archive.html" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:"8px",marginTop:"16px",padding:"14px",border:"1px solid var(--card-bd)",borderRadius:"10px",color:"var(--muted)",fontSize:"14px",fontWeight:500,transition:"all .2s"}} onMouseEnter={e=>{e.currentTarget.style.borderColor="rgba(6,182,212,0.3)";e.currentTarget.style.color="#06b6d4";e.currentTarget.style.background="rgba(6,182,212,0.04)"}} onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--card-bd)";e.currentTarget.style.color="var(--muted)";e.currentTarget.style.background="transparent"}}>과거 AI 브리핑 아카이브 (1년치) →</a>
   </div>;
 }
 
@@ -528,7 +531,16 @@ function App(){
       {tab==="ai"&&<TabAI aiSum={aiSum} loading={loading}/>}
     </main>
 
-    <footer style={{borderTop:"1px solid var(--div2)",maxWidth:1440,margin:"0 auto",padding:"18px 40px",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:"8px",color:"var(--dimmer)",fontSize:"13px"}}><div><span style={{fontWeight:600,color:"var(--dim)"}}>STOCKPULSE</span> © 2026 · 투자 권유 목적이 아닌 정보 제공 목적</div><div>데이터: 네이버 금융 크롤링</div></footer>
+    <footer style={{borderTop:"1px solid var(--div2)",maxWidth:1440,margin:"0 auto",padding:"18px 40px",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:"8px",color:"var(--dimmer)",fontSize:"13px"}}>
+      <div><span style={{fontWeight:600,color:"var(--dim)"}}>STOCKPULSE</span> © 2026 · 투자 권유 목적이 아닌 정보 제공 목적</div>
+      <div className="footer-links">
+        <a href="archive.html">AI 브리핑 아카이브</a>
+        <a href="guide.html">투자 가이드</a>
+        <a href="about.html">서비스 소개</a>
+        <a href="privacy.html">개인정보처리방침</a>
+        <a href="terms.html">이용약관</a>
+      </div>
+    </footer>
   </div>;
 }
 
