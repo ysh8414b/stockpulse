@@ -273,7 +273,9 @@ THEME_DEFINITIONS = [
 # Supabase 헬퍼
 # ─────────────────────────────────────────
 def supabase_request(method, table, data=None, params=None):
-    """Supabase REST API 직접 호출 (라이브러리 없이도 작동)"""
+    """Supabase REST API 직접 호출 (재시도 + 대용량 POST 배치 분할)"""
+    import time
+
     url = f"{SUPABASE_URL}/rest/v1/{table}"
     headers = {
         "apikey": SUPABASE_KEY,
@@ -281,24 +283,48 @@ def supabase_request(method, table, data=None, params=None):
         "Content-Type": "application/json",
         "Prefer": "return=minimal",
     }
-    if method == "GET":
-        resp = requests.get(url, headers=headers, params=params)
-    elif method == "POST":
-        headers["Prefer"] = "return=representation"
-        resp = requests.post(url, headers=headers, json=data)
-    elif method == "DELETE":
-        resp = requests.delete(url, headers=headers, params=params)
-    elif method == "PATCH":
-        resp = requests.patch(url, headers=headers, json=data, params=params)
 
-    if resp.status_code >= 400:
-        log(f"  ⚠️ Supabase 오류 ({table}): {resp.status_code} - {resp.text[:200]}")
-        return None
+    # POST 대용량 데이터 배치 분할 (500개씩)
+    BATCH_SIZE = 500
+    if method == "POST" and isinstance(data, list) and len(data) > BATCH_SIZE:
+        all_results = []
+        for i in range(0, len(data), BATCH_SIZE):
+            batch = data[i:i + BATCH_SIZE]
+            result = supabase_request("POST", table, data=batch, params=params)
+            if result:
+                all_results.extend(result if isinstance(result, list) else [result])
+        return all_results if all_results else None
 
-    try:
-        return resp.json() if resp.text else None
-    except:
-        return None
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            if method == "GET":
+                resp = requests.get(url, headers=headers, params=params, timeout=30)
+            elif method == "POST":
+                headers["Prefer"] = "return=representation"
+                resp = requests.post(url, headers=headers, json=data, timeout=30)
+            elif method == "DELETE":
+                resp = requests.delete(url, headers=headers, params=params, timeout=30)
+            elif method == "PATCH":
+                resp = requests.patch(url, headers=headers, json=data, params=params, timeout=30)
+
+            if resp.status_code >= 400:
+                log(f"  ⚠️ Supabase 오류 ({table}): {resp.status_code} - {resp.text[:200]}")
+                return None
+
+            try:
+                return resp.json() if resp.text else None
+            except:
+                return None
+
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            if attempt < max_retries - 1:
+                wait = 2 ** attempt  # 1초, 2초
+                log(f"  ⚠️ Supabase 연결 오류 ({table}), {wait}초 후 재시도 ({attempt+1}/{max_retries})...")
+                time.sleep(wait)
+            else:
+                log(f"  ❌ Supabase 연결 실패 ({table}): {e}")
+                return None
 
 
 def clear_today_data(table):
