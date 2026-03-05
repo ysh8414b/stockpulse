@@ -252,17 +252,60 @@ function TabStocks({stk,nws,loading}){
           <span className="stock-col-reason" style={{paddingLeft:"16px",color:"var(--text-sub)",fontSize:"14px",lineHeight:1.4}}>{s.reason}</span>
           <div className="stock-col-tags" style={{display:"flex",gap:"4px",flexWrap:"wrap",alignItems:"center"}}>{(s.tags||[]).map(t=><Tag key={t}>{t}</Tag>)}<span style={{color:"var(--dimmer)",fontSize:"16px",marginLeft:"auto",transform:exp===s.code?"rotate(90deg)":"none",transition:"transform .2s"}}>›</span></div>
         </div>
-        {exp===s.code&&<div className="stock-detail" style={{padding:"18px 20px 18px 76px",background:"var(--hover2)",borderBottom:"1px solid var(--div3)",animation:"fadeUp .3s ease both"}}>
-          <div className="stock-detail" style={{display:"flex",gap:"24px",marginBottom:related.length?"16px":"0"}}>
-            <div style={{flex:1}}><div style={{color:"var(--muted)",fontSize:"13px",fontWeight:600,marginBottom:"8px"}}>📌 이슈 사유</div><div style={{color:"var(--text-sub)",fontSize:"15px",lineHeight:1.7}}>{s.reason.split(" · ").map((r,ri)=><span key={ri} style={{display:"inline-block",padding:"4px 10px",background:"rgba(245,158,11,0.08)",border:"1px solid rgba(245,158,11,0.15)",borderRadius:"6px",fontSize:"14px",marginRight:"6px",marginBottom:"4px",color:"#f59e0b",fontWeight:500}}>{r}</span>)}</div></div>
+        {exp===s.code&&(()=>{
+          // 3축 분석 계산
+          const reasons=(s.reason||"").split(" · ");
+          const newsCount=related.length;
+          const hasTags=(s.tags||[]).length>0;
+          const hasTheme=reasons.includes("인기테마");
+          const hasNewsReason=reasons.includes("뉴스언급");
+          const hasTradeBoom=reasons.includes("거래폭발");
+          const pctNum=parseFloat((s.change_pct||"0").replace(/[+%]/g,""));
+          const isLimit=reasons.includes("상한가")||reasons.includes("하한가");
+          const isSurge=reasons.includes("급등");
+          const isPlunge=reasons.includes("급락");
+          // 재료 강도
+          const catalystScore=(newsCount>=3?2:newsCount>=1?1:0)+(hasTheme?1:0)+(hasNewsReason?1:0);
+          const catalystRating=catalystScore>=3?"strong":catalystScore>=1?"moderate":"weak";
+          const catalystLabel={strong:"재료 풍부",moderate:"재료 보통",weak:"재료 부족"}[catalystRating];
+          const catalystColor={strong:"#22c55e",moderate:"#f59e0b",weak:"#6b7280"}[catalystRating];
+          // 수급 강도
+          const supplyScore=(hasTradeBoom?2:0)+(hasTheme?1:0)+(s.rank<=5?1:0);
+          const supplyRating=supplyScore>=3?"strong":supplyScore>=1?"moderate":"weak";
+          const supplyLabel={strong:"수급 강",moderate:"수급 보통",weak:"수급 약"}[supplyRating];
+          const supplyColor={strong:"#22c55e",moderate:"#f59e0b",weak:"#6b7280"}[supplyRating];
+          // 모멘텀 강도
+          const momScore=(isLimit?3:isSurge||isPlunge?2:Math.abs(pctNum)>=3?1:0);
+          const momRating=momScore>=3?"strong":momScore>=1?"moderate":"weak";
+          const momDir=pctNum>=0?"상승":"하락";
+          const momLabel={strong:`강한 ${momDir}`,moderate:`${momDir}`,weak:"약보합"}[momRating];
+          const momColor=pctNum>=0?{strong:"#22c55e",moderate:"#22c55e",weak:"#6b7280"}[momRating]:{strong:"#ef4444",moderate:"#ef4444",weak:"#6b7280"}[momRating];
+          // 상세 텍스트
+          const catalystDetail=[newsCount>0?`관련 뉴스 ${newsCount}건`:"뉴스 없음",hasTags?(s.tags||[]).slice(0,2).join(", ")+" 소속":"테마 미분류",hasNewsReason?"뉴스 다수 언급":""].filter(Boolean).join(" · ");
+          const supplyDetail=[hasTradeBoom?"거래대금 폭발":"거래대금 "+s.volume,hasTheme?"인기테마 수급 유입":"",s.rank<=3?"TOP 3 종목":""].filter(Boolean).join(" · ");
+          const momDetail=[s.change_pct,isLimit?"가격제한폭 도달":isSurge?"급등세":isPlunge?"급락세":"",s.rank<=5?"이슈 상위권":""].filter(Boolean).join(" · ");
+          return <div className="stock-detail" style={{padding:"18px 20px 18px 76px",background:"var(--hover2)",borderBottom:"1px solid var(--div3)",animation:"fadeUp .3s ease both"}}>
+          <div style={{display:"flex",gap:"24px",marginBottom:"16px",flexWrap:"wrap"}}>
+            <div style={{flex:1,minWidth:120}}><div style={{color:"var(--muted)",fontSize:"13px",fontWeight:600,marginBottom:"8px"}}>📌 이슈 사유</div><div>{reasons.map((r,ri)=><span key={ri} style={{display:"inline-block",padding:"4px 10px",background:"rgba(245,158,11,0.08)",border:"1px solid rgba(245,158,11,0.15)",borderRadius:"6px",fontSize:"14px",marginRight:"6px",marginBottom:"4px",color:"#f59e0b",fontWeight:500}}>{r}</span>)}</div></div>
             <div><div style={{color:"var(--muted)",fontSize:"13px",fontWeight:600,marginBottom:"8px"}}>🏷️ 테마</div><div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>{(s.tags||[]).map(t=><Tag key={t} color="cyan">{t}</Tag>)}</div></div>
             <div style={{textAlign:"right"}}><div style={{color:"var(--muted)",fontSize:"13px",fontWeight:600,marginBottom:"8px"}}>💰 거래대금</div><div style={{fontSize:"16px",fontWeight:700,color:"var(--text)"}}>{s.volume}</div></div>
           </div>
-          {related.length>0&&<div><div style={{color:"var(--muted)",fontSize:"13px",fontWeight:600,marginBottom:"8px"}}>📰 관련 뉴스</div><div style={{display:"grid",gap:"6px"}}>{related.map((n,ni)=><a key={ni} href={n.link||n.url||"#"} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{display:"flex",alignItems:"center",gap:"8px",padding:"8px 12px",background:"var(--card-bg)",border:"1px solid var(--div2)",borderRadius:"8px",textDecoration:"none",color:"inherit",transition:"all .2s"}} onMouseEnter={e=>{e.currentTarget.style.borderColor="rgba(59,130,246,0.3)";e.currentTarget.style.background="rgba(59,130,246,0.04)"}} onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--div2)";e.currentTarget.style.background="var(--card-bg)"}}><span style={{color:"#3b82f6",fontSize:"13px",flexShrink:0}}>▸</span><span style={{fontSize:"14px",lineHeight:1.5,color:"var(--text-sub)",flex:1}}>{n.title}</span><span style={{fontSize:"12px",color:"var(--dim)",flexShrink:0,whiteSpace:"nowrap"}}>{n.source} · {n.time_ago}</span></a>)}</div></div>}
-          {related.length===0&&<div style={{display:"flex",alignItems:"center",gap:"6px",padding:"10px 12px",background:"var(--card-bg)",border:"1px solid var(--div2)",borderRadius:"8px"}}><span style={{fontSize:"13px",color:"var(--dim)"}}>📰</span><span style={{fontSize:"14px",color:"var(--dim)"}}>관련 뉴스가 없습니다</span><a href={`https://finance.naver.com/item/news.naver?code=${s.code}`} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{fontSize:"13px",color:"#3b82f6",textDecoration:"none",marginLeft:"auto"}}>네이버 뉴스 보기 →</a></div>}
-        </div>}
+          {/* 3축 분석 카드 */}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"10px",marginBottom:"16px"}}>{[
+            {icon:"🔥",title:"재료",label:catalystLabel,color:catalystColor,detail:catalystDetail},
+            {icon:"💰",title:"수급",label:supplyLabel,color:supplyColor,detail:supplyDetail},
+            {icon:"🎯",title:"모멘텀",label:momLabel,color:momColor,detail:momDetail}
+          ].map((ax,ai)=><div key={ai} style={{padding:"14px 16px",borderRadius:"10px",background:"var(--card-bg)",border:"1px solid var(--card-bd)"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"8px"}}><span style={{fontSize:"14px",fontWeight:600,color:"var(--text)"}}>{ax.icon} {ax.title}</span><span style={{padding:"3px 10px",borderRadius:"12px",fontSize:"12px",fontWeight:700,color:ax.color,background:`${ax.color}18`,border:`1px solid ${ax.color}30`}}>{ax.label}</span></div>
+            <div style={{fontSize:"13px",color:"var(--text-sub)",lineHeight:1.5}}>{ax.detail}</div>
+          </div>)}</div>
+          {related.length>0&&<div style={{marginBottom:"12px"}}><div style={{color:"var(--muted)",fontSize:"13px",fontWeight:600,marginBottom:"8px"}}>📰 관련 뉴스</div><div style={{display:"grid",gap:"6px"}}>{related.map((n,ni)=><a key={ni} href={n.link||n.url||"#"} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{display:"flex",alignItems:"center",gap:"8px",padding:"8px 12px",background:"var(--card-bg)",border:"1px solid var(--div2)",borderRadius:"8px",textDecoration:"none",color:"inherit",transition:"all .2s"}} onMouseEnter={e=>{e.currentTarget.style.borderColor="rgba(59,130,246,0.3)";e.currentTarget.style.background="rgba(59,130,246,0.04)"}} onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--div2)";e.currentTarget.style.background="var(--card-bg)"}}><span style={{color:"#3b82f6",fontSize:"13px",flexShrink:0}}>▸</span><span style={{fontSize:"14px",lineHeight:1.5,color:"var(--text-sub)",flex:1}}>{n.title}</span><span style={{fontSize:"12px",color:"var(--dim)",flexShrink:0,whiteSpace:"nowrap"}}>{n.source} · {n.time_ago}</span></a>)}</div></div>}
+          {related.length===0&&<div style={{display:"flex",alignItems:"center",gap:"6px",padding:"10px 12px",background:"var(--card-bg)",border:"1px solid var(--div2)",borderRadius:"8px",marginBottom:"12px"}}><span style={{fontSize:"13px",color:"var(--dim)"}}>📰</span><span style={{fontSize:"14px",color:"var(--dim)"}}>관련 뉴스가 없습니다</span><a href={`https://finance.naver.com/item/news.naver?code=${s.code}`} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{fontSize:"13px",color:"#3b82f6",textDecoration:"none",marginLeft:"auto"}}>네이버 뉴스 보기 →</a></div>}
+          <a href={`https://finance.naver.com/item/main.naver?code=${s.code}`} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{display:"inline-flex",alignItems:"center",gap:"6px",padding:"8px 16px",borderRadius:"8px",background:"rgba(6,182,212,0.08)",border:"1px solid rgba(6,182,212,0.2)",color:"#06b6d4",fontSize:"14px",fontWeight:600,textDecoration:"none",transition:"all .2s"}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(6,182,212,0.15)"}} onMouseLeave={e=>{e.currentTarget.style.background="rgba(6,182,212,0.08)"}}>네이버 증권 상세 →</a>
+        </div>})()}
       </React.Fragment>})}
     </Box>
+    <div style={{textAlign:"center",marginTop:"16px"}}><a href="analysis.html" style={{display:"inline-flex",alignItems:"center",gap:"8px",padding:"10px 20px",borderRadius:"10px",background:"rgba(6,182,212,0.08)",border:"1px solid rgba(6,182,212,0.15)",color:"#06b6d4",fontSize:"14px",fontWeight:600,textDecoration:"none",transition:"all .2s"}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(6,182,212,0.15)"}} onMouseLeave={e=>{e.currentTarget.style.background="rgba(6,182,212,0.08)"}}>📊 상세 종목 리포트 보기 →</a></div>
   </div>;
 }
 
@@ -427,8 +470,8 @@ function TabAI({aiSum,loading}){
   if(loading)return <Loader/>;
   const moodMap={bullish:{emoji:"🟢",label:"강세",color:"#22c55e"},bearish:{emoji:"🔴",label:"약세",color:"#ef4444"},neutral:{emoji:"⚪",label:"보합",color:"#6b7280"}};
   const mood=aiSum?moodMap[aiSum.market_mood]||moodMap.neutral:null;
-  const secIcons={"핵심":"🔥","파급":"🔥","촉발":"🔥","환율":"💱","금리":"📈","유가":"📈","연쇄":"📈","선물":"📈","수급":"💰","외인":"💰","기관":"💰","자금":"💰","패닉":"🩺","체력":"🩺","진단":"🩺","섹터":"📊","강약":"📊","테마":"🎯","모멘텀":"🎯","매매":"⚔️","전략":"⚔️","대응":"⚔️","리스크":"⚔️","반등":"⏭️","트리거":"⏭️","하락":"⏭️","결론":"🧠","시나리오":"🔮","해외":"🌍","국내":"🇰🇷","영향":"🇰🇷","체크":"📋","전망":"📋"};
-  const secColors={"핵심":"239,68,68","파급":"239,68,68","촉발":"239,68,68","환율":"245,158,11","금리":"245,158,11","유가":"245,158,11","연쇄":"245,158,11","선물":"245,158,11","수급":"99,102,241","외인":"99,102,241","기관":"99,102,241","자금":"99,102,241","패닉":"59,130,246","체력":"59,130,246","진단":"59,130,246","섹터":"139,92,246","강약":"139,92,246","테마":"168,85,247","모멘텀":"168,85,247","매매":"239,68,68","전략":"239,68,68","대응":"239,68,68","리스크":"239,68,68","반등":"6,182,212","트리거":"6,182,212","하락":"6,182,212","결론":"34,197,94","시나리오":"6,182,212","해외":"99,102,241","국내":"59,130,246","영향":"59,130,246","체크":"168,85,247","전망":"168,85,247"};
+  const secIcons={"핵심":"🔥","재료":"🔥","파급":"🔥","촉발":"🔥","수명":"🔥","환율":"💱","금리":"📈","유가":"📈","연쇄":"📈","선물":"📈","수급":"💰","외인":"💰","기관":"💰","자금":"💰","쏠림":"💰","거래대금":"💰","패닉":"🩺","체력":"🩺","진단":"🩺","섹터":"📊","강약":"📊","테마":"🎯","모멘텀":"🎯","로테이션":"🎯","흐름":"🎯","매매":"⚔️","전략":"⚔️","대응":"⚔️","리스크":"⚔️","반등":"⏭️","트리거":"⏭️","하락":"⏭️","결론":"🧠","시나리오":"🔮","해외":"🌍","국내":"🇰🇷","영향":"🇰🇷","체크":"📋","전망":"📋"};
+  const secColors={"핵심":"239,68,68","재료":"239,68,68","파급":"239,68,68","촉발":"239,68,68","수명":"239,68,68","환율":"245,158,11","금리":"245,158,11","유가":"245,158,11","연쇄":"245,158,11","선물":"245,158,11","수급":"99,102,241","외인":"99,102,241","기관":"99,102,241","자금":"99,102,241","쏠림":"99,102,241","거래대금":"99,102,241","패닉":"59,130,246","체력":"59,130,246","진단":"59,130,246","섹터":"139,92,246","강약":"139,92,246","테마":"168,85,247","모멘텀":"168,85,247","로테이션":"168,85,247","흐름":"168,85,247","매매":"239,68,68","전략":"239,68,68","대응":"239,68,68","리스크":"239,68,68","반등":"6,182,212","트리거":"6,182,212","하락":"6,182,212","결론":"34,197,94","시나리오":"6,182,212","해외":"99,102,241","국내":"59,130,246","영향":"59,130,246","체크":"168,85,247","전망":"168,85,247"};
   const getSecMeta=(title)=>{for(const[k,v]of Object.entries(secIcons)){if(title.includes(k))return{icon:v,clr:secColors[k]}}return{icon:"📌",clr:"107,114,128"}};
   const parseSections=(text)=>{
     if(!text)return[];
@@ -509,7 +552,7 @@ function App(){
   const tabs=[{id:"overview",l:"시장 개요",ic:"◈"},{id:"themes",l:"인기 테마",ic:"◈",live:true},{id:"issues",l:"이슈 종목",ic:"◆"},{id:"news",l:"주요 뉴스",ic:"◇"},{id:"ai",l:"AI 브리핑",ic:"⬡"}];
 
   return <div>
-    <div style={{background:"var(--ticker-bg)",borderBottom:"1px solid var(--div2)",padding:"9px 0",overflow:"hidden",position:"relative",transition:"background .3s"}}><div style={{display:"inline-flex",gap:"40px",whiteSpace:"nowrap",animation:"tickerScroll 150s linear infinite"}}>{[...idx,...idx,...idx,...idx].map((m,i)=><span key={i} style={{display:"inline-flex",alignItems:"center",gap:"7px",fontSize:"14px",paddingRight:"20px"}}><span style={{color:"var(--muted)",fontWeight:500}}>{m.name}</span><span style={{color:"var(--text)",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{m.value}</span><span style={{color:m.trend==="up"?"#22c55e":"#ef4444",fontWeight:600}}>{m.change_pct}</span></span>)}</div></div>
+    <div style={{background:"var(--ticker-bg)",borderBottom:"1px solid var(--div2)",padding:"9px 0",overflow:"hidden",position:"relative",transition:"background .3s"}}><div style={{display:"inline-flex",gap:"40px",whiteSpace:"nowrap",animation:"tickerScroll 300s linear infinite"}}>{[...idx,...idx,...idx,...idx].map((m,i)=><span key={i} style={{display:"inline-flex",alignItems:"center",gap:"7px",fontSize:"14px",paddingRight:"20px"}}><span style={{color:"var(--muted)",fontWeight:500}}>{m.name}</span><span style={{color:"var(--text)",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{m.value}</span><span style={{color:m.trend==="up"?"#22c55e":"#ef4444",fontWeight:600}}>{m.change_pct}</span></span>)}</div></div>
 
     <header className="header-wrap" style={{padding:"24px 40px 18px",maxWidth:1440,margin:"0 auto",display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
       <div className="fade-up"><div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"3px"}}><div style={{width:8,height:8,borderRadius:"50%",background:"#22c55e",boxShadow:"0 0 10px rgba(34,197,94,0.4)",animation:"pulse 2s infinite"}}/><h1 className="header-title" style={{fontSize:"26px",fontWeight:800,letterSpacing:"-0.03em",background:"var(--h-grad)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>STOCKPULSE</h1><span style={{fontSize:"11px",padding:"3px 7px",background:"rgba(34,197,94,0.12)",color:"#22c55e",borderRadius:"4px",fontWeight:700}}>BETA</span></div>
@@ -535,6 +578,7 @@ function App(){
       <div><span style={{fontWeight:600,color:"var(--dim)"}}>STOCKPULSE</span> © 2026 · 투자 권유 목적이 아닌 정보 제공 목적</div>
       <div className="footer-links">
         <a href="archive.html">AI 브리핑 아카이브</a>
+        <a href="analysis.html">종목 리포트</a>
         <a href="guide.html">투자 가이드</a>
         <a href="about.html">서비스 소개</a>
         <a href="privacy.html">개인정보처리방침</a>

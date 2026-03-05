@@ -4,6 +4,7 @@
 
 ## 프로젝트 구조
 - `index.html` — React 18 SPA (메인 대시보드, CDN 기반)
+- `analysis.html` — 일간 종목 리포트 (AI 3축 분석, 날짜별 탐색)
 - `archive.html` — AI 브리핑 아카이브 (캘린더 기반 과거 브리핑 탐색)
 - `guide.html` — 투자 정보 가이드 (독창적 교육 콘텐츠)
 - `about.html` — 서비스 소개 + 연락처
@@ -138,6 +139,26 @@
 - **sitemap.xml**: SEO용 (6개 페이지)
 - index.html 푸터에 모든 페이지 링크 추가
 - TabAI 하단에 "과거 AI 브리핑 아카이브" 링크 추가
+
+### 이슈 종목 상세 강화 + 일간 종목 리포트 (2026-03-05)
+- index.html TabStocks: 종목 클릭 시 3축 분석 카드 추가 (재료/수급/모멘텀)
+  - 재료: 관련 뉴스 수 + 테마 소속 + 뉴스언급 사유 → strong/moderate/weak
+  - 수급: 거래폭발 + 인기테마 + 순위 → strong/moderate/weak
+  - 모멘텀: 등락률 + 상한가/급등/급락 → strong/moderate/weak
+  - IIFE 패턴으로 JSX 내 로컬 변수 계산
+  - 네이버 증권 상세 링크 버튼 추가
+- crawl.py `generate_stock_analysis()`: 이슈 종목 TOP 5 AI 심층 분석 생성
+  - Groq API (llama-3.3-70b), close 모드(15:35)에서만 호출
+  - 3축(재료·수급·모멘텀) 프레임워크 분석 + 한줄 결론
+  - Supabase `stock_analysis` 테이블 (date, market_context, stocks JSONB)
+  - 90일 초과 데이터 자동 정리
+- analysis.html: 일간 종목 리포트 페이지 (신규)
+  - 날짜 네비게이터 (90일간 탐색)
+  - 종목 카드: 3축 등급 뱃지 + AI 분석 본문 + 한줄 결론
+  - 시장 맥락 카드, 면책 고지
+- sitemap.xml에 analysis.html 추가
+- about.html에 "일간 종목 리포트" 기능 카드 추가
+- index.html TabStocks 하단에 "상세 종목 리포트 보기" 링크, 푸터에 "종목 리포트" 링크 추가
 
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용

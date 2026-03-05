@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>일간 종목 리포트 — STOCKPULSE</title>
+  <meta name="description" content="STOCKPULSE AI 일간 종목 리포트. 매일 이슈 종목 TOP 5를 재료·수급·모멘텀 3축으로 심층 분석합니다." />
+  <meta property="og:title" content="일간 종목 리포트 — STOCKPULSE" />
+  <meta property="og:description" content="매일 이슈 종목 TOP 5를 재료·수급·모멘텀 3축으로 심층 분석합니다." />
+  <link rel="canonical" href="https://ysh8414b.github.io/stockpulse/analysis.html" />
+  <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <script src="shared.js"></script>
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4299486606059424" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useEffect,useCallback}=React;
+
+function Box({children,style,hover=true}){
+  const[h,setH]=useState(false);
+  return <div style={{background:h&&hover?"var(--card-hbg)":"var(--card-bg)",border:"1px solid",borderColor:h&&hover?"var(--card-hbd)":"var(--card-bd)",borderRadius:"12px",padding:"18px 22px",transition:"all .25s",...style}} onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)}>{children}</div>;
+}
+
+function Loader(){return <div style={{display:"flex",justifyContent:"center",padding:"60px 0"}}><div style={{width:28,height:28,border:"3px solid var(--div3)",borderTop:"3px solid #06b6d4",borderRadius:"50%",animation:"spin 1s linear infinite"}}/></div>}
+
+// 날짜 유틸
+function formatDate(d){return d.toISOString().slice(0,10)}
+function addDays(d,n){const r=new Date(d);r.setDate(r.getDate()+n);return r}
+
+// 3축 등급 라벨/색상
+const ratingMeta={
+  strong:{label:"강",color:"#22c55e"},
+  moderate:{label:"보통",color:"#f59e0b"},
+  weak:{label:"약",color:"#6b7280"}
+};
+
+function RatingBadge({rating,prefix}){
+  const m=ratingMeta[rating]||ratingMeta.weak;
+  return <span style={{padding:"3px 10px",borderRadius:"12px",fontSize:"12px",fontWeight:700,color:m.color,background:`${m.color}18`,border:`1px solid ${m.color}30`}}>{prefix?prefix+" ":""}{m.label}</span>;
+}
+
+function StockCard({stock,rank}){
+  const pctNum=parseFloat((stock.change_pct||"0").replace(/[+%]/g,""));
+  const isUp=pctNum>=0;
+  const pctColor=isUp?"#22c55e":"#ef4444";
+
+  // 분석 텍스트를 3축으로 나누기 시도
+  const analysis=stock.analysis||"";
+
+  return <Box style={{marginBottom:"16px",padding:"24px 28px"}}>
+    {/* 헤더: 순위 + 종목명 + 가격 */}
+    <div style={{display:"flex",alignItems:"center",gap:"14px",marginBottom:"18px",flexWrap:"wrap"}}>
+      <span style={{width:36,height:36,borderRadius:"10px",background:rank<=3?"rgba(245,158,11,0.14)":"var(--badge-bg2)",color:rank<=3?"#f59e0b":"var(--muted)",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:"16px"}}>{rank}</span>
+      <div style={{flex:1,minWidth:0}}>
+        <span style={{fontWeight:700,fontSize:"18px"}}>{stock.name}</span>
+        <span style={{color:"var(--dim)",fontSize:"13px",marginLeft:"8px"}}>{stock.code}</span>
+      </div>
+      <div style={{textAlign:"right"}}>
+        <div style={{fontWeight:700,fontSize:"18px",fontVariantNumeric:"tabular-nums"}}>₩{stock.price}</div>
+        <div style={{fontWeight:700,fontSize:"15px",color:pctColor,marginTop:"2px"}}>{isUp?"▲":"▼"} {stock.change_pct}</div>
+      </div>
+    </div>
+
+    {/* 3축 등급 뱃지 */}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"10px",marginBottom:"18px"}}>
+      {[
+        {icon:"🔥",title:"재료",rating:stock.catalyst_rating},
+        {icon:"💰",title:"수급",rating:stock.supply_rating},
+        {icon:"🎯",title:"모멘텀",rating:stock.momentum_rating}
+      ].map((ax,i)=><div key={i} style={{padding:"12px 14px",borderRadius:"10px",background:"var(--hover)",border:"1px solid var(--div2)",textAlign:"center"}}>
+        <div style={{fontSize:"13px",color:"var(--muted)",marginBottom:"6px"}}>{ax.icon} {ax.title}</div>
+        <RatingBadge rating={ax.rating}/>
+      </div>)}
+    </div>
+
+    {/* AI 분석 본문 */}
+    <div style={{fontSize:"15px",lineHeight:1.8,color:"var(--text-sub)",marginBottom:"16px",whiteSpace:"pre-wrap"}}>{analysis}</div>
+
+    {/* 한줄 결론 + 네이버 링크 */}
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:"10px"}}>
+      {stock.verdict&&<div style={{display:"flex",alignItems:"center",gap:"8px",flex:1,minWidth:0}}>
+        <span style={{flexShrink:0,fontSize:"14px"}}>💡</span>
+        <span style={{fontWeight:600,fontSize:"15px",color:"var(--text)"}}>{stock.verdict}</span>
+      </div>}
+      <a href={`https://finance.naver.com/item/main.naver?code=${stock.code}`} target="_blank" rel="noopener noreferrer" style={{display:"inline-flex",alignItems:"center",gap:"6px",padding:"8px 16px",borderRadius:"8px",background:"rgba(6,182,212,0.08)",border:"1px solid rgba(6,182,212,0.2)",color:"#06b6d4",fontSize:"14px",fontWeight:600,textDecoration:"none",transition:"all .2s",flexShrink:0}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(6,182,212,0.15)"}} onMouseLeave={e=>{e.currentTarget.style.background="rgba(6,182,212,0.08)"}}>네이버 증권 →</a>
+    </div>
+  </Box>;
+}
+
+function App(){
+  const[theme,setTheme]=useState(getStoredTheme());
+  const[date,setDate]=useState(new Date());
+  const[data,setData]=useState(null);
+  const[loading,setLoading]=useState(true);
+  const[error,setError]=useState(null);
+
+  useEffect(()=>{applyTheme(theme)},[theme]);
+  const toggleTheme=()=>{const n=theme==="dark"?"light":"dark";setTheme(n);setStoredTheme(n)};
+
+  const dateStr=formatDate(date);
+  const today=formatDate(new Date());
+  const minDate=formatDate(addDays(new Date(),-90));
+
+  const loadData=useCallback(async()=>{
+    setLoading(true);setError(null);setData(null);
+    try{
+      const rows=await db("stock_analysis",`date=eq.${dateStr}&order=created_at.desc&limit=1`);
+      if(rows&&rows.length>0){
+        const row=rows[0];
+        let stocks=row.stocks;
+        if(typeof stocks==="string"){try{stocks=JSON.parse(stocks)}catch(e){stocks=[]}}
+        setData({market_context:row.market_context,stocks:stocks||[],date:row.date});
+      }else{
+        setData(null);
+      }
+    }catch(e){
+      setError("데이터 로드 실패");
+    }
+    setLoading(false);
+  },[dateStr]);
+
+  useEffect(()=>{loadData()},[loadData]);
+
+  const goPrev=()=>{const nd=addDays(date,-1);if(formatDate(nd)>=minDate)setDate(nd)};
+  const goNext=()=>{const nd=addDays(date,1);if(formatDate(nd)<=today)setDate(nd)};
+  const isAtToday=dateStr===today;
+  const isAtMin=dateStr<=minDate;
+
+  return <div style={{minHeight:"100vh",background:"var(--bg)"}}>
+    {/* 헤더 */}
+    <header style={{background:"var(--card-bg)",borderBottom:"1px solid var(--div)",padding:"14px 0",position:"sticky",top:0,zIndex:100,backdropFilter:"blur(12px)"}}>
+      <div style={{maxWidth:800,margin:"0 auto",padding:"0 20px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <a href="index.html" style={{display:"flex",alignItems:"center",gap:"10px",textDecoration:"none",color:"inherit"}}>
+          <span style={{fontSize:"18px",fontWeight:800,letterSpacing:"-0.5px"}}>
+            <span style={{color:"#06b6d4"}}>● </span>STOCKPULSE
+          </span>
+        </a>
+        <div style={{display:"flex",alignItems:"center",gap:"12px"}}>
+          <a href="index.html" style={{fontSize:"14px",color:"var(--muted)",textDecoration:"none",fontWeight:500}}>Home</a>
+          <a href="archive.html" style={{fontSize:"14px",color:"var(--muted)",textDecoration:"none",fontWeight:500}}>아카이브</a>
+          <button onClick={toggleTheme} style={{background:"none",border:"none",cursor:"pointer",fontSize:"20px",padding:"4px"}}>{theme==="dark"?"☀️":"🌙"}</button>
+        </div>
+      </div>
+    </header>
+
+    {/* 메인 */}
+    <main style={{maxWidth:800,margin:"0 auto",padding:"32px 20px 60px"}}>
+      {/* 타이틀 */}
+      <h1 style={{fontSize:"24px",fontWeight:800,marginBottom:"8px",display:"flex",alignItems:"center",gap:"10px"}}>
+        <span style={{fontSize:"28px"}}>📊</span> 일간 종목 리포트
+      </h1>
+      <p style={{color:"var(--muted)",fontSize:"14px",marginBottom:"28px",lineHeight:1.6}}>
+        매일 장 마감 후 이슈 종목 TOP 5를 AI가 재료·수급·모멘텀 3축으로 심층 분석합니다.
+      </p>
+
+      {/* 날짜 네비게이터 */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:"16px",marginBottom:"28px"}}>
+        <button onClick={goPrev} disabled={isAtMin} style={{background:"none",border:"1px solid var(--div2)",borderRadius:"8px",padding:"8px 14px",cursor:isAtMin?"not-allowed":"pointer",color:isAtMin?"var(--dim)":"var(--text)",fontSize:"16px",fontWeight:600,opacity:isAtMin?0.4:1,transition:"all .2s"}}>←</button>
+        <div style={{fontSize:"18px",fontWeight:700,minWidth:140,textAlign:"center",fontVariantNumeric:"tabular-nums"}}>{dateStr}</div>
+        <button onClick={goNext} disabled={isAtToday} style={{background:"none",border:"1px solid var(--div2)",borderRadius:"8px",padding:"8px 14px",cursor:isAtToday?"not-allowed":"pointer",color:isAtToday?"var(--dim)":"var(--text)",fontSize:"16px",fontWeight:600,opacity:isAtToday?0.4:1,transition:"all .2s"}}>→</button>
+      </div>
+
+      {/* 콘텐츠 */}
+      {loading&&<Loader/>}
+
+      {!loading&&error&&<Box hover={false} style={{textAlign:"center",padding:"40px 20px"}}>
+        <div style={{fontSize:"32px",marginBottom:"12px"}}>⚠️</div>
+        <div style={{fontSize:"16px",color:"var(--muted)"}}>{error}</div>
+      </Box>}
+
+      {!loading&&!error&&!data&&<Box hover={false} style={{textAlign:"center",padding:"40px 20px"}}>
+        <div style={{fontSize:"40px",marginBottom:"12px"}}>📭</div>
+        <div style={{fontSize:"16px",fontWeight:600,marginBottom:"8px"}}>이 날짜의 리포트가 없습니다</div>
+        <div style={{fontSize:"14px",color:"var(--muted)",lineHeight:1.6}}>종목 리포트는 장 마감 후(15:35) 생성됩니다.<br/>주말·공휴일에는 리포트가 생성되지 않습니다.</div>
+      </Box>}
+
+      {!loading&&!error&&data&&<>
+        {/* 시장 맥락 */}
+        {data.market_context&&<Box hover={false} style={{marginBottom:"20px",padding:"16px 22px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+            <span style={{fontSize:"16px"}}>🌐</span>
+            <span style={{fontWeight:600,fontSize:"14px",color:"var(--muted)"}}>시장 맥락</span>
+          </div>
+          <div style={{fontSize:"15px",lineHeight:1.7,marginTop:"10px",color:"var(--text-sub)"}}>{data.market_context}</div>
+        </Box>}
+
+        {/* 종목 카드 */}
+        {data.stocks.map((s,i)=><StockCard key={s.code||i} stock={s} rank={i+1}/>)}
+
+        {/* 면책 */}
+        <div style={{textAlign:"center",padding:"20px 0",color:"var(--dim)",fontSize:"12px",lineHeight:1.6}}>
+          본 리포트는 AI가 자동 생성한 분석으로, 투자 조언이 아닙니다.<br/>
+          투자 판단은 본인의 책임하에 이루어져야 합니다.
+        </div>
+      </>}
+    </main>
+
+    {/* 푸터 */}
+    <footer style={{borderTop:"1px solid var(--div)",padding:"24px 0",textAlign:"center"}}>
+      <div style={{maxWidth:800,margin:"0 auto",padding:"0 20px"}}>
+        <div style={{display:"flex",justifyContent:"center",gap:"20px",marginBottom:"12px",flexWrap:"wrap"}}>
+          <a href="index.html" style={{fontSize:"13px",color:"var(--muted)",textDecoration:"none"}}>홈</a>
+          <a href="archive.html" style={{fontSize:"13px",color:"var(--muted)",textDecoration:"none"}}>아카이브</a>
+          <a href="guide.html" style={{fontSize:"13px",color:"var(--muted)",textDecoration:"none"}}>투자 가이드</a>
+          <a href="about.html" style={{fontSize:"13px",color:"var(--muted)",textDecoration:"none"}}>소개</a>
+        </div>
+        <div style={{fontSize:"12px",color:"var(--dim)"}}>© 2026 STOCKPULSE. AI 기반 실시간 시장 분석 플랫폼.</div>
+      </div>
+    </footer>
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

@@ -1557,14 +1557,32 @@ def generate_ai_summary(indices, stocks, sectors, themes, news, mode="market", k
 
         ad_ratio = f"{up_cnt/down_cnt:.2f}" if down_cnt > 0 else "N/A"
 
+        # 모멘텀 지표: 등락률 TOP5 (상승/하락)
+        by_change_up = sorted(all_stocks, key=lambda x: x["change_pct"], reverse=True)[:5]
+        by_change_dn = sorted(all_stocks, key=lambda x: x["change_pct"])[:5]
+        top5_up = ", ".join(f"{d['name']}({d['change_pct']:+.1f}%)" for d in by_change_up)
+        top5_dn = ", ".join(f"{d['name']}({d['change_pct']:+.1f}%)" for d in by_change_dn)
+
+        # 거래대금 상위 종목의 상승/하락 비율 (수급 방향 지표)
+        val_top10 = sorted(all_stocks, key=lambda x: x["trading_value"], reverse=True)[:10]
+        val_top10_up = sum(1 for d in val_top10 if d["change_pct"] > 0)
+        val_top10_dn = sum(1 for d in val_top10 if d["change_pct"] < 0)
+
+        # 급등/급락 강도
+        big_surge = sum(1 for d in all_stocks if d["change_pct"] >= 10)
+        big_plunge = sum(1 for d in all_stocks if d["change_pct"] <= -10)
+
         breadth_text = f"""[시장 체력 지표]
 전체 종목: {total}개 | 상승 {up_cnt} : 하락 {down_cnt} : 보합 {flat_cnt} | AD비율 {ad_ratio}
 등락분포: 급등(+3%↑) {surge}개, 상승 {mild_up}개, 하락 {mild_dn}개, 급락(-3%↓) {plunge}개
-상한가 {limit_up}개 / 하한가 {limit_dn}개
+상한가 {limit_up}개 / 하한가 {limit_dn}개 | 10%↑ {big_surge}개 / 10%↓ {big_plunge}개
 총 거래대금: {total_val_str}
 KOSPI 평균 등락률: {kospi_avg:+.2f}% | KOSDAQ 평균: {kosdaq_avg:+.2f}%
 거래대금 TOP5: {val_top}
-시총 TOP10 등락: {cap_top}"""
+거래대금 TOP10 방향: 상승 {val_top10_up}개 / 하락 {val_top10_dn}개 (돈이 몰리는 종목의 방향)
+시총 TOP10 등락: {cap_top}
+등락률 TOP5 상승: {top5_up}
+등락률 TOP5 하락: {top5_dn}"""
 
     if mode == "premarket":
         # ── 장 시작 전: 해외시장 위주 브리핑 ──
@@ -1676,13 +1694,15 @@ market_mood 판단: 해외시장 전반 상승+원화 강세면 bullish, 하락+
 
 ## 분석 구조 (7개 섹션, 반드시 이 순서와 번호를 따를 것):
 
-1) 핵심 촉발 요인과 파급 구조
-- 오늘 시장을 움직이는 핵심 팩트 1~2가지를 뉴스에서 뽑아 서술
-- 각 팩트를 반드시 1차→2차→3차 파급 구조로 전개할 것
+1) 핵심 재료(촉발 요인)와 파급 구조
+- 오늘 시장을 움직이는 핵심 재료(뉴스·정책·이벤트) 1~2가지를 명확히 서술
+- ★ 시장 레벨 재료: 매크로(금리·환율·지정학 등) 이슈가 시장 전체에 미치는 영향
+- ★ 종목/테마 레벨 재료: 이슈 종목 TOP 15와 인기 테마의 상승/하락 원인(사유)을 재료 관점에서 분석. 왜 이 종목/테마에 돈이 몰리는가?
+- 각 재료를 반드시 1차→2차→3차 파급 구조로 전개할 것
   예시: "중동 리스크 격화(1차) → 유가 급등+인플레 기대(2차) → 금리 인하 기대 후퇴+외인 선물 매도(3차) → 코스피 프로그램 매도 가속(4차)"
-- 수치에 반드시 역사적 맥락 부여: 과거 유사 급등/급락 사례(코로나 2020.03, 우크라 2022.02, 금융위기 2008 등)와 비교하여 현재 낙폭/상승폭이 어느 수준인지 명시
-  예시: "코스피 -12%는 2020년 3월 코로나 서킷브레이커(-8.4%) 이후 최대. 당시 추가 -15% 하락 후 3주만에 기술적 반등"
-- 3~5문장
+- 재료의 수명 판단: 이 재료가 단기(1~2일)인지, 중기(1~2주)인지, 장기(수개월)인지 명시. "재료 소멸" 임박 여부도 판단
+- 수치에 반드시 역사적 맥락 부여: 과거 유사 급등/급락 사례와 비교
+- 4~6문장
 
 2) 환율·금리·유가·선물 연쇄 해석
 - 환율/금리/유가/선물을 개별이 아닌 하나의 연쇄 구조로 해석
@@ -1691,12 +1711,13 @@ market_mood 판단: 해외시장 전반 상승+원화 강세면 bullish, 하락+
 - 선물 수급 추정: 환율+지수 하락 조합에서 외인 선물 매도 규모를 추정하고, 프로그램 차익/비차익 매도 동반 여부 판단
 - 3~4문장
 
-3) 수급 주체 분석 (외인·기관·개인)
-- 외국인: 환율·선물 포지션에서 매수/매도 방향 추정. "환율 1,470원대 + 코스피 급락 → 외인은 선물 매도 + 현물 순매도 추정" 식으로 논리 전개
-- 기관: 거래대금 집중 종목/섹터에서 기관 수급 방향 추정. 프로그램 매매 방향, 연기금 방어 매수 가능성
-- 개인: 급락 시 반대매매/마진콜 리스크, 신용융자 잔고 부담. 급등 시 FOMO 추격 매수 리스크
-- 각 주체의 의도와 다음 행동 예측
-- 3~4문장
+3) 수급 분석 — 돈의 방향
+- ★ 거래대금 수급: 거래대금 TOP10 종목의 상승/하락 비율로 "큰 돈이 사는 중인가 파는 중인가" 판단. 거래대금 TOP10 중 상승 7개 이상이면 강한 매수 수급, 하락 7개 이상이면 투매 수급
+- ★ 주체별 수급: 외국인(환율·선물에서 방향 추정), 기관(프로그램 매매·연기금 방어매수), 개인(반대매매/FOMO 리스크)
+- ★ 수급 쏠림: 거래대금이 특정 섹터/테마에 집중되고 있는지, 분산되어 있는지. 쏠림이 강하면 모멘텀 지속, 분산이면 방향성 약화
+- 총 거래대금 수준 해석: 평소 대비 많으면 수급 교체(매도→매수 전환 또는 투매), 적으면 관심 이탈
+- 핵심 질문에 답할 것: "지금 돈이 들어오는 중인가, 나가는 중인가?"
+- 4~5문장
 
 4) 패닉 단계 진단 + 시장 체력
 - 핵심 질문: 현재가 패닉 초입인가, 중반인가, 막바지인가?
@@ -1708,12 +1729,17 @@ market_mood 판단: 해외시장 전반 상승+원화 강세면 bullish, 하락+
 - 강세장에서는: 과열 수준 진단 (급등 종목 비율, 거래대금 과열 여부)
 - 3~4문장
 
-5) 섹터·테마 자금 흐름
-- 섹터: ↗ 강세 / ↘ 약세 섹터를 뉴스·테마와 연결하여 원인 분석
-- 자금 로테이션: 어떤 섹터/테마에서 자금이 빠져서 어디로 이동 중인지 (방어주↔성장주, 내수↔수출주, 대형↔중소형)
-- 테마 모멘텀: 인기 테마의 상승/하락 비율로 과열·건전·소멸 판단. 상승 비율 80%+는 과열 주의, 50% 이하는 모멘텀 약화
-- 섹터 내 종목 분화 여부: 대장주만 가는 쏠림인지, 전체 동반인지
-- 3~5문장
+5) 모멘텀·섹터·테마 흐름
+- ★ 시장 모멘텀 판단: 등락률 TOP5 상승/하락 종목의 공통점 분석. 같은 섹터/테마에 속해 있으면 강한 방향성 모멘텀, 무작위이면 개별 재료 장세
+- ★ 테마 모멘텀: 인기 테마별 상승/하락 종목 비율로 모멘텀 강도 판단
+  · 상승 비율 80%+ → 강한 모멘텀 (추세 추종 유효)
+  · 60~80% → 건전한 모멘텀 (선별 매수 구간)
+  · 50% 이하 → 모멘텀 소멸 (차익실현 구간)
+  · 대장주만 상승+나머지 하락 → 쏠림 경고 (후발주 추격 금지)
+- ★ 섹터 로테이션: 어떤 섹터에서 자금이 빠져서 어디로 이동 중인지 (방어주↔성장주, 내수↔수출주, 대형↔중소형)
+- 모멘텀 가속/감속: 급등(+3%↑) 종목 수 vs 급락(-3%↓) 종목 수 비교로 시장 모멘텀 방향 판단
+- 핵심 질문에 답할 것: "지금 추세를 따라가야 하는가, 역추세를 노려야 하는가?"
+- 4~6문장
 
 6) 매매 전략과 리스크 관리
 - 포지션 가이드: 현금 비중 몇 % 권장인지 명시 (예: "현금 40% 유지, 신규 매수 자제")
@@ -1800,6 +1826,156 @@ market_mood 판단: 코스피·코스닥 모두 상승이면 bullish, 모두 하
 
     except Exception as e:
         log(f"  ⚠️ AI 요약 생성 실패: {e}")
+        return None
+
+
+def generate_stock_analysis(stocks, themes, sectors, news, krx_data):
+    """이슈 종목 TOP 5 심층 분석 생성 (Groq AI)"""
+    if not GROQ_API_KEY:
+        log("  ⚠️ GROQ_API_KEY 미설정 - 종목 분석 건너뜀")
+        return None
+
+    if not stocks:
+        log("  ⚠️ 이슈 종목 없음 - 종목 분석 건너뜀")
+        return None
+
+    top5 = stocks[:5]
+    log(f"  📊 종목 분석 생성 시작 (TOP {len(top5)}개)")
+
+    # 종목별 컨텍스트 구성
+    stock_contexts = []
+    theme_names = [t.get("name", "") for t in (themes or [])]
+    sector_names = {s.get("name", ""): s.get("change_pct", "0%") for s in (sectors or [])}
+
+    for s in top5:
+        code = s.get("code", "")
+        name = s.get("name", "")
+
+        # 소속 테마 찾기
+        stock_themes = []
+        for t in (themes or []):
+            ls = t.get("leading_stocks", "")
+            if code in ls or name in ls:
+                stock_themes.append(t.get("name", ""))
+
+        # 소속 섹터 찾기
+        stock_sector = ""
+        if krx_data and code in krx_data:
+            stock_sector = krx_data[code].get("display_sector", "")
+
+        # 관련 뉴스
+        related = []
+        try:
+            related = json.loads(s.get("related_news", "[]"))
+        except:
+            pass
+        news_titles = [n.get("title", "") for n in related[:3]]
+
+        stock_contexts.append(
+            f"종목: {name} ({code})\n"
+            f"가격: ₩{s.get('price', '?')}, 등락률: {s.get('change_pct', '?')}, 거래대금: {s.get('volume', '?')}\n"
+            f"이슈 사유: {s.get('reason', '?')}\n"
+            f"소속 테마: {', '.join(stock_themes) if stock_themes else '없음'}\n"
+            f"소속 섹터: {stock_sector or '미분류'} (섹터 등락: {sector_names.get(stock_sector, '?')})\n"
+            f"관련 뉴스: {chr(10).join(news_titles) if news_titles else '없음'}"
+        )
+
+    # 시장 맥락
+    market_ctx_parts = []
+    if sectors:
+        up_sectors = [s["name"] for s in sectors if s.get("trend") == "up"]
+        dn_sectors = [s["name"] for s in sectors if s.get("trend") == "down"]
+        if up_sectors:
+            market_ctx_parts.append(f"상승 섹터: {', '.join(up_sectors[:5])}")
+        if dn_sectors:
+            market_ctx_parts.append(f"하락 섹터: {', '.join(dn_sectors[:5])}")
+    if themes:
+        top_themes = [t["name"] for t in themes[:5]]
+        market_ctx_parts.append(f"인기 테마: {', '.join(top_themes)}")
+    market_ctx = " | ".join(market_ctx_parts)
+
+    prompt = f"""당신은 한국 주식시장 전문 애널리스트입니다.
+오늘 이슈가 된 상위 종목들을 3축(재료·수급·모멘텀) 관점에서 심층 분석해주세요.
+
+[오늘 시장 맥락]
+{market_ctx}
+
+[분석 대상 종목]
+{"---".join(stock_contexts)}
+
+[분석 프레임워크]
+각 종목에 대해:
+1. 재료(Catalyst): 왜 이 종목이 오늘 이슈인가? 어떤 뉴스/이벤트/테마가 주가를 움직였나? 재료의 수명은 단기(1-3일)/중기(1-4주)/장기(1개월+) 중 어디인가?
+2. 수급(Flow): 거래대금이 크다면 누가 사고 있는가? 기관/외인 수급 추정. 거래폭발이면 단기 세력인가 중장기 자금인가?
+3. 모멘텀(Momentum): 상승/하락 추세의 강도는? 추가 상승 여력이 있는가? 과열 징후는?
+
+[출력 규칙]
+- 분석은 한국어로 작성
+- 각 축별 2~3문장, 종목당 총 200~400자
+- "관망" 같은 애매한 표현 금지. 명확한 판단 제시
+- 재료/수급/모멘텀 강도를 각각 strong/moderate/weak로 판정
+- verdict(한줄 결론)는 50자 이내로 핵심만
+
+JSON 형식:
+{{
+  "stocks": [
+    {{
+      "name": "종목명",
+      "code": "종목코드",
+      "price": "가격",
+      "change_pct": "등락률",
+      "analysis": "3축 분석 본문 (재료→수급→모멘텀 순서로 서술)",
+      "catalyst_rating": "strong|moderate|weak",
+      "supply_rating": "strong|moderate|weak",
+      "momentum_rating": "strong|moderate|weak",
+      "verdict": "한줄 결론 (50자 이내)"
+    }}
+  ],
+  "market_context": "오늘 시장 전체 맥락 한 줄 (80자 이내)",
+  "date": "{TODAY}"
+}}"""
+
+    try:
+        resp = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "llama-3.3-70b-versatile",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.4,
+                "max_tokens": 4096,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=60,
+        )
+
+        if resp.status_code != 200:
+            log(f"  ⚠️ Groq 종목 분석 오류: {resp.status_code} - {resp.text[:200]}")
+            return None
+
+        result = resp.json()
+        content = result["choices"][0]["message"]["content"]
+        parsed = json.loads(content)
+
+        analyzed_stocks = parsed.get("stocks", [])
+        market_context = parsed.get("market_context", "")
+
+        if analyzed_stocks:
+            log(f"  🤖 종목 분석 생성 완료 ({len(analyzed_stocks)}종목)")
+            for a in analyzed_stocks:
+                log(f"     • {a.get('name', '?')} — {a.get('verdict', '')[:40]}")
+            return {
+                "date": TODAY,
+                "market_context": market_context,
+                "stocks": json.dumps(analyzed_stocks, ensure_ascii=False),
+            }
+        return None
+
+    except Exception as e:
+        log(f"  ⚠️ 종목 분석 생성 실패: {e}")
         return None
 
 
@@ -2556,6 +2732,12 @@ def main():
         log(f"  ℹ️ AI 브리핑 스킵 (현재 {kst_now.strftime('%H:%M')}, 생성 시간: 08:00/12:05/15:35)")
         ai_summary = None
 
+    # ─── 종목 심층 분석 (close 모드에서만) ───
+    stock_analysis = None
+    if ai_mode == "close" and stocks:
+        log("  📊 일간 종목 분석 생성 — Groq 호출")
+        stock_analysis = generate_stock_analysis(stocks, themes, sectors, news, krx_data)
+
     # ─── Supabase에 저장 ───
     log("")
     log("💾 Supabase에 데이터 저장 중...")
@@ -2615,12 +2797,21 @@ def main():
     else:
         log("  ℹ️ AI 요약 생성 실패 — 기존 데이터 유지")
 
-    # 365일 초과 AI 요약 정리 (close 모드에서만)
+    # 종목 분석 저장 (close 모드에서만)
+    if stock_analysis:
+        supabase_request("DELETE", "stock_analysis", params={"date": f"eq.{TODAY}"})
+        result = supabase_request("POST", "stock_analysis", data=[stock_analysis])
+        log(f"  📊 종목 분석 저장 {'✅' if result else '❌'}")
+
+    # 365일 초과 AI 요약 정리 + 90일 초과 종목 분석 정리 (close 모드에서만)
     if ai_mode == "close":
         from datetime import datetime, timedelta
-        cutoff = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
-        supabase_request("DELETE", "ai_summary", params={"date": f"lt.{cutoff}"})
-        log(f"  🧹 {cutoff} 이전 AI 요약 정리")
+        cutoff_ai = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+        supabase_request("DELETE", "ai_summary", params={"date": f"lt.{cutoff_ai}"})
+        log(f"  🧹 {cutoff_ai} 이전 AI 요약 정리")
+        cutoff_sa = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+        supabase_request("DELETE", "stock_analysis", params={"date": f"lt.{cutoff_sa}"})
+        log(f"  🧹 {cutoff_sa} 이전 종목 분석 정리")
 
     log("")
     log("=" * 50)

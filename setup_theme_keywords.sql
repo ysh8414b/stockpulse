@@ -67,3 +67,23 @@ CREATE INDEX IF NOT EXISTS idx_all_themes_is_top ON all_themes(is_top);
 ALTER TABLE all_themes ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow service role full access" ON all_themes
     FOR ALL USING (true) WITH CHECK (true);
+
+
+-- =============================================
+-- stock_analysis 테이블 생성
+-- 일간 종목 리포트 (AI 3축 분석)
+-- =============================================
+
+CREATE TABLE IF NOT EXISTS stock_analysis (
+    id BIGSERIAL PRIMARY KEY,
+    date DATE NOT NULL,                -- 분석 날짜
+    market_context TEXT,               -- 시장 맥락 한 줄
+    stocks JSONB,                      -- 종목별 분석 JSON 배열
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_analysis_date ON stock_analysis(date);
+
+ALTER TABLE stock_analysis ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow service role full access" ON stock_analysis
+    FOR ALL USING (true) WITH CHECK (true);
