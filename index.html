@@ -272,7 +272,7 @@ function TabStocks({stk,nws,loading}){
           // 수급 강도 (외국인/기관 실제 데이터 반영)
           const fNet=s.foreign_net||0;
           const iNet=s.institution_net||0;
-          const supplyScore=(fNet>0?2:0)+(iNet>0?1:0)+(hasTradeBoom?1:0)+(hasTheme?1:0);
+          const supplyScore=(fNet>0?2:fNet<0?-1:0)+(iNet>0?1:iNet<0?-1:0)+(hasTradeBoom?1:0)+(hasTheme?1:0);
           const supplyRating=supplyScore>=3?"strong":supplyScore>=1?"moderate":"weak";
           const supplyLabel={strong:"수급 강",moderate:"수급 보통",weak:"수급 약"}[supplyRating];
           const supplyColor={strong:"#22c55e",moderate:"#f59e0b",weak:"#6b7280"}[supplyRating];
