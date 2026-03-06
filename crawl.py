@@ -1305,8 +1305,8 @@ def load_theme_keywords_from_db():
         log(f"  ⚠️ DB 키워드 로딩 실패 (코드 키워드 사용): {e}")
 
 
-def detect_themes_rule_based(news_titles, theme_map=None):
-    """뉴스 헤드라인 키워드 매칭으로 핫 테마 선정 (AI 불필요)"""
+def detect_themes_rule_based(news_titles, theme_map=None, krx_data=None):
+    """뉴스 헤드라인 키워드 매칭 + 등락률 복합 점수로 핫 테마 선정"""
     if not news_titles:
         log("  ⚠️ 뉴스 데이터 없음 - 정적 테마 사용")
         return None
@@ -1344,15 +1344,42 @@ def detect_themes_rule_based(news_titles, theme_map=None):
                     valid_scores[map_key] = valid_scores.get(map_key, 0) + score
                     break
 
-    # 뉴스에 언급 안 된 테마도 종목 수 기반으로 최소 점수 부여 (10개 미만일 때 보충)
-    if len(valid_scores) < 10:
-        for map_key in theme_map:
-            if map_key not in valid_scores:
-                valid_scores[map_key] = 0
+    # 전체 테마 대상으로 확장 (뉴스 언급 없는 테마도 등락률로 진입 가능)
+    for map_key in theme_map:
+        if map_key not in valid_scores:
+            valid_scores[map_key] = 0
 
-    # 1차: 뉴스 점수 순, 2차: 종목 수 순 (동점 시)
+    # ── 테마별 평균 등락률 계산 (krx_data 활용) ──
+    theme_changes = {}
+    if krx_data:
+        for theme_name in valid_scores:
+            stocks = theme_map.get(theme_name, [])
+            changes = []
+            for s in stocks[:10]:
+                code = s["code"] if isinstance(s, dict) else s
+                d = krx_data.get(code)
+                if d and d.get("price", 0) > 0:
+                    changes.append(d["change_pct"])
+            if changes:
+                theme_changes[theme_name] = sum(changes) / len(changes)
+
+    # ── 복합 점수: 뉴스(50%) + 등락률(50%) ──
+    max_news = max(valid_scores.values()) if valid_scores and max(valid_scores.values()) > 0 else 1
+    change_values = [v for v in theme_changes.values()]
+    max_change = max(change_values) if change_values else 1
+    min_change = min(change_values) if change_values else 0
+    change_range = max_change - min_change if max_change != min_change else 1
+
+    combined_scores = {}
+    for theme_name in valid_scores:
+        news_norm = valid_scores[theme_name] / max_news * 50
+        avg_change = theme_changes.get(theme_name, 0)
+        change_norm = (avg_change - min_change) / change_range * 50
+        combined_scores[theme_name] = news_norm + change_norm
+
+    # 복합 점수순 정렬, 동점 시 종목 수
     sorted_themes = sorted(
-        valid_scores.items(),
+        combined_scores.items(),
         key=lambda x: (x[1], len(theme_map.get(x[0], []))),
         reverse=True,
     )[:10]
@@ -1371,9 +1398,11 @@ def detect_themes_rule_based(news_titles, theme_map=None):
         total_stocks = sum(len(t["stocks"]) for t in result)
         log(f"  🔍 규칙 기반 테마 감지: {len(result)}개 테마, {total_stocks}개 종목")
         for t in result:
-            score = valid_scores.get(t["name"], 0)
+            news_s = valid_scores.get(t["name"], 0)
+            chg = theme_changes.get(t["name"], 0)
+            combo = combined_scores.get(t["name"], 0)
             names = ", ".join(s["name"] for s in t["stocks"][:3])
-            log(f"     - {t['name']} (뉴스 {score}건): {names}...")
+            log(f"     - {t['name']} (뉴스 {news_s}건, 등락 {chg:+.2f}%, 점수 {combo:.1f}): {names}...")
         return result
     else:
         log("  ⚠️ 규칙 기반 매칭 실패")
@@ -2202,7 +2231,12 @@ def crawl_issue_stocks(krx_data, themes=None, sectors=None, news=None):
         # 상승 섹터 소속 (10점)
         sector_score = 10 if d.get("display_sector", "") in rising_sectors else 0
 
-        total = tv_score + change_score + theme_score + news_score + sector_score
+        # 상한가/하한가 보너스 (15점) — 시총 3000억+ 조건
+        limit_bonus = 0
+        if abs(d["change_pct"]) >= LIMIT_PCT and d.get("market_cap", 0) >= 300_000_000_000:
+            limit_bonus = 15
+
+        total = tv_score + change_score + theme_score + news_score + sector_score + limit_bonus
 
         # 선정 사유 생성
         reasons = []
@@ -2497,9 +2531,9 @@ def crawl_themes(krx_data, news_titles=None, theme_map=None):
         ai_themes = detect_themes_with_ai(news_titles, theme_map)
         if not ai_themes:
             log("  ↩️ AI 실패 → 규칙 기반 폴백")
-            ai_themes = detect_themes_rule_based(news_titles, theme_map)
+            ai_themes = detect_themes_rule_based(news_titles, theme_map, krx_data)
     else:
-        ai_themes = detect_themes_rule_based(news_titles, theme_map)
+        ai_themes = detect_themes_rule_based(news_titles, theme_map, krx_data)
 
     if ai_themes:
         # ── AI 테마: KRX 데이터에서 직접 가격 조회 ──
