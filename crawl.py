@@ -382,6 +382,55 @@ def _fetch_naver_stocks(market_type, page_size=100):
     return all_stocks
 
 
+def fetch_investor_trend(code, price=0):
+    """네이버 금융 API에서 종목별 투자자 순매수 데이터 조회 (외국인/기관/개인)"""
+    try:
+        resp = requests.get(
+            f"https://m.stock.naver.com/api/stock/{code}/trend",
+            params={"pageSize": 1},
+            headers=NAVER_STOCK_HEADERS,
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        if not data:
+            return None
+
+        latest = data[0]
+        def parse_num(s):
+            try:
+                return int(str(s).replace(",", "").replace("+", ""))
+            except (ValueError, TypeError):
+                return 0
+
+        foreign_qty = parse_num(latest.get("foreignerPureBuyQuant", "0"))
+        organ_qty = parse_num(latest.get("organPureBuyQuant", "0"))
+        individual_qty = parse_num(latest.get("individualPureBuyQuant", "0"))
+        hold_ratio = latest.get("foreignerHoldRatio", "0%")
+
+        try:
+            hold_pct = float(str(hold_ratio).replace("%", "").replace(",", ""))
+        except (ValueError, TypeError):
+            hold_pct = 0.0
+
+        # 순매수량(주) × 종가 → 억원 변환
+        eok = 100_000_000
+        foreign_net = round(foreign_qty * price / eok) if price > 0 else 0
+        institution_net = round(organ_qty * price / eok) if price > 0 else 0
+        individual_net = round(individual_qty * price / eok) if price > 0 else 0
+
+        return {
+            "foreign_net": foreign_net,       # 외국인 순매수 (억원)
+            "institution_net": institution_net, # 기관 순매수 (억원)
+            "individual_net": individual_net,   # 개인 순매수 (억원)
+            "foreign_ratio": hold_pct,          # 외국인 보유비율 (%)
+        }
+    except Exception as e:
+        log(f"  ⚠️ 투자자 동향 조회 실패 ({code}): {e}")
+        return None
+
+
 def fetch_naver_market_data(sector_map=None):
     """네이버 금융 API에서 전종목 시세 데이터 조회 (KRX 대체)"""
     log("📋 네이버 금융 API 전종목 시세 조회 중...")
@@ -1926,9 +1975,17 @@ def generate_stock_analysis(stocks, themes, sectors, news, krx_data):
             pass
         news_titles = [n.get("title", "") for n in related[:3]]
 
+        # 투자자 수급 데이터
+        f_net = s.get("foreign_net", 0)
+        i_net = s.get("institution_net", 0)
+        ind_net = s.get("individual_net", 0)
+        f_ratio = s.get("foreign_ratio", 0)
+        investor_line = f"외국인 순매수: {f_net:+,}억원, 기관 순매수: {i_net:+,}억원, 개인 순매수: {ind_net:+,}억원, 외국인 보유비율: {f_ratio:.1f}%"
+
         stock_contexts.append(
             f"종목: {name} ({code})\n"
             f"가격: ₩{s.get('price', '?')}, 등락률: {s.get('change_pct', '?')}, 거래대금: {s.get('volume', '?')}\n"
+            f"투자자 수급: {investor_line}\n"
             f"이슈 사유: {s.get('reason', '?')}\n"
             f"소속 테마: {', '.join(stock_themes) if stock_themes else '없음'}\n"
             f"소속 섹터: {stock_sector or '미분류'} (섹터 등락: {sector_names.get(stock_sector, '?')})\n"
@@ -1961,7 +2018,7 @@ def generate_stock_analysis(stocks, themes, sectors, news, krx_data):
 [분석 프레임워크]
 각 종목에 대해:
 1. 재료(Catalyst): 왜 이 종목이 오늘 이슈인가? 어떤 뉴스/이벤트/테마가 주가를 움직였나? 재료의 수명은 단기(1-3일)/중기(1-4주)/장기(1개월+) 중 어디인가?
-2. 수급(Flow): 거래대금이 크다면 누가 사고 있는가? 기관/외인 수급 추정. 거래폭발이면 단기 세력인가 중장기 자금인가?
+2. 수급(Flow): 외국인/기관/개인 순매수 데이터를 바탕으로 누가 주도하는지 분석. 외국인 보유비율 변화 의미, 기관 매수의 성격(연기금/투신), 개인 매수 집중 시 리스크 판단.
 3. 모멘텀(Momentum): 상승/하락 추세의 강도는? 추가 상승 여력이 있는가? 과열 징후는?
 
 [출력 규칙]
@@ -2319,10 +2376,31 @@ def crawl_issue_stocks(krx_data, themes=None, sectors=None, news=None):
 
         s["related_news"] = json.dumps(matched[:5], ensure_ascii=False)
 
+    # ── 6단계: 투자자별 순매수 데이터 수집 (외국인/기관/개인) ──
+    log("  💰 투자자별 순매수 데이터 수집 중...")
+    for s in stocks:
+        code = s["code"]
+        price_raw = int(str(s["price"]).replace(",", "").replace("₩", ""))
+        trend_data = fetch_investor_trend(code, price_raw)
+        if trend_data:
+            s["foreign_net"] = trend_data["foreign_net"]
+            s["institution_net"] = trend_data["institution_net"]
+            s["individual_net"] = trend_data["individual_net"]
+            s["foreign_ratio"] = trend_data["foreign_ratio"]
+        else:
+            s["foreign_net"] = 0
+            s["institution_net"] = 0
+            s["individual_net"] = 0
+            s["foreign_ratio"] = 0.0
+    investor_ok = sum(1 for s in stocks if s.get("foreign_net", 0) != 0 or s.get("institution_net", 0) != 0)
+    log(f"  ✅ 투자자 데이터 {investor_ok}/{len(stocks)}개 종목 수집 완료")
+
     log(f"  ✅ 이슈 종목 {len(stocks)}개 선정 (복합 점수 기반)")
     for s in stocks[:5]:
         news_cnt = len(json.loads(s["related_news"])) if s.get("related_news") else 0
-        log(f"     {s['rank']}. {s['name']} ({s['change_pct']}) — {s['reason']} [뉴스 {news_cnt}건]")
+        f_net = s.get("foreign_net", 0)
+        i_net = s.get("institution_net", 0)
+        log(f"     {s['rank']}. {s['name']} ({s['change_pct']}) — {s['reason']} [뉴스 {news_cnt}건, 외인 {f_net:+,}억, 기관 {i_net:+,}억]")
     return stocks
 
 

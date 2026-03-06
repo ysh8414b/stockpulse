@@ -61,7 +61,7 @@ function StockCard({stock,rank}){
         <span style={{color:"var(--dim)",fontSize:"13px",marginLeft:"8px"}}>{stock.code}</span>
       </div>
       <div style={{textAlign:"right"}}>
-        <div style={{fontWeight:700,fontSize:"18px",fontVariantNumeric:"tabular-nums"}}>₩{stock.price}</div>
+        <div style={{fontWeight:700,fontSize:"18px",fontVariantNumeric:"tabular-nums"}}>{String(stock.price).replace(/[₩\\s]/g,"").replace(/^/,"₩")}</div>
         <div style={{fontWeight:700,fontSize:"15px",color:pctColor,marginTop:"2px"}}>{isUp?"▲":"▼"} {stock.change_pct}</div>
       </div>
     </div>
@@ -77,6 +77,15 @@ function StockCard({stock,rank}){
         <RatingBadge rating={ax.rating}/>
       </div>)}
     </div>
+
+    {/* 투자자 수급 데이터 */}
+    {(stock.foreign_net!=null||stock.institution_net!=null)&&(stock.foreign_net!==0||stock.institution_net!==0)&&<div style={{display:"flex",gap:"10px",marginBottom:"18px",flexWrap:"wrap"}}>
+      {[{label:"🌍 외국인",val:stock.foreign_net||0,sub:stock.foreign_ratio?`보유 ${stock.foreign_ratio}%`:""},{label:"🏛️ 기관",val:stock.institution_net||0},{label:"👤 개인",val:stock.individual_net||0}].map((inv,i)=><div key={i} style={{flex:1,minWidth:90,padding:"10px 14px",background:"var(--hover)",borderRadius:"8px",border:"1px solid var(--div2)",textAlign:"center"}}>
+        <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"4px"}}>{inv.label}</div>
+        <div style={{fontSize:"15px",fontWeight:700,color:inv.val>0?"#22c55e":inv.val<0?"#ef4444":"var(--dim)"}}>{inv.val>0?"+":""}{inv.val.toLocaleString()}억</div>
+        {inv.sub&&<div style={{fontSize:"11px",color:"var(--muted)",marginTop:"2px"}}>{inv.sub}</div>}
+      </div>)}
+    </div>}
 
     {/* AI 분석 본문 */}
     <div style={{fontSize:"15px",lineHeight:1.8,color:"var(--text-sub)",marginBottom:"16px",whiteSpace:"pre-wrap"}}>{analysis}</div>
@@ -114,6 +123,16 @@ function App(){
         const row=rows[0];
         let stocks=row.stocks;
         if(typeof stocks==="string"){try{stocks=JSON.parse(stocks)}catch(e){stocks=[]}}
+        // issue_stocks에서 투자자 수급 데이터 merge
+        const issueRows=await db("issue_stocks",`date=eq.${dateStr}&select=*`);
+        if(issueRows&&issueRows.length>0){
+          const investorMap={};
+          issueRows.forEach(r=>{investorMap[r.code]=r});
+          (stocks||[]).forEach(s=>{
+            const inv=investorMap[s.code];
+            if(inv){s.foreign_net=inv.foreign_net;s.institution_net=inv.institution_net;s.individual_net=inv.individual_net;s.foreign_ratio=inv.foreign_ratio}
+          });
+        }
         setData({market_context:row.market_context,stocks:stocks||[],date:row.date});
       }else{
         setData(null);

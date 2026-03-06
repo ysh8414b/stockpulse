@@ -269,8 +269,10 @@ function TabStocks({stk,nws,loading}){
           const catalystRating=catalystScore>=3?"strong":catalystScore>=1?"moderate":"weak";
           const catalystLabel={strong:"재료 풍부",moderate:"재료 보통",weak:"재료 부족"}[catalystRating];
           const catalystColor={strong:"#22c55e",moderate:"#f59e0b",weak:"#6b7280"}[catalystRating];
-          // 수급 강도
-          const supplyScore=(hasTradeBoom?2:0)+(hasTheme?1:0)+(s.rank<=5?1:0);
+          // 수급 강도 (외국인/기관 실제 데이터 반영)
+          const fNet=s.foreign_net||0;
+          const iNet=s.institution_net||0;
+          const supplyScore=(fNet>0?2:0)+(iNet>0?1:0)+(hasTradeBoom?1:0)+(hasTheme?1:0);
           const supplyRating=supplyScore>=3?"strong":supplyScore>=1?"moderate":"weak";
           const supplyLabel={strong:"수급 강",moderate:"수급 보통",weak:"수급 약"}[supplyRating];
           const supplyColor={strong:"#22c55e",moderate:"#f59e0b",weak:"#6b7280"}[supplyRating];
@@ -282,7 +284,9 @@ function TabStocks({stk,nws,loading}){
           const momColor=pctNum>=0?{strong:"#22c55e",moderate:"#22c55e",weak:"#6b7280"}[momRating]:{strong:"#ef4444",moderate:"#ef4444",weak:"#6b7280"}[momRating];
           // 상세 텍스트
           const catalystDetail=[newsCount>0?`관련 뉴스 ${newsCount}건`:"뉴스 없음",hasTags?(s.tags||[]).slice(0,2).join(", ")+" 소속":"테마 미분류",hasNewsReason?"뉴스 다수 언급":""].filter(Boolean).join(" · ");
-          const supplyDetail=[hasTradeBoom?"거래대금 폭발":"거래대금 "+s.volume,hasTheme?"인기테마 수급 유입":"",s.rank<=3?"TOP 3 종목":""].filter(Boolean).join(" · ");
+          const fNetStr=fNet!==0?(fNet>0?`외인 +${Math.abs(fNet).toLocaleString()}억`:`외인 ${fNet.toLocaleString()}억`):"";
+          const iNetStr=iNet!==0?(iNet>0?`기관 +${Math.abs(iNet).toLocaleString()}억`:`기관 ${iNet.toLocaleString()}억`):"";
+          const supplyDetail=[fNetStr,iNetStr,hasTradeBoom?"거래폭발":""].filter(Boolean).join(" · ")||(hasTradeBoom?"거래대금 폭발":"거래대금 "+s.volume);
           const momDetail=[s.change_pct,isLimit?"가격제한폭 도달":isSurge?"급등세":isPlunge?"급락세":"",s.rank<=5?"이슈 상위권":""].filter(Boolean).join(" · ");
           return <div className="stock-detail" style={{padding:"18px 20px 18px 76px",background:"var(--hover2)",borderBottom:"1px solid var(--div3)",animation:"fadeUp .3s ease both"}}>
           <div style={{display:"flex",gap:"24px",marginBottom:"16px",flexWrap:"wrap"}}>
@@ -290,6 +294,21 @@ function TabStocks({stk,nws,loading}){
             <div><div style={{color:"var(--muted)",fontSize:"13px",fontWeight:600,marginBottom:"8px"}}>🏷️ 테마</div><div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>{(s.tags||[]).map(t=><Tag key={t} color="cyan">{t}</Tag>)}</div></div>
             <div style={{textAlign:"right"}}><div style={{color:"var(--muted)",fontSize:"13px",fontWeight:600,marginBottom:"8px"}}>💰 거래대금</div><div style={{fontSize:"16px",fontWeight:700,color:"var(--text)"}}>{s.volume}</div></div>
           </div>
+          {(fNet!==0||iNet!==0)&&<div style={{display:"flex",gap:"12px",marginBottom:"16px",flexWrap:"wrap"}}>
+            <div style={{flex:1,minWidth:100,padding:"10px 14px",background:"var(--card)",borderRadius:"8px",border:"1px solid var(--div3)"}}>
+              <div style={{color:"var(--muted)",fontSize:"12px",marginBottom:"4px"}}>🌍 외국인</div>
+              <div style={{fontSize:"15px",fontWeight:700,color:fNet>0?"#22c55e":fNet<0?"#ef4444":"var(--dim)"}}>{fNet>0?"+":""}{fNet.toLocaleString()}억</div>
+              {s.foreign_ratio>0&&<div style={{fontSize:"11px",color:"var(--muted)",marginTop:"2px"}}>보유 {s.foreign_ratio}%</div>}
+            </div>
+            <div style={{flex:1,minWidth:100,padding:"10px 14px",background:"var(--card)",borderRadius:"8px",border:"1px solid var(--div3)"}}>
+              <div style={{color:"var(--muted)",fontSize:"12px",marginBottom:"4px"}}>🏛️ 기관</div>
+              <div style={{fontSize:"15px",fontWeight:700,color:iNet>0?"#22c55e":iNet<0?"#ef4444":"var(--dim)"}}>{iNet>0?"+":""}{iNet.toLocaleString()}억</div>
+            </div>
+            <div style={{flex:1,minWidth:100,padding:"10px 14px",background:"var(--card)",borderRadius:"8px",border:"1px solid var(--div3)"}}>
+              <div style={{color:"var(--muted)",fontSize:"12px",marginBottom:"4px"}}>👤 개인</div>
+              <div style={{fontSize:"15px",fontWeight:700,color:(s.individual_net||0)>0?"#22c55e":(s.individual_net||0)<0?"#ef4444":"var(--dim)"}}>{(s.individual_net||0)>0?"+":""}{(s.individual_net||0).toLocaleString()}억</div>
+            </div>
+          </div>}
           {/* 3축 분석 카드 */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"10px",marginBottom:"16px"}}>{[
             {icon:"🔥",title:"재료",label:catalystLabel,color:catalystColor,detail:catalystDetail},

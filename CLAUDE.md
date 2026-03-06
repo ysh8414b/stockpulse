@@ -96,6 +96,15 @@
 - `main()` 호출 순서: themes/sectors/news 이후로 이동 (데이터 의존성)
 - 함수 시그니처: `crawl_issue_stocks(krx_data, themes=None, sectors=None, news=None)`
 
+### 이슈 종목 투자자 수급 데이터 (2026-03-06)
+- `fetch_investor_trend(code, price)`: 네이버 API (`/api/stock/{code}/trend`) 종목별 투자자 순매수 조회
+- 데이터: 외국인/기관/개인 순매수금액(억원), 외국인 보유비율(%)
+- `crawl_issue_stocks()` 6단계에서 TOP 15 종목에 대해 수집 → Supabase에 저장
+- `issue_stocks` 테이블에 `foreign_net`, `institution_net`, `individual_net`, `foreign_ratio` 컬럼 추가 필요
+- index.html: 수급 점수에 외국인 순매수(+2점), 기관 순매수(+1점) 반영 + 상세 카드에 외국인/기관/개인 금액 표시
+- analysis.html: issue_stocks에서 투자자 데이터 merge 후 종목 카드에 표시
+- `generate_stock_analysis()` AI 프롬프트에 실제 외국인/기관 데이터 제공 (추정→실데이터)
+
 ### 이슈 종목 관련 뉴스 (2026-03-02)
 - 기존: 클라이언트에서 일반 뉴스 제목에 종목명 포함 여부로 매칭 → 거의 매칭 안 됨
 - 변경: `crawl_issue_stocks()`에서 종목별 관련 뉴스를 직접 수집하여 `related_news` JSON 필드에 저장
