@@ -2747,7 +2747,7 @@ def main():
     ai_schedule = [(8, 0, "premarket"), (12, 5, "market"), (15, 35, "close")]
     ai_mode = None
     for h, m, mode in ai_schedule:
-        if h == kst_now.hour and abs(kst_now.minute - m) <= 5:
+        if h == kst_now.hour and abs(kst_now.minute - m) <= 2:
             ai_mode = mode
             break
     if ai_mode:
