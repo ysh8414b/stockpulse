@@ -2263,7 +2263,7 @@ def generate_stock_analysis(stocks, themes, sectors, news, krx_data):
         market_ctx_parts.append(f"인기 테마: {', '.join(top_themes)}")
     market_ctx = " | ".join(market_ctx_parts)
 
-    prompt = f"""당신은 한국 주식시장 전문 애널리스트입니다.
+    prompt = f"""당신은 한국 주식시장 10년 경력 시니어 애널리스트입니다.
 오늘 이슈가 된 상위 종목들을 3축(재료·수급·모멘텀) 관점에서 심층 분석해주세요.
 
 [오늘 시장 맥락]
@@ -2272,18 +2272,37 @@ def generate_stock_analysis(stocks, themes, sectors, news, krx_data):
 [분석 대상 종목]
 {"---".join(stock_contexts)}
 
-[분석 프레임워크]
-각 종목에 대해:
-1. 재료(Catalyst): 왜 이 종목이 오늘 이슈인가? 어떤 뉴스/이벤트/테마가 주가를 움직였나? 재료의 수명은 단기(1-3일)/중기(1-4주)/장기(1개월+) 중 어디인가?
-2. 수급(Flow): 외국인/기관/개인 순매수 데이터를 바탕으로 누가 주도하는지 분석. 외국인 보유비율 변화 의미, 기관 매수의 성격(연기금/투신), 개인 매수 집중 시 리스크 판단.
-3. 모멘텀(Momentum): 상승/하락 추세의 강도는? 추가 상승 여력이 있는가? 과열 징후는?
+[분석 프레임워크 — 각 축별 300~500자씩 깊이 있게 분석]
+
+1. 재료(Catalyst) 분석:
+   - 이 종목이 오늘 이슈가 된 구체적 뉴스/이벤트/정책을 인용
+   - 해당 재료가 주가에 미치는 파급 경로를 2~3단계로 설명 (예: 정책발표 → 수주 기대 → 실적 상향)
+   - 재료의 수명 판단: 단기(1~3일 이벤트성) / 중기(1~4주 실적 반영) / 장기(1개월+ 구조적 변화)
+   - 과거 유사한 재료가 나왔을 때 주가 반응 패턴이 있다면 비교
+   - 시장에서 이미 반영된 부분 vs 아직 미반영된 부분 구분
+
+2. 수급(Flow) 분석:
+   - 외국인/기관/개인 순매수 데이터를 구체적으로 해석 (금액, 방향, 강도)
+   - 수급 주도 세력 식별: 누가 주도하고 있는가? 그 의미는?
+   - 외국인 매수라면 글로벌 자금 흐름과 연결, 기관 매수라면 연기금/투신/자사주 성격 구분
+   - 개인 매수 집중 시 과열 리스크, 개인 순매도 시 공포 매도 여부 판단
+   - 현재 수급 구조의 지속 가능성 평가
+
+3. 모멘텀(Momentum) 분석:
+   - 등락률 크기와 거래대금을 기반으로 상승/하락 추세의 강도 평가
+   - 상한가/하한가 여부, 연속 상승/하락 패턴 확인
+   - 과열 징후 (급등 후 차익실현 압력) 또는 추가 상승 여력 판단
+   - 동일 섹터·테마 내 다른 종목 대비 상대 강도 비교
+   - 향후 1~3일 가격 방향에 대한 구체적 견해
 
 [출력 규칙]
-- 분석은 한국어로 작성
-- 각 축별 2~3문장, 종목당 총 200~400자
-- "관망" 같은 애매한 표현 금지. 명확한 판단 제시
+- 한국어로 작성
+- 각 축별 300~500자, 종목당 총 900~1500자
+- 구체적 수치(금액, 퍼센트, 종목명)를 적극 활용
+- "관망" 같은 애매한 표현 금지. 명확한 판단 + 근거 제시
 - 재료/수급/모멘텀 강도를 각각 strong/moderate/weak로 판정
-- verdict(한줄 결론)는 50자 이내로 핵심만
+- verdict(핵심 판단)는 100자 이내, 조건부 시나리오 포함 가능 (예: "A이면 B, 그렇지 않으면 C")
+- risk_note: 이 종목의 가장 큰 리스크 요인 한 줄
 
 JSON 형식:
 {{
@@ -2293,14 +2312,18 @@ JSON 형식:
       "code": "종목코드",
       "price": "가격",
       "change_pct": "등락률",
-      "analysis": "3축 분석 본문 (재료→수급→모멘텀 순서로 서술)",
+      "catalyst_analysis": "재료 분석 본문 (300~500자)",
       "catalyst_rating": "strong|moderate|weak",
+      "catalyst_lifecycle": "short|mid|long",
+      "supply_analysis": "수급 분석 본문 (300~500자)",
       "supply_rating": "strong|moderate|weak",
+      "momentum_analysis": "모멘텀 분석 본문 (300~500자)",
       "momentum_rating": "strong|moderate|weak",
-      "verdict": "한줄 결론 (50자 이내)"
+      "verdict": "핵심 판단 (100자 이내)",
+      "risk_note": "핵심 리스크 한 줄"
     }}
   ],
-  "market_context": "오늘 시장 전체 맥락 한 줄 (80자 이내)",
+  "market_context": "오늘 시장 전체 맥락 (200자 이내, 지수·섹터·테마 흐름 요약)",
   "date": "{TODAY}"
 }}"""
 
@@ -2315,10 +2338,10 @@ JSON 형식:
                 "model": "llama-3.3-70b-versatile",
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.4,
-                "max_tokens": 4096,
+                "max_tokens": 8192,
                 "response_format": {"type": "json_object"},
             },
-            timeout=60,
+            timeout=90,
         )
 
         if resp.status_code != 200:
@@ -2335,7 +2358,7 @@ JSON 형식:
         if analyzed_stocks:
             log(f"  🤖 종목 분석 생성 완료 ({len(analyzed_stocks)}종목)")
             for a in analyzed_stocks:
-                log(f"     • {a.get('name', '?')} — {a.get('verdict', '')[:40]}")
+                log(f"     • {a.get('name', '?')} — {a.get('verdict', '')[:60]}")
             return {
                 "date": TODAY,
                 "market_context": market_context,

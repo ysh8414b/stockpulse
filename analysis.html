@@ -38,10 +38,35 @@ const ratingMeta={
   moderate:{label:"보통",color:"#f59e0b"},
   weak:{label:"약",color:"#6b7280"}
 };
+const lifecycleMeta={
+  short:{label:"단기 1~3일",color:"#ef4444"},
+  mid:{label:"중기 1~4주",color:"#f59e0b"},
+  long:{label:"장기 1개월+",color:"#06b6d4"}
+};
 
-function RatingBadge({rating,prefix}){
+function RatingBadge({rating}){
   const m=ratingMeta[rating]||ratingMeta.weak;
-  return <span style={{padding:"3px 10px",borderRadius:"12px",fontSize:"12px",fontWeight:700,color:m.color,background:`${m.color}18`,border:`1px solid ${m.color}30`}}>{prefix?prefix+" ":""}{m.label}</span>;
+  return <span style={{padding:"3px 10px",borderRadius:"12px",fontSize:"12px",fontWeight:700,color:m.color,background:`${m.color}18`,border:`1px solid ${m.color}30`}}>{m.label}</span>;
+}
+
+function LifecycleBadge({lifecycle}){
+  const m=lifecycleMeta[lifecycle];
+  if(!m)return null;
+  return <span style={{padding:"2px 8px",borderRadius:"10px",fontSize:"11px",fontWeight:600,color:m.color,background:`${m.color}12`,border:`1px solid ${m.color}25`,marginLeft:"6px"}}>{m.label}</span>;
+}
+
+function AxisSection({icon,title,rating,analysis,lifecycle}){
+  const m=ratingMeta[rating]||ratingMeta.weak;
+  if(!analysis)return null;
+  return <div style={{borderLeft:`3px solid ${m.color}`,paddingLeft:"16px",marginBottom:"16px"}}>
+    <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"8px",flexWrap:"wrap"}}>
+      <span style={{fontSize:"15px"}}>{icon}</span>
+      <span style={{fontWeight:700,fontSize:"15px"}}>{title}</span>
+      <RatingBadge rating={rating}/>
+      {lifecycle&&<LifecycleBadge lifecycle={lifecycle}/>}
+    </div>
+    <div style={{fontSize:"14px",lineHeight:1.85,color:"var(--text-sub)",whiteSpace:"pre-wrap"}}>{analysis}</div>
+  </div>;
 }
 
 function StockCard({stock,rank}){
@@ -49,8 +74,8 @@ function StockCard({stock,rank}){
   const isUp=pctNum>=0;
   const pctColor=isUp?"#22c55e":"#ef4444";
 
-  // 분석 텍스트를 3축으로 나누기 시도
-  const analysis=stock.analysis||"";
+  // 새 구조(3축 분리) vs 기존 구조(단일 analysis) 하위 호환
+  const hasNewFormat=!!stock.catalyst_analysis;
 
   return <Box style={{marginBottom:"16px",padding:"24px 28px"}}>
     {/* 헤더: 순위 + 종목명 + 가격 */}
@@ -66,20 +91,8 @@ function StockCard({stock,rank}){
       </div>
     </div>
 
-    {/* 3축 등급 뱃지 */}
-    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"10px",marginBottom:"18px"}}>
-      {[
-        {icon:"🔥",title:"재료",rating:stock.catalyst_rating},
-        {icon:"💰",title:"수급",rating:stock.supply_rating},
-        {icon:"🎯",title:"모멘텀",rating:stock.momentum_rating}
-      ].map((ax,i)=><div key={i} style={{padding:"12px 14px",borderRadius:"10px",background:"var(--hover)",border:"1px solid var(--div2)",textAlign:"center"}}>
-        <div style={{fontSize:"13px",color:"var(--muted)",marginBottom:"6px"}}>{ax.icon} {ax.title}</div>
-        <RatingBadge rating={ax.rating}/>
-      </div>)}
-    </div>
-
     {/* 투자자 수급 데이터 */}
-    {(stock.foreign_net!=null||stock.institution_net!=null)&&(stock.foreign_net!==0||stock.institution_net!==0)&&<div style={{display:"flex",gap:"10px",marginBottom:"18px",flexWrap:"wrap"}}>
+    {(stock.foreign_net!=null||stock.institution_net!=null)&&(stock.foreign_net!==0||stock.institution_net!==0)&&<div style={{display:"flex",gap:"10px",marginBottom:"20px",flexWrap:"wrap"}}>
       {[{label:"🌍 외국인",val:stock.foreign_net||0,sub:stock.foreign_ratio?`보유 ${stock.foreign_ratio}%`:""},{label:"🏛️ 기관",val:stock.institution_net||0},{label:"👤 개인",val:stock.individual_net||0}].map((inv,i)=><div key={i} style={{flex:1,minWidth:90,padding:"10px 14px",background:"var(--hover)",borderRadius:"8px",border:"1px solid var(--div2)",textAlign:"center"}}>
         <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"4px"}}>{inv.label}</div>
         <div style={{fontSize:"15px",fontWeight:700,color:inv.val>0?"#22c55e":inv.val<0?"#ef4444":"var(--dim)"}}>{inv.val>0?"+":""}{inv.val.toLocaleString()}억</div>
@@ -87,15 +100,37 @@ function StockCard({stock,rank}){
       </div>)}
     </div>}
 
-    {/* AI 분석 본문 */}
-    <div style={{fontSize:"15px",lineHeight:1.8,color:"var(--text-sub)",marginBottom:"16px",whiteSpace:"pre-wrap"}}>{analysis}</div>
+    {/* 3축 분석 - 새 구조 (축별 분리) */}
+    {hasNewFormat&&<div style={{marginBottom:"16px"}}>
+      <AxisSection icon="🔥" title="재료 분석" rating={stock.catalyst_rating} analysis={stock.catalyst_analysis} lifecycle={stock.catalyst_lifecycle}/>
+      <AxisSection icon="💰" title="수급 분석" rating={stock.supply_rating} analysis={stock.supply_analysis}/>
+      <AxisSection icon="🎯" title="모멘텀 분석" rating={stock.momentum_rating} analysis={stock.momentum_analysis}/>
+    </div>}
 
-    {/* 한줄 결론 + 네이버 링크 */}
-    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:"10px"}}>
-      {stock.verdict&&<div style={{display:"flex",alignItems:"center",gap:"8px",flex:1,minWidth:0}}>
-        <span style={{flexShrink:0,fontSize:"14px"}}>💡</span>
-        <span style={{fontWeight:600,fontSize:"15px",color:"var(--text)"}}>{stock.verdict}</span>
+    {/* 기존 구조 fallback (단일 analysis) */}
+    {!hasNewFormat&&stock.analysis&&<>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"10px",marginBottom:"18px"}}>
+        {[{icon:"🔥",title:"재료",rating:stock.catalyst_rating},{icon:"💰",title:"수급",rating:stock.supply_rating},{icon:"🎯",title:"모멘텀",rating:stock.momentum_rating}].map((ax,i)=><div key={i} style={{padding:"12px 14px",borderRadius:"10px",background:"var(--hover)",border:"1px solid var(--div2)",textAlign:"center"}}>
+          <div style={{fontSize:"13px",color:"var(--muted)",marginBottom:"6px"}}>{ax.icon} {ax.title}</div>
+          <RatingBadge rating={ax.rating}/>
+        </div>)}
+      </div>
+      <div style={{fontSize:"14px",lineHeight:1.8,color:"var(--text-sub)",marginBottom:"16px",whiteSpace:"pre-wrap"}}>{stock.analysis}</div>
+    </>}
+
+    {/* 핵심 판단 + 리스크 + 네이버 링크 */}
+    <div style={{padding:"14px 18px",borderRadius:"10px",background:"var(--hover)",border:"1px solid var(--div2)"}}>
+      {stock.verdict&&<div style={{display:"flex",alignItems:"flex-start",gap:"8px",marginBottom:stock.risk_note?"10px":"0"}}>
+        <span style={{flexShrink:0,fontSize:"14px",marginTop:"1px"}}>💡</span>
+        <span style={{fontWeight:600,fontSize:"15px",color:"var(--text)",lineHeight:1.6}}>{stock.verdict}</span>
       </div>}
+      {stock.risk_note&&<div style={{display:"flex",alignItems:"flex-start",gap:"8px"}}>
+        <span style={{flexShrink:0,fontSize:"13px",marginTop:"1px"}}>⚠️</span>
+        <span style={{fontSize:"13px",color:"#ef4444",lineHeight:1.5,fontWeight:500}}>{stock.risk_note}</span>
+      </div>}
+    </div>
+
+    <div style={{display:"flex",justifyContent:"flex-end",marginTop:"14px"}}>
       <a href={`https://finance.naver.com/item/main.naver?code=${stock.code}`} target="_blank" rel="noopener noreferrer" style={{display:"inline-flex",alignItems:"center",gap:"6px",padding:"8px 16px",borderRadius:"8px",background:"rgba(6,182,212,0.08)",border:"1px solid rgba(6,182,212,0.2)",color:"#06b6d4",fontSize:"14px",fontWeight:600,textDecoration:"none",transition:"all .2s",flexShrink:0}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(6,182,212,0.15)"}} onMouseLeave={e=>{e.currentTarget.style.background="rgba(6,182,212,0.08)"}}>네이버 증권 →</a>
     </div>
   </Box>;

@@ -185,6 +185,23 @@
   - 분석 없으면 기존과 동일하게 동작 (graceful degradation)
   - `thmAn` state: `{theme_name: analysis_obj}` map으로 O(1) 조회
 
+### 일간 종목 리포트 심층 분석 강화 (2026-03-07)
+- 기존: 종목당 200-400자 단일 `analysis` 텍스트, 축별 2-3문장 수준
+- 변경: 3축 각각 독립 필드로 분리, 축별 300-500자 (종목당 총 900-1500자)
+- **crawl.py JSON 구조 변경**:
+  - `analysis` (단일) → `catalyst_analysis`, `supply_analysis`, `momentum_analysis` (3축 분리)
+  - `catalyst_lifecycle` 추가: short(1~3일)/mid(1~4주)/long(1개월+)
+  - `risk_note` 추가: 핵심 리스크 한 줄
+  - `verdict`: 50자 → 100자, 조건부 시나리오 포함
+  - `market_context`: 80자 → 200자
+  - `max_tokens`: 4096 → 8192, timeout: 60s → 90s
+- **프롬프트 심화**: 파급 경로 2~3단계, 과거 유사 사례 비교, 수급 주체별 의도 추정, 과열/과매도 판단
+- **analysis.html UI 리디자인**:
+  - `AxisSection` 컴포넌트: 왼쪽 컬러 보더(등급색) + 아이콘 + 분석 텍스트
+  - `LifecycleBadge` 컴포넌트: 재료 수명 표시 (단기/중기/장기)
+  - 핵심 판단 + 리스크 노트 카드로 분리 표시
+  - 하위 호환: `catalyst_analysis` 없으면 기존 `analysis` fallback 표시
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
