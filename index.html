@@ -386,11 +386,14 @@ function ThemeNewsDropdown({newsList,mainTitle,mainUrl,onOpen}){
     </div>}
   </div>;
 }
-function ThemeItem({t,i}){
+function ThemeItem({t,i,analysis}){
   const[newsOpen,setNewsOpen]=useState(false);
+  const[anOpen,setAnOpen]=useState(false);
   const u=t.trend==="up";const f=t.trend==="flat";const clr=u?"#22c55e":(f?"#6b7280":"#ef4444");
+  const olMap={positive:{e:"🟢",l:"긍정적",c:"#22c55e"},negative:{e:"🔴",l:"부정적",c:"#ef4444"},neutral:{e:"⚪",l:"중립",c:"#6b7280"}};
+  const ol=analysis?olMap[analysis.outlook]||olMap.neutral:null;
   return <div style={{position:"relative",zIndex:newsOpen?50:1}}>
-    <Box className="theme-card" style={{padding:"22px 24px",overflow:newsOpen?"visible":"hidden"}} hover={!newsOpen}>
+    <Box className="theme-card" style={{padding:"22px 24px",overflow:newsOpen?"visible":"hidden",cursor:analysis?"pointer":"default"}} hover={!newsOpen&&!anOpen} onClick={()=>{if(analysis)setAnOpen(v=>!v)}}>
       <div className="theme-layout" style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"18px"}}>
         <div style={{display:"flex",alignItems:"center",gap:"16px",flex:1,minWidth:0}}>
           <span style={{width:38,height:38,borderRadius:"9px",fontSize:"18px",fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",background:i<3?"rgba(249,115,22,0.14)":"var(--badge-bg)",color:i<3?"#f97316":"var(--muted)",flexShrink:0}}>{t.rank}</span>
@@ -411,10 +414,19 @@ function ThemeItem({t,i}){
               <div className="theme-pct" style={{fontWeight:800,fontSize:"24px",color:clr}}>{t.change_pct}</div>
               {t.avg_3day_pct&&<div style={{fontSize:"14px",color:"var(--muted)",marginTop:"3px"}}>3일 {t.avg_3day_pct}</div>}
             </div>
+            {analysis&&<span style={{color:"var(--dimmer)",fontSize:"18px",transform:anOpen?"rotate(90deg)":"none",transition:"transform .2s",marginLeft:"4px"}}>›</span>}
           </div>
         </div>
         {t.leading_stocks&&<div className="theme-tags" style={{marginTop:"12px",paddingTop:"12px",borderTop:"1px solid var(--div)",display:"flex",gap:"8px",flexWrap:"wrap"}}>
           {t.leading_stocks.split(",").map((s,j)=>{const parts=s.trim().split(":");const nm=parts[0];const cd=parts[1]||"";const pct=parts[2]||"";const pctVal=parseFloat(pct)||0;const pctClr=pctVal<0?"#ef4444":pctVal>0?"#22c55e":"var(--text-sub)";const validCode=cd&&/^\d{6}$/.test(cd);return validCode?<a key={j} href={`https://finance.naver.com/item/main.naver?code=${cd}`} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} className="theme-tag" style={{padding:"5px 11px",background:"var(--badge-bg)",borderRadius:"6px",fontSize:"15px",color:"var(--text-sub)",fontWeight:500,textDecoration:"none",cursor:"pointer",transition:"all .15s",border:"1px solid transparent"}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(249,115,22,0.12)";e.currentTarget.style.color="#f97316";e.currentTarget.style.borderColor="rgba(249,115,22,0.3)"}} onMouseLeave={e=>{e.currentTarget.style.background="var(--badge-bg)";e.currentTarget.style.color="var(--text-sub)";e.currentTarget.style.borderColor="transparent"}}>{nm}{pct&&<span style={{marginLeft:"5px",color:pctClr,fontSize:"13px",fontWeight:600}}>{pct}</span>}</a>:<span key={j} className="theme-tag" style={{padding:"5px 11px",background:"var(--badge-bg)",borderRadius:"6px",fontSize:"15px",color:"var(--text-sub)",fontWeight:500}}>{nm}{pct&&<span style={{marginLeft:"5px",color:pctClr,fontSize:"13px",fontWeight:600}}>{pct}</span>}</span>})}
+        </div>}
+        {anOpen&&analysis&&<div style={{marginTop:"16px",paddingTop:"16px",borderTop:"1px solid var(--div2)",animation:"fadeUp .3s ease both"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"12px",flexWrap:"wrap",gap:"8px"}}>
+            <div style={{display:"flex",alignItems:"center",gap:"8px"}}><span style={{fontSize:"17px"}}>🔬</span><span style={{fontWeight:700,fontSize:"16px",color:"var(--text)"}}>테마 심층 분석</span></div>
+            {ol&&<span style={{padding:"4px 12px",borderRadius:"14px",fontSize:"13px",fontWeight:600,color:ol.c,background:`${ol.c}18`,border:`1px solid ${ol.c}30`}}>{ol.e} {ol.l}</span>}
+          </div>
+          <div style={{fontSize:"15px",lineHeight:1.8,color:"var(--text-sub)",whiteSpace:"pre-line"}}>{analysis.analysis}</div>
+          <div style={{marginTop:"12px",fontSize:"12px",color:"var(--dimmer)",fontStyle:"italic"}}>AI 분석 · 장 마감 후 생성 · 투자 참고용</div>
         </div>}
       </Box>
     </div>;
@@ -453,7 +465,7 @@ function AllThemeItem({t,displayRank}){
     </div>}
   </Box>;
 }
-function TabThemes({thm,allThm,loading}){
+function TabThemes({thm,allThm,thmAn,loading}){
   const[q,setQ]=useState("");
   const[showAll,setShowAll]=useState(false);
   if(loading)return <Loader/>;if(!thm.length&&!allThm.length)return <Empty msg="테마 데이터 없음"/>;
@@ -470,7 +482,7 @@ function TabThemes({thm,allThm,loading}){
     </div>
     {(isSearching?filteredTop.length>0:true)&&<div>
       <h2 style={{fontSize:"22px",fontWeight:700,marginBottom:"20px"}}><span style={{color:"#f97316"}}>◈</span> 인기 테마 TOP 10 {isSearching&&<span style={{fontSize:"15px",color:"var(--muted)",fontWeight:400}}>({filteredTop.length}건)</span>}</h2>
-      <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr)",gap:"12px"}}>{(isSearching?filteredTop:thm).map((t,i)=><ThemeItem key={t.name||i} t={t} i={i}/>)}</div>
+      <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr)",gap:"12px"}}>{(isSearching?filteredTop:thm).map((t,i)=><ThemeItem key={t.name||i} t={t} i={i} analysis={thmAn?.[t.name]}/>)}</div>
     </div>}
     {isSearching&&filteredTop.length===0&&filteredAll.length===0&&<Empty msg={`"${q}" 관련 테마 없음`}/>}
     {allThm.length>0&&<div style={{marginTop:"28px"}}>
@@ -561,6 +573,7 @@ function App(){
   const[thm,setThm]=useState([]);
   const[allThm,setAllThm]=useState([]);
   const[aiSum,setAiSum]=useState(null);
+  const[thmAn,setThmAn]=useState({});
   const[lastUp,setLastUp]=useState(null);
   const[theme,setTheme]=useState(()=>{try{return localStorage.getItem("sp-theme")||"dark"}catch(e){return "dark"}});
 
@@ -571,8 +584,8 @@ function App(){
 
   useEffect(()=>{(async()=>{
     setLoading(true);
-    const[a,b,c,d,e,f,g]=await Promise.all([db("market_index","order=id"),db("issue_stocks","order=rank&limit=15"),db("news","order=created_at.desc&limit=20"),db("sectors","order=id"),db("themes","order=rank&limit=10"),db("ai_summary","order=id.desc&limit=1"),db("all_themes","order=rank")]);
-    if(a?.length)setIdx(a);if(b?.length)setStk(b);if(c?.length){setNws(c);setLastUp(c[0].date)}if(d?.length)setSec(d);if(e?.length)setThm(e);if(f?.length)setAiSum(f[0]);if(g?.length)setAllThm(g);
+    const[a,b,c,d,e,f,g,h]=await Promise.all([db("market_index","order=id"),db("issue_stocks","order=rank&limit=15"),db("news","order=created_at.desc&limit=20"),db("sectors","order=id"),db("themes","order=rank&limit=10"),db("ai_summary","order=id.desc&limit=1"),db("all_themes","order=rank"),db("theme_analysis","order=id")]);
+    if(a?.length)setIdx(a);if(b?.length)setStk(b);if(c?.length){setNws(c);setLastUp(c[0].date)}if(d?.length)setSec(d);if(e?.length)setThm(e);if(f?.length)setAiSum(f[0]);if(g?.length)setAllThm(g);if(h?.length){const m={};h.forEach(ta=>{m[ta.theme_name]=ta});setThmAn(m)}
     setLoading(false);
   })()},[]);
 
@@ -597,7 +610,7 @@ function App(){
     <main className="main-wrap" style={{maxWidth:1440,margin:"0 auto",padding:"22px 40px 60px"}}>
       {tab==="overview"&&<TabOverview idx={idx} stk={stk} nws={nws} sec={sec} loading={loading}/>}
       {tab==="issues"&&<TabStocks stk={stk} nws={nws} loading={loading}/>}
-      {tab==="themes"&&<TabThemes thm={thm} allThm={allThm} loading={loading}/>}
+      {tab==="themes"&&<TabThemes thm={thm} allThm={allThm} thmAn={thmAn} loading={loading}/>}
       {tab==="news"&&<TabNews nws={nws} loading={loading}/>}
       {tab==="ai"&&<TabAI aiSum={aiSum} loading={loading}/>}
     </main>

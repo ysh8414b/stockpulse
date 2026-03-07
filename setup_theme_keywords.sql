@@ -87,3 +87,25 @@ CREATE INDEX IF NOT EXISTS idx_stock_analysis_date ON stock_analysis(date);
 ALTER TABLE stock_analysis ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow service role full access" ON stock_analysis
     FOR ALL USING (true) WITH CHECK (true);
+
+
+-- =============================================
+-- theme_analysis 테이블 생성
+-- 인기 테마 TOP 10 AI 심층 분석
+-- =============================================
+
+CREATE TABLE IF NOT EXISTS theme_analysis (
+    id BIGSERIAL PRIMARY KEY,
+    date DATE NOT NULL,
+    theme_name TEXT NOT NULL,
+    analysis TEXT NOT NULL,
+    outlook TEXT DEFAULT 'neutral',   -- positive / neutral / negative
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(date, theme_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_theme_analysis_date ON theme_analysis(date);
+
+ALTER TABLE theme_analysis ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow service role full access" ON theme_analysis
+    FOR ALL USING (true) WITH CHECK (true);

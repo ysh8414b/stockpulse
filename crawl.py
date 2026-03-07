@@ -2348,6 +2348,145 @@ JSON 형식:
         return None
 
 
+def generate_theme_analysis(themes, sectors, news, indices):
+    """인기 테마 TOP 10 심층 분석 생성 (Groq AI)"""
+    if not GROQ_API_KEY:
+        log("  ⚠️ GROQ_API_KEY 미설정 - 테마 분석 건너뜀")
+        return None
+
+    if not themes:
+        log("  ⚠️ 테마 데이터 없음 - 테마 분석 건너뜀")
+        return None
+
+    top10 = themes[:10]
+    log(f"  🔥 테마 심층 분석 시작 (TOP {len(top10)}개)")
+
+    # 테마별 컨텍스트 구성
+    theme_blocks = []
+    for t in top10:
+        name = t.get("name", "")
+        pct = t.get("change_pct", "0%")
+        up = t.get("up_count", 0)
+        dn = t.get("down_count", 0)
+        flat = t.get("flat_count", 0)
+        stocks = t.get("leading_stocks", "")
+
+        # 관련 뉴스 제목 추출
+        news_titles = []
+        nl = t.get("news_list")
+        if nl:
+            try:
+                parsed_nl = json.loads(nl) if isinstance(nl, str) else nl
+                news_titles = [n.get("title", "") for n in (parsed_nl or []) if n.get("title")]
+            except Exception:
+                pass
+        if not news_titles and t.get("related_news"):
+            news_titles = [t["related_news"]]
+
+        block = f"""[{name}] 등락률: {pct} | 상승 {up} · 보합 {flat} · 하락 {dn}
+대장주: {stocks}
+관련 뉴스: {' / '.join(news_titles[:5]) if news_titles else '없음'}"""
+        theme_blocks.append(block)
+
+    # 시장 맥락
+    market_parts = []
+    if indices:
+        for idx in indices:
+            nm = idx.get("name", "")
+            if nm in ["코스피", "코스닥", "USD/KRW"]:
+                market_parts.append(f"{nm} {idx.get('value','')} ({idx.get('change_pct','')})")
+    if sectors:
+        up_s = [s["name"] for s in sectors if s.get("trend") == "up"][:5]
+        dn_s = [s["name"] for s in sectors if s.get("trend") == "down"][:5]
+        if up_s:
+            market_parts.append(f"상승 섹터: {', '.join(up_s)}")
+        if dn_s:
+            market_parts.append(f"하락 섹터: {', '.join(dn_s)}")
+    market_ctx = " | ".join(market_parts)
+
+    prompt = f"""당신은 한국 주식시장 테마 전문 애널리스트입니다.
+오늘 인기 테마 TOP 10에 대해 각각 심층 분석을 작성해주세요.
+
+[오늘 시장 맥락]
+{market_ctx}
+
+[인기 테마 TOP 10]
+{"---".join(theme_blocks)}
+
+[분석 프레임워크]
+각 테마에 대해 아래 4가지를 자연스럽게 통합하여 서술:
+1. 촉발 요인: 오늘 이 테마가 부각된 구체적 원인 (정책 발표, 뉴스, 지정학, 실적, 글로벌 이벤트 등)
+2. 근본 배경: 표면적 뉴스 너머의 구조적·산업적 흐름 (글로벌 트렌드, 산업 사이클, 규제 변화 등)
+3. 수혜·리스크 종목: 대장주 중 가장 수혜를 받는 종목과 주의할 종목 구체적 언급
+4. 투자자 대응: 진입 타이밍, 주의할 리스크, 테마 지속성(단기 1~3일 / 중기 1~4주 / 장기 1개월+) 판단
+
+[출력 규칙]
+- 한국어로 작성
+- 각 테마 분석: 1000~2000자 (4개 항목을 자연스럽게 통합)
+- 항목 번호(1. 2. 3. 4.)를 붙여서 구분하되 자연스럽게 이어서 서술
+- "관망" 같은 애매한 표현 금지. 구체적 판단과 근거 제시
+- 숫자와 종목명을 적극 활용하여 구체적으로 서술
+- 뉴스를 인용할 때 정확하게 인용
+- outlook: 이 테마의 향후 전망 (positive=추가 상승, neutral=현 수준, negative=하락 전환 우려)
+
+JSON 형식:
+{{
+  "themes": [
+    {{
+      "theme_name": "테마명 (입력과 정확히 동일하게)",
+      "analysis": "4개 항목 통합 분석 본문",
+      "outlook": "positive|neutral|negative"
+    }}
+  ],
+  "date": "{TODAY}"
+}}"""
+
+    try:
+        resp = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "llama-3.3-70b-versatile",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.4,
+                "max_tokens": 4096,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=60,
+        )
+
+        if resp.status_code != 200:
+            log(f"  ⚠️ Groq 테마 분석 오류: {resp.status_code} - {resp.text[:200]}")
+            return None
+
+        result = resp.json()
+        content = result["choices"][0]["message"]["content"]
+        parsed = json.loads(content)
+
+        analyzed = parsed.get("themes", [])
+        if analyzed:
+            log(f"  🔥 테마 분석 생성 완료 ({len(analyzed)}개)")
+            rows = []
+            for a in analyzed:
+                tn = a.get("theme_name", "")
+                log(f"     • {tn} — {a.get('outlook', 'neutral')}")
+                rows.append({
+                    "date": TODAY,
+                    "theme_name": tn,
+                    "analysis": a.get("analysis", ""),
+                    "outlook": a.get("outlook", "neutral"),
+                })
+            return rows
+        return None
+
+    except Exception as e:
+        log(f"  ⚠️ 테마 분석 생성 실패: {e}")
+        return None
+
+
 # ─────────────────────────────────────────
 # 1. 뉴스 수집 (네이버 검색 API)
 # ─────────────────────────────────────────
@@ -3152,6 +3291,12 @@ def main():
         log("  📊 일간 종목 분석 생성 — Groq 호출")
         stock_analysis = generate_stock_analysis(stocks, themes, sectors, news, krx_data)
 
+    # ─── 테마 심층 분석 (close 모드에서만) ───
+    theme_analysis = None
+    if ai_mode == "close" and themes:
+        log("  🔥 테마 심층 분석 생성 — Groq 호출")
+        theme_analysis = generate_theme_analysis(themes, sectors, news, indices)
+
     # ─── Supabase에 저장 ───
     log("")
     log("💾 Supabase에 데이터 저장 중...")
@@ -3217,7 +3362,13 @@ def main():
         result = supabase_request("POST", "stock_analysis", data=[stock_analysis])
         log(f"  📊 종목 분석 저장 {'✅' if result else '❌'}")
 
-    # 365일 초과 AI 요약 정리 + 90일 초과 종목 분석 정리 (close 모드에서만)
+    # 테마 분석 저장 (close 모드에서만)
+    if theme_analysis:
+        supabase_request("DELETE", "theme_analysis", params={"date": f"eq.{TODAY}"})
+        result = supabase_request("POST", "theme_analysis", data=theme_analysis)
+        log(f"  🔥 테마 분석 {len(theme_analysis)}개 저장 {'✅' if result else '❌'}")
+
+    # 365일 초과 AI 요약 정리 + 90일 초과 종목/테마 분석 정리 (close 모드에서만)
     if ai_mode == "close":
         from datetime import datetime, timedelta
         cutoff_ai = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
@@ -3225,7 +3376,8 @@ def main():
         log(f"  🧹 {cutoff_ai} 이전 AI 요약 정리")
         cutoff_sa = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
         supabase_request("DELETE", "stock_analysis", params={"date": f"lt.{cutoff_sa}"})
-        log(f"  🧹 {cutoff_sa} 이전 종목 분석 정리")
+        supabase_request("DELETE", "theme_analysis", params={"date": f"lt.{cutoff_sa}"})
+        log(f"  🧹 {cutoff_sa} 이전 종목/테마 분석 정리")
 
     log("")
     log("=" * 50)

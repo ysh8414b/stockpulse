@@ -172,6 +172,19 @@
 - about.html에 "일간 종목 리포트" 기능 카드 추가
 - index.html TabStocks 하단에 "상세 종목 리포트 보기" 링크, 푸터에 "종목 리포트" 링크 추가
 
+### 테마 심층 분석 (2026-03-07)
+- 인기 테마 TOP 10 클릭 시 AI 심층 분석 드롭다운 표시
+- crawl.py `generate_theme_analysis()`: close 모드(15:35)에서 Groq AI로 생성
+  - 4축 분석: 촉발 요인 / 근본 배경 / 수혜·리스크 종목 / 투자자 대응
+  - 테마당 1000~2000자, outlook(positive/neutral/negative)
+  - TOP 10 테마 전체를 하나의 API 콜로 처리
+- Supabase `theme_analysis` 테이블 (date, theme_name, analysis, outlook) — UNIQUE(date, theme_name)
+- 90일 초과 데이터 자동 정리 (stock_analysis와 동일)
+- index.html: ThemeItem에 `anOpen` state, 클릭-확장 UI (이슈 종목 상세와 동일 패턴)
+  - outlook 뱃지 (🟢긍정/🔴부정/⚪중립)
+  - 분석 없으면 기존과 동일하게 동작 (graceful degradation)
+  - `thmAn` state: `{theme_name: analysis_obj}` map으로 O(1) 조회
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
