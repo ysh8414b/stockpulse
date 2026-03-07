@@ -523,24 +523,24 @@ function TabAI({aiSum,loading}){
     return sections;
   };
   return <div className="fade-up">
-    <h2 style={{fontSize:"20px",fontWeight:700,marginBottom:"4px"}}><span style={{color:"#06b6d4"}}>⬡</span> AI 시장 브리핑</h2>
-    <p style={{color:"var(--muted)",fontSize:"15px",marginBottom:"22px"}}>Groq AI 기반 매크로 전략 분석 · 크롤링 시 자동 갱신</p>
+    <h2 style={{fontSize:"22px",fontWeight:700,marginBottom:"4px"}}><span style={{color:"#06b6d4"}}>⬡</span> AI 시장 브리핑</h2>
+    <p style={{color:"var(--muted)",fontSize:"16px",marginBottom:"22px"}}>Groq AI 기반 매크로 전략 분석 · 크롤링 시 자동 갱신</p>
     {aiSum?<div>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"16px"}}>
         <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
-          <span style={{width:36,height:36,borderRadius:"10px",background:"rgba(6,182,212,0.12)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"20px"}}>⬡</span>
-          <div><div style={{fontWeight:700,fontSize:"17px"}}>오늘의 시장 브리핑</div><div style={{color:"var(--muted)",fontSize:"13px",marginTop:"2px"}}>{aiSum.date} {aiSum.generated_time?aiSum.generated_time+" ":""}기준</div></div>
+          <span style={{width:40,height:40,borderRadius:"10px",background:"rgba(6,182,212,0.12)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"22px"}}>⬡</span>
+          <div><div style={{fontWeight:700,fontSize:"19px"}}>오늘의 시장 브리핑</div><div style={{color:"var(--muted)",fontSize:"14px",marginTop:"2px"}}>{aiSum.date} {aiSum.generated_time?aiSum.generated_time+" ":""}기준</div></div>
         </div>
-        {mood&&<span style={{padding:"5px 14px",borderRadius:"20px",fontSize:"14px",fontWeight:600,background:`rgba(${mood.color==="#22c55e"?"34,197,94":mood.color==="#ef4444"?"239,68,68":"107,114,128"},0.1)`,color:mood.color,display:"flex",alignItems:"center",gap:"5px"}}>{mood.emoji} {mood.label}</span>}
+        {mood&&<span style={{padding:"6px 16px",borderRadius:"20px",fontSize:"15px",fontWeight:600,background:`rgba(${mood.color==="#22c55e"?"34,197,94":mood.color==="#ef4444"?"239,68,68":"107,114,128"},0.1)`,color:mood.color,display:"flex",alignItems:"center",gap:"5px"}}>{mood.emoji} {mood.label}</span>}
       </div>
       <div style={{display:"grid",gap:"12px"}}>{parseSections(aiSum.summary).map((sec,si)=>{
         const meta=getSecMeta(sec.title);
         const isConclusion=sec.title.includes("결론");
         return <Box key={si} className="ai-section" style={{padding:isConclusion?"20px 22px":"18px 22px",borderLeft:`3px solid rgba(${meta.clr},0.5)`,background:isConclusion?`rgba(${meta.clr},0.04)`:"transparent"}} hover={false}>
-          {sec.title&&<div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"10px"}}><span style={{fontSize:"17px"}}>{meta.icon}</span><span style={{fontWeight:700,fontSize:"16px",color:"var(--text)"}}>{sec.title}</span></div>}
-          <div style={{fontSize:"15px",lineHeight:1.8,color:"var(--text-sub)"}}>{sec.lines.map((l,li)=>{
+          {sec.title&&<div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"12px"}}><span style={{fontSize:"19px"}}>{meta.icon}</span><span style={{fontWeight:700,fontSize:"18px",color:"var(--text)"}}>{sec.title}</span></div>}
+          <div style={{fontSize:"16.5px",lineHeight:1.85,color:"var(--text-sub)",letterSpacing:"0.01em"}}>{sec.lines.map((l,li)=>{
             const isArrow=l.includes("→");const isBullet=/^[↘↗📌👉·\-\*]/.test(l);
-            return <div key={li} style={{marginBottom:li<sec.lines.length-1?"6px":"0",paddingLeft:isBullet?"4px":"0",color:isArrow?"var(--text)":"inherit",fontWeight:isArrow?500:"normal"}}>{l}</div>
+            return <div key={li} style={{marginBottom:li<sec.lines.length-1?"7px":"0",paddingLeft:isBullet?"4px":"0",color:isArrow?"var(--text)":"inherit",fontWeight:isArrow?500:"normal"}}>{l}</div>
           })}</div>
         </Box>
       })}</div>
@@ -549,8 +549,8 @@ function TabAI({aiSum,loading}){
       <div style={{fontWeight:600,fontSize:"17px",color:"var(--muted)",marginBottom:"6px"}}>AI 브리핑 준비 중</div>
       <div style={{fontSize:"14px",color:"var(--dim)"}}>다음 크롤링 시 자동 생성됩니다</div>
     </Box>}
-    <div style={{marginTop:"20px",padding:"14px 18px",background:"rgba(245,158,11,0.04)",border:"1px solid rgba(245,158,11,0.1)",borderRadius:"10px",fontSize:"14px",color:"#b4940f",lineHeight:1.6}}>⚠️ 본 AI 분석은 정보 제공 목적입니다. 투자 판단은 본인 책임이며 투자 추천/권유가 아닙니다.</div>
-    <a href="archive.html" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:"8px",marginTop:"16px",padding:"14px",border:"1px solid var(--card-bd)",borderRadius:"10px",color:"var(--muted)",fontSize:"14px",fontWeight:500,transition:"all .2s"}} onMouseEnter={e=>{e.currentTarget.style.borderColor="rgba(6,182,212,0.3)";e.currentTarget.style.color="#06b6d4";e.currentTarget.style.background="rgba(6,182,212,0.04)"}} onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--card-bd)";e.currentTarget.style.color="var(--muted)";e.currentTarget.style.background="transparent"}}>과거 AI 브리핑 아카이브 (1년치) →</a>
+    <div style={{marginTop:"20px",padding:"14px 18px",background:"rgba(245,158,11,0.04)",border:"1px solid rgba(245,158,11,0.1)",borderRadius:"10px",fontSize:"15px",color:"#b4940f",lineHeight:1.7}}>⚠️ 본 AI 분석은 정보 제공 목적입니다. 투자 판단은 본인 책임이며 투자 추천/권유가 아닙니다.</div>
+    <a href="archive.html" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:"8px",marginTop:"16px",padding:"14px",border:"1px solid var(--card-bd)",borderRadius:"10px",color:"var(--muted)",fontSize:"15px",fontWeight:500,transition:"all .2s"}} onMouseEnter={e=>{e.currentTarget.style.borderColor="rgba(6,182,212,0.3)";e.currentTarget.style.color="#06b6d4";e.currentTarget.style.background="rgba(6,182,212,0.04)"}} onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--card-bd)";e.currentTarget.style.color="var(--muted)";e.currentTarget.style.background="transparent"}}>과거 AI 브리핑 아카이브 (1년치) →</a>
   </div>;
 }
 
