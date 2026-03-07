@@ -2634,7 +2634,7 @@ def crawl_themes(krx_data, news_titles=None, theme_map=None):
 
                 cp = d["change_pct"]
                 changes.append(cp)
-                theme_stocks.append({"name": d["name"], "code": code, "change_pct": cp})
+                theme_stocks.append({"name": d["name"], "code": code, "change_pct": cp, "trading_value": d.get("trading_value", 0)})
 
             if len(theme_stocks) < 3:
                 log(f"  ⏭️ 종목 부족으로 테마 스킵: {theme_def['name']} ({len(theme_stocks)}개)")
@@ -2652,7 +2652,12 @@ def crawl_themes(krx_data, news_titles=None, theme_map=None):
             else:
                 trend, pct_str = "flat", "0.00%"
 
-            theme_stocks.sort(key=lambda x: abs(x["change_pct"]), reverse=True)
+            # 복합 점수: 등락률 절대값 50% + 거래대금 50% (정규화)
+            max_abs_chg = max((abs(ts["change_pct"]) for ts in theme_stocks), default=1) or 1
+            max_tv = max((ts["trading_value"] for ts in theme_stocks), default=1) or 1
+            for ts in theme_stocks:
+                ts["_score"] = (abs(ts["change_pct"]) / max_abs_chg) * 50 + (ts["trading_value"] / max_tv) * 50
+            theme_stocks.sort(key=lambda x: x["_score"], reverse=True)
             leaders = []
             for ts in theme_stocks[:10]:
                 cp = ts["change_pct"]
@@ -2685,7 +2690,7 @@ def crawl_themes(krx_data, news_titles=None, theme_map=None):
                     continue
                 cp = d["change_pct"]
                 changes.append(cp)
-                theme_stocks.append({"name": d["name"], "code": code, "change_pct": cp})
+                theme_stocks.append({"name": d["name"], "code": code, "change_pct": cp, "trading_value": d.get("trading_value", 0)})
 
             avg_change = sum(changes) / len(changes) if changes else 0.0
             up_count = sum(1 for c in changes if c > 0.005)
@@ -2699,7 +2704,12 @@ def crawl_themes(krx_data, news_titles=None, theme_map=None):
             else:
                 trend, pct_str = "flat", "0.00%"
 
-            theme_stocks.sort(key=lambda x: abs(x["change_pct"]), reverse=True)
+            # 복합 점수: 등락률 절대값 50% + 거래대금 50% (정규화)
+            max_abs_chg = max((abs(ts["change_pct"]) for ts in theme_stocks), default=1) or 1
+            max_tv = max((ts["trading_value"] for ts in theme_stocks), default=1) or 1
+            for ts in theme_stocks:
+                ts["_score"] = (abs(ts["change_pct"]) / max_abs_chg) * 50 + (ts["trading_value"] / max_tv) * 50
+            theme_stocks.sort(key=lambda x: x["_score"], reverse=True)
             leaders = []
             for ts in theme_stocks[:10]:
                 cp = ts["change_pct"]
@@ -2748,7 +2758,7 @@ def build_all_themes_data(krx_data, theme_map, top_theme_names):
 
             cp = d["change_pct"]
             changes.append(cp)
-            theme_stocks.append({"name": d["name"], "code": code, "change_pct": cp})
+            theme_stocks.append({"name": d["name"], "code": code, "change_pct": cp, "trading_value": d.get("trading_value", 0)})
 
         if len(theme_stocks) < 3:
             continue
@@ -2765,7 +2775,12 @@ def build_all_themes_data(krx_data, theme_map, top_theme_names):
         else:
             trend, pct_str = "flat", "0.00%"
 
-        theme_stocks.sort(key=lambda x: abs(x["change_pct"]), reverse=True)
+        # 복합 점수: 등락률 절대값 50% + 거래대금 50% (정규화)
+        max_abs_chg = max((abs(ts["change_pct"]) for ts in theme_stocks), default=1) or 1
+        max_tv = max((ts["trading_value"] for ts in theme_stocks), default=1) or 1
+        for ts in theme_stocks:
+            ts["_score"] = (abs(ts["change_pct"]) / max_abs_chg) * 50 + (ts["trading_value"] / max_tv) * 50
+        theme_stocks.sort(key=lambda x: x["_score"], reverse=True)
         leaders = []
         for ts in theme_stocks[:10]:
             cp = ts["change_pct"]
