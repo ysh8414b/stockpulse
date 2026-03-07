@@ -98,17 +98,19 @@
       .idx-value{font-size:16px!important}
       .idx-label{font-size:11px!important}
       .grid-sector{grid-template-columns:1fr!important}
-      /* Stock table: 카드 레이아웃 */
-      .stock-row{display:flex!important;flex-wrap:wrap!important;padding:14px 16px!important;gap:4px 8px!important;font-size:15px!important}
+      /* Stock table: 모바일 카드 레이아웃 */
+      .stock-row{display:grid!important;grid-template-columns:32px 1fr auto!important;grid-template-rows:auto auto auto auto!important;padding:12px 16px!important;gap:2px 10px!important;font-size:15px!important;align-items:center!important}
       .stock-row.stock-row-header{display:none!important}
-      .stock-col-rank{order:0;flex-shrink:0;min-width:28px}
-      .stock-col-name{order:1;flex:1;min-width:0;font-size:16px!important;font-weight:600!important}
-      .stock-col-price{order:2;text-align:right!important;flex-shrink:0;font-size:16px!important;font-weight:700!important}
-      .stock-col-change{order:3;margin-left:36px}
-      .stock-col-volume{order:4;margin-left:auto;font-size:13px!important;color:var(--muted)}
-      .stock-col-reason{order:5;width:100%!important;font-size:13px!important;padding-left:0!important;margin-top:2px}
-      .stock-col-tags{order:6;width:100%!important;margin-top:4px}
-      .stock-detail{padding:12px 16px!important;flex-direction:column!important;gap:12px!important}
+      .stock-col-rank{grid-row:1/3;align-self:center}
+      .stock-col-name{grid-column:2;grid-row:1;font-size:15px!important;font-weight:600!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+      .stock-col-change{grid-column:3;grid-row:1;text-align:right!important;font-size:14px!important;white-space:nowrap}
+      .stock-col-price{grid-column:2;grid-row:2;font-size:13px!important;font-weight:500!important;text-align:left!important;color:var(--text-sub)!important}
+      .stock-col-volume{grid-column:3;grid-row:2;text-align:right!important;font-size:12px!important;color:var(--muted)}
+      .stock-col-reason{grid-column:1/4;grid-row:3;font-size:12px!important;padding-left:0!important;margin-top:4px;line-height:1.4!important}
+      .stock-col-tags{grid-column:1/4;grid-row:4;margin-top:4px}
+      .stock-detail{padding:12px 16px!important}
+      .stock-detail .stock-3axis{grid-template-columns:1fr!important}
+      .stock-detail .stock-investor>div{min-width:0!important;flex:1!important}
       .card-pad{padding:14px!important}
       /* Theme */
       .theme-layout{flex-wrap:wrap!important;gap:10px!important}
@@ -294,7 +296,7 @@ function TabStocks({stk,nws,loading}){
             <div><div style={{color:"var(--muted)",fontSize:"13px",fontWeight:600,marginBottom:"8px"}}>🏷️ 테마</div><div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>{(s.tags||[]).map(t=><Tag key={t} color="cyan">{t}</Tag>)}</div></div>
             <div style={{textAlign:"right"}}><div style={{color:"var(--muted)",fontSize:"13px",fontWeight:600,marginBottom:"8px"}}>💰 거래대금</div><div style={{fontSize:"16px",fontWeight:700,color:"var(--text)"}}>{s.volume}</div></div>
           </div>
-          {(fNet!==0||iNet!==0)&&<div style={{display:"flex",gap:"12px",marginBottom:"16px",flexWrap:"wrap"}}>
+          {(fNet!==0||iNet!==0)&&<div className="stock-investor" style={{display:"flex",gap:"12px",marginBottom:"16px",flexWrap:"wrap"}}>
             <div style={{flex:1,minWidth:100,padding:"10px 14px",background:"var(--card)",borderRadius:"8px",border:"1px solid var(--div3)"}}>
               <div style={{color:"var(--muted)",fontSize:"12px",marginBottom:"4px"}}>🌍 외국인</div>
               <div style={{fontSize:"15px",fontWeight:700,color:fNet>0?"#22c55e":fNet<0?"#ef4444":"var(--dim)"}}>{fNet>0?"+":""}{fNet.toLocaleString()}억</div>
@@ -310,7 +312,7 @@ function TabStocks({stk,nws,loading}){
             </div>
           </div>}
           {/* 3축 분석 카드 */}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"10px",marginBottom:"16px"}}>{[
+          <div className="stock-3axis" style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"10px",marginBottom:"16px"}}>{[
             {icon:"🔥",title:"재료",label:catalystLabel,color:catalystColor,detail:catalystDetail},
             {icon:"💰",title:"수급",label:supplyLabel,color:supplyColor,detail:supplyDetail},
             {icon:"🎯",title:"모멘텀",label:momLabel,color:momColor,detail:momDetail}
