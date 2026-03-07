@@ -1604,6 +1604,263 @@ def detect_themes_with_ai(news_titles, theme_map=None):
         return None
 
 
+# ─────────────────────────────────────────
+# 신규 테마 자동 발굴 (Groq AI) — 일 1회
+# ─────────────────────────────────────────
+NEW_THEME_CACHE_FILE = "new_theme_cache.json"
+
+
+def _should_run_new_theme_discovery():
+    """캐시 파일을 확인하여 신규 테마 발굴을 실행할지 결정 (1일 경과 시 실행)"""
+    if not GROQ_API_KEY:
+        return False
+    try:
+        with open(NEW_THEME_CACHE_FILE, "r", encoding="utf-8") as f:
+            cache = json.load(f)
+        cached_date = cache.get("date", "")
+        if cached_date:
+            from datetime import datetime as _dt
+            diff = (_dt.strptime(TODAY, "%Y-%m-%d") - _dt.strptime(cached_date, "%Y-%m-%d")).days
+            if diff < 1:
+                log(f"  ℹ️ 신규 테마 캐시 유효 ({cached_date}, 오늘 이미 실행) - 발굴 스킵")
+                return False
+    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+        pass
+    return True
+
+
+def _is_duplicate_theme(new_name, new_keywords, existing_themes):
+    """신규 테마가 기존 테마와 중복되는지 확인"""
+    new_name_lower = new_name.lower().replace(" ", "")
+
+    for existing_name, existing_kws in existing_themes.items():
+        existing_lower = existing_name.lower().replace(" ", "")
+
+        # 1) 이름 부분 매칭
+        if new_name_lower in existing_lower or existing_lower in new_name_lower:
+            return True
+
+        # 2) 키워드 겹침률 50% 이상
+        if new_keywords and existing_kws:
+            new_set = set(k.lower() for k in new_keywords)
+            existing_set = set(k.lower() for k in existing_kws)
+            overlap = len(new_set & existing_set)
+            if overlap > 0 and overlap / len(new_set) >= 0.5:
+                return True
+
+    return False
+
+
+def _match_stocks_for_new_theme(keywords, krx_data):
+    """신규 테마의 키워드로 KRX 데이터 + 기업개요 캐시에서 관련 종목 매칭"""
+    MIN_MARKET_CAP = 300_000_000_000  # 시총 3000억+
+    matched = {}
+
+    # 1) KRX 종목명 매칭
+    for code, d in krx_data.items():
+        if d.get("market_cap", 0) < MIN_MARKET_CAP:
+            continue
+        if code[-1] in ("5", "7", "8", "9") and "우" in d.get("name", ""):
+            continue
+        name = d.get("name", "")
+        for kw in keywords:
+            if kw in name:
+                matched[code] = {"code": code, "name": name, "market": d.get("market", "")}
+                break
+
+    # 2) 기업개요 캐시에서 키워드 검색
+    if os.path.exists(THEME_MAP_FILE):
+        try:
+            with open(THEME_MAP_FILE, "r", encoding="utf-8") as f:
+                cache_data = json.load(f)
+            # theme_stock_map.json의 stocks에는 code → [theme list] 매핑이 있지만
+            # 기업개요 텍스트는 저장되지 않으므로, 기존 theme_to_stocks에서 종목 정보를 활용
+            # 대신 모든 테마 종목을 순회하며 종목명에 키워드 포함 여부 확인
+            all_stocks_in_map = set()
+            for theme_stocks in cache_data.get("theme_to_stocks", {}).values():
+                for s in theme_stocks:
+                    code = s.get("code", "")
+                    if code and code not in matched:
+                        all_stocks_in_map.add((code, s.get("name", ""), s.get("market", "")))
+
+            for code, name, market in all_stocks_in_map:
+                if code in matched:
+                    continue
+                if code in krx_data and krx_data[code].get("market_cap", 0) < MIN_MARKET_CAP:
+                    continue
+                for kw in keywords:
+                    if kw in name:
+                        matched[code] = {"code": code, "name": name, "market": market}
+                        break
+        except Exception:
+            pass
+
+    return list(matched.values())
+
+
+def discover_new_themes(news_titles, krx_data, theme_map):
+    """일 1회: AI로 기존 테마 목록에 없는 신규 트렌드 테마를 발굴하여 DB에 등록"""
+    if not _should_run_new_theme_discovery():
+        return
+
+    log("  🔍 신규 테마 자동 발굴 시작 (일 1회)...")
+
+    try:
+        existing_themes = list(NEWS_THEME_KEYWORDS.keys())
+        existing_list_text = ", ".join(existing_themes)
+        news_text = "\n".join(f"- {t}" for t in news_titles[:50])
+
+        prompt = f"""너는 국내 증시 테마 분석 전문가다.
+
+## 목표:
+아래 최신 뉴스 헤드라인을 분석하여, 현재 기존 테마 목록에 없는 **새로운 투자 테마**를 최대 5개 발굴하라.
+기존 테마를 반복하거나 변형하지 마라. 완전히 새로운 테마만 제안하라.
+
+## 오늘의 뉴스 헤드라인:
+{news_text}
+
+## 기존 테마 목록 (이 목록에 있는 테마는 제외):
+{existing_list_text}
+
+## 출력 형식 (JSON):
+{{
+  "new_themes": [
+    {{
+      "name": "테마명 (2~5글자, 간결하게)",
+      "keywords": ["키워드1", "키워드2", "키워드3", "키워드4", "키워드5"],
+      "reason": "이 테마가 주목받는 이유 (1문장)"
+    }}
+  ]
+}}
+
+## 규칙:
+1. 기존 테마 목록과 중복되는 테마 절대 금지 (유사 변형도 금지)
+2. 한국 증시와 관련된 투자 테마만 선정
+3. 테마당 검색용 키워드 최소 4개 이상 제시 (종목명, 기술명, 산업 용어 등)
+4. 뉴스에서 실제로 언급된 트렌드 기반으로만 선정
+5. 너무 넓은 테마(예: "경제", "정치") 금지 — 구체적 산업/기술 단위로
+6. 발굴할 테마가 없으면 빈 배열 반환: {{"new_themes": []}}
+7. 최대 5개까지만"""
+
+        resp = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "llama-3.3-70b-versatile",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.4,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=30,
+        )
+
+        if resp.status_code != 200:
+            log(f"  ⚠️ 신규 테마 발굴 API 오류: {resp.status_code}")
+            return
+
+        result = resp.json()
+        content = result["choices"][0]["message"]["content"]
+        parsed = json.loads(content)
+
+        raw_themes = parsed.get("new_themes", [])
+        if not raw_themes:
+            log("  ℹ️ AI가 신규 테마 없음으로 판단 — 스킵")
+            # 캐시 저장 (빈 결과라도 7일간 재시도 방지)
+            try:
+                with open(NEW_THEME_CACHE_FILE, "w", encoding="utf-8") as f:
+                    json.dump({"date": TODAY, "discovered": []}, f, ensure_ascii=False)
+            except Exception:
+                pass
+            return
+
+        discovered = []
+        for theme in raw_themes[:5]:
+            if not isinstance(theme, dict):
+                continue
+            name = theme.get("name", "").strip()
+            keywords = theme.get("keywords", [])
+            reason = theme.get("reason", "")
+
+            if not name or not keywords or len(keywords) < 3:
+                log(f"     ❌ '{name}' 스킵: 이름 또는 키워드 부족")
+                continue
+
+            # 중복 체크
+            if _is_duplicate_theme(name, keywords, NEWS_THEME_KEYWORDS):
+                log(f"     ❌ '{name}' 스킵: 기존 테마와 중복")
+                continue
+
+            # 종목 매칭
+            matched_stocks = _match_stocks_for_new_theme(keywords, krx_data)
+            if len(matched_stocks) < 3:
+                log(f"     ❌ '{name}' 스킵: 매칭 종목 {len(matched_stocks)}개 (최소 3개 필요)")
+                continue
+
+            # ✅ 유효한 신규 테마
+            discovered.append({
+                "name": name,
+                "keywords": keywords,
+                "reason": reason,
+                "stocks": matched_stocks,
+            })
+
+        if not discovered:
+            log("  ℹ️ 유효한 신규 테마 없음 (중복/종목 부족)")
+            try:
+                with open(NEW_THEME_CACHE_FILE, "w", encoding="utf-8") as f:
+                    json.dump({"date": TODAY, "discovered": []}, f, ensure_ascii=False)
+            except Exception:
+                pass
+            return
+
+        # DB 등록 + 런타임 병합
+        for t in discovered:
+            name = t["name"]
+            keywords = t["keywords"]
+            stocks = t["stocks"]
+
+            # 1) NEWS_THEME_KEYWORDS에 런타임 병합
+            NEWS_THEME_KEYWORDS[name] = keywords
+
+            # 2) theme_map에 종목 추가 (mutable dict 직접 수정)
+            theme_map[name] = stocks
+
+            # 3) theme_keywords 테이블에 DB 등록
+            for kw in keywords:
+                try:
+                    supabase_request("POST", "theme_keywords", data=[{
+                        "theme": name,
+                        "keyword": kw,
+                        "enabled": True,
+                        "memo": f"AI 자동 발굴 ({TODAY})",
+                    }])
+                except Exception:
+                    pass  # 중복 키 등 무시
+
+            stock_names = ", ".join(s["name"] for s in stocks[:5])
+            log(f"     ✅ '{name}' 등록 완료 — 키워드 {len(keywords)}개, 종목 {len(stocks)}개 ({stock_names}...)")
+            log(f"        사유: {t['reason']}")
+
+        # 캐시 저장
+        try:
+            with open(NEW_THEME_CACHE_FILE, "w", encoding="utf-8") as f:
+                json.dump({
+                    "date": TODAY,
+                    "discovered": [t["name"] for t in discovered],
+                }, f, ensure_ascii=False)
+            log(f"  💾 신규 테마 캐시 저장: {NEW_THEME_CACHE_FILE}")
+        except Exception as e:
+            log(f"  ⚠️ 신규 테마 캐시 저장 실패: {e}")
+
+        log(f"  🎉 신규 테마 {len(discovered)}개 발굴 완료!")
+
+    except Exception as e:
+        log(f"  ⚠️ 신규 테마 발굴 실패 (기존 테마로 계속): {e}")
+
+
 def generate_ai_summary(indices, stocks, sectors, themes, news, mode="market", krx_data=None):
     """Groq AI로 시장 브리핑 생성. mode: 'premarket'(장전 해외시장) / 'market'(장중) / 'close'(마감)"""
     if not GROQ_API_KEY:
@@ -2602,6 +2859,10 @@ def crawl_sector_stocks(krx_data):
 def crawl_themes(krx_data, news_titles=None, theme_map=None):
     """AI가 선정한 테마의 종목을 KRX 데이터에서 조회하여 성과 계산"""
     log("🔥 테마 크롤링 시작...")
+
+    # 일 1회: 신규 테마 자동 발굴 (기존 테마에 없는 새로운 트렌드)
+    if news_titles and krx_data and theme_map:
+        discover_new_themes(news_titles, krx_data, theme_map)
 
     # 주 1회: Groq AI로 테마 감지 / 나머지: 규칙 기반 키워드 매칭
     if _should_run_ai_themes():
