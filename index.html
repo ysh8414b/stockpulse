@@ -417,13 +417,13 @@ function ThemeItem({t,i}){
       </Box>
     </div>;
 }
-function AllThemeItem({t}){
+function AllThemeItem({t,displayRank}){
   const[open,setOpen]=useState(false);
   const u=t.trend==="up";const f=t.trend==="flat";const clr=u?"#22c55e":(f?"#6b7280":"#ef4444");
   return <Box style={{padding:"16px 20px",cursor:"pointer"}} onClick={()=>setOpen(v=>!v)}>
     <div className="alltheme-layout" style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"14px"}}>
       <div style={{display:"flex",alignItems:"center",gap:"14px",flex:1,minWidth:0}}>
-        <span style={{width:34,height:34,borderRadius:"8px",fontSize:"16px",fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",background:"var(--badge-bg)",color:"var(--muted)",flexShrink:0}}>{t.rank}</span>
+        <span style={{width:34,height:34,borderRadius:"8px",fontSize:"16px",fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",background:"var(--badge-bg)",color:"var(--muted)",flexShrink:0}}>{displayRank!=null?displayRank:t.rank}</span>
         <div style={{minWidth:0}}>
           <div style={{display:"flex",alignItems:"center",gap:"10px",flexWrap:"wrap"}}>
             <span style={{fontWeight:700,fontSize:"18px",whiteSpace:"nowrap"}}>{t.name}</span>
@@ -478,7 +478,7 @@ function TabThemes({thm,allThm,loading}){
       </button>}
       {(isSearching||showAll)&&<div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr)",gap:"10px",marginTop:isSearching?"0":"12px"}}>
         {isSearching&&nonTopThemes.length>0&&<h3 style={{fontSize:"18px",fontWeight:600,color:"var(--muted)",marginTop:"6px",marginBottom:"6px"}}>기타 테마 ({nonTopThemes.length}건)</h3>}
-        {(isSearching?nonTopThemes:filteredAll.filter(t=>!t.is_top)).map((t,i)=><AllThemeItem key={t.name||i} t={t}/>)}
+        {(isSearching?nonTopThemes:filteredAll.filter(t=>!t.is_top)).map((t,i)=><AllThemeItem key={t.name||i} t={t} displayRank={i+1}/>)}
       </div>}
     </div>}
   </div>;
