@@ -7,6 +7,7 @@
 - `analysis.html` — 일간 종목 리포트 (AI 3축 분석, 날짜별 탐색)
 - `theme_detail.html` — 테마 종목 상세 (전체 종목 리스트, 정렬, 네이버 링크)
 - `chat.html` — 실시간 익명 토론방 (Supabase Realtime, WebSocket)
+- `board.html` — 자유게시판 (익명 글/댓글, 비밀번호 기반 삭제)
 - `archive.html` — AI 브리핑 아카이브 (캘린더 기반 과거 브리핑 탐색)
 - `guide.html` — 투자 정보 가이드 (독창적 교육 콘텐츠)
 - `about.html` — 서비스 소개 + 연락처
@@ -241,6 +242,22 @@
 - **Supabase 설정 필요**: RLS 정책(anon read/insert), Realtime 활성화
 - index.html 푸터에 "실시간 토론방" 링크 추가
 - sitemap.xml에 chat.html 추가
+
+### 자유게시판 (2026-03-08)
+- **board.html**: 신규 페이지 — 익명 자유게시판
+- 닉네임 + 비밀번호로 익명 글 작성 (계정 없음)
+- 비밀번호: Web Crypto API SHA-256 해싱 → Supabase에 해시값만 저장
+- 삭제: 글쓴이(비밀번호 검증) 또는 관리자만 가능 — Supabase RPC 함수(`SECURITY DEFINER`)로 서버사이드 검증
+- 댓글 시스템: 글별 댓글 작성/삭제 (동일 비밀번호 방식)
+- `comment_count` 자동 업데이트 (PostgreSQL 트리거)
+- 뷰(`board_posts_public`, `board_comments_public`): password_hash 컬럼 숨김
+- 페이지네이션: 20개/페이지
+- React SPA: list(목록) → detail(상세) → write(글쓰기) view states
+- 반응형: 모바일에서 날짜 컬럼 숨김 + 메타 정보 인라인 표시
+- **Supabase 테이블 필요**: `board_posts`, `board_comments` (setup_board.sql 참조)
+- **Supabase RPC 필요**: `delete_board_post`, `delete_board_comment` (setup_board.sql 참조)
+- index.html 네비게이션에 "게시판" 링크, 푸터에 "자유게시판" 링크 추가
+- sitemap.xml에 board.html 추가
 
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용

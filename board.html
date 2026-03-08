@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>자유게시판 — STOCKPULSE</title>
+  <meta name="description" content="STOCKPULSE 자유게시판. 익명으로 자유롭게 의견을 나눠보세요." />
+  <meta property="og:title" content="자유게시판 — STOCKPULSE" />
+  <meta property="og:description" content="익명으로 자유롭게 의견을 나눠보세요." />
+  <link rel="canonical" href="https://ysh8414b.github.io/stockpulse/board.html" />
+  <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <script src="shared.js"></script>
+  <style>
+    .board-table{width:100%;border-collapse:collapse}
+    .board-table th{text-align:left;padding:10px 12px;font-size:13px;font-weight:600;color:var(--muted);border-bottom:1px solid var(--div2)}
+    .board-table td{padding:12px;font-size:14px;border-bottom:1px solid var(--div)}
+    .board-table tr:hover td{background:var(--hover)}
+    .board-table .col-id{width:60px;text-align:center;color:var(--muted);font-size:13px}
+    .board-table .col-title{cursor:pointer}
+    .board-table .col-title:hover{color:#06b6d4}
+    .board-table .col-nick{width:100px;color:var(--text-sub);font-size:13px}
+    .board-table .col-date{width:110px;color:var(--muted);font-size:12px}
+    .board-table .col-cmt{width:50px;text-align:center;font-size:12px;color:var(--muted)}
+    .board-input{width:100%;padding:10px 14px;border-radius:8px;border:1px solid var(--inp-bd);background:var(--inp-bg);color:var(--text);font-size:14px;outline:none;font-family:inherit;transition:border-color .2s}
+    .board-input:focus{border-color:rgba(6,182,212,0.4)}
+    .board-textarea{width:100%;padding:12px 14px;border-radius:8px;border:1px solid var(--inp-bd);background:var(--inp-bg);color:var(--text);font-size:14px;outline:none;font-family:inherit;resize:vertical;min-height:160px;line-height:1.7;transition:border-color .2s}
+    .board-textarea:focus{border-color:rgba(6,182,212,0.4)}
+    .board-btn{padding:10px 22px;border-radius:8px;border:none;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .2s}
+    .board-btn-primary{background:linear-gradient(135deg,#06b6d4,#8b5cf6);color:#fff}
+    .board-btn-primary:hover{opacity:.9;transform:translateY(-1px)}
+    .board-btn-secondary{background:var(--card-bg);border:1px solid var(--card-bd);color:var(--text)}
+    .board-btn-secondary:hover{background:var(--card-hbg);border-color:var(--card-hbd)}
+    .board-btn-danger{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#ef4444}
+    .board-btn-danger:hover{background:rgba(239,68,68,0.2)}
+    .comment-item{padding:14px 0;border-bottom:1px solid var(--div)}
+    .comment-item:last-child{border-bottom:none}
+    .modal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:100}
+    .modal-box{background:var(--bg);border:1px solid var(--card-bd);border-radius:12px;padding:24px;width:340px;max-width:90%}
+    .pagination{display:flex;gap:4px;justify-content:center;margin-top:24px;flex-wrap:wrap}
+    .pagination button{min-width:36px;height:36px;border-radius:8px;border:1px solid var(--card-bd);background:var(--card-bg);color:var(--text);cursor:pointer;font-size:13px;font-family:inherit;transition:all .2s}
+    .pagination button:hover{background:var(--card-hbg);border-color:var(--card-hbd)}
+    .pagination button.active{background:rgba(6,182,212,0.15);border-color:rgba(6,182,212,0.3);color:#06b6d4;font-weight:600}
+    @media(max-width:600px){
+      .board-table .col-id{width:40px;padding:10px 6px}
+      .board-table .col-nick{width:70px}
+      .board-table .col-date{display:none}
+      .board-table th:nth-child(4){display:none}
+      .board-table .col-cmt{width:36px}
+      .board-meta-mobile{display:flex;gap:8px;font-size:12px;color:var(--muted);margin-top:4px}
+    }
+    @media(min-width:601px){.board-meta-mobile{display:none}}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useEffect,useCallback,useRef}=React;
+
+const PER_PAGE=20;
+
+async function hashPassword(pw){
+  const enc=new TextEncoder().encode(pw);
+  const buf=await crypto.subtle.digest("SHA-256",enc);
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+
+function fmt(dateStr){
+  const d=new Date(dateStr);
+  const now=new Date();
+  const isToday=d.toDateString()===now.toDateString();
+  if(isToday)return d.toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"});
+  return d.toLocaleDateString("ko-KR",{month:"numeric",day:"numeric"});
+}
+function fmtFull(dateStr){
+  const d=new Date(dateStr);
+  return d.toLocaleDateString("ko-KR",{year:"numeric",month:"long",day:"numeric"})+" "+d.toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"});
+}
+
+function Box({children,style,hover=true}){
+  const[h,setH]=useState(false);
+  return <div style={{background:h&&hover?"var(--card-hbg)":"var(--card-bg)",border:"1px solid",borderColor:h&&hover?"var(--card-hbd)":"var(--card-bd)",borderRadius:"12px",padding:"18px 22px",transition:"all .25s",...style}} onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)}>{children}</div>;
+}
+
+function Loader(){return <div style={{display:"flex",justifyContent:"center",padding:"60px 0"}}><div style={{width:28,height:28,border:"3px solid var(--div3)",borderTop:"3px solid #06b6d4",borderRadius:"50%",animation:"spin 1s linear infinite"}}/></div>}
+
+function DeleteModal({onConfirm,onCancel}){
+  const[pw,setPw]=useState("");
+  const[err,setErr]=useState("");
+  const[loading,setLoading]=useState(false);
+  const submit=async()=>{
+    if(!pw.trim()){setErr("비밀번호를 입력하세요");return}
+    setLoading(true);setErr("");
+    const h=await hashPassword(pw.trim());
+    const ok=await onConfirm(h);
+    if(!ok){setErr("비밀번호가 일치하지 않습니다");setLoading(false)}
+  };
+  return <div className="modal-overlay" onClick={onCancel}>
+    <div className="modal-box" onClick={e=>e.stopPropagation()}>
+      <div style={{fontWeight:700,fontSize:"16px",marginBottom:"14px"}}>삭제 확인</div>
+      <div style={{color:"var(--text-sub)",fontSize:"13px",marginBottom:"14px"}}>작성 시 입력한 비밀번호를 입력하세요.</div>
+      <input type="password" className="board-input" placeholder="비밀번호" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} autoFocus/>
+      {err&&<div style={{color:"#ef4444",fontSize:"13px",marginTop:"8px"}}>{err}</div>}
+      <div style={{display:"flex",gap:"8px",marginTop:"16px",justifyContent:"flex-end"}}>
+        <button className="board-btn board-btn-secondary" onClick={onCancel} disabled={loading}>취소</button>
+        <button className="board-btn board-btn-danger" onClick={submit} disabled={loading}>{loading?"확인 중...":"삭제"}</button>
+      </div>
+    </div>
+  </div>;
+}
+
+function CommentForm({postId,onAdded}){
+  const[nick,setNick]=useState("");
+  const[pw,setPw]=useState("");
+  const[content,setContent]=useState("");
+  const[loading,setLoading]=useState(false);
+  const[err,setErr]=useState("");
+
+  const submit=async()=>{
+    if(!nick.trim()||nick.trim().length<1){setErr("닉네임을 입력하세요");return}
+    if(!pw.trim()||pw.trim().length<2){setErr("비밀번호는 2자 이상");return}
+    if(!content.trim()){setErr("내용을 입력하세요");return}
+    setLoading(true);setErr("");
+    try{
+      const h=await hashPassword(pw.trim());
+      const r=await fetch(SB_URL+"/rest/v1/rpc/insert_board_comment",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({p_post_id:postId,p_nickname:nick.trim(),p_password_hash:h,p_content:content.trim()})});
+      if(!r.ok){const t=await r.text();if(t.includes("too_fast"))throw new Error("too_fast");throw new Error(r.status)}
+      setContent("");setErr("");
+      onAdded();
+    }catch(e){setErr(e.message==="too_fast"?"잠시 후 다시 시도하세요 (15초)":"댓글 등록 실패: "+e.message)}
+    setLoading(false);
+  };
+
+  return <Box hover={false} style={{marginTop:"16px",padding:"16px 18px"}}>
+    <div style={{fontWeight:600,fontSize:"14px",marginBottom:"12px"}}>댓글 작성</div>
+    <div style={{display:"flex",gap:"8px",marginBottom:"8px",flexWrap:"wrap"}}>
+      <input className="board-input" placeholder="닉네임" value={nick} onChange={e=>setNick(e.target.value)} maxLength={10} style={{flex:"1 1 100px",minWidth:"80px"}}/>
+      <input className="board-input" type="password" placeholder="비밀번호" value={pw} onChange={e=>setPw(e.target.value)} maxLength={20} style={{flex:"1 1 100px",minWidth:"80px"}}/>
+    </div>
+    <div style={{display:"flex",gap:"8px"}}>
+      <input className="board-input" placeholder="댓글 내용을 입력하세요" value={content} onChange={e=>setContent(e.target.value)} maxLength={500} onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&submit()} style={{flex:1}}/>
+      <button className="board-btn board-btn-primary" onClick={submit} disabled={loading} style={{flexShrink:0}}>{loading?"...":"등록"}</button>
+    </div>
+    {err&&<div style={{color:"#ef4444",fontSize:"13px",marginTop:"6px"}}>{err}</div>}
+  </Box>;
+}
+
+function CommentItem({c,onDelete}){
+  return <div className="comment-item">
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}}>
+      <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+        <span style={{fontWeight:600,fontSize:"13px",color:"var(--text)"}}>{c.nickname}</span>
+        <span style={{fontSize:"12px",color:"var(--muted)"}}>{fmtFull(c.created_at)}</span>
+      </div>
+      <button onClick={()=>onDelete(c.id)} style={{background:"none",border:"none",color:"var(--muted)",cursor:"pointer",fontSize:"12px",padding:"2px 6px",transition:"color .2s"}} onMouseEnter={e=>e.currentTarget.style.color="#ef4444"} onMouseLeave={e=>e.currentTarget.style.color="var(--muted)"}>삭제</button>
+    </div>
+    <div style={{fontSize:"14px",lineHeight:1.7,color:"var(--text-sub)",whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{c.content}</div>
+  </div>;
+}
+
+function WriteForm({onCancel,onSaved}){
+  const[nick,setNick]=useState("");
+  const[pw,setPw]=useState("");
+  const[title,setTitle]=useState("");
+  const[content,setContent]=useState("");
+  const[loading,setLoading]=useState(false);
+  const[err,setErr]=useState("");
+
+  const submit=async()=>{
+    if(!nick.trim()||nick.trim().length<1){setErr("닉네임을 입력하세요");return}
+    if(!pw.trim()||pw.trim().length<2){setErr("비밀번호는 2자 이상");return}
+    if(!title.trim()){setErr("제목을 입력하세요");return}
+    if(!content.trim()){setErr("내용을 입력하세요");return}
+    setLoading(true);setErr("");
+    try{
+      const h=await hashPassword(pw.trim());
+      const r=await fetch(SB_URL+"/rest/v1/rpc/insert_board_post",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({p_nickname:nick.trim(),p_password_hash:h,p_title:title.trim(),p_content:content.trim()})});
+      if(!r.ok){const t=await r.text();if(t.includes("too_fast"))throw new Error("too_fast");throw new Error(r.status)}
+      onSaved();
+    }catch(e){setErr(e.message==="too_fast"?"잠시 후 다시 시도하세요 (30초)":"글 등록 실패: "+e.message)}
+    setLoading(false);
+  };
+
+  return <div className="fade-up">
+    <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"20px"}}>
+      <button className="board-btn board-btn-secondary" onClick={onCancel} style={{padding:"8px 14px",fontSize:"13px"}}>← 목록</button>
+      <span style={{fontWeight:700,fontSize:"18px"}}>글쓰기</span>
+    </div>
+    <Box hover={false} style={{padding:"24px"}}>
+      <div style={{display:"flex",gap:"10px",marginBottom:"12px",flexWrap:"wrap"}}>
+        <input className="board-input" placeholder="닉네임" value={nick} onChange={e=>setNick(e.target.value)} maxLength={10} style={{flex:"1 1 140px"}}/>
+        <input className="board-input" type="password" placeholder="비밀번호 (삭제 시 필요)" value={pw} onChange={e=>setPw(e.target.value)} maxLength={20} style={{flex:"1 1 140px"}}/>
+      </div>
+      <input className="board-input" placeholder="제목" value={title} onChange={e=>setTitle(e.target.value)} maxLength={100} style={{marginBottom:"12px"}}/>
+      <textarea className="board-textarea" placeholder="내용을 입력하세요" value={content} onChange={e=>setContent(e.target.value)} maxLength={5000}/>
+      {err&&<div style={{color:"#ef4444",fontSize:"13px",marginTop:"8px"}}>{err}</div>}
+      <div style={{display:"flex",gap:"8px",marginTop:"16px",justifyContent:"flex-end"}}>
+        <button className="board-btn board-btn-secondary" onClick={onCancel}>취소</button>
+        <button className="board-btn board-btn-primary" onClick={submit} disabled={loading}>{loading?"등록 중...":"등록하기"}</button>
+      </div>
+    </Box>
+  </div>;
+}
+
+function PostDetail({postId,onBack}){
+  const[post,setPost]=useState(null);
+  const[comments,setComments]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[delTarget,setDelTarget]=useState(null); // {type:'post'}|{type:'comment',id:N}
+
+  const loadPost=useCallback(async()=>{
+    const data=await db("board_posts_public","id=eq."+postId);
+    if(data&&data.length>0)setPost(data[0]);
+    setLoading(false);
+  },[postId]);
+
+  const loadComments=useCallback(async()=>{
+    const data=await db("board_comments_public","post_id=eq."+postId+"&order=created_at.asc");
+    if(data)setComments(data);
+  },[postId]);
+
+  useEffect(()=>{loadPost();loadComments();},[loadPost,loadComments]);
+
+  const handleDelete=async(hash)=>{
+    if(!delTarget)return false;
+    try{
+      const fn=delTarget.type==="post"?"delete_board_post":"delete_board_comment";
+      const args=delTarget.type==="post"?{p_id:postId,p_hash:hash}:{c_id:delTarget.id,c_hash:hash};
+      const r=await fetch(SB_URL+"/rest/v1/rpc/"+fn,{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify(args)});
+      if(!r.ok)throw new Error(r.status);
+      const result=await r.json();
+      if(result===true){
+        setDelTarget(null);
+        if(delTarget.type==="post"){onBack()}else{loadComments()}
+        return true;
+      }
+      return false;
+    }catch(e){console.error("Delete error:",e);return false}
+  };
+
+  if(loading)return <Loader/>;
+  if(!post)return <div className="fade-up" style={{textAlign:"center",padding:"60px 0",color:"var(--muted)"}}>
+    <div style={{fontSize:"36px",marginBottom:"10px"}}>😥</div>
+    <div>글을 찾을 수 없습니다.</div>
+    <button className="board-btn board-btn-secondary" onClick={onBack} style={{marginTop:"16px"}}>목록으로</button>
+  </div>;
+
+  return <div className="fade-up">
+    <button className="board-btn board-btn-secondary" onClick={onBack} style={{padding:"8px 14px",fontSize:"13px",marginBottom:"20px"}}>← 목록</button>
+
+    <Box hover={false} style={{padding:"24px",marginBottom:"20px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"14px",gap:"10px",flexWrap:"wrap"}}>
+        <h2 style={{fontSize:"20px",fontWeight:700,lineHeight:1.4,flex:1,wordBreak:"break-word"}}>{post.title}</h2>
+        <button className="board-btn board-btn-danger" onClick={()=>setDelTarget({type:"post"})} style={{padding:"6px 14px",fontSize:"12px",flexShrink:0}}>삭제</button>
+      </div>
+      <div style={{display:"flex",gap:"12px",alignItems:"center",color:"var(--muted)",fontSize:"13px",marginBottom:"18px",paddingBottom:"14px",borderBottom:"1px solid var(--div)"}}>
+        <span style={{fontWeight:600,color:"var(--text-sub)"}}>{post.nickname}</span>
+        <span>{fmtFull(post.created_at)}</span>
+      </div>
+      <div style={{fontSize:"15px",lineHeight:1.8,color:"var(--text-sub)",whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{post.content}</div>
+    </Box>
+
+    <div style={{marginBottom:"8px",fontWeight:600,fontSize:"15px"}}>댓글 {comments.length}개</div>
+    <Box hover={false} style={{padding:comments.length?"16px 18px":"18px"}}>
+      {comments.length===0?<div style={{textAlign:"center",padding:"20px",color:"var(--muted)",fontSize:"14px"}}>첫 댓글을 남겨보세요!</div>:
+        comments.map(c=><CommentItem key={c.id} c={c} onDelete={(id)=>setDelTarget({type:"comment",id})}/>)
+      }
+    </Box>
+
+    <CommentForm postId={postId} onAdded={loadComments}/>
+
+    {delTarget&&<DeleteModal onConfirm={handleDelete} onCancel={()=>setDelTarget(null)}/>}
+  </div>;
+}
+
+function App(){
+  const[theme,setTheme]=useState(getStoredTheme());
+  const[view,setView]=useState("list"); // list|detail|write
+  const[posts,setPosts]=useState([]);
+  const[page,setPage]=useState(1);
+  const[total,setTotal]=useState(0);
+  const[loading,setLoading]=useState(true);
+  const[selectedPost,setSelectedPost]=useState(null);
+
+  useEffect(()=>{applyTheme(theme);setStoredTheme(theme)},[theme]);
+
+  const loadPosts=useCallback(async(p)=>{
+    setLoading(true);
+    const offset=(p-1)*PER_PAGE;
+    try{
+      // count
+      const cntR=await fetch(SB_URL+"/rest/v1/board_posts?select=id&limit=0",{headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Prefer":"count=exact"}});
+      const cnt=parseInt(cntR.headers.get("content-range")?.split("/")?.[1]||"0");
+      setTotal(cnt);
+
+      const data=await db("board_posts_public","order=created_at.desc&limit="+PER_PAGE+"&offset="+offset);
+      if(data)setPosts(data);
+    }catch(e){console.error("Load posts error:",e)}
+    setLoading(false);
+  },[]);
+
+  useEffect(()=>{if(view==="list")loadPosts(page)},[view,page,loadPosts]);
+
+  const totalPages=Math.ceil(total/PER_PAGE);
+
+  const openPost=(id)=>{setSelectedPost(id);setView("detail")};
+  const goList=()=>{setView("list");setSelectedPost(null)};
+
+  return <div>
+    <header className="page-header">
+      <a href="index.html" className="page-back">← STOCKPULSE</a>
+      <button onClick={()=>setTheme(t=>t==="dark"?"light":"dark")} style={{width:36,height:36,borderRadius:"10px",border:"1px solid var(--card-bd)",background:"var(--card-bg)",cursor:"pointer",fontSize:"18px",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .25s"}} onMouseEnter={e=>{e.currentTarget.style.background="var(--card-hbg)"}} onMouseLeave={e=>{e.currentTarget.style.background="var(--card-bg)"}}>{theme==="dark"?"☀️":"🌙"}</button>
+    </header>
+
+    <div className="page-wrap">
+      {view==="list"&&<div className="fade-up">
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"20px",flexWrap:"wrap",gap:"10px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
+            <span style={{fontSize:"24px"}}>📋</span>
+            <h1 style={{fontSize:"22px",fontWeight:800}}>자유게시판</h1>
+            <span style={{fontSize:"13px",color:"var(--muted)"}}>총 {total}개</span>
+          </div>
+          <button className="board-btn board-btn-primary" onClick={()=>setView("write")}>글쓰기</button>
+        </div>
+
+        {loading?<Loader/>:<>
+          {posts.length===0?<Box hover={false} style={{textAlign:"center",padding:"60px 20px"}}>
+            <div style={{fontSize:"36px",marginBottom:"10px"}}>📝</div>
+            <div style={{color:"var(--muted)",fontSize:"15px",marginBottom:"16px"}}>아직 게시글이 없습니다.</div>
+            <button className="board-btn board-btn-primary" onClick={()=>setView("write")}>첫 글 작성하기</button>
+          </Box>:
+          <Box hover={false} style={{padding:0,overflow:"hidden"}}>
+            <table className="board-table">
+              <thead><tr>
+                <th className="col-id">번호</th>
+                <th>제목</th>
+                <th className="col-nick">작성자</th>
+                <th className="col-date">날짜</th>
+                <th className="col-cmt">💬</th>
+              </tr></thead>
+              <tbody>{posts.map((p,i)=>{
+                const num=total-((page-1)*PER_PAGE)-i;
+                return <tr key={p.id}>
+                  <td className="col-id">{num}</td>
+                  <td className="col-title" onClick={()=>openPost(p.id)}>
+                    <div style={{fontWeight:500}}>{p.title}</div>
+                    <div className="board-meta-mobile">
+                      <span>{p.nickname}</span>
+                      <span>{fmt(p.created_at)}</span>
+                      {p.comment_count>0&&<span>💬 {p.comment_count}</span>}
+                    </div>
+                  </td>
+                  <td className="col-nick">{p.nickname}</td>
+                  <td className="col-date">{fmt(p.created_at)}</td>
+                  <td className="col-cmt">{p.comment_count>0?p.comment_count:""}</td>
+                </tr>
+              })}</tbody>
+            </table>
+          </Box>}
+
+          {totalPages>1&&<div className="pagination">
+            {page>1&&<button onClick={()=>setPage(1)}>«</button>}
+            {page>1&&<button onClick={()=>setPage(p=>p-1)}>‹</button>}
+            {Array.from({length:totalPages},(_,i)=>i+1).filter(p=>Math.abs(p-page)<=2||p===1||p===totalPages).reduce((acc,p,i,arr)=>{
+              if(i>0&&p-arr[i-1]>1)acc.push(<span key={"e"+p} style={{padding:"0 4px",color:"var(--muted)",alignSelf:"center"}}>…</span>);
+              acc.push(<button key={p} className={p===page?"active":""} onClick={()=>setPage(p)}>{p}</button>);
+              return acc;
+            },[])}
+            {page<totalPages&&<button onClick={()=>setPage(p=>p+1)}>›</button>}
+            {page<totalPages&&<button onClick={()=>setPage(totalPages)}>»</button>}
+          </div>}
+        </>}
+      </div>}
+
+      {view==="write"&&<WriteForm onCancel={goList} onSaved={()=>{setPage(1);goList()}}/>}
+
+      {view==="detail"&&selectedPost&&<PostDetail postId={selectedPost} onBack={goList}/>}
+    </div>
+
+    <footer style={{borderTop:"1px solid var(--div2)",maxWidth:900,margin:"0 auto",padding:"18px 40px",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:"8px",color:"var(--dimmer)",fontSize:"13px"}}>
+      <div><span style={{fontWeight:600,color:"var(--dim)"}}>STOCKPULSE</span> © 2026</div>
+      <div className="footer-links">
+        <a href="index.html">메인</a>
+        <a href="chat.html">토론방</a>
+        <a href="archive.html">AI 아카이브</a>
+        <a href="guide.html">가이드</a>
+      </div>
+    </footer>
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
