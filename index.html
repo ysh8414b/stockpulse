@@ -569,9 +569,18 @@ const sbClient=window.supabase.createClient(SB_URL,SB_KEY);
 const CHAT_NICK_COLORS=["#06b6d4","#8b5cf6","#f59e0b","#22c55e","#ec4899","#3b82f6","#ef4444","#14b8a6","#f97316","#a855f7","#6366f1","#10b981"];
 function chatNickColor(n){let h=0;for(let i=0;i<n.length;i++)h=n.charCodeAt(i)+((h<<5)-h);return CHAT_NICK_COLORS[Math.abs(h)%CHAT_NICK_COLORS.length]}
 
+const RESERVED_NICKS=['운영자','관리자','admin','운영진','매니저'];
+function isReservedNick(n){return RESERVED_NICKS.some(r=>r.toLowerCase()===n.toLowerCase())}
+async function checkBannedNick(n){
+  if(isReservedNick(n))return true;
+  try{const r=await fetch(SB_URL+"/rest/v1/rpc/check_banned_nickname",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({p_nickname:n})});if(!r.ok)return false;return await r.json()}catch(e){return false}
+}
+
 function ChatPanel({open,onClose}){
-  const[nick,setNick]=useState(()=>localStorage.getItem("sp-chat-nick")||"");
+  const savedNick=localStorage.getItem("sp-chat-nick")||"";
+  const[nick,setNick]=useState("");
   const[nickInput,setNickInput]=useState("");
+  const[nickChecking,setNickChecking]=useState(!!savedNick);
   const[msgs,setMsgs]=useState([]);
   const[input,setInput]=useState("");
   const[connected,setConnected]=useState(false);
@@ -582,6 +591,16 @@ function ChatPanel({open,onClose}){
   const MAX_LEN=300;
 
   const scrollBottom=useCallback(()=>{const el=msgsRef.current;if(el)el.scrollTop=el.scrollHeight},[]);
+
+  // 저장된 닉네임 차단 확인
+  useEffect(()=>{
+    if(!savedNick){setNickChecking(false);return}
+    (async()=>{
+      const banned=await checkBannedNick(savedNick);
+      if(banned){localStorage.removeItem("sp-chat-nick")}else{setNick(savedNick)}
+      setNickChecking(false);
+    })();
+  },[]);
 
   // Load messages
   useEffect(()=>{
@@ -615,14 +634,28 @@ function ChatPanel({open,onClose}){
   const sendMsg=async()=>{
     const txt=input.trim();if(!txt||txt.length>MAX_LEN)return;
     if(Date.now()-lastSent<1500)return;
+    const adminHash=localStorage.getItem("sp-admin-hash")||"";
+    if(!adminHash){const banned=await checkBannedNick(nick);if(banned){alert("사용이 제한된 닉네임입니다. 닉네임을 변경해주세요.");setNick("");localStorage.removeItem("sp-chat-nick");return}}
     setLastSent(Date.now());setInput("");inputRef.current?.focus();
-    try{await fetch(SB_URL+"/rest/v1/chat_messages",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json",Prefer:"return=minimal"},body:JSON.stringify({nickname:nick,message:txt})})}catch(e){console.error("Chat send error:",e)}
+    try{
+      const r=await fetch(SB_URL+"/rest/v1/rpc/insert_chat_message",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({p_nickname:nick,p_message:txt,p_admin_hash:adminHash})});
+      if(!r.ok){const err=await r.json().catch(()=>null);if(err&&err.message&&err.message.includes("banned_nickname")){alert("사용이 제한된 닉네임입니다.");setNick("");localStorage.removeItem("sp-chat-nick")}}
+    }catch(e){console.error("Chat send error:",e)}
   };
 
-  const setNickname=()=>{
+  const[nickErr,setNickErr]=useState("");
+  const[nickLoading,setNickLoading]=useState(false);
+  const setNickname=async()=>{
     const t=nickInput.trim();
-    if(t.length<2||t.length>10)return;
-    if(/[<>"'&]/.test(t))return;
+    if(t.length<2||t.length>10){setNickErr("닉네임은 2~10자");return}
+    if(/[<>"'&]/.test(t)){setNickErr("특수문자 사용 불가");return}
+    setNickLoading(true);setNickErr("");
+    const adminHash=localStorage.getItem("sp-admin-hash")||"";
+    if(!adminHash){
+      const banned=await checkBannedNick(t);
+      if(banned){setNickErr("사용이 제한된 닉네임입니다");setNickLoading(false);return}
+    }
+    setNickLoading(false);
     localStorage.setItem("sp-chat-nick",t);setNick(t);
   };
 
@@ -655,15 +688,18 @@ function ChatPanel({open,onClose}){
       </div>
     </div>
 
-    {!nick ? (
+    {nickChecking ? (
+      <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{width:24,height:24,border:"3px solid var(--div3)",borderTop:"3px solid #06b6d4",borderRadius:"50%",animation:"spin 1s linear infinite"}}/></div>
+    ) : !nick ? (
       /* Nickname input */
       <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
         <div style={{textAlign:"center",maxWidth:260,width:"100%"}}>
           <div style={{fontSize:"32px",marginBottom:"10px"}}>💬</div>
           <div style={{fontWeight:700,fontSize:"16px",marginBottom:"4px"}}>토론방 입장</div>
           <div style={{color:"var(--muted)",fontSize:"13px",marginBottom:"16px"}}>닉네임을 입력하세요</div>
-          <input value={nickInput} onChange={e=>{setNickInput(e.target.value)}} onKeyDown={e=>e.key==="Enter"&&setNickname()} placeholder="닉네임 (2~10자)" maxLength={10} style={{width:"100%",padding:"10px 14px",borderRadius:"8px",border:"1px solid var(--inp-bd)",background:"var(--inp-bg)",color:"var(--text)",fontSize:"14px",outline:"none",marginBottom:"8px",fontFamily:"inherit"}}/>
-          <button onClick={setNickname} style={{width:"100%",padding:"10px",borderRadius:"8px",border:"none",background:"linear-gradient(135deg,#06b6d4,#8b5cf6)",color:"#fff",fontSize:"14px",fontWeight:600,cursor:"pointer"}}>입장</button>
+          <input value={nickInput} onChange={e=>{setNickInput(e.target.value);setNickErr("")}} onKeyDown={e=>e.key==="Enter"&&setNickname()} placeholder="닉네임 (2~10자)" maxLength={10} style={{width:"100%",padding:"10px 14px",borderRadius:"8px",border:"1px solid var(--inp-bd)",background:"var(--inp-bg)",color:"var(--text)",fontSize:"14px",outline:"none",marginBottom:nickErr?"4px":"8px",fontFamily:"inherit"}}/>
+          {nickErr&&<div style={{color:"#ef4444",fontSize:"12px",marginBottom:"6px"}}>{nickErr}</div>}
+          <button onClick={setNickname} disabled={nickLoading} style={{width:"100%",padding:"10px",borderRadius:"8px",border:"none",background:"linear-gradient(135deg,#06b6d4,#8b5cf6)",color:"#fff",fontSize:"14px",fontWeight:600,cursor:nickLoading?"default":"pointer",opacity:nickLoading?0.7:1}}>{nickLoading?"확인 중...":"입장"}</button>
         </div>
       </div>
     ) : (<>
