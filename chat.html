@@ -58,8 +58,13 @@ function formatTime(ts) {
 // ═══ 차단 닉네임 검사 ═══
 async function checkBannedNick(nick) {
   try {
-    const data = await db("banned_nicknames", "select=id&nickname=ilike." + encodeURIComponent(nick) + "&limit=1");
-    return data && data.length > 0;
+    const r = await fetch(SB_URL + "/rest/v1/rpc/check_banned_nickname", {
+      method: "POST",
+      headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ p_nickname: nick })
+    });
+    if (!r.ok) return false;
+    return await r.json();
   } catch (e) { return false; }
 }
 

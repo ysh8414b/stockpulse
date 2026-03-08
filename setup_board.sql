@@ -357,7 +357,15 @@ CREATE UNIQUE INDEX idx_banned_nicknames_lower ON banned_nicknames (LOWER(nickna
 ALTER TABLE banned_nicknames ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "read_banned" ON banned_nicknames FOR SELECT USING (true);
 
--- 20. 차단 닉네임 목록 조회 (superadmin 전용)
+-- 20. 차단 닉네임 확인 (공개 — 채팅/게시판 클라이언트용)
+CREATE OR REPLACE FUNCTION check_banned_nickname(p_nickname TEXT)
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN EXISTS (SELECT 1 FROM banned_nicknames WHERE LOWER(nickname) = LOWER(p_nickname));
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 21. 차단 닉네임 목록 조회 (superadmin 전용)
 CREATE OR REPLACE FUNCTION list_banned_nicknames(p_admin_hash TEXT)
 RETURNS JSON AS $$
 DECLARE
