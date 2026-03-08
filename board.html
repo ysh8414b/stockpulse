@@ -62,13 +62,25 @@ const{useState,useEffect,useCallback,useRef}=React;
 
 const PER_PAGE=20;
 
+function isSafeUrl(url){
+  if(!url)return false;
+  const u=url.trim().toLowerCase();
+  if(u.startsWith("http://")||u.startsWith("https://"))return true;
+  if(/^[a-z0-9_\-]+\.html$/.test(u))return true;
+  return false;
+}
+
 function LinkedText({text}){
   if(!text)return null;
   const pattern=/\[([^\]]+)\]\(([^)]+)\)/g;
   const parts=[];let last=0,m;
   while((m=pattern.exec(text))!==null){
     if(m.index>last)parts.push(<React.Fragment key={last}>{text.slice(last,m.index)}</React.Fragment>);
-    parts.push(<a key={m.index} href={m[2]} style={{color:"#06b6d4",textDecoration:"underline",cursor:"pointer"}} target="_blank" rel="noopener">{m[1]}</a>);
+    if(isSafeUrl(m[2])){
+      parts.push(<a key={m.index} href={m[2]} style={{color:"#06b6d4",textDecoration:"underline",cursor:"pointer"}} target="_blank" rel="noopener noreferrer">{m[1]}</a>);
+    }else{
+      parts.push(<React.Fragment key={m.index}>{m[0]}</React.Fragment>);
+    }
     last=pattern.lastIndex;
   }
   if(last<text.length)parts.push(<React.Fragment key={last}>{text.slice(last)}</React.Fragment>);
