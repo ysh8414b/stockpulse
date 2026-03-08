@@ -55,17 +55,26 @@ function formatTime(ts) {
   return new Date(ts).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
 }
 
-// ═══ 차단 닉네임 검사 ═══
+// ═══ 예약/차단 닉네임 검사 ═══
+const RESERVED_NICKS = ['운영자','관리자','admin','운영진','매니저'];
+
+function isReservedNick(nick) {
+  return RESERVED_NICKS.some(r => r.toLowerCase() === nick.toLowerCase());
+}
+
 async function checkBannedNick(nick) {
+  // 1) 예약 닉네임 로컬 체크 (RPC 없이도 작동)
+  if (isReservedNick(nick)) return true;
+  // 2) DB 차단 목록 체크
   try {
     const r = await fetch(SB_URL + "/rest/v1/rpc/check_banned_nickname", {
       method: "POST",
       headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" },
       body: JSON.stringify({ p_nickname: nick })
     });
-    if (!r.ok) return false;
+    if (!r.ok) { console.warn("check_banned_nickname RPC failed:", r.status); return false; }
     return await r.json();
-  } catch (e) { return false; }
+  } catch (e) { console.warn("check_banned_nickname error:", e); return false; }
 }
 
 // ═══ NICKNAME MODAL ═══
