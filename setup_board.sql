@@ -198,6 +198,22 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+-- 11-2. 댓글 수정 RPC (관리자 권한 또는 작성자 비밀번호)
+CREATE OR REPLACE FUNCTION update_board_comment(c_id BIGINT, c_hash TEXT, c_content TEXT)
+RETURNS BOOLEAN AS $$
+DECLARE
+  admin_rec board_admins;
+BEGIN
+  SELECT * INTO admin_rec FROM board_admins WHERE password_hash = c_hash;
+  IF FOUND AND (admin_rec.role = 'superadmin' OR (admin_rec.permissions->>'edit_posts')::boolean) THEN
+    UPDATE board_comments SET content = c_content WHERE id = c_id;
+    RETURN FOUND;
+  END IF;
+  UPDATE board_comments SET content = c_content WHERE id = c_id AND password_hash = c_hash;
+  RETURN FOUND;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 -- 12. 공지 고정/해제 RPC (관리자 pin_posts 권한 필요)
 CREATE OR REPLACE FUNCTION toggle_pin_post(p_id BIGINT, p_hash TEXT)
 RETURNS BOOLEAN AS $$
