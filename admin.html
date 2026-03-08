@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>관리자 — STOCKPULSE</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <script src="shared.js"></script>
+  <style>
+    .admin-table{width:100%;border-collapse:collapse}
+    .admin-table th{text-align:left;padding:10px 12px;font-size:13px;font-weight:600;color:var(--muted);border-bottom:1px solid var(--div2)}
+    .admin-table td{padding:12px;font-size:14px;border-bottom:1px solid var(--div);vertical-align:middle}
+    .admin-table tr:hover td{background:var(--hover)}
+    .admin-check{width:18px;height:18px;accent-color:#06b6d4;cursor:pointer}
+    .admin-check:disabled{cursor:default;opacity:.5}
+    .admin-input{width:100%;padding:10px 14px;border-radius:8px;border:1px solid var(--inp-bd);background:var(--inp-bg);color:var(--text);font-size:14px;outline:none;font-family:inherit;transition:border-color .2s}
+    .admin-input:focus{border-color:rgba(6,182,212,0.4)}
+    .admin-btn{padding:10px 22px;border-radius:8px;border:none;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .2s}
+    .admin-btn-primary{background:linear-gradient(135deg,#06b6d4,#8b5cf6);color:#fff}
+    .admin-btn-primary:hover{opacity:.9;transform:translateY(-1px)}
+    .admin-btn-secondary{background:var(--card-bg);border:1px solid var(--card-bd);color:var(--text)}
+    .admin-btn-secondary:hover{background:var(--card-hbg);border-color:var(--card-hbd)}
+    .admin-btn-danger{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#ef4444}
+    .admin-btn-danger:hover{background:rgba(239,68,68,0.2)}
+    .role-badge{padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;display:inline-block}
+    .role-super{background:rgba(6,182,212,0.12);color:#06b6d4}
+    .role-mod{background:rgba(139,92,246,0.12);color:#8b5cf6}
+    .perm-row{display:flex;flex-wrap:wrap;gap:16px;margin-top:12px}
+    .perm-label{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--text);cursor:pointer}
+    .modal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:100}
+    .modal-box{background:var(--bg);border:1px solid var(--card-bd);border-radius:12px;padding:24px;width:360px;max-width:90%}
+    @media(max-width:700px){
+      .admin-table th:nth-child(1){display:none}
+      .admin-table td:nth-child(1){display:none}
+      .admin-table td{padding:10px 8px;font-size:13px}
+      .perm-row{gap:10px}
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useEffect,useCallback}=React;
+
+const PERM_KEYS=[
+  {key:"delete_posts",label:"글 삭제"},
+  {key:"delete_comments",label:"댓글 삭제"},
+  {key:"edit_posts",label:"글 수정"},
+  {key:"pin_posts",label:"공지 관리"},
+  {key:"use_reserved_names",label:"예약 닉네임"}
+];
+
+async function hashPassword(pw){
+  const enc=new TextEncoder().encode(pw);
+  const buf=await crypto.subtle.digest("SHA-256",enc);
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+
+function Box({children,hover=true,style={}}){
+  return <div style={{background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:12,padding:"20px",...style}}>{children}</div>;
+}
+
+function Loader(){
+  return <div style={{textAlign:"center",padding:"60px 0"}}><div className="loader"></div></div>;
+}
+
+// ═══ 로그인 화면 ═══
+function LoginScreen({onLogin}){
+  const[pw,setPw]=useState("");
+  const[err,setErr]=useState("");
+  const[loading,setLoading]=useState(false);
+  const[cooldown,setCooldown]=useState(false);
+
+  const submit=async()=>{
+    if(!pw.trim()||pw.trim().length<2){setErr("비밀번호를 입력하세요");return}
+    if(cooldown)return;
+    setLoading(true);setErr("");
+    try{
+      const h=await hashPassword(pw.trim());
+      const r=await fetch(SB_URL+"/rest/v1/rpc/admin_login",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({p_hash:h})});
+      if(!r.ok)throw new Error(r.status);
+      const data=await r.json();
+      if(!data){
+        setErr("관리자 비밀번호가 아닙니다");
+        setCooldown(true);
+        setTimeout(()=>setCooldown(false),3000);
+      }else{
+        onLogin(h,data);
+      }
+    }catch(e){setErr("로그인 실패: "+e.message)}
+    setLoading(false);
+  };
+
+  return <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"60vh"}}>
+    <Box hover={false} style={{width:360,maxWidth:"90%",padding:"32px 28px"}}>
+      <div style={{textAlign:"center",marginBottom:"24px"}}>
+        <div style={{fontSize:"36px",marginBottom:"8px"}}>🔐</div>
+        <div style={{fontSize:"20px",fontWeight:700}}>관리자 로그인</div>
+        <div style={{fontSize:"13px",color:"var(--muted)",marginTop:"4px"}}>관리자 비밀번호를 입력하세요</div>
+      </div>
+      <input className="admin-input" type="password" placeholder="비밀번호" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} autoFocus/>
+      {err&&<div style={{color:"#ef4444",fontSize:"13px",marginTop:"8px"}}>{err}</div>}
+      <button className="admin-btn admin-btn-primary" onClick={submit} disabled={loading||cooldown} style={{width:"100%",marginTop:"16px"}}>{loading?"확인 중...":cooldown?"잠시 후 다시 시도":"로그인"}</button>
+    </Box>
+  </div>;
+}
+
+// ═══ 삭제 확인 모달 ═══
+function ConfirmModal({nickname,onConfirm,onCancel}){
+  return <div className="modal-overlay" onClick={onCancel}>
+    <div className="modal-box" onClick={e=>e.stopPropagation()}>
+      <div style={{fontWeight:700,fontSize:"16px",marginBottom:"12px"}}>관리자 삭제</div>
+      <div style={{fontSize:"14px",color:"var(--text-sub)",marginBottom:"20px",lineHeight:1.6}}>
+        <strong>{nickname}</strong> 관리자를 삭제하시겠습니까?<br/>이 작업은 되돌릴 수 없습니다.
+      </div>
+      <div style={{display:"flex",gap:"8px",justifyContent:"flex-end"}}>
+        <button className="admin-btn admin-btn-secondary" onClick={onCancel}>취소</button>
+        <button className="admin-btn admin-btn-danger" onClick={onConfirm}>삭제</button>
+      </div>
+    </div>
+  </div>;
+}
+
+// ═══ 관리자 추가 폼 ═══
+function AddAdminForm({adminHash,onAdded}){
+  const[nick,setNick]=useState("");
+  const[pw,setPw]=useState("");
+  const[perms,setPerms]=useState({delete_posts:false,delete_comments:false,edit_posts:false,pin_posts:false,use_reserved_names:false});
+  const[err,setErr]=useState("");
+  const[loading,setLoading]=useState(false);
+
+  const toggle=(key)=>setPerms(p=>({...p,[key]:!p[key]}));
+
+  const submit=async()=>{
+    if(!nick.trim()){setErr("닉네임을 입력하세요");return}
+    if(!pw.trim()||pw.trim().length<2){setErr("비밀번호는 2자 이상");return}
+    setLoading(true);setErr("");
+    try{
+      const h=await hashPassword(pw.trim());
+      const r=await fetch(SB_URL+"/rest/v1/rpc/add_board_admin",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({p_admin_hash:adminHash,p_nickname:nick.trim(),p_password_hash:h,p_permissions:perms})});
+      if(!r.ok){
+        const t=await r.text();
+        if(t.includes("duplicate_nickname"))throw new Error("duplicate_nickname");
+        if(t.includes("duplicate_password"))throw new Error("duplicate_password");
+        throw new Error(r.status);
+      }
+      setNick("");setPw("");setPerms({delete_posts:false,delete_comments:false,edit_posts:false,pin_posts:false,use_reserved_names:false});
+      onAdded();
+    }catch(e){
+      if(e.message==="duplicate_nickname")setErr("이미 존재하는 닉네임입니다");
+      else if(e.message==="duplicate_password")setErr("이미 사용 중인 비밀번호입니다");
+      else setErr("추가 실패: "+e.message);
+    }
+    setLoading(false);
+  };
+
+  return <Box hover={false} style={{marginTop:"24px",padding:"20px 24px"}}>
+    <div style={{fontWeight:700,fontSize:"16px",marginBottom:"16px"}}>부관리자 추가</div>
+    <div style={{display:"flex",gap:"8px",marginBottom:"8px",flexWrap:"wrap"}}>
+      <input className="admin-input" placeholder="닉네임" value={nick} onChange={e=>setNick(e.target.value)} maxLength={10} style={{flex:"1 1 120px",minWidth:"100px"}}/>
+      <input className="admin-input" type="password" placeholder="비밀번호" value={pw} onChange={e=>setPw(e.target.value)} maxLength={20} style={{flex:"1 1 120px",minWidth:"100px"}}/>
+    </div>
+    <div style={{fontSize:"13px",color:"var(--muted)",marginBottom:"6px"}}>권한 선택</div>
+    <div className="perm-row">
+      {PERM_KEYS.map(p=><label key={p.key} className="perm-label">
+        <input type="checkbox" className="admin-check" checked={perms[p.key]} onChange={()=>toggle(p.key)}/>
+        {p.label}
+      </label>)}
+    </div>
+    {err&&<div style={{color:"#ef4444",fontSize:"13px",marginTop:"10px"}}>{err}</div>}
+    <div style={{marginTop:"16px",textAlign:"right"}}>
+      <button className="admin-btn admin-btn-primary" onClick={submit} disabled={loading}>{loading?"추가 중...":"추가하기"}</button>
+    </div>
+  </Box>;
+}
+
+// ═══ 관리자 행 ═══
+function AdminRow({admin,adminHash,onUpdated,onDelete}){
+  const isSuper=admin.role==="superadmin";
+  const[updating,setUpdating]=useState(null);
+
+  const togglePerm=async(key)=>{
+    if(isSuper)return;
+    setUpdating(key);
+    const newPerms={...admin.permissions,[key]:!admin.permissions[key]};
+    try{
+      const r=await fetch(SB_URL+"/rest/v1/rpc/update_board_admin",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({p_admin_hash:adminHash,p_target_id:admin.id,p_permissions:newPerms})});
+      if(!r.ok)throw new Error(r.status);
+      onUpdated();
+    }catch(e){console.error("Update error:",e)}
+    setUpdating(null);
+  };
+
+  return <tr>
+    <td style={{color:"var(--muted)",fontSize:"13px",textAlign:"center",width:40}}>{admin.id}</td>
+    <td>
+      <div style={{fontWeight:600}}>{admin.nickname}</div>
+      <span className={"role-badge "+(isSuper?"role-super":"role-mod")}>{isSuper?"최고관리자":"부관리자"}</span>
+    </td>
+    {PERM_KEYS.map(p=><td key={p.key} style={{textAlign:"center",width:70}}>
+      <input type="checkbox" className="admin-check" checked={!!admin.permissions[p.key]} disabled={isSuper||updating===p.key} onChange={()=>togglePerm(p.key)}/>
+    </td>)}
+    <td style={{textAlign:"center",width:60}}>
+      {!isSuper&&<button className="admin-btn admin-btn-danger" onClick={()=>onDelete(admin)} style={{padding:"6px 12px",fontSize:"12px"}}>삭제</button>}
+    </td>
+  </tr>;
+}
+
+// ═══ 관리자 대시보드 ═══
+function AdminDashboard({adminHash,adminInfo,onLogout}){
+  const[admins,setAdmins]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[deleteTarget,setDeleteTarget]=useState(null);
+
+  const loadAdmins=useCallback(async()=>{
+    try{
+      const r=await fetch(SB_URL+"/rest/v1/rpc/list_board_admins",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({p_admin_hash:adminHash})});
+      if(!r.ok)throw new Error(r.status);
+      const data=await r.json();
+      setAdmins(data||[]);
+    }catch(e){console.error("Load admins error:",e)}
+    setLoading(false);
+  },[adminHash]);
+
+  useEffect(()=>{loadAdmins()},[loadAdmins]);
+
+  const handleDelete=async()=>{
+    if(!deleteTarget)return;
+    try{
+      const r=await fetch(SB_URL+"/rest/v1/rpc/delete_board_admin",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({p_admin_hash:adminHash,p_target_id:deleteTarget.id})});
+      if(!r.ok)throw new Error(r.status);
+      setDeleteTarget(null);
+      loadAdmins();
+    }catch(e){console.error("Delete error:",e)}
+  };
+
+  if(adminInfo.role!=="superadmin"){
+    return <div>
+      <Box hover={false} style={{padding:"24px",textAlign:"center"}}>
+        <div style={{fontSize:"36px",marginBottom:"10px"}}>👤</div>
+        <div style={{fontWeight:700,fontSize:"18px",marginBottom:"8px"}}>{adminInfo.nickname}</div>
+        <span className="role-badge role-mod">부관리자</span>
+        <div style={{marginTop:"20px",fontSize:"14px",color:"var(--text-sub)"}}>
+          <div style={{fontWeight:600,marginBottom:"10px"}}>내 권한</div>
+          <div className="perm-row" style={{justifyContent:"center"}}>
+            {PERM_KEYS.map(p=><span key={p.key} style={{padding:"4px 12px",borderRadius:8,fontSize:"13px",background:adminInfo.permissions[p.key]?"rgba(34,197,94,0.1)":"rgba(239,68,68,0.1)",color:adminInfo.permissions[p.key]?"#22c55e":"#ef4444"}}>{p.label}: {adminInfo.permissions[p.key]?"O":"X"}</span>)}
+          </div>
+        </div>
+        <button className="admin-btn admin-btn-secondary" onClick={onLogout} style={{marginTop:"24px"}}>로그아웃</button>
+      </Box>
+    </div>;
+  }
+
+  return <div>
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"20px",flexWrap:"wrap",gap:"8px"}}>
+      <div>
+        <div style={{fontWeight:700,fontSize:"18px"}}>관리자 목록</div>
+        <div style={{fontSize:"13px",color:"var(--muted)",marginTop:"2px"}}>총 {admins.length}명</div>
+      </div>
+      <button className="admin-btn admin-btn-secondary" onClick={onLogout} style={{padding:"8px 16px",fontSize:"13px"}}>로그아웃</button>
+    </div>
+
+    {loading?<Loader/>:<Box hover={false} style={{padding:0,overflow:"auto"}}>
+      <table className="admin-table">
+        <thead><tr>
+          <th style={{width:40,textAlign:"center"}}>#</th>
+          <th>관리자</th>
+          {PERM_KEYS.map(p=><th key={p.key} style={{textAlign:"center",width:70,fontSize:"12px"}}>{p.label}</th>)}
+          <th style={{width:60,textAlign:"center"}}>관리</th>
+        </tr></thead>
+        <tbody>
+          {admins.map(a=><AdminRow key={a.id} admin={a} adminHash={adminHash} onUpdated={loadAdmins} onDelete={setDeleteTarget}/>)}
+        </tbody>
+      </table>
+    </Box>}
+
+    <AddAdminForm adminHash={adminHash} onAdded={loadAdmins}/>
+
+    {deleteTarget&&<ConfirmModal nickname={deleteTarget.nickname} onConfirm={handleDelete} onCancel={()=>setDeleteTarget(null)}/>}
+  </div>;
+}
+
+// ═══ 메인 앱 ═══
+function App(){
+  const[theme,setTheme]=useState(getStoredTheme());
+  const[adminHash,setAdminHash]=useState(sessionStorage.getItem("sp-admin-hash")||"");
+  const[adminInfo,setAdminInfo]=useState(null);
+  const[checking,setChecking]=useState(!!sessionStorage.getItem("sp-admin-hash"));
+
+  useEffect(()=>{applyTheme(theme)},[theme]);
+  const toggleTheme=()=>{const t=theme==="dark"?"light":"dark";setTheme(t);setStoredTheme(t);applyTheme(t)};
+
+  // 세션 복원
+  useEffect(()=>{
+    if(!adminHash){setChecking(false);return}
+    (async()=>{
+      try{
+        const r=await fetch(SB_URL+"/rest/v1/rpc/admin_login",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({p_hash:adminHash})});
+        if(!r.ok)throw new Error();
+        const data=await r.json();
+        if(data){setAdminInfo(data)}
+        else{sessionStorage.removeItem("sp-admin-hash");setAdminHash("")}
+      }catch(e){sessionStorage.removeItem("sp-admin-hash");setAdminHash("")}
+      setChecking(false);
+    })();
+  },[]);
+
+  const handleLogin=(hash,info)=>{
+    sessionStorage.setItem("sp-admin-hash",hash);
+    setAdminHash(hash);
+    setAdminInfo(info);
+  };
+
+  const handleLogout=()=>{
+    sessionStorage.removeItem("sp-admin-hash");
+    setAdminHash("");
+    setAdminInfo(null);
+  };
+
+  return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column"}}>
+    <header style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"20px 40px",maxWidth:900,width:"100%",margin:"0 auto",boxSizing:"border-box"}}>
+      <a href="index.html" style={{fontSize:"15px",fontWeight:700,color:"var(--text)",textDecoration:"none"}}>← STOCKPULSE</a>
+      <button onClick={toggleTheme} style={{background:"none",border:"none",fontSize:"20px",cursor:"pointer"}}>{theme==="dark"?"☀️":"🌙"}</button>
+    </header>
+
+    <div style={{flex:1,maxWidth:900,width:"100%",margin:"0 auto",padding:"20px 40px 60px",boxSizing:"border-box"}}>
+      <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"28px"}}>
+        <span style={{fontSize:"24px"}}>🔐</span>
+        <h1 style={{fontSize:"22px",fontWeight:800,margin:0}}>관리자 페이지</h1>
+      </div>
+
+      {checking?<Loader/>:(!adminHash||!adminInfo)?<LoginScreen onLogin={handleLogin}/>:<AdminDashboard adminHash={adminHash} adminInfo={adminInfo} onLogout={handleLogout}/>}
+    </div>
+
+    <footer style={{borderTop:"1px solid var(--div2)",maxWidth:900,margin:"0 auto",padding:"18px 40px",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:"8px",color:"var(--dimmer)",fontSize:"13px",width:"100%",boxSizing:"border-box"}}>
+      <div><span style={{fontWeight:600,color:"var(--dim)"}}>STOCKPULSE</span> © 2026</div>
+      <div className="footer-links">
+        <a href="index.html">메인</a>
+        <a href="board.html">게시판</a>
+      </div>
+    </footer>
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
