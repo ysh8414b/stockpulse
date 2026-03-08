@@ -577,10 +577,9 @@ async function checkBannedNick(n){
 }
 
 function ChatPanel({open,onClose}){
-  const savedNick=localStorage.getItem("sp-chat-nick")||"";
-  const[nick,setNick]=useState("");
+  const[nick,setNick]=useState(()=>localStorage.getItem("sp-chat-nick")||"");
   const[nickInput,setNickInput]=useState("");
-  const[nickChecking,setNickChecking]=useState(!!savedNick);
+  const[nickChecking,setNickChecking]=useState(()=>!!localStorage.getItem("sp-chat-nick"));
   const[msgs,setMsgs]=useState([]);
   const[input,setInput]=useState("");
   const[connected,setConnected]=useState(false);
@@ -594,10 +593,11 @@ function ChatPanel({open,onClose}){
 
   // 저장된 닉네임 차단 확인
   useEffect(()=>{
-    if(!savedNick){setNickChecking(false);return}
+    const saved=localStorage.getItem("sp-chat-nick")||"";
+    if(!saved){setNickChecking(false);return}
     (async()=>{
-      const banned=await checkBannedNick(savedNick);
-      if(banned){localStorage.removeItem("sp-chat-nick")}else{setNick(savedNick)}
+      const banned=await checkBannedNick(saved);
+      if(banned){localStorage.removeItem("sp-chat-nick");setNick("")}
       setNickChecking(false);
     })();
   },[]);
