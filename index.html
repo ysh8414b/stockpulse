@@ -573,11 +573,11 @@ function ChatPanel({open,onClose}){
   const[connected,setConnected]=useState(false);
   const[lastSent,setLastSent]=useState(0);
   const[userCount,setUserCount]=useState(0);
-  const bottomRef=useRef(null);
+  const msgsRef=useRef(null);
   const inputRef=useRef(null);
   const MAX_LEN=300;
 
-  const scrollBottom=useCallback(()=>{bottomRef.current?.scrollIntoView({behavior:"smooth"})},[]);
+  const scrollBottom=useCallback(()=>{const el=msgsRef.current;if(el)el.scrollTop=el.scrollHeight},[]);
 
   // Load messages
   useEffect(()=>{
@@ -673,7 +673,7 @@ function ChatPanel({open,onClose}){
       </div>
 
       {/* Messages */}
-      <div style={{flex:1,overflowY:"auto",padding:"12px 16px",display:"flex",flexDirection:"column",gap:"2px"}}>
+      <div ref={msgsRef} style={{flex:1,overflowY:"auto",padding:"12px 16px",display:"flex",flexDirection:"column",gap:"2px"}}>
         {msgs.length===0?(
           <div style={{textAlign:"center",padding:"40px 0",color:"var(--muted)"}}>
             <div style={{fontSize:"32px",marginBottom:"8px"}}>💬</div>
@@ -695,7 +695,7 @@ function ChatPanel({open,onClose}){
             </div>;
           })())
         )}
-        <div ref={bottomRef}/>
+        <div/>
       </div>
 
       {/* Input */}
@@ -769,7 +769,7 @@ function App(){
       </div>
     </header>
 
-    <nav className="nav-wrap" style={{maxWidth:1440,margin:"0 auto",padding:"0 40px 18px",display:"flex",gap:"3px",borderBottom:"1px solid var(--div2)",overflow:"visible"}}>{tabs.map(t=><button key={t.id} className="nav-btn" onClick={()=>setTab(t.id)} style={{padding:"9px 18px",fontFamily:"inherit",fontSize:"15px",fontWeight:tab===t.id?600:400,cursor:"pointer",background:tab===t.id?"var(--tab-bg)":"transparent",border:"1px solid",borderColor:tab===t.id?"var(--tab-bd)":"transparent",borderRadius:"8px",color:tab===t.id?"var(--text)":"var(--dim)",transition:"all .2s",display:"flex",alignItems:"center",gap:"5px",whiteSpace:"nowrap",position:t.live?"relative":"static"}}><span className="nav-btn-icon" style={{fontSize:"12px",opacity:tab===t.id?1:.6}}>{t.ic}</span><span className="nav-btn-label">{t.l}</span>{t.live&&<span style={{position:"absolute",top:"-20px",left:"50%",transform:"translateX(-50%)",background:"linear-gradient(135deg, #ff6b6b, #ef4444, #dc2626)",color:"#fff",fontSize:"11px",fontWeight:800,padding:"3px 8px",borderRadius:"6px",letterSpacing:"0.5px",lineHeight:"14px",boxShadow:"0 2px 10px rgba(239,68,68,0.45), 0 0 20px rgba(239,68,68,0.2)",animation:"liveBounce 2s ease-in-out infinite",zIndex:10,pointerEvents:"none"}}><span style={{position:"absolute",bottom:"-4px",left:"50%",transform:"translateX(-50%)",width:0,height:0,borderLeft:"5px solid transparent",borderRight:"5px solid transparent",borderTop:"5px solid #ef4444"}}/>LIVE</span>}</button>)}<button className="nav-btn" onClick={()=>setChatOpen(c=>!c)} style={{padding:"9px 18px",fontFamily:"inherit",fontSize:"15px",fontWeight:chatOpen?600:400,background:chatOpen?"rgba(6,182,212,0.1)":"transparent",border:"1px solid",borderColor:chatOpen?"rgba(6,182,212,0.25)":"transparent",borderRadius:"8px",color:chatOpen?"#06b6d4":"var(--dim)",transition:"all .2s",display:"flex",alignItems:"center",gap:"5px",whiteSpace:"nowrap",cursor:"pointer",marginLeft:"auto"}} onMouseEnter={e=>{if(!chatOpen){e.currentTarget.style.background="rgba(6,182,212,0.08)";e.currentTarget.style.borderColor="rgba(6,182,212,0.2)";e.currentTarget.style.color="#06b6d4"}}} onMouseLeave={e=>{if(!chatOpen){e.currentTarget.style.background="transparent";e.currentTarget.style.borderColor="transparent";e.currentTarget.style.color="var(--dim)"}}}><span style={{fontSize:"12px"}}>💬</span><span className="nav-btn-label">토론방</span></button></nav>
+    <nav className="nav-wrap" style={{maxWidth:1440,margin:"0 auto",padding:"0 40px 18px",display:"flex",gap:"3px",borderBottom:"1px solid var(--div2)",overflow:"visible"}}>{tabs.map(t=><button key={t.id} className="nav-btn" onClick={()=>setTab(t.id)} style={{padding:"9px 18px",fontFamily:"inherit",fontSize:"15px",fontWeight:tab===t.id?600:400,cursor:"pointer",background:tab===t.id?"var(--tab-bg)":"transparent",border:"1px solid",borderColor:tab===t.id?"var(--tab-bd)":"transparent",borderRadius:"8px",color:tab===t.id?"var(--text)":"var(--dim)",transition:"all .2s",display:"flex",alignItems:"center",gap:"5px",whiteSpace:"nowrap",position:t.live?"relative":"static"}}><span className="nav-btn-icon" style={{fontSize:"12px",opacity:tab===t.id?1:.6}}>{t.ic}</span><span className="nav-btn-label">{t.l}</span>{t.live&&<span style={{position:"absolute",top:"-20px",left:"6px",background:"linear-gradient(135deg, #ff6b6b, #ef4444, #dc2626)",color:"#fff",fontSize:"11px",fontWeight:800,padding:"3px 8px",borderRadius:"6px",letterSpacing:"0.5px",lineHeight:"14px",boxShadow:"0 2px 10px rgba(239,68,68,0.45), 0 0 20px rgba(239,68,68,0.2)",animation:"liveBounce 2s ease-in-out infinite",zIndex:10,pointerEvents:"none"}}><span style={{position:"absolute",bottom:"-4px",left:"14px",width:0,height:0,borderLeft:"5px solid transparent",borderRight:"5px solid transparent",borderTop:"5px solid #ef4444"}}/>LIVE</span>}</button>)}<button className="nav-btn" onClick={()=>setChatOpen(c=>!c)} style={{padding:"9px 18px",fontFamily:"inherit",fontSize:"15px",fontWeight:chatOpen?600:400,background:chatOpen?"rgba(6,182,212,0.1)":"transparent",border:"1px solid",borderColor:chatOpen?"rgba(6,182,212,0.25)":"transparent",borderRadius:"8px",color:chatOpen?"#06b6d4":"var(--dim)",transition:"all .2s",display:"flex",alignItems:"center",gap:"5px",whiteSpace:"nowrap",cursor:"pointer",marginLeft:"auto"}} onMouseEnter={e=>{if(!chatOpen){e.currentTarget.style.background="rgba(6,182,212,0.08)";e.currentTarget.style.borderColor="rgba(6,182,212,0.2)";e.currentTarget.style.color="#06b6d4"}}} onMouseLeave={e=>{if(!chatOpen){e.currentTarget.style.background="transparent";e.currentTarget.style.borderColor="transparent";e.currentTarget.style.color="var(--dim)"}}}><span style={{fontSize:"12px"}}>💬</span><span className="nav-btn-label">토론방</span></button></nav>
 
     <div style={{display:"flex",maxWidth:1440,margin:"0 auto",minHeight:"calc(100vh - 200px)"}}>
       <main className="main-wrap" style={{flex:1,minWidth:0,padding:"22px 40px 60px",transition:"all .3s ease"}}>

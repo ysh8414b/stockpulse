@@ -133,7 +133,6 @@ function App() {
   const [connected, setConnected] = useState(false);
   const [lastSent, setLastSent] = useState(0);
   const [userCount, setUserCount] = useState(0);
-  const bottomRef = useRef(null);
   const listRef = useRef(null);
   const inputRef = useRef(null);
   const [theme, setTheme] = useState(getStoredTheme());
@@ -144,7 +143,7 @@ function App() {
 
   // Auto-scroll
   const scrollToBottom = useCallback(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = listRef.current; if (el) el.scrollTop = el.scrollHeight;
   }, []);
 
   // Load initial messages
@@ -286,7 +285,7 @@ function App() {
               : <MsgBubble key={item.data.id || i} msg={item.data} isMine={item.data.nickname === nick} />
           )
         )}
-        <div ref={bottomRef} />
+        <div />
       </div>
 
       {/* Input area */}
