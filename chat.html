@@ -224,6 +224,18 @@ function App() {
     if (!txt || txt.length > MAX_MSG_LEN) return;
     const now = Date.now();
     if (now - lastSent < SEND_COOLDOWN) return;
+
+    // 클라이언트 차단 검사
+    const adminHash = localStorage.getItem("sp-admin-hash") || "";
+    if (!adminHash) {
+      const banned = await checkBannedNick(nick);
+      if (banned) {
+        alert("사용이 제한된 닉네임입니다. 닉네임을 변경해주세요.");
+        changeNick();
+        return;
+      }
+    }
+
     setLastSent(now);
     setInput("");
     inputRef.current?.focus();
@@ -236,7 +248,7 @@ function App() {
           Authorization: "Bearer " + SB_KEY,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ p_nickname: nick, p_message: txt, p_admin_hash: localStorage.getItem("sp-admin-hash") || "" })
+        body: JSON.stringify({ p_nickname: nick, p_message: txt, p_admin_hash: adminHash })
       });
       if (!r.ok) {
         const err = await r.json().catch(() => null);
