@@ -462,17 +462,20 @@ function App(){
 
   const handleLogin=(hash,info)=>{
     sessionStorage.setItem("sp-admin-hash",hash);
+    localStorage.setItem("sp-admin-hash",hash);
     setAdminHash(hash);
     setAdminInfo(info);
   };
 
   const handleHashChanged=(newHash)=>{
     sessionStorage.setItem("sp-admin-hash",newHash);
+    localStorage.setItem("sp-admin-hash",newHash);
     setAdminHash(newHash);
   };
 
   const handleLogout=()=>{
     sessionStorage.removeItem("sp-admin-hash");
+    localStorage.removeItem("sp-admin-hash");
     setAdminHash("");
     setAdminInfo(null);
   };

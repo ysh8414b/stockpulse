@@ -229,16 +229,23 @@ function App() {
     inputRef.current?.focus();
 
     try {
-      await fetch(SB_URL + "/rest/v1/chat_messages", {
+      const r = await fetch(SB_URL + "/rest/v1/rpc/insert_chat_message", {
         method: "POST",
         headers: {
           apikey: SB_KEY,
           Authorization: "Bearer " + SB_KEY,
-          "Content-Type": "application/json",
-          Prefer: "return=minimal"
+          "Content-Type": "application/json"
         },
-        body: JSON.stringify({ nickname: nick, message: txt })
+        body: JSON.stringify({ p_nickname: nick, p_message: txt, p_admin_hash: localStorage.getItem("sp-admin-hash") || "" })
       });
+      if (!r.ok) {
+        const err = await r.json().catch(() => null);
+        if (err && err.message && err.message.includes("banned_nickname")) {
+          alert("사용이 제한된 닉네임입니다. 닉네임을 변경해주세요.");
+          changeNick();
+          return;
+        }
+      }
     } catch (e) {
       console.error("Send error:", e);
     }

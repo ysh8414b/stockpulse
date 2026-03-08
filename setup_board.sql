@@ -417,3 +417,30 @@ BEGIN
   RETURN FOUND;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ═══ 23. 채팅 메시지 전송 RPC (차단 닉네임 서버사이드 검사 + 관리자 우회) ═══
+CREATE OR REPLACE FUNCTION insert_chat_message(p_nickname TEXT, p_message TEXT, p_admin_hash TEXT DEFAULT '')
+RETURNS BIGINT AS $$
+DECLARE
+  new_id BIGINT;
+  admin_rec board_admins;
+BEGIN
+  IF EXISTS (SELECT 1 FROM banned_nicknames WHERE LOWER(nickname) = LOWER(p_nickname)) THEN
+    IF p_admin_hash != '' THEN
+      SELECT * INTO admin_rec FROM board_admins WHERE password_hash = p_admin_hash;
+      IF NOT FOUND OR NOT (admin_rec.role = 'superadmin' OR (admin_rec.permissions->>'use_reserved_names')::boolean) THEN
+        RAISE EXCEPTION 'banned_nickname';
+      END IF;
+    ELSE
+      RAISE EXCEPTION 'banned_nickname';
+    END IF;
+  END IF;
+  IF length(p_message) > 300 THEN
+    RAISE EXCEPTION 'message_too_long';
+  END IF;
+  INSERT INTO chat_messages (nickname, message)
+  VALUES (p_nickname, p_message)
+  RETURNING id INTO new_id;
+  RETURN new_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
