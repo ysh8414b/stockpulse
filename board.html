@@ -152,10 +152,10 @@ function CommentForm({postId,onAdded}){
     try{
       const h=await hashPassword(pw.trim());
       const r=await fetch(SB_URL+"/rest/v1/rpc/insert_board_comment",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({p_post_id:postId,p_nickname:nick.trim(),p_password_hash:h,p_content:content.trim()})});
-      if(!r.ok){const t=await r.text();if(t.includes("too_fast"))throw new Error("too_fast");throw new Error(r.status)}
+      if(!r.ok){const t=await r.text();if(t.includes("too_fast"))throw new Error("too_fast");if(t.includes("reserved_name"))throw new Error("reserved_name");throw new Error(r.status)}
       setContent("");setErr("");
       onAdded();
-    }catch(e){setErr(e.message==="too_fast"?"잠시 후 다시 시도하세요 (15초)":"댓글 등록 실패: "+e.message)}
+    }catch(e){setErr(e.message==="too_fast"?"잠시 후 다시 시도하세요 (15초)":e.message==="reserved_name"?"사용할 수 없는 닉네임입니다":"댓글 등록 실패: "+e.message)}
     setLoading(false);
   };
 
@@ -203,9 +203,9 @@ function WriteForm({onCancel,onSaved}){
     try{
       const h=await hashPassword(pw.trim());
       const r=await fetch(SB_URL+"/rest/v1/rpc/insert_board_post",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({p_nickname:nick.trim(),p_password_hash:h,p_title:title.trim(),p_content:content.trim()})});
-      if(!r.ok){const t=await r.text();if(t.includes("too_fast"))throw new Error("too_fast");throw new Error(r.status)}
+      if(!r.ok){const t=await r.text();if(t.includes("too_fast"))throw new Error("too_fast");if(t.includes("reserved_name"))throw new Error("reserved_name");throw new Error(r.status)}
       onSaved();
-    }catch(e){setErr(e.message==="too_fast"?"잠시 후 다시 시도하세요 (30초)":"글 등록 실패: "+e.message)}
+    }catch(e){setErr(e.message==="too_fast"?"잠시 후 다시 시도하세요 (30초)":e.message==="reserved_name"?"사용할 수 없는 닉네임입니다":"글 등록 실패: "+e.message)}
     setLoading(false);
   };
 
@@ -379,25 +379,31 @@ function App(){
   const[total,setTotal]=useState(0);
   const[loading,setLoading]=useState(true);
   const[selectedPost,setSelectedPost]=useState(null);
+  const[search,setSearch]=useState("");
+  const[searchQuery,setSearchQuery]=useState("");
+  const searchRef=useRef(null);
 
   useEffect(()=>{applyTheme(theme);setStoredTheme(theme)},[theme]);
 
-  const loadPosts=useCallback(async(p)=>{
+  const loadPosts=useCallback(async(p,q)=>{
     setLoading(true);
     const offset=(p-1)*PER_PAGE;
     try{
-      // count
-      const cntR=await fetch(SB_URL+"/rest/v1/board_posts?select=id&limit=0",{headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Prefer":"count=exact"}});
+      const filter=q?"&or=(title.ilike.*"+encodeURIComponent(q)+"*,nickname.ilike.*"+encodeURIComponent(q)+"*)":"";
+      const cntR=await fetch(SB_URL+"/rest/v1/board_posts_public?select=id&limit=0"+filter,{headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Prefer":"count=exact"}});
       const cnt=parseInt(cntR.headers.get("content-range")?.split("/")?.[1]||"0");
       setTotal(cnt);
 
-      const data=await db("board_posts_public","order=created_at.desc&limit="+PER_PAGE+"&offset="+offset);
+      const data=await db("board_posts_public","order=is_pinned.desc,created_at.desc&limit="+PER_PAGE+"&offset="+offset+filter);
       if(data)setPosts(data);
     }catch(e){console.error("Load posts error:",e)}
     setLoading(false);
   },[]);
 
-  useEffect(()=>{if(view==="list")loadPosts(page)},[view,page,loadPosts]);
+  useEffect(()=>{if(view==="list")loadPosts(page,searchQuery)},[view,page,searchQuery,loadPosts]);
+
+  const doSearch=()=>{setPage(1);setSearchQuery(search.trim())};
+  const clearSearch=()=>{setSearch("");setSearchQuery("");setPage(1)};
 
   const totalPages=Math.ceil(total/PER_PAGE);
 
@@ -421,11 +427,18 @@ function App(){
           <button className="board-btn board-btn-primary" onClick={()=>setView("write")}>글쓰기</button>
         </div>
 
+        <div style={{display:"flex",gap:"8px",marginBottom:"16px"}}>
+          <input ref={searchRef} className="board-input" placeholder="제목 또는 작성자 검색" value={search} onChange={e=>setSearch(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doSearch()} style={{flex:1}}/>
+          <button className="board-btn board-btn-secondary" onClick={doSearch} style={{padding:"10px 16px",flexShrink:0}}>검색</button>
+          {searchQuery&&<button className="board-btn board-btn-secondary" onClick={clearSearch} style={{padding:"10px 14px",flexShrink:0,color:"var(--muted)"}}>✕</button>}
+        </div>
+        {searchQuery&&<div style={{fontSize:"13px",color:"var(--muted)",marginBottom:"12px"}}>"{searchQuery}" 검색 결과 {total}건</div>}
+
         {loading?<Loader/>:<>
           {posts.length===0?<Box hover={false} style={{textAlign:"center",padding:"60px 20px"}}>
-            <div style={{fontSize:"36px",marginBottom:"10px"}}>📝</div>
-            <div style={{color:"var(--muted)",fontSize:"15px",marginBottom:"16px"}}>아직 게시글이 없습니다.</div>
-            <button className="board-btn board-btn-primary" onClick={()=>setView("write")}>첫 글 작성하기</button>
+            <div style={{fontSize:"36px",marginBottom:"10px"}}>{searchQuery?"🔍":"📝"}</div>
+            <div style={{color:"var(--muted)",fontSize:"15px",marginBottom:"16px"}}>{searchQuery?"검색 결과가 없습니다.":"아직 게시글이 없습니다."}</div>
+            {searchQuery?<button className="board-btn board-btn-secondary" onClick={clearSearch}>검색 초기화</button>:<button className="board-btn board-btn-primary" onClick={()=>setView("write")}>첫 글 작성하기</button>}
           </Box>:
           <Box hover={false} style={{padding:0,overflow:"hidden"}}>
             <table className="board-table">

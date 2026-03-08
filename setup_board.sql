@@ -59,13 +59,18 @@ CREATE TRIGGER trg_comment_count
 AFTER INSERT OR DELETE ON board_comments
 FOR EACH ROW EXECUTE FUNCTION update_comment_count();
 
--- 5. 게시글 작성 RPC (30초 쿨다운)
+-- 5. 게시글 작성 RPC (30초 쿨다운 + 예약 닉네임 차단)
 CREATE OR REPLACE FUNCTION insert_board_post(p_nickname TEXT, p_password_hash TEXT, p_title TEXT, p_content TEXT)
 RETURNS BIGINT AS $$
 DECLARE
   last_time TIMESTAMPTZ;
   new_id BIGINT;
+  reserved_names TEXT[] := ARRAY['운영자','관리자','admin','ADMIN','Admin','운영진','매니저'];
+  admin_hash TEXT := '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918';
 BEGIN
+  IF p_nickname = ANY(reserved_names) AND p_password_hash != admin_hash THEN
+    RAISE EXCEPTION 'reserved_name';
+  END IF;
   SELECT created_at INTO last_time FROM board_posts WHERE nickname = p_nickname ORDER BY created_at DESC LIMIT 1;
   IF last_time IS NOT NULL AND (now() - last_time) < interval '30 seconds' THEN
     RAISE EXCEPTION 'too_fast';
@@ -77,13 +82,18 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 6. 댓글 작성 RPC (15초 쿨다운)
+-- 6. 댓글 작성 RPC (15초 쿨다운 + 예약 닉네임 차단)
 CREATE OR REPLACE FUNCTION insert_board_comment(p_post_id BIGINT, p_nickname TEXT, p_password_hash TEXT, p_content TEXT)
 RETURNS BIGINT AS $$
 DECLARE
   last_time TIMESTAMPTZ;
   new_id BIGINT;
+  reserved_names TEXT[] := ARRAY['운영자','관리자','admin','ADMIN','Admin','운영진','매니저'];
+  admin_hash TEXT := '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918';
 BEGIN
+  IF p_nickname = ANY(reserved_names) AND p_password_hash != admin_hash THEN
+    RAISE EXCEPTION 'reserved_name';
+  END IF;
   SELECT created_at INTO last_time FROM board_comments WHERE nickname = p_nickname ORDER BY created_at DESC LIMIT 1;
   IF last_time IS NOT NULL AND (now() - last_time) < interval '15 seconds' THEN
     RAISE EXCEPTION 'too_fast';
