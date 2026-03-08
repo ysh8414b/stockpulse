@@ -634,7 +634,7 @@ function ChatPanel({open,onClose}){
   const sendMsg=async()=>{
     const txt=input.trim();if(!txt||txt.length>MAX_LEN)return;
     if(Date.now()-lastSent<1500)return;
-    const adminHash=localStorage.getItem("sp-admin-hash")||"";
+    const adminHash=sessionStorage.getItem("sp-admin-hash")||"";
     if(!adminHash){const banned=await checkBannedNick(nick);if(banned){alert("사용이 제한된 닉네임입니다. 닉네임을 변경해주세요.");setNick("");localStorage.removeItem("sp-chat-nick");return}}
     setLastSent(Date.now());setInput("");inputRef.current?.focus();
     try{
@@ -650,7 +650,7 @@ function ChatPanel({open,onClose}){
     if(t.length<2||t.length>10){setNickErr("닉네임은 2~10자");return}
     if(/[<>"'&]/.test(t)){setNickErr("특수문자 사용 불가");return}
     setNickLoading(true);setNickErr("");
-    const adminHash=localStorage.getItem("sp-admin-hash")||"";
+    const adminHash=sessionStorage.getItem("sp-admin-hash")||"";
     if(!adminHash){
       const banned=await checkBannedNick(t);
       if(banned){setNickErr("사용이 제한된 닉네임입니다");setNickLoading(false);return}

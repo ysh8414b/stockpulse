@@ -235,7 +235,7 @@ function App() {
     if (now - lastSent < SEND_COOLDOWN) return;
 
     // 클라이언트 차단 검사
-    const adminHash = localStorage.getItem("sp-admin-hash") || "";
+    const adminHash = sessionStorage.getItem("sp-admin-hash") || "";
     if (!adminHash) {
       const banned = await checkBannedNick(nick);
       if (banned) {
