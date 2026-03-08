@@ -6,6 +6,7 @@
 - `index.html` — React 18 SPA (메인 대시보드, CDN 기반)
 - `analysis.html` — 일간 종목 리포트 (AI 3축 분석, 날짜별 탐색)
 - `theme_detail.html` — 테마 종목 상세 (전체 종목 리스트, 정렬, 네이버 링크)
+- `chat.html` — 실시간 익명 토론방 (Supabase Realtime, WebSocket)
 - `archive.html` — AI 브리핑 아카이브 (캘린더 기반 과거 브리핑 탐색)
 - `guide.html` — 투자 정보 가이드 (독창적 교육 콘텐츠)
 - `about.html` — 서비스 소개 + 연락처
@@ -224,6 +225,22 @@
 ### 뉴스 설명 클릭 시 기사 원문 이동 (2026-03-08)
 - TabNews: 뉴스 설명(summary) 클릭 시 `window.open()`으로 뉴스 원문 새 탭 열기
 - 호버 시 테두리/배경 파란색 하이라이트 + "기사 원문 보기 →" 텍스트 표시
+
+### 실시간 익명 토론방 (2026-03-08)
+- **chat.html**: 신규 페이지 — Supabase Realtime 기반 익명 채팅
+- 닉네임 입력(2~10자, localStorage 저장) → 채팅방 입장
+- Supabase JS v2 클라이언트 CDN (`@supabase/supabase-js@2`) 사용 — Realtime WebSocket
+- `postgres_changes` INSERT 이벤트 구독으로 실시간 메시지 수신
+- Presence 기능으로 접속자 수 표시
+- 메시지 버블 UI: 내 메시지(오른쪽, 그라데이션) / 상대 메시지(왼쪽)
+- 닉네임별 고유 색상 (해시 기반 12색 매핑)
+- 날짜 구분선, 시간 표시, 글자 수 제한(300자)
+- 스팸 방지: 1.5초 쿨다운
+- 반응형: 모바일 대응
+- **Supabase 테이블 필요**: `chat_messages` (id bigserial, nickname text, message text, created_at timestamptz)
+- **Supabase 설정 필요**: RLS 정책(anon read/insert), Realtime 활성화
+- index.html 푸터에 "실시간 토론방" 링크 추가
+- sitemap.xml에 chat.html 추가
 
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용

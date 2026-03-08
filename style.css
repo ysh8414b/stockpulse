@@ -139,4 +139,5 @@ a{color:inherit;text-decoration:none}
 @media(max-width:600px){
   .page-wrap{padding:20px 16px 40px}
   .page-header{padding:14px 16px}
+  .chat-container{padding:0 16px!important}
 }

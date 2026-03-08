@@ -527,7 +527,7 @@ function TabAI({aiSum,loading}){
   };
   return <div className="fade-up">
     <h2 style={{fontSize:"22px",fontWeight:700,marginBottom:"4px"}}><span style={{color:"#06b6d4"}}>⬡</span> AI 시장 브리핑</h2>
-    <p style={{color:"var(--muted)",fontSize:"16px",marginBottom:"22px"}}>Groq AI 기반 매크로 전략 분석 · 크롤링 시 자동 갱신</p>
+    <p style={{color:"var(--muted)",fontSize:"16px",marginBottom:"22px"}}>매일 3회 자동 브리핑 (08:00 장전 · 12:00 장중 · 15:35 마감)</p>
     {aiSum?<div>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"16px"}}>
         <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
@@ -628,6 +628,7 @@ function App(){
     <footer style={{borderTop:"1px solid var(--div2)",maxWidth:1440,margin:"0 auto",padding:"18px 40px",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:"8px",color:"var(--dimmer)",fontSize:"13px"}}>
       <div><span style={{fontWeight:600,color:"var(--dim)"}}>STOCKPULSE</span> © 2026 · 투자 권유 목적이 아닌 정보 제공 목적</div>
       <div className="footer-links">
+        <a href="chat.html">실시간 토론방</a>
         <a href="archive.html">AI 브리핑 아카이브</a>
         <a href="analysis.html">종목 리포트</a>
         <a href="guide.html">투자 가이드</a>

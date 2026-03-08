@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>실시간 토론방 — STOCKPULSE</title>
+  <meta name="description" content="STOCKPULSE 실시간 익명 토론방. 주식 시장에 대해 자유롭게 이야기하세요." />
+  <meta property="og:title" content="실시간 토론방 — STOCKPULSE" />
+  <meta property="og:description" content="주식 시장에 대해 자유롭게 이야기하세요." />
+  <link rel="canonical" href="https://ysh8414b.github.io/stockpulse/chat.html" />
+  <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="shared.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useEffect,useRef,useCallback}=React;
+
+// ═══ CONFIG ═══
+const MAX_MSG_LEN = 300;
+const LOAD_LIMIT = 80;
+const NICK_MIN = 2;
+const NICK_MAX = 10;
+const SEND_COOLDOWN = 1500; // ms
+const NICK_COLORS = [
+  "#06b6d4","#8b5cf6","#f59e0b","#22c55e","#ec4899","#3b82f6",
+  "#ef4444","#14b8a6","#f97316","#a855f7","#6366f1","#10b981"
+];
+
+// ═══ SUPABASE CLIENT (for Realtime) ═══
+const sbClient = window.supabase.createClient(SB_URL, SB_KEY);
+
+function getNickColor(nick) {
+  let h = 0;
+  for (let i = 0; i < nick.length; i++) h = nick.charCodeAt(i) + ((h << 5) - h);
+  return NICK_COLORS[Math.abs(h) % NICK_COLORS.length];
+}
+
+function timeAgo(ts) {
+  const d = new Date(ts);
+  const now = new Date();
+  const diff = Math.floor((now - d) / 1000);
+  if (diff < 60) return "방금";
+  if (diff < 3600) return Math.floor(diff / 60) + "분 전";
+  if (diff < 86400) return Math.floor(diff / 3600) + "시간 전";
+  return d.toLocaleDateString("ko-KR", { month: "short", day: "numeric" });
+}
+
+function formatTime(ts) {
+  return new Date(ts).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
+}
+
+// ═══ NICKNAME MODAL ═══
+function NickModal({ onSet }) {
+  const [v, setV] = useState("");
+  const [err, setErr] = useState("");
+  const ref = useRef(null);
+  useEffect(() => { ref.current?.focus(); }, []);
+
+  const submit = () => {
+    const t = v.trim();
+    if (t.length < NICK_MIN || t.length > NICK_MAX) {
+      setErr(`닉네임은 ${NICK_MIN}~${NICK_MAX}자로 입력하세요`);
+      return;
+    }
+    if (/[<>"'&]/.test(t)) { setErr("특수문자는 사용할 수 없습니다"); return; }
+    localStorage.setItem("sp-chat-nick", t);
+    onSet(t);
+  };
+
+  return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999, padding: "20px" }}>
+    <div style={{ background: "var(--bg)", border: "1px solid var(--card-bd)", borderRadius: "16px", padding: "32px", maxWidth: 380, width: "100%", textAlign: "center" }}>
+      <div style={{ fontSize: "36px", marginBottom: "12px" }}>💬</div>
+      <h2 style={{ fontSize: "20px", fontWeight: 700, marginBottom: "6px" }}>토론방 입장</h2>
+      <p style={{ color: "var(--muted)", fontSize: "14px", marginBottom: "20px" }}>닉네임을 입력하세요</p>
+      <input ref={ref} value={v} onChange={e => { setV(e.target.value); setErr(""); }}
+        onKeyDown={e => e.key === "Enter" && submit()}
+        placeholder="닉네임 (2~10자)"
+        maxLength={NICK_MAX}
+        style={{ width: "100%", padding: "12px 16px", borderRadius: "10px", border: "1px solid var(--inp-bd)", background: "var(--inp-bg)", color: "var(--text)", fontSize: "15px", outline: "none", marginBottom: "8px" }} />
+      {err && <div style={{ color: "#ef4444", fontSize: "13px", marginBottom: "8px" }}>{err}</div>}
+      <button onClick={submit} style={{ width: "100%", padding: "12px", borderRadius: "10px", border: "none", background: "linear-gradient(135deg,#06b6d4,#8b5cf6)", color: "#fff", fontSize: "15px", fontWeight: 600, cursor: "pointer", marginTop: "4px" }}>입장하기</button>
+    </div>
+  </div>;
+}
+
+// ═══ MESSAGE BUBBLE ═══
+function MsgBubble({ msg, isMine }) {
+  const clr = getNickColor(msg.nickname);
+  return <div style={{ display: "flex", flexDirection: "column", alignItems: isMine ? "flex-end" : "flex-start", marginBottom: "4px", animation: "fadeUp .3s ease both" }}>
+    {!isMine && <span style={{ fontSize: "12px", fontWeight: 600, color: clr, marginBottom: "3px", marginLeft: "4px" }}>{msg.nickname}</span>}
+    <div style={{
+      maxWidth: "75%", padding: "10px 14px", borderRadius: isMine ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
+      background: isMine ? "linear-gradient(135deg,rgba(6,182,212,0.15),rgba(139,92,246,0.12))" : "var(--card-bg)",
+      border: "1px solid " + (isMine ? "rgba(6,182,212,0.2)" : "var(--card-bd)"),
+      fontSize: "14px", lineHeight: 1.6, color: "var(--text)", wordBreak: "break-word", whiteSpace: "pre-wrap"
+    }}>
+      {msg.message}
+    </div>
+    <span style={{ fontSize: "11px", color: "var(--dimmer)", marginTop: "2px", marginLeft: "4px", marginRight: "4px" }}>{formatTime(msg.created_at)}</span>
+  </div>;
+}
+
+// ═══ DATE DIVIDER ═══
+function DateDivider({ date }) {
+  return <div style={{ display: "flex", alignItems: "center", gap: "12px", margin: "16px 0 12px", padding: "0 4px" }}>
+    <div style={{ flex: 1, height: "1px", background: "var(--div2)" }} />
+    <span style={{ fontSize: "12px", color: "var(--muted)", whiteSpace: "nowrap" }}>{date}</span>
+    <div style={{ flex: 1, height: "1px", background: "var(--div2)" }} />
+  </div>;
+}
+
+// ═══ ONLINE INDICATOR ═══
+function OnlineDot({ connected }) {
+  return <span style={{ display: "inline-flex", alignItems: "center", gap: "5px", fontSize: "12px", color: connected ? "#22c55e" : "#ef4444" }}>
+    <span style={{ width: 7, height: 7, borderRadius: "50%", background: connected ? "#22c55e" : "#ef4444", animation: connected ? "pulse 2s infinite" : "none" }} />
+    {connected ? "연결됨" : "연결 중..."}
+  </span>;
+}
+
+// ═══ MAIN APP ═══
+function App() {
+  const savedNick = localStorage.getItem("sp-chat-nick") || "";
+  const [nick, setNick] = useState(savedNick);
+  const [msgs, setMsgs] = useState([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [connected, setConnected] = useState(false);
+  const [lastSent, setLastSent] = useState(0);
+  const [userCount, setUserCount] = useState(0);
+  const bottomRef = useRef(null);
+  const listRef = useRef(null);
+  const inputRef = useRef(null);
+  const [theme, setTheme] = useState(getStoredTheme());
+
+  // Theme
+  useEffect(() => { applyTheme(theme); }, [theme]);
+  const toggleTheme = () => { const t = theme === "dark" ? "light" : "dark"; setTheme(t); setStoredTheme(t); };
+
+  // Auto-scroll
+  const scrollToBottom = useCallback(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, []);
+
+  // Load initial messages
+  useEffect(() => {
+    if (!nick) return;
+    (async () => {
+      setLoading(true);
+      const data = await db("chat_messages", `select=*&order=created_at.asc&limit=${LOAD_LIMIT}&offset=0`);
+      // Actually we want the LAST N messages, so order desc then reverse
+      const data2 = await db("chat_messages", `select=*&order=created_at.desc&limit=${LOAD_LIMIT}`);
+      if (data2) {
+        setMsgs(data2.reverse());
+      }
+      setLoading(false);
+      setTimeout(scrollToBottom, 100);
+    })();
+  }, [nick]);
+
+  // Realtime subscription
+  useEffect(() => {
+    if (!nick) return;
+
+    const channel = sbClient
+      .channel('chat_room')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_messages' }, (payload) => {
+        setMsgs(prev => [...prev, payload.new]);
+        setTimeout(scrollToBottom, 50);
+      })
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState();
+        setUserCount(Object.keys(state).length);
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          setConnected(true);
+          await channel.track({ nick, joined: new Date().toISOString() });
+        } else {
+          setConnected(false);
+        }
+      });
+
+    return () => { sbClient.removeChannel(channel); };
+  }, [nick]);
+
+  // Send message
+  const sendMsg = async () => {
+    const txt = input.trim();
+    if (!txt || txt.length > MAX_MSG_LEN) return;
+    const now = Date.now();
+    if (now - lastSent < SEND_COOLDOWN) return;
+    setLastSent(now);
+    setInput("");
+    inputRef.current?.focus();
+
+    try {
+      await fetch(SB_URL + "/rest/v1/chat_messages", {
+        method: "POST",
+        headers: {
+          apikey: SB_KEY,
+          Authorization: "Bearer " + SB_KEY,
+          "Content-Type": "application/json",
+          Prefer: "return=minimal"
+        },
+        body: JSON.stringify({ nickname: nick, message: txt })
+      });
+    } catch (e) {
+      console.error("Send error:", e);
+    }
+  };
+
+  // Change nickname
+  const changeNick = () => {
+    localStorage.removeItem("sp-chat-nick");
+    setNick("");
+    setMsgs([]);
+  };
+
+  // Group messages by date
+  const groupedMsgs = [];
+  let lastDate = "";
+  msgs.forEach(m => {
+    const d = new Date(m.created_at).toLocaleDateString("ko-KR", { year: "numeric", month: "long", day: "numeric", weekday: "short" });
+    if (d !== lastDate) {
+      groupedMsgs.push({ type: "date", date: d });
+      lastDate = d;
+    }
+    groupedMsgs.push({ type: "msg", data: m });
+  });
+
+  if (!nick) return <NickModal onSet={setNick} />;
+
+  return <>
+    {/* Header */}
+    <header style={{ borderBottom: "1px solid var(--div2)", maxWidth: 900, margin: "0 auto", padding: "16px 40px", display: "flex", alignItems: "center", justifyContent: "space-between" }} className="page-header">
+      <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+        <a href="index.html" className="page-back">← 대시보드</a>
+        <span style={{ color: "var(--div3)" }}>|</span>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <span style={{ fontSize: "20px" }}>💬</span>
+          <span style={{ fontWeight: 700, fontSize: "17px" }}>실시간 토론방</span>
+        </div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+        <OnlineDot connected={connected} />
+        {userCount > 0 && <span style={{ fontSize: "12px", color: "var(--muted)" }}>👥 {userCount}명</span>}
+        <button onClick={toggleTheme} style={{ background: "var(--tab-bg)", border: "1px solid var(--tab-bd)", borderRadius: "8px", padding: "6px 10px", cursor: "pointer", fontSize: "14px", color: "var(--text)" }}>{theme === "dark" ? "☀️" : "🌙"}</button>
+      </div>
+    </header>
+
+    {/* Chat container */}
+    <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 40px", display: "flex", flexDirection: "column", height: "calc(100vh - 70px)" }} className="chat-container">
+
+      {/* Info bar */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 0", borderBottom: "1px solid var(--div)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <span style={{ fontSize: "13px", color: "var(--muted)" }}>닉네임:</span>
+          <span style={{ fontSize: "13px", fontWeight: 600, color: getNickColor(nick) }}>{nick}</span>
+          <button onClick={changeNick} style={{ background: "none", border: "1px solid var(--div3)", borderRadius: "6px", padding: "2px 8px", fontSize: "11px", color: "var(--muted)", cursor: "pointer" }}>변경</button>
+        </div>
+        <span style={{ fontSize: "12px", color: "var(--dimmer)" }}>주식 관련 자유 토론 · 비방/욕설 금지</span>
+      </div>
+
+      {/* Messages area */}
+      <div ref={listRef} style={{ flex: 1, overflowY: "auto", padding: "16px 0", display: "flex", flexDirection: "column", gap: "2px" }}>
+        {loading ? (
+          <div style={{ display: "flex", justifyContent: "center", padding: "60px 0" }}>
+            <div style={{ width: 28, height: 28, border: "3px solid var(--div3)", borderTop: "3px solid #06b6d4", borderRadius: "50%", animation: "spin 1s linear infinite" }} />
+          </div>
+        ) : msgs.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "80px 0", color: "var(--muted)" }}>
+            <div style={{ fontSize: "48px", marginBottom: "12px" }}>💬</div>
+            <div style={{ fontSize: "15px" }}>아직 메시지가 없습니다</div>
+            <div style={{ fontSize: "13px", marginTop: "4px" }}>첫 번째 메시지를 남겨보세요!</div>
+          </div>
+        ) : (
+          groupedMsgs.map((item, i) =>
+            item.type === "date"
+              ? <DateDivider key={"d" + i} date={item.date} />
+              : <MsgBubble key={item.data.id || i} msg={item.data} isMine={item.data.nickname === nick} />
+          )
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Input area */}
+      <div style={{ borderTop: "1px solid var(--div2)", padding: "14px 0 20px", display: "flex", gap: "10px", alignItems: "flex-end" }}>
+        <div style={{ flex: 1, position: "relative" }}>
+          <textarea
+            ref={inputRef}
+            value={input}
+            onChange={e => setInput(e.target.value.slice(0, MAX_MSG_LEN))}
+            onKeyDown={e => {
+              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); }
+            }}
+            placeholder="메시지를 입력하세요... (Shift+Enter: 줄바꿈)"
+            rows={1}
+            style={{
+              width: "100%", padding: "12px 16px", borderRadius: "12px",
+              border: "1px solid var(--inp-bd)", background: "var(--inp-bg)",
+              color: "var(--text)", fontSize: "14px", lineHeight: 1.5,
+              outline: "none", resize: "none", fontFamily: "inherit",
+              minHeight: "44px", maxHeight: "120px"
+            }}
+            onInput={e => {
+              e.target.style.height = "auto";
+              e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px";
+            }}
+          />
+          <span style={{ position: "absolute", right: 12, bottom: 8, fontSize: "11px", color: input.length > MAX_MSG_LEN * 0.9 ? "#ef4444" : "var(--dimmer)" }}>
+            {input.length}/{MAX_MSG_LEN}
+          </span>
+        </div>
+        <button
+          onClick={sendMsg}
+          disabled={!input.trim()}
+          style={{
+            padding: "12px 20px", borderRadius: "12px", border: "none",
+            background: input.trim() ? "linear-gradient(135deg,#06b6d4,#8b5cf6)" : "var(--tab-bg)",
+            color: input.trim() ? "#fff" : "var(--dimmer)",
+            fontSize: "14px", fontWeight: 600, cursor: input.trim() ? "pointer" : "default",
+            transition: "all .2s", whiteSpace: "nowrap", minHeight: "44px"
+          }}
+        >전송</button>
+      </div>
+    </div>
+
+    {/* Footer */}
+    <footer style={{ borderTop: "1px solid var(--div2)", maxWidth: 900, margin: "0 auto", padding: "14px 40px", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "8px", color: "var(--dimmer)", fontSize: "13px" }}>
+      <div><span style={{ fontWeight: 600, color: "var(--dim)" }}>STOCKPULSE</span> © 2026</div>
+      <div className="footer-links">
+        <a href="index.html">대시보드</a>
+        <a href="archive.html">AI 브리핑</a>
+        <a href="guide.html">투자 가이드</a>
+        <a href="about.html">서비스 소개</a>
+      </div>
+    </footer>
+  </>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
