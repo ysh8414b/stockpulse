@@ -211,11 +211,51 @@ function AdminRow({admin,adminHash,onUpdated,onDelete}){
   </tr>;
 }
 
+// ═══ 비밀번호 변경 모달 ═══
+function ChangePwModal({adminHash,onChanged,onCancel}){
+  const[newPw,setNewPw]=useState("");
+  const[newPw2,setNewPw2]=useState("");
+  const[err,setErr]=useState("");
+  const[loading,setLoading]=useState(false);
+
+  const submit=async()=>{
+    if(!newPw.trim()||newPw.trim().length<4){setErr("새 비밀번호는 4자 이상");return}
+    if(newPw!==newPw2){setErr("비밀번호가 일치하지 않습니다");return}
+    setLoading(true);setErr("");
+    try{
+      const h=await hashPassword(newPw.trim());
+      const r=await fetch(SB_URL+"/rest/v1/rpc/change_admin_password",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({p_old_hash:adminHash,p_new_hash:h})});
+      if(!r.ok){const t=await r.text();if(t.includes("duplicate_password"))throw new Error("duplicate_password");throw new Error(r.status)}
+      const result=await r.json();
+      if(result===true){onChanged(h)}
+      else{setErr("변경 실패")}
+    }catch(e){
+      if(e.message==="duplicate_password")setErr("이미 사용 중인 비밀번호입니다");
+      else setErr("변경 실패: "+e.message);
+    }
+    setLoading(false);
+  };
+
+  return <div className="modal-overlay" onClick={onCancel}>
+    <div className="modal-box" onClick={e=>e.stopPropagation()}>
+      <div style={{fontWeight:700,fontSize:"16px",marginBottom:"16px"}}>🔑 비밀번호 변경</div>
+      <input className="admin-input" type="password" placeholder="새 비밀번호 (4자 이상)" value={newPw} onChange={e=>setNewPw(e.target.value)} maxLength={30} style={{marginBottom:"8px"}}/>
+      <input className="admin-input" type="password" placeholder="새 비밀번호 확인" value={newPw2} onChange={e=>setNewPw2(e.target.value)} maxLength={30} onKeyDown={e=>e.key==="Enter"&&submit()}/>
+      {err&&<div style={{color:"#ef4444",fontSize:"13px",marginTop:"8px"}}>{err}</div>}
+      <div style={{display:"flex",gap:"8px",justifyContent:"flex-end",marginTop:"16px"}}>
+        <button className="admin-btn admin-btn-secondary" onClick={onCancel} disabled={loading}>취소</button>
+        <button className="admin-btn admin-btn-primary" onClick={submit} disabled={loading}>{loading?"변경 중...":"변경"}</button>
+      </div>
+    </div>
+  </div>;
+}
+
 // ═══ 관리자 대시보드 ═══
-function AdminDashboard({adminHash,adminInfo,onLogout}){
+function AdminDashboard({adminHash,adminInfo,onLogout,onHashChanged}){
   const[admins,setAdmins]=useState([]);
   const[loading,setLoading]=useState(true);
   const[deleteTarget,setDeleteTarget]=useState(null);
+  const[showPwModal,setShowPwModal]=useState(false);
 
   const loadAdmins=useCallback(async()=>{
     try{
@@ -251,8 +291,12 @@ function AdminDashboard({adminHash,adminInfo,onLogout}){
             {PERM_KEYS.map(p=><span key={p.key} style={{padding:"4px 12px",borderRadius:8,fontSize:"13px",background:adminInfo.permissions[p.key]?"rgba(34,197,94,0.1)":"rgba(239,68,68,0.1)",color:adminInfo.permissions[p.key]?"#22c55e":"#ef4444"}}>{p.label}: {adminInfo.permissions[p.key]?"O":"X"}</span>)}
           </div>
         </div>
-        <button className="admin-btn admin-btn-secondary" onClick={onLogout} style={{marginTop:"24px"}}>로그아웃</button>
+        <div style={{display:"flex",gap:"8px",justifyContent:"center",marginTop:"24px"}}>
+          <button className="admin-btn admin-btn-secondary" onClick={()=>setShowPwModal(true)}>비밀번호 변경</button>
+          <button className="admin-btn admin-btn-secondary" onClick={onLogout}>로그아웃</button>
+        </div>
       </Box>
+      {showPwModal&&<ChangePwModal adminHash={adminHash} onChanged={(h)=>{setShowPwModal(false);onHashChanged(h)}} onCancel={()=>setShowPwModal(false)}/>}
     </div>;
   }
 
@@ -262,7 +306,10 @@ function AdminDashboard({adminHash,adminInfo,onLogout}){
         <div style={{fontWeight:700,fontSize:"18px"}}>관리자 목록</div>
         <div style={{fontSize:"13px",color:"var(--muted)",marginTop:"2px"}}>총 {admins.length}명</div>
       </div>
-      <button className="admin-btn admin-btn-secondary" onClick={onLogout} style={{padding:"8px 16px",fontSize:"13px"}}>로그아웃</button>
+      <div style={{display:"flex",gap:"8px"}}>
+        <button className="admin-btn admin-btn-secondary" onClick={()=>setShowPwModal(true)} style={{padding:"8px 16px",fontSize:"13px"}}>🔑 비밀번호 변경</button>
+        <button className="admin-btn admin-btn-secondary" onClick={onLogout} style={{padding:"8px 16px",fontSize:"13px"}}>로그아웃</button>
+      </div>
     </div>
 
     {loading?<Loader/>:<Box hover={false} style={{padding:0,overflow:"auto"}}>
@@ -282,6 +329,7 @@ function AdminDashboard({adminHash,adminInfo,onLogout}){
     <AddAdminForm adminHash={adminHash} onAdded={loadAdmins}/>
 
     {deleteTarget&&<ConfirmModal nickname={deleteTarget.nickname} onConfirm={handleDelete} onCancel={()=>setDeleteTarget(null)}/>}
+    {showPwModal&&<ChangePwModal adminHash={adminHash} onChanged={(h)=>{setShowPwModal(false);onHashChanged(h)}} onCancel={()=>setShowPwModal(false)}/>}
   </div>;
 }
 
@@ -316,6 +364,11 @@ function App(){
     setAdminInfo(info);
   };
 
+  const handleHashChanged=(newHash)=>{
+    sessionStorage.setItem("sp-admin-hash",newHash);
+    setAdminHash(newHash);
+  };
+
   const handleLogout=()=>{
     sessionStorage.removeItem("sp-admin-hash");
     setAdminHash("");
@@ -334,7 +387,7 @@ function App(){
         <h1 style={{fontSize:"22px",fontWeight:800,margin:0}}>관리자 페이지</h1>
       </div>
 
-      {checking?<Loader/>:(!adminHash||!adminInfo)?<LoginScreen onLogin={handleLogin}/>:<AdminDashboard adminHash={adminHash} adminInfo={adminInfo} onLogout={handleLogout}/>}
+      {checking?<Loader/>:(!adminHash||!adminInfo)?<LoginScreen onLogin={handleLogin}/>:<AdminDashboard adminHash={adminHash} adminInfo={adminInfo} onLogout={handleLogout} onHashChanged={handleHashChanged}/>}
     </div>
 
     <footer style={{borderTop:"1px solid var(--div2)",maxWidth:900,margin:"0 auto",padding:"18px 40px",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:"8px",color:"var(--dimmer)",fontSize:"13px",width:"100%",boxSizing:"border-box"}}>

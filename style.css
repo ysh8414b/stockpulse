@@ -68,13 +68,14 @@ a{color:inherit;text-decoration:none}
 }
 /* === Phone (600px) === */
 @media(max-width:600px){
-  .header-wrap{padding:14px 16px 18px!important;flex-direction:column!important;align-items:flex-start!important;gap:4px!important}
-  .header-title{font-size:23px!important}
-  .header-subtitle{display:none!important}
-  .header-right{width:100%!important;display:flex!important;justify-content:space-between!important;align-items:center!important}
-  .header-date{font-size:13px!important}
-  .header-time-large{font-size:18px!important}
-  .nav-wrap{gap:4px!important;padding:14px 16px 12px!important;margin-top:-14px!important;overflow-x:auto!important;flex-wrap:nowrap!important}
+  .header-wrap{padding:14px 16px 10px!important;flex-direction:row!important;align-items:flex-start!important;justify-content:space-between!important;gap:2px 8px!important;flex-wrap:wrap!important}
+  .header-wrap>div:first-child{flex:1 1 auto!important;min-width:150px!important}
+  .header-title{font-size:20px!important}
+  .header-subtitle{display:block!important;font-size:11px!important;margin-top:1px!important}
+  .header-right{width:auto!important;display:flex!important;align-items:center!important;gap:10px!important;margin-left:auto!important}
+  .header-date{display:block!important;font-size:12px!important}
+  .header-time-large{font-size:18px!important;text-align:right!important}
+  .nav-wrap{gap:4px!important;padding:28px 16px 12px!important;margin-top:-10px!important;overflow-x:auto!important;flex-wrap:nowrap!important}
   .nav-btn{padding:10px 14px!important;font-size:14px!important;min-height:44px!important;white-space:nowrap!important;flex-shrink:0!important}
   .nav-btn-icon{font-size:13px!important}
   .grid-index{grid-template-columns:1fr 1fr!important;gap:6px!important}
@@ -112,7 +113,7 @@ a{color:inherit;text-decoration:none}
 }
 /* === Small phone (400px) === */
 @media(max-width:400px){
-  .header-title{font-size:21px!important}
+  .header-title{font-size:18px!important}
   .header-time-large{font-size:16px!important}
   .idx-value{font-size:15px!important}
   .theme-pct{font-size:19px!important}

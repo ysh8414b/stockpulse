@@ -291,7 +291,25 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 17. 관리자 삭제 (superadmin 전용, superadmin 삭제 불가)
+-- 17. 비밀번호 변경 (본인 확인 후 변경)
+CREATE OR REPLACE FUNCTION change_admin_password(p_old_hash TEXT, p_new_hash TEXT)
+RETURNS BOOLEAN AS $$
+DECLARE
+  admin_rec board_admins;
+BEGIN
+  SELECT * INTO admin_rec FROM board_admins WHERE password_hash = p_old_hash;
+  IF NOT FOUND THEN
+    RETURN false;
+  END IF;
+  IF EXISTS (SELECT 1 FROM board_admins WHERE password_hash = p_new_hash) THEN
+    RAISE EXCEPTION 'duplicate_password';
+  END IF;
+  UPDATE board_admins SET password_hash = p_new_hash WHERE id = admin_rec.id;
+  RETURN true;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 18. 관리자 삭제 (superadmin 전용, superadmin 삭제 불가)
 CREATE OR REPLACE FUNCTION delete_board_admin(p_admin_hash TEXT, p_target_id BIGINT)
 RETURNS BOOLEAN AS $$
 DECLARE

@@ -83,15 +83,16 @@
     }
     /* === Phone (600px) === */
     @media(max-width:600px){
-      /* Header: 세로 스택 */
-      .header-wrap{padding:14px 16px 10px!important;flex-direction:column!important;align-items:flex-start!important;gap:4px!important}
-      .header-title{font-size:23px!important}
-      .header-subtitle{display:none!important}
-      .header-right{width:100%!important;display:flex!important;justify-content:space-between!important;align-items:center!important}
-      .header-date{font-size:13px!important}
-      .header-time-large{font-size:18px!important}
-      /* Nav: 가로 스크롤 + 라벨 항상 표시 */
-      .nav-wrap{gap:4px!important;padding:22px 16px 12px!important;margin-top:-22px!important;overflow-x:auto!important;flex-wrap:nowrap!important}
+      /* Header: 타이틀+설명 왼쪽, 날짜+시간 오른쪽, 줄바꿈 허용 */
+      .header-wrap{padding:14px 16px 10px!important;flex-direction:row!important;align-items:flex-start!important;justify-content:space-between!important;gap:2px 8px!important;flex-wrap:wrap!important}
+      .header-wrap>div:first-child{flex:1 1 auto!important;min-width:150px!important}
+      .header-title{font-size:20px!important}
+      .header-subtitle{display:block!important;font-size:11px!important;margin-top:1px!important}
+      .header-right{width:auto!important;display:flex!important;align-items:center!important;gap:10px!important;margin-left:auto!important}
+      .header-date{display:block!important;font-size:12px!important}
+      .header-time-large{font-size:18px!important;text-align:right!important}
+      /* Nav: 가로 스크롤 + LIVE 뱃지 잘림 방지 (padding-top 확보) */
+      .nav-wrap{gap:4px!important;padding:28px 16px 12px!important;margin-top:-10px!important;overflow-x:auto!important;flex-wrap:nowrap!important}
       .nav-btn{padding:10px 14px!important;font-size:14px!important;min-height:44px!important;white-space:nowrap!important;flex-shrink:0!important}
       .nav-btn-icon{font-size:13px!important}
       /* Index: 2열 + 카드 패딩 축소 */
@@ -127,7 +128,7 @@
     }
     /* === Small phone (400px) === */
     @media(max-width:400px){
-      .header-title{font-size:21px!important}
+      .header-title{font-size:18px!important}
       .header-time-large{font-size:16px!important}
       .idx-value{font-size:15px!important}
       .theme-pct{font-size:16px!important}
@@ -392,11 +393,13 @@ function ThemeNewsDropdown({newsList,mainTitle,mainUrl,onOpen}){
 function ThemeItem({t,i,analysis,stockCount}){
   const[newsOpen,setNewsOpen]=useState(false);
   const[anOpen,setAnOpen]=useState(false);
+  const[mOpen,setMOpen]=useState(false);
+  const isMob=window.innerWidth<=600;
   const u=t.trend==="up";const f=t.trend==="flat";const clr=u?"#22c55e":(f?"#6b7280":"#ef4444");
   const olMap={positive:{e:"🟢",l:"긍정적",c:"#22c55e"},negative:{e:"🔴",l:"부정적",c:"#ef4444"},neutral:{e:"⚪",l:"중립",c:"#6b7280"}};
   const ol=analysis?olMap[analysis.outlook]||olMap.neutral:null;
   return <div style={{position:"relative",zIndex:newsOpen?50:1}}>
-    <Box className="theme-card" style={{padding:"22px 24px",overflow:newsOpen?"visible":"hidden",cursor:analysis?"pointer":"default"}} hover={!newsOpen&&!anOpen} onClick={()=>{if(analysis)setAnOpen(v=>!v)}}>
+    <Box className="theme-card" style={{padding:"22px 24px",overflow:newsOpen?"visible":"hidden",cursor:(isMob||analysis)?"pointer":"default"}} hover={!newsOpen&&!anOpen} onClick={()=>{if(isMob)setMOpen(v=>!v);if(analysis)setAnOpen(v=>!v)}}>
       <div className="theme-layout" style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"18px"}}>
         <div style={{display:"flex",alignItems:"center",gap:"16px",flex:1,minWidth:0}}>
           <span style={{width:38,height:38,borderRadius:"9px",fontSize:"18px",fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",background:i<3?"rgba(249,115,22,0.14)":"var(--badge-bg)",color:i<3?"#f97316":"var(--muted)",flexShrink:0}}>{t.rank}</span>
@@ -417,10 +420,11 @@ function ThemeItem({t,i,analysis,stockCount}){
               <div className="theme-pct" style={{fontWeight:800,fontSize:"24px",color:clr}}>{t.change_pct}</div>
               {t.avg_3day_pct&&<div style={{fontSize:"14px",color:"var(--muted)",marginTop:"3px"}}>3일 {t.avg_3day_pct}</div>}
             </div>
-            {analysis&&<span style={{color:"var(--dimmer)",fontSize:"18px",transform:anOpen?"rotate(90deg)":"none",transition:"transform .2s",marginLeft:"4px"}}>›</span>}
+            {analysis&&!isMob&&<span style={{color:"var(--dimmer)",fontSize:"18px",transform:anOpen?"rotate(90deg)":"none",transition:"transform .2s",marginLeft:"4px"}}>›</span>}
+            {isMob&&<span style={{color:"var(--dimmer)",fontSize:"16px",transform:mOpen?"rotate(180deg)":"none",transition:"transform .2s",marginLeft:"4px"}}>▾</span>}
           </div>
         </div>
-        {t.leading_stocks&&<div className="theme-tags" style={{marginTop:"12px",paddingTop:"12px",borderTop:"1px solid var(--div)",display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>
+        {t.leading_stocks&&(!isMob||mOpen)&&<div className="theme-tags" style={{marginTop:"12px",paddingTop:"12px",borderTop:"1px solid var(--div)",display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center",animation:isMob?"fadeUp .3s ease both":"none"}}>
           {t.leading_stocks.split(",").map((s,j)=>{const parts=s.trim().split(":");const nm=parts[0];const cd=parts[1]||"";const pct=parts[2]||"";const pctVal=parseFloat(pct)||0;const pctClr=pctVal<0?"#ef4444":pctVal>0?"#22c55e":"var(--text-sub)";const validCode=cd&&/^\d{6}$/.test(cd);return validCode?<a key={j} href={`https://finance.naver.com/item/main.naver?code=${cd}`} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} className="theme-tag" style={{padding:"5px 11px",background:"var(--badge-bg)",borderRadius:"6px",fontSize:"15px",color:"var(--text-sub)",fontWeight:500,textDecoration:"none",cursor:"pointer",transition:"all .15s",border:"1px solid transparent"}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(249,115,22,0.12)";e.currentTarget.style.color="#f97316";e.currentTarget.style.borderColor="rgba(249,115,22,0.3)"}} onMouseLeave={e=>{e.currentTarget.style.background="var(--badge-bg)";e.currentTarget.style.color="var(--text-sub)";e.currentTarget.style.borderColor="transparent"}}>{nm}{pct&&<span style={{marginLeft:"5px",color:pctClr,fontSize:"13px",fontWeight:600}}>{pct}</span>}</a>:<span key={j} className="theme-tag" style={{padding:"5px 11px",background:"var(--badge-bg)",borderRadius:"6px",fontSize:"15px",color:"var(--text-sub)",fontWeight:500}}>{nm}{pct&&<span style={{marginLeft:"5px",color:pctClr,fontSize:"13px",fontWeight:600}}>{pct}</span>}</span>})}
           {stockCount>10&&<a href={`theme_detail.html?theme=${encodeURIComponent(t.name)}`} onClick={e=>e.stopPropagation()} style={{padding:"5px 12px",background:"rgba(245,158,11,0.10)",borderRadius:"6px",fontSize:"13px",color:"#f59e0b",fontWeight:600,textDecoration:"none",cursor:"pointer",transition:"all .15s",border:"1px solid rgba(245,158,11,0.2)",whiteSpace:"nowrap"}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(245,158,11,0.22)";e.currentTarget.style.borderColor="rgba(245,158,11,0.5)"}} onMouseLeave={e=>{e.currentTarget.style.background="rgba(245,158,11,0.10)";e.currentTarget.style.borderColor="rgba(245,158,11,0.2)"}}>전체 {stockCount}종목 보기 →</a>}
         </div>}
