@@ -76,7 +76,22 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 6. 댓글 삭제 RPC (비밀번호 검증)
+-- 6. 게시글 수정 RPC (비밀번호 검증)
+CREATE OR REPLACE FUNCTION update_board_post(p_id BIGINT, p_hash TEXT, p_title TEXT, p_content TEXT)
+RETURNS BOOLEAN AS $$
+DECLARE
+  admin_hash TEXT := '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918'; -- 'admin' 의 SHA-256
+BEGIN
+  IF p_hash = admin_hash THEN
+    UPDATE board_posts SET title = p_title, content = p_content, updated_at = now() WHERE id = p_id;
+    RETURN FOUND;
+  END IF;
+  UPDATE board_posts SET title = p_title, content = p_content, updated_at = now() WHERE id = p_id AND password_hash = p_hash;
+  RETURN FOUND;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 7. 댓글 삭제 RPC (비밀번호 검증)
 CREATE OR REPLACE FUNCTION delete_board_comment(c_id BIGINT, c_hash TEXT)
 RETURNS BOOLEAN AS $$
 DECLARE

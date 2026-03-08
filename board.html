@@ -211,6 +211,13 @@ function PostDetail({postId,onBack}){
   const[loading,setLoading]=useState(true);
   const[delTarget,setDelTarget]=useState(null); // {type:'post'}|{type:'comment',id:N}
   const[pinModal,setPinModal]=useState(false);
+  const[editModal,setEditModal]=useState(false);
+  const[editing,setEditing]=useState(false);
+  const[editHash,setEditHash]=useState("");
+  const[editTitle,setEditTitle]=useState("");
+  const[editContent,setEditContent]=useState("");
+  const[editLoading,setEditLoading]=useState(false);
+  const[editErr,setEditErr]=useState("");
 
   const loadPost=useCallback(async()=>{
     const data=await db("board_posts_public","id=eq."+postId);
@@ -252,6 +259,38 @@ function PostDetail({postId,onBack}){
     }catch(e){console.error("Pin error:",e);return false}
   };
 
+  const handleEditAuth=async(hash)=>{
+    try{
+      // 비밀번호 검증: update RPC를 현재 내용 그대로 호출해서 확인
+      const r=await fetch(SB_URL+"/rest/v1/rpc/update_board_post",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({p_id:postId,p_hash:hash,p_title:post.title,p_content:post.content})});
+      if(!r.ok)throw new Error(r.status);
+      const result=await r.json();
+      if(result===true){
+        setEditModal(false);
+        setEditHash(hash);
+        setEditTitle(post.title);
+        setEditContent(post.content);
+        setEditing(true);
+        return true;
+      }
+      return false;
+    }catch(e){console.error("Edit auth error:",e);return false}
+  };
+
+  const submitEdit=async()=>{
+    if(!editTitle.trim()){setEditErr("제목을 입력하세요");return}
+    if(!editContent.trim()){setEditErr("내용을 입력하세요");return}
+    setEditLoading(true);setEditErr("");
+    try{
+      const r=await fetch(SB_URL+"/rest/v1/rpc/update_board_post",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({p_id:postId,p_hash:editHash,p_title:editTitle.trim(),p_content:editContent.trim()})});
+      if(!r.ok)throw new Error(r.status);
+      const result=await r.json();
+      if(result===true){setEditing(false);setEditHash("");loadPost()}
+      else{setEditErr("수정 실패")}
+    }catch(e){setEditErr("수정 실패: "+e.message)}
+    setEditLoading(false);
+  };
+
   if(loading)return <Loader/>;
   if(!post)return <div className="fade-up" style={{textAlign:"center",padding:"60px 0",color:"var(--muted)"}}>
     <div style={{fontSize:"36px",marginBottom:"10px"}}>😥</div>
@@ -263,18 +302,33 @@ function PostDetail({postId,onBack}){
     <button className="board-btn board-btn-secondary" onClick={onBack} style={{padding:"8px 14px",fontSize:"13px",marginBottom:"20px"}}>← 목록</button>
 
     <Box hover={false} style={{padding:"24px",marginBottom:"20px"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"14px",gap:"10px",flexWrap:"wrap"}}>
-        <h2 style={{fontSize:"20px",fontWeight:700,lineHeight:1.4,flex:1,wordBreak:"break-word"}}>{post.is_pinned&&<span style={{color:"#06b6d4",fontSize:"13px",marginRight:"8px"}}>📌 공지</span>}{post.title}</h2>
-        <div style={{display:"flex",gap:"6px",flexShrink:0}}>
-          <button className="board-btn board-btn-secondary" onClick={()=>setPinModal(true)} style={{padding:"6px 14px",fontSize:"12px"}}>{post.is_pinned?"📌 공지해제":"📌 공지등록"}</button>
-          <button className="board-btn board-btn-danger" onClick={()=>setDelTarget({type:"post"})} style={{padding:"6px 14px",fontSize:"12px"}}>삭제</button>
+      {editing?<>
+        <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"16px"}}>
+          <span style={{fontWeight:700,fontSize:"18px"}}>글 수정</span>
         </div>
-      </div>
-      <div style={{display:"flex",gap:"12px",alignItems:"center",color:"var(--muted)",fontSize:"13px",marginBottom:"18px",paddingBottom:"14px",borderBottom:"1px solid var(--div)"}}>
-        <span style={{fontWeight:600,color:"var(--text-sub)"}}>{post.nickname}</span>
-        <span>{fmtFull(post.created_at)}</span>
-      </div>
-      <div style={{fontSize:"15px",lineHeight:1.8,color:"var(--text-sub)",whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{post.content}</div>
+        <input className="board-input" value={editTitle} onChange={e=>setEditTitle(e.target.value)} maxLength={100} style={{marginBottom:"12px"}} placeholder="제목"/>
+        <textarea className="board-textarea" value={editContent} onChange={e=>setEditContent(e.target.value)} maxLength={5000} placeholder="내용"/>
+        {editErr&&<div style={{color:"#ef4444",fontSize:"13px",marginTop:"8px"}}>{editErr}</div>}
+        <div style={{display:"flex",gap:"8px",marginTop:"16px",justifyContent:"flex-end"}}>
+          <button className="board-btn board-btn-secondary" onClick={()=>{setEditing(false);setEditHash("")}} disabled={editLoading}>취소</button>
+          <button className="board-btn board-btn-primary" onClick={submitEdit} disabled={editLoading}>{editLoading?"수정 중...":"수정완료"}</button>
+        </div>
+      </>:<>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"14px",gap:"10px",flexWrap:"wrap"}}>
+          <h2 style={{fontSize:"20px",fontWeight:700,lineHeight:1.4,flex:1,wordBreak:"break-word"}}>{post.is_pinned&&<span style={{color:"#06b6d4",fontSize:"13px",marginRight:"8px"}}>📌 공지</span>}{post.title}</h2>
+          <div style={{display:"flex",gap:"6px",flexShrink:0}}>
+            <button className="board-btn board-btn-secondary" onClick={()=>setEditModal(true)} style={{padding:"6px 14px",fontSize:"12px"}}>수정</button>
+            <button className="board-btn board-btn-secondary" onClick={()=>setPinModal(true)} style={{padding:"6px 14px",fontSize:"12px"}}>{post.is_pinned?"📌 공지해제":"📌 공지등록"}</button>
+            <button className="board-btn board-btn-danger" onClick={()=>setDelTarget({type:"post"})} style={{padding:"6px 14px",fontSize:"12px"}}>삭제</button>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:"12px",alignItems:"center",color:"var(--muted)",fontSize:"13px",marginBottom:"18px",paddingBottom:"14px",borderBottom:"1px solid var(--div)"}}>
+          <span style={{fontWeight:600,color:"var(--text-sub)"}}>{post.nickname}</span>
+          <span>{fmtFull(post.created_at)}</span>
+          {post.updated_at&&post.updated_at!==post.created_at&&<span style={{color:"#06b6d4",fontSize:"12px"}}>(수정됨)</span>}
+        </div>
+        <div style={{fontSize:"15px",lineHeight:1.8,color:"var(--text-sub)",whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{post.content}</div>
+      </>}
     </Box>
 
     <div style={{marginBottom:"8px",fontWeight:600,fontSize:"15px"}}>댓글 {comments.length}개</div>
@@ -288,6 +342,7 @@ function PostDetail({postId,onBack}){
 
     {delTarget&&<PasswordModal onConfirm={handleDelete} onCancel={()=>setDelTarget(null)}/>}
     {pinModal&&<PasswordModal onConfirm={handlePin} onCancel={()=>setPinModal(false)} title="공지 설정" desc="관리자 비밀번호를 입력하세요." btnText="확인" btnClass="board-btn-primary"/>}
+    {editModal&&<PasswordModal onConfirm={handleEditAuth} onCancel={()=>setEditModal(false)} title="글 수정" desc="작성 시 입력한 비밀번호를 입력하세요." btnText="확인" btnClass="board-btn-primary"/>}
   </div>;
 }
 
