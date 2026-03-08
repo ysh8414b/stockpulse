@@ -10,6 +10,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="shared.js"></script>
   <style>
     :root{
@@ -58,6 +59,8 @@
     @keyframes spin{to{transform:rotate(360deg)}}
     .fade-up{animation:fadeUp .55s cubic-bezier(.16,1,.3,1) both}
     .fade-up-d1{animation-delay:.05s}.fade-up-d2{animation-delay:.1s}.fade-up-d3{animation-delay:.15s}.fade-up-d4{animation-delay:.2s}
+    @media(max-width:900px){.chat-side-panel{position:fixed!important;top:0!important;right:0!important;bottom:0!important;width:100%!important;max-width:380px!important;height:100vh!important;z-index:999!important;box-shadow:-4px 0 20px rgba(0,0,0,0.3)!important}}
+    @media(max-width:600px){.chat-side-panel{max-width:100%!important}}
     .skeleton{background:linear-gradient(90deg,var(--skel1) 25%,var(--skel2) 50%,var(--skel1) 75%);background-size:200% 100%;animation:shimmer 1.8s infinite;border-radius:6px}
     body::before{content:'';position:fixed;top:-40%;left:-20%;width:80%;height:80%;background:radial-gradient(ellipse,var(--glow1) 0%,transparent 70%);pointer-events:none;z-index:0;transition:background .5s}
     body::after{content:'';position:fixed;bottom:-30%;right:-15%;width:60%;height:60%;background:radial-gradient(ellipse,var(--glow2) 0%,transparent 70%);pointer-events:none;z-index:0;transition:background .5s}
@@ -134,7 +137,7 @@
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const{useState,useEffect,useMemo,useRef}=React;
+const{useState,useEffect,useMemo,useRef,useCallback}=React;
 
 // ═══ SUPABASE CONFIG ═══
 const SB_URL="https://mmmpqmvwpuxqyxlxytsh.supabase.co";
@@ -557,6 +560,156 @@ function TabAI({aiSum,loading}){
   </div>;
 }
 
+// ═══ CHAT PANEL ═══
+const sbClient=window.supabase.createClient(SB_URL,SB_KEY);
+const CHAT_NICK_COLORS=["#06b6d4","#8b5cf6","#f59e0b","#22c55e","#ec4899","#3b82f6","#ef4444","#14b8a6","#f97316","#a855f7","#6366f1","#10b981"];
+function chatNickColor(n){let h=0;for(let i=0;i<n.length;i++)h=n.charCodeAt(i)+((h<<5)-h);return CHAT_NICK_COLORS[Math.abs(h)%CHAT_NICK_COLORS.length]}
+
+function ChatPanel({open,onClose}){
+  const[nick,setNick]=useState(()=>localStorage.getItem("sp-chat-nick")||"");
+  const[nickInput,setNickInput]=useState("");
+  const[msgs,setMsgs]=useState([]);
+  const[input,setInput]=useState("");
+  const[connected,setConnected]=useState(false);
+  const[lastSent,setLastSent]=useState(0);
+  const[userCount,setUserCount]=useState(0);
+  const bottomRef=useRef(null);
+  const inputRef=useRef(null);
+  const MAX_LEN=300;
+
+  const scrollBottom=useCallback(()=>{bottomRef.current?.scrollIntoView({behavior:"smooth"})},[]);
+
+  // Load messages
+  useEffect(()=>{
+    if(!open||!nick)return;
+    (async()=>{
+      const d=await db("chat_messages","select=*&order=created_at.desc&limit=80");
+      if(d)setMsgs(d.reverse());
+      setTimeout(scrollBottom,100);
+    })();
+  },[open,nick]);
+
+  // Realtime
+  useEffect(()=>{
+    if(!open||!nick)return;
+    const ch=sbClient.channel('chat_panel')
+      .on('postgres_changes',{event:'INSERT',schema:'public',table:'chat_messages'},(p)=>{
+        setMsgs(prev=>[...prev,p.new]);
+        setTimeout(scrollBottom,50);
+      })
+      .on('presence',{event:'sync'},()=>{setUserCount(Object.keys(ch.presenceState()).length)})
+      .subscribe(async(s)=>{
+        if(s==='SUBSCRIBED'){setConnected(true);await ch.track({nick,joined:new Date().toISOString()})}
+        else setConnected(false);
+      });
+    return()=>{sbClient.removeChannel(ch)};
+  },[open,nick]);
+
+  // Focus input on open
+  useEffect(()=>{if(open&&nick)setTimeout(()=>inputRef.current?.focus(),200)},[open,nick]);
+
+  const sendMsg=async()=>{
+    const txt=input.trim();if(!txt||txt.length>MAX_LEN)return;
+    if(Date.now()-lastSent<1500)return;
+    setLastSent(Date.now());setInput("");inputRef.current?.focus();
+    try{await fetch(SB_URL+"/rest/v1/chat_messages",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json",Prefer:"return=minimal"},body:JSON.stringify({nickname:nick,message:txt})})}catch(e){console.error("Chat send error:",e)}
+  };
+
+  const setNickname=()=>{
+    const t=nickInput.trim();
+    if(t.length<2||t.length>10)return;
+    if(/[<>"'&]/.test(t))return;
+    localStorage.setItem("sp-chat-nick",t);setNick(t);
+  };
+
+  const fmtTime=(ts)=>new Date(ts).toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"});
+
+  // Group by date
+  const grouped=useMemo(()=>{
+    const r=[];let ld="";
+    msgs.forEach(m=>{
+      const d=new Date(m.created_at).toLocaleDateString("ko-KR",{month:"short",day:"numeric"});
+      if(d!==ld){r.push({type:"date",date:d});ld=d}
+      r.push({type:"msg",data:m});
+    });return r;
+  },[msgs]);
+
+  if(!open)return null;
+
+  return <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:"var(--bg)",borderLeft:"1px solid var(--div2)"}}>
+    {/* Header */}
+    <div style={{padding:"12px 16px",borderBottom:"1px solid var(--div2)",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+      <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+        <span style={{fontSize:"16px"}}>💬</span>
+        <span style={{fontWeight:700,fontSize:"15px"}}>토론방</span>
+        {connected&&<span style={{width:6,height:6,borderRadius:"50%",background:"#22c55e",animation:"pulse 2s infinite"}}/>}
+        {userCount>0&&<span style={{fontSize:"11px",color:"var(--muted)"}}>👥 {userCount}</span>}
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+        <a href="chat.html" target="_blank" rel="noopener" style={{fontSize:"11px",color:"var(--dim)",textDecoration:"none",padding:"3px 8px",borderRadius:"6px",border:"1px solid var(--div3)"}} title="새 창으로 열기">↗</a>
+        <button onClick={onClose} style={{background:"none",border:"none",color:"var(--muted)",cursor:"pointer",fontSize:"18px",padding:"2px 6px",lineHeight:1}}>✕</button>
+      </div>
+    </div>
+
+    {!nick ? (
+      /* Nickname input */
+      <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+        <div style={{textAlign:"center",maxWidth:260,width:"100%"}}>
+          <div style={{fontSize:"32px",marginBottom:"10px"}}>💬</div>
+          <div style={{fontWeight:700,fontSize:"16px",marginBottom:"4px"}}>토론방 입장</div>
+          <div style={{color:"var(--muted)",fontSize:"13px",marginBottom:"16px"}}>닉네임을 입력하세요</div>
+          <input value={nickInput} onChange={e=>{setNickInput(e.target.value)}} onKeyDown={e=>e.key==="Enter"&&setNickname()} placeholder="닉네임 (2~10자)" maxLength={10} style={{width:"100%",padding:"10px 14px",borderRadius:"8px",border:"1px solid var(--inp-bd)",background:"var(--inp-bg)",color:"var(--text)",fontSize:"14px",outline:"none",marginBottom:"8px",fontFamily:"inherit"}}/>
+          <button onClick={setNickname} style={{width:"100%",padding:"10px",borderRadius:"8px",border:"none",background:"linear-gradient(135deg,#06b6d4,#8b5cf6)",color:"#fff",fontSize:"14px",fontWeight:600,cursor:"pointer"}}>입장</button>
+        </div>
+      </div>
+    ) : (<>
+      {/* Nick bar */}
+      <div style={{padding:"8px 16px",borderBottom:"1px solid var(--div)",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
+          <span style={{fontSize:"12px",fontWeight:600,color:chatNickColor(nick)}}>{nick}</span>
+          <button onClick={()=>{localStorage.removeItem("sp-chat-nick");setNick("");setMsgs([])}} style={{background:"none",border:"1px solid var(--div3)",borderRadius:"4px",padding:"1px 6px",fontSize:"10px",color:"var(--muted)",cursor:"pointer"}}>변경</button>
+        </div>
+        <span style={{fontSize:"10px",color:"var(--dimmer)"}}>비방/욕설 금지</span>
+      </div>
+
+      {/* Messages */}
+      <div style={{flex:1,overflowY:"auto",padding:"12px 16px",display:"flex",flexDirection:"column",gap:"2px"}}>
+        {msgs.length===0?(
+          <div style={{textAlign:"center",padding:"40px 0",color:"var(--muted)"}}>
+            <div style={{fontSize:"32px",marginBottom:"8px"}}>💬</div>
+            <div style={{fontSize:"13px"}}>첫 메시지를 남겨보세요!</div>
+          </div>
+        ):(
+          grouped.map((item,i)=>item.type==="date"?(
+            <div key={"d"+i} style={{display:"flex",alignItems:"center",gap:"8px",margin:"10px 0 6px"}}>
+              <div style={{flex:1,height:"1px",background:"var(--div2)"}}/>
+              <span style={{fontSize:"10px",color:"var(--muted)"}}>{item.date}</span>
+              <div style={{flex:1,height:"1px",background:"var(--div2)"}}/>
+            </div>
+          ):(()=>{
+            const m=item.data,mine=m.nickname===nick;
+            return <div key={m.id||i} style={{display:"flex",flexDirection:"column",alignItems:mine?"flex-end":"flex-start",marginBottom:"3px"}}>
+              {!mine&&<span style={{fontSize:"11px",fontWeight:600,color:chatNickColor(m.nickname),marginBottom:"2px",marginLeft:"2px"}}>{m.nickname}</span>}
+              <div style={{maxWidth:"85%",padding:"8px 12px",borderRadius:mine?"12px 12px 3px 12px":"12px 12px 12px 3px",background:mine?"linear-gradient(135deg,rgba(6,182,212,0.15),rgba(139,92,246,0.12))":"var(--card-bg)",border:"1px solid "+(mine?"rgba(6,182,212,0.2)":"var(--card-bd)"),fontSize:"13px",lineHeight:1.5,color:"var(--text)",wordBreak:"break-word",whiteSpace:"pre-wrap"}}>{m.message}</div>
+              <span style={{fontSize:"10px",color:"var(--dimmer)",marginTop:"1px"}}>{fmtTime(m.created_at)}</span>
+            </div>;
+          })())
+        )}
+        <div ref={bottomRef}/>
+      </div>
+
+      {/* Input */}
+      <div style={{borderTop:"1px solid var(--div2)",padding:"10px 16px",display:"flex",gap:"8px",alignItems:"flex-end",flexShrink:0}}>
+        <div style={{flex:1,position:"relative"}}>
+          <textarea ref={inputRef} value={input} onChange={e=>setInput(e.target.value.slice(0,MAX_LEN))} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMsg()}}} placeholder="메시지 입력..." rows={1} style={{width:"100%",padding:"8px 12px",borderRadius:"10px",border:"1px solid var(--inp-bd)",background:"var(--inp-bg)",color:"var(--text)",fontSize:"13px",lineHeight:1.4,outline:"none",resize:"none",fontFamily:"inherit",minHeight:"36px",maxHeight:"80px"}} onInput={e=>{e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,80)+"px"}}/>
+          {input.length>250&&<span style={{position:"absolute",right:8,bottom:4,fontSize:"10px",color:input.length>280?"#ef4444":"var(--dimmer)"}}>{input.length}/{MAX_LEN}</span>}
+        </div>
+        <button onClick={sendMsg} disabled={!input.trim()} style={{padding:"8px 14px",borderRadius:"10px",border:"none",background:input.trim()?"linear-gradient(135deg,#06b6d4,#8b5cf6)":"var(--tab-bg)",color:input.trim()?"#fff":"var(--dimmer)",fontSize:"13px",fontWeight:600,cursor:input.trim()?"pointer":"default",minHeight:"36px",whiteSpace:"nowrap"}}>전송</button>
+      </div>
+    </>)}
+  </div>;
+}
+
 // ═══ APP ═══
 const Ticker=React.memo(function Ticker({idx}){
   const items=useMemo(()=>[...idx,...idx],[idx]);
@@ -584,6 +737,7 @@ function App(){
   const[allThm,setAllThm]=useState([]);
   const[aiSum,setAiSum]=useState(null);
   const[thmAn,setThmAn]=useState({});
+  const[chatOpen,setChatOpen]=useState(false);
   const[lastUp,setLastUp]=useState(null);
   const[theme,setTheme]=useState(()=>{try{return localStorage.getItem("sp-theme")||"dark"}catch(e){return "dark"}});
 
@@ -615,15 +769,18 @@ function App(){
       </div>
     </header>
 
-    <nav className="nav-wrap" style={{maxWidth:1440,margin:"0 auto",padding:"0 40px 18px",display:"flex",gap:"3px",borderBottom:"1px solid var(--div2)",overflow:"visible"}}>{tabs.map(t=><button key={t.id} className="nav-btn" onClick={()=>setTab(t.id)} style={{padding:"9px 18px",fontFamily:"inherit",fontSize:"15px",fontWeight:tab===t.id?600:400,cursor:"pointer",background:tab===t.id?"var(--tab-bg)":"transparent",border:"1px solid",borderColor:tab===t.id?"var(--tab-bd)":"transparent",borderRadius:"8px",color:tab===t.id?"var(--text)":"var(--dim)",transition:"all .2s",display:"flex",alignItems:"center",gap:"5px",whiteSpace:"nowrap",position:t.live?"relative":"static"}}><span className="nav-btn-icon" style={{fontSize:"12px",opacity:tab===t.id?1:.6}}>{t.ic}</span><span className="nav-btn-label">{t.l}</span>{t.live&&<span style={{position:"absolute",top:"-20px",left:"50%",transform:"translateX(-50%)",background:"linear-gradient(135deg, #ff6b6b, #ef4444, #dc2626)",color:"#fff",fontSize:"11px",fontWeight:800,padding:"3px 8px",borderRadius:"6px",letterSpacing:"0.5px",lineHeight:"14px",boxShadow:"0 2px 10px rgba(239,68,68,0.45), 0 0 20px rgba(239,68,68,0.2)",animation:"liveBounce 2s ease-in-out infinite",zIndex:10,pointerEvents:"none"}}><span style={{position:"absolute",bottom:"-4px",left:"50%",transform:"translateX(-50%)",width:0,height:0,borderLeft:"5px solid transparent",borderRight:"5px solid transparent",borderTop:"5px solid #ef4444"}}/>LIVE</span>}</button>)}<a href="chat.html" className="nav-btn" style={{padding:"9px 18px",fontSize:"15px",fontWeight:400,background:"transparent",border:"1px solid transparent",borderRadius:"8px",color:"var(--dim)",transition:"all .2s",display:"flex",alignItems:"center",gap:"5px",whiteSpace:"nowrap",textDecoration:"none",marginLeft:"auto"}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(6,182,212,0.08)";e.currentTarget.style.borderColor="rgba(6,182,212,0.2)";e.currentTarget.style.color="#06b6d4"}} onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.borderColor="transparent";e.currentTarget.style.color="var(--dim)"}}><span style={{fontSize:"12px"}}>💬</span><span className="nav-btn-label">토론방</span></a></nav>
+    <nav className="nav-wrap" style={{maxWidth:1440,margin:"0 auto",padding:"0 40px 18px",display:"flex",gap:"3px",borderBottom:"1px solid var(--div2)",overflow:"visible"}}>{tabs.map(t=><button key={t.id} className="nav-btn" onClick={()=>setTab(t.id)} style={{padding:"9px 18px",fontFamily:"inherit",fontSize:"15px",fontWeight:tab===t.id?600:400,cursor:"pointer",background:tab===t.id?"var(--tab-bg)":"transparent",border:"1px solid",borderColor:tab===t.id?"var(--tab-bd)":"transparent",borderRadius:"8px",color:tab===t.id?"var(--text)":"var(--dim)",transition:"all .2s",display:"flex",alignItems:"center",gap:"5px",whiteSpace:"nowrap",position:t.live?"relative":"static"}}><span className="nav-btn-icon" style={{fontSize:"12px",opacity:tab===t.id?1:.6}}>{t.ic}</span><span className="nav-btn-label">{t.l}</span>{t.live&&<span style={{position:"absolute",top:"-20px",left:"50%",transform:"translateX(-50%)",background:"linear-gradient(135deg, #ff6b6b, #ef4444, #dc2626)",color:"#fff",fontSize:"11px",fontWeight:800,padding:"3px 8px",borderRadius:"6px",letterSpacing:"0.5px",lineHeight:"14px",boxShadow:"0 2px 10px rgba(239,68,68,0.45), 0 0 20px rgba(239,68,68,0.2)",animation:"liveBounce 2s ease-in-out infinite",zIndex:10,pointerEvents:"none"}}><span style={{position:"absolute",bottom:"-4px",left:"50%",transform:"translateX(-50%)",width:0,height:0,borderLeft:"5px solid transparent",borderRight:"5px solid transparent",borderTop:"5px solid #ef4444"}}/>LIVE</span>}</button>)}<button className="nav-btn" onClick={()=>setChatOpen(c=>!c)} style={{padding:"9px 18px",fontFamily:"inherit",fontSize:"15px",fontWeight:chatOpen?600:400,background:chatOpen?"rgba(6,182,212,0.1)":"transparent",border:"1px solid",borderColor:chatOpen?"rgba(6,182,212,0.25)":"transparent",borderRadius:"8px",color:chatOpen?"#06b6d4":"var(--dim)",transition:"all .2s",display:"flex",alignItems:"center",gap:"5px",whiteSpace:"nowrap",cursor:"pointer",marginLeft:"auto"}} onMouseEnter={e=>{if(!chatOpen){e.currentTarget.style.background="rgba(6,182,212,0.08)";e.currentTarget.style.borderColor="rgba(6,182,212,0.2)";e.currentTarget.style.color="#06b6d4"}}} onMouseLeave={e=>{if(!chatOpen){e.currentTarget.style.background="transparent";e.currentTarget.style.borderColor="transparent";e.currentTarget.style.color="var(--dim)"}}}><span style={{fontSize:"12px"}}>💬</span><span className="nav-btn-label">토론방</span></button></nav>
 
-    <main className="main-wrap" style={{maxWidth:1440,margin:"0 auto",padding:"22px 40px 60px"}}>
-      {tab==="overview"&&<TabOverview idx={idx} stk={stk} nws={nws} sec={sec} loading={loading}/>}
-      {tab==="issues"&&<TabStocks stk={stk} nws={nws} loading={loading}/>}
-      {tab==="themes"&&<TabThemes thm={thm} allThm={allThm} thmAn={thmAn} loading={loading}/>}
-      {tab==="news"&&<TabNews nws={nws} loading={loading}/>}
-      {tab==="ai"&&<TabAI aiSum={aiSum} loading={loading}/>}
-    </main>
+    <div style={{display:"flex",maxWidth:1440,margin:"0 auto",minHeight:"calc(100vh - 200px)"}}>
+      <main className="main-wrap" style={{flex:1,minWidth:0,padding:"22px 40px 60px",transition:"all .3s ease"}}>
+        {tab==="overview"&&<TabOverview idx={idx} stk={stk} nws={nws} sec={sec} loading={loading}/>}
+        {tab==="issues"&&<TabStocks stk={stk} nws={nws} loading={loading}/>}
+        {tab==="themes"&&<TabThemes thm={thm} allThm={allThm} thmAn={thmAn} loading={loading}/>}
+        {tab==="news"&&<TabNews nws={nws} loading={loading}/>}
+        {tab==="ai"&&<TabAI aiSum={aiSum} loading={loading}/>}
+      </main>
+      {chatOpen&&<div className="chat-side-panel" style={{width:380,flexShrink:0,height:"calc(100vh - 200px)",position:"sticky",top:0,animation:"fadeUp .3s ease both"}}><ChatPanel open={chatOpen} onClose={()=>setChatOpen(false)}/></div>}
+    </div>
 
     <footer style={{borderTop:"1px solid var(--div2)",maxWidth:1440,margin:"0 auto",padding:"18px 40px",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:"8px",color:"var(--dimmer)",fontSize:"13px"}}>
       <div><span style={{fontWeight:600,color:"var(--dim)"}}>STOCKPULSE</span> © 2026 · 투자 권유 목적이 아닌 정보 제공 목적</div>
