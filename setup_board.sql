@@ -88,7 +88,7 @@ INSERT INTO board_admins (nickname, password_hash, role, permissions) VALUES (
 -- 게시판 RPC 함수 (board_admins 연동)
 -- ═══════════════════════════════════════════
 
--- 7. 게시글 작성 RPC (30초 쿨다운 + 예약 닉네임 차단)
+-- 7. 게시글 작성 RPC (30초 쿨다운 + 차단/예약 닉네임 검사)
 CREATE OR REPLACE FUNCTION insert_board_post(p_nickname TEXT, p_password_hash TEXT, p_title TEXT, p_content TEXT)
 RETURNS BIGINT AS $$
 DECLARE
@@ -97,10 +97,15 @@ DECLARE
   admin_rec board_admins;
   reserved_names TEXT[] := ARRAY['운영자','관리자','admin','ADMIN','Admin','운영진','매니저'];
 BEGIN
-  IF p_nickname = ANY(reserved_names) THEN
+  -- 차단/예약 닉네임 검사 (관리자는 우회 가능)
+  IF EXISTS (SELECT 1 FROM banned_nicknames WHERE LOWER(nickname) = LOWER(p_nickname)) OR p_nickname = ANY(reserved_names) THEN
     SELECT * INTO admin_rec FROM board_admins WHERE password_hash = p_password_hash;
     IF NOT FOUND OR NOT (admin_rec.role = 'superadmin' OR (admin_rec.permissions->>'use_reserved_names')::boolean) THEN
-      RAISE EXCEPTION 'reserved_name';
+      IF EXISTS (SELECT 1 FROM banned_nicknames WHERE LOWER(nickname) = LOWER(p_nickname)) THEN
+        RAISE EXCEPTION 'banned_nickname';
+      ELSE
+        RAISE EXCEPTION 'reserved_name';
+      END IF;
     END IF;
   END IF;
   SELECT created_at INTO last_time FROM board_posts WHERE nickname = p_nickname ORDER BY created_at DESC LIMIT 1;
@@ -114,7 +119,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 8. 댓글 작성 RPC (15초 쿨다운 + 예약 닉네임 차단)
+-- 8. 댓글 작성 RPC (15초 쿨다운 + 차단/예약 닉네임 검사)
 CREATE OR REPLACE FUNCTION insert_board_comment(p_post_id BIGINT, p_nickname TEXT, p_password_hash TEXT, p_content TEXT)
 RETURNS BIGINT AS $$
 DECLARE
@@ -123,10 +128,15 @@ DECLARE
   admin_rec board_admins;
   reserved_names TEXT[] := ARRAY['운영자','관리자','admin','ADMIN','Admin','운영진','매니저'];
 BEGIN
-  IF p_nickname = ANY(reserved_names) THEN
+  -- 차단/예약 닉네임 검사 (관리자는 우회 가능)
+  IF EXISTS (SELECT 1 FROM banned_nicknames WHERE LOWER(nickname) = LOWER(p_nickname)) OR p_nickname = ANY(reserved_names) THEN
     SELECT * INTO admin_rec FROM board_admins WHERE password_hash = p_password_hash;
     IF NOT FOUND OR NOT (admin_rec.role = 'superadmin' OR (admin_rec.permissions->>'use_reserved_names')::boolean) THEN
-      RAISE EXCEPTION 'reserved_name';
+      IF EXISTS (SELECT 1 FROM banned_nicknames WHERE LOWER(nickname) = LOWER(p_nickname)) THEN
+        RAISE EXCEPTION 'banned_nickname';
+      ELSE
+        RAISE EXCEPTION 'reserved_name';
+      END IF;
     END IF;
   END IF;
   SELECT created_at INTO last_time FROM board_comments WHERE nickname = p_nickname ORDER BY created_at DESC LIMIT 1;
@@ -327,5 +337,75 @@ BEGIN
   END IF;
   DELETE FROM board_admins WHERE id = p_target_id;
   RETURN true;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ═══════════════════════════════════════════
+-- 닉네임 제한(차단) 시스템
+-- ═══════════════════════════════════════════
+
+-- 19. 차단 닉네임 테이블
+CREATE TABLE banned_nicknames (
+  id BIGSERIAL PRIMARY KEY,
+  nickname TEXT NOT NULL,
+  reason TEXT DEFAULT '',
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE UNIQUE INDEX idx_banned_nicknames_lower ON banned_nicknames (LOWER(nickname));
+
+ALTER TABLE banned_nicknames ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "read_banned" ON banned_nicknames FOR SELECT USING (true);
+
+-- 20. 차단 닉네임 목록 조회 (superadmin 전용)
+CREATE OR REPLACE FUNCTION list_banned_nicknames(p_admin_hash TEXT)
+RETURNS JSON AS $$
+DECLARE
+  caller board_admins;
+BEGIN
+  SELECT * INTO caller FROM board_admins WHERE password_hash = p_admin_hash;
+  IF NOT FOUND OR caller.role != 'superadmin' THEN
+    RAISE EXCEPTION 'unauthorized';
+  END IF;
+  RETURN (
+    SELECT COALESCE(json_agg(json_build_object(
+      'id', id, 'nickname', nickname, 'reason', reason, 'created_at', created_at
+    ) ORDER BY created_at DESC), '[]'::json)
+    FROM banned_nicknames
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 21. 차단 닉네임 추가 (superadmin 전용)
+CREATE OR REPLACE FUNCTION add_banned_nickname(p_admin_hash TEXT, p_nickname TEXT, p_reason TEXT DEFAULT '')
+RETURNS BIGINT AS $$
+DECLARE
+  caller board_admins;
+  new_id BIGINT;
+BEGIN
+  SELECT * INTO caller FROM board_admins WHERE password_hash = p_admin_hash;
+  IF NOT FOUND OR caller.role != 'superadmin' THEN
+    RAISE EXCEPTION 'unauthorized';
+  END IF;
+  IF EXISTS (SELECT 1 FROM banned_nicknames WHERE LOWER(nickname) = LOWER(p_nickname)) THEN
+    RAISE EXCEPTION 'duplicate_nickname';
+  END IF;
+  INSERT INTO banned_nicknames (nickname, reason) VALUES (p_nickname, p_reason) RETURNING id INTO new_id;
+  RETURN new_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 22. 차단 닉네임 삭제 (superadmin 전용)
+CREATE OR REPLACE FUNCTION remove_banned_nickname(p_admin_hash TEXT, p_id BIGINT)
+RETURNS BOOLEAN AS $$
+DECLARE
+  caller board_admins;
+BEGIN
+  SELECT * INTO caller FROM board_admins WHERE password_hash = p_admin_hash;
+  IF NOT FOUND OR caller.role != 'superadmin' THEN
+    RAISE EXCEPTION 'unauthorized';
+  END IF;
+  DELETE FROM banned_nicknames WHERE id = p_id;
+  RETURN FOUND;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;

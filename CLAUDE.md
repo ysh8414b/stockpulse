@@ -259,6 +259,17 @@
 - index.html 네비게이션에 "게시판" 링크, 푸터에 "자유게시판" 링크 추가
 - sitemap.xml에 board.html 추가
 
+### 닉네임 제한(차단) 시스템 (2026-03-08)
+- 관리자 페이지에서 특정 닉네임 사용을 차단할 수 있는 기능
+- **Supabase 테이블**: `banned_nicknames` (id, nickname, reason, created_at) — UNIQUE INDEX on LOWER(nickname)
+- **RPC 함수**: `list_banned_nicknames`, `add_banned_nickname`, `remove_banned_nickname` (관리자 전용)
+- **서버사이드 검사**: `insert_board_post`, `insert_board_comment` RPC에 차단 닉네임 체크 추가 → `banned_nickname` 예외 발생
+- **admin.html**: `BannedNicknames` 컴포넌트 — 차단 닉네임 추가/삭제/목록 관리 UI (🚫 닉네임 제한 관리 섹션)
+- **chat.html**: 입장 시 + 저장된 닉네임 자동 로그인 시 `banned_nicknames` 테이블 조회하여 차단 여부 확인
+- **board.html**: 글 작성/댓글 작성 시 `banned_nickname` 에러 핸들링 추가 → "사용이 제한된 닉네임입니다" 메시지
+- 대소문자 구분 없이 차단 (LOWER() 비교)
+- RLS: anon SELECT 허용 (클라이언트에서 조회 가능)
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)

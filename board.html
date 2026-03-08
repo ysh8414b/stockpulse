@@ -152,10 +152,10 @@ function CommentForm({postId,onAdded}){
     try{
       const h=await hashPassword(pw.trim());
       const r=await fetch(SB_URL+"/rest/v1/rpc/insert_board_comment",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({p_post_id:postId,p_nickname:nick.trim(),p_password_hash:h,p_content:content.trim()})});
-      if(!r.ok){const t=await r.text();if(t.includes("too_fast"))throw new Error("too_fast");if(t.includes("reserved_name"))throw new Error("reserved_name");throw new Error(r.status)}
+      if(!r.ok){const t=await r.text();if(t.includes("too_fast"))throw new Error("too_fast");if(t.includes("reserved_name"))throw new Error("reserved_name");if(t.includes("banned_nickname"))throw new Error("banned_nickname");throw new Error(r.status)}
       setContent("");setErr("");
       onAdded();
-    }catch(e){setErr(e.message==="too_fast"?"잠시 후 다시 시도하세요 (15초)":e.message==="reserved_name"?"사용할 수 없는 닉네임입니다":"댓글 등록 실패: "+e.message)}
+    }catch(e){setErr(e.message==="too_fast"?"잠시 후 다시 시도하세요 (15초)":e.message==="reserved_name"?"사용할 수 없는 닉네임입니다":e.message==="banned_nickname"?"사용이 제한된 닉네임입니다":"댓글 등록 실패: "+e.message)}
     setLoading(false);
   };
 
@@ -203,9 +203,9 @@ function WriteForm({onCancel,onSaved}){
     try{
       const h=await hashPassword(pw.trim());
       const r=await fetch(SB_URL+"/rest/v1/rpc/insert_board_post",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({p_nickname:nick.trim(),p_password_hash:h,p_title:title.trim(),p_content:content.trim()})});
-      if(!r.ok){const t=await r.text();if(t.includes("too_fast"))throw new Error("too_fast");if(t.includes("reserved_name"))throw new Error("reserved_name");throw new Error(r.status)}
+      if(!r.ok){const t=await r.text();if(t.includes("too_fast"))throw new Error("too_fast");if(t.includes("reserved_name"))throw new Error("reserved_name");if(t.includes("banned_nickname"))throw new Error("banned_nickname");throw new Error(r.status)}
       onSaved();
-    }catch(e){setErr(e.message==="too_fast"?"잠시 후 다시 시도하세요 (30초)":e.message==="reserved_name"?"사용할 수 없는 닉네임입니다":"글 등록 실패: "+e.message)}
+    }catch(e){setErr(e.message==="too_fast"?"잠시 후 다시 시도하세요 (30초)":e.message==="reserved_name"?"사용할 수 없는 닉네임입니다":e.message==="banned_nickname"?"사용이 제한된 닉네임입니다":"글 등록 실패: "+e.message)}
     setLoading(false);
   };
 
