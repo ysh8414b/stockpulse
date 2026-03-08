@@ -5,6 +5,7 @@
 ## 프로젝트 구조
 - `index.html` — React 18 SPA (메인 대시보드, CDN 기반)
 - `analysis.html` — 일간 종목 리포트 (AI 3축 분석, 날짜별 탐색)
+- `theme_detail.html` — 테마 종목 상세 (전체 종목 리스트, 정렬, 네이버 링크)
 - `archive.html` — AI 브리핑 아카이브 (캘린더 기반 과거 브리핑 탐색)
 - `guide.html` — 투자 정보 가이드 (독창적 교육 콘텐츠)
 - `about.html` — 서비스 소개 + 연락처
@@ -201,6 +202,28 @@
   - `LifecycleBadge` 컴포넌트: 재료 수명 표시 (단기/중기/장기)
   - 핵심 판단 + 리스크 노트 카드로 분리 표시
   - 하위 호환: `catalyst_analysis` 없으면 기존 `analysis` fallback 표시
+
+### 테마 종목 상세 페이지 (2026-03-08)
+- 기존: 테마 클릭 시 상위 10개 종목(leading_stocks)만 표시
+- 변경: "전체 N종목 보기 →" 버튼 → `theme_detail.html`로 이동하여 전체 종목 확인
+- **crawl.py**: `save_theme_all_stocks(krx_data, theme_map)` 함수 추가
+  - theme_map의 모든 테마 × 모든 종목을 `theme_stocks_all` 테이블에 개별 행으로 저장
+  - 복합 점수(등락률+거래대금) 기준 rank 부여
+  - 500개씩 배치 저장 (대량 데이터 처리)
+- **theme_detail.html**: 신규 페이지
+  - URL: `theme_detail.html?theme=테마명`
+  - 테마명 + 종목 수 + 평균 등락률 + 상승/보합/하락 수 헤더
+  - 정렬: 복합점수순(기본), 등락률순, 거래대금순
+  - 종목 클릭 → 네이버 증권 이동
+  - 반응형: 모바일(600px 미만)에서 현재가/거래대금 컬럼 통합
+- **index.html**: ThemeItem에 `stockCount` prop 추가 (allThm에서 stock_count 매핑)
+  - stock_count > 10인 테마에만 버튼 표시
+  - AllThemeItem에도 동일 버튼 추가
+- **Supabase 테이블 필요**: `theme_stocks_all` (theme_name, code, name, price, change_pct, change_amount, trading_value, trend, rank, date)
+
+### 뉴스 설명 클릭 시 기사 원문 이동 (2026-03-08)
+- TabNews: 뉴스 설명(summary) 클릭 시 `window.open()`으로 뉴스 원문 새 탭 열기
+- 호버 시 테두리/배경 파란색 하이라이트 + "기사 원문 보기 →" 텍스트 표시
 
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용

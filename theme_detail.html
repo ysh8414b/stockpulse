@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>테마 종목 상세 — STOCKPULSE</title>
+  <meta name="description" content="STOCKPULSE 테마별 전체 종목 리스트. 등락률, 거래대금 기준 정렬 및 상세 분석." />
+  <meta property="og:title" content="테마 종목 상세 — STOCKPULSE" />
+  <meta property="og:description" content="테마별 전체 종목 리스트를 확인하세요." />
+  <link rel="canonical" href="https://ysh8414b.github.io/stockpulse/theme_detail.html" />
+  <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <script src="shared.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useEffect,useMemo}=React;
+
+function Box({children,style,hover=true}){
+  const[h,setH]=useState(false);
+  return <div style={{background:h&&hover?"var(--card-hbg)":"var(--card-bg)",border:"1px solid",borderColor:h&&hover?"var(--card-hbd)":"var(--card-bd)",borderRadius:"12px",padding:"18px 22px",transition:"all .25s",...style}} onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)}>{children}</div>;
+}
+
+function Loader(){return <div style={{display:"flex",justifyContent:"center",padding:"60px 0"}}><div style={{width:28,height:28,border:"3px solid var(--div3)",borderTop:"3px solid #f59e0b",borderRadius:"50%",animation:"spin 1s linear infinite"}}/></div>}
+
+// URL에서 테마명 파싱
+function getThemeName(){
+  const p=new URLSearchParams(window.location.search);
+  return p.get("theme")||"";
+}
+
+// 숫자 포맷 (억 단위)
+function formatValue(v){
+  if(!v||v===0)return "-";
+  const eok=v/100000000;
+  if(eok>=10000)return (eok/10000).toFixed(1)+"조";
+  if(eok>=1)return Math.round(eok).toLocaleString()+"억";
+  return v.toLocaleString();
+}
+
+function useIsMobile(){const[m,setM]=useState(window.innerWidth<600);useEffect(()=>{const h=()=>setM(window.innerWidth<600);window.addEventListener("resize",h);return()=>window.removeEventListener("resize",h)},[]);return m}
+
+function StockRow({s,i,mobile}){
+  const[h,setH]=useState(false);
+  const clr=s.trend==="up"?"#22c55e":(s.trend==="down"?"#ef4444":"#6b7280");
+  const arrow=s.trend==="up"?"▲":(s.trend==="down"?"▼":"─");
+  const cols=mobile?"32px 1fr 80px":"42px 1fr 110px 100px 100px";
+  return <a href={`https://finance.naver.com/item/main.naver?code=${s.code}`} target="_blank" rel="noopener noreferrer"
+    onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)}
+    style={{display:"grid",gridTemplateColumns:cols,alignItems:"center",padding:mobile?"10px 12px":"12px 16px",
+      borderBottom:"1px solid var(--div)",textDecoration:"none",color:"inherit",cursor:"pointer",
+      background:h?"rgba(245,158,11,0.06)":"transparent",transition:"all .2s ease",gap:mobile?"6px":"8px"}}>
+    <span style={{width:mobile?26:30,height:mobile?26:30,borderRadius:"8px",fontSize:mobile?"12px":"13px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",
+      background:i<3?"rgba(245,158,11,0.12)":"var(--badge-bg)",color:i<3?"#f59e0b":"var(--muted)"}}>{s.rank}</span>
+    <div style={{minWidth:0}}>
+      <div style={{fontWeight:h?700:600,fontSize:mobile?"13px":(h?"15px":"14px"),transition:"all .2s ease",color:h?"#f59e0b":"inherit",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}<span style={{color:"var(--dim)",fontSize:"11px",marginLeft:"4px"}}>{s.code}</span></div>
+      {mobile&&<div style={{fontSize:"12px",color:"var(--muted)",marginTop:"2px"}}>{s.price?`₩${Number(s.price).toLocaleString()}`:"-"} · {formatValue(s.trading_value)}</div>}
+    </div>
+    {!mobile&&<div style={{textAlign:"right",fontWeight:600,fontSize:"15px",fontVariantNumeric:"tabular-nums"}}>
+      {s.price?`₩${Number(s.price).toLocaleString()}`:"-"}
+    </div>}
+    <div style={{textAlign:"right",fontWeight:700,fontSize:mobile?"13px":"14px",color:clr}}>
+      {arrow} {s.change_pct}
+    </div>
+    {!mobile&&<div style={{textAlign:"right",fontSize:"13px",color:"var(--muted)",fontVariantNumeric:"tabular-nums"}}>
+      {formatValue(s.trading_value)}
+    </div>}
+  </a>;
+}
+
+function App(){
+  const themeName=getThemeName();
+  const[stocks,setStocks]=useState([]);
+  const[themeInfo,setThemeInfo]=useState(null);
+  const[loading,setLoading]=useState(true);
+  const[sort,setSort]=useState("rank");
+  const mobile=useIsMobile();
+
+  useEffect(()=>{
+    if(!themeName)return;
+    (async()=>{
+      setLoading(true);
+      const[stkData,thmData]=await Promise.all([
+        db("theme_stocks_all",`theme_name=eq.${encodeURIComponent(themeName)}&order=rank`),
+        db("all_themes",`name=eq.${encodeURIComponent(themeName)}&limit=1`)
+      ]);
+      if(stkData?.length)setStocks(stkData);
+      if(thmData?.length)setThemeInfo(thmData[0]);
+      setLoading(false);
+    })();
+  },[themeName]);
+
+  const sorted=useMemo(()=>{
+    const arr=[...stocks];
+    if(sort==="change") arr.sort((a,b)=>parseFloat(b.change_pct)-parseFloat(a.change_pct));
+    else if(sort==="volume") arr.sort((a,b)=>(b.trading_value||0)-(a.trading_value||0));
+    else arr.sort((a,b)=>a.rank-b.rank);
+    return arr;
+  },[stocks,sort]);
+
+  const upCount=stocks.filter(s=>s.trend==="up").length;
+  const downCount=stocks.filter(s=>s.trend==="down").length;
+  const flatCount=stocks.length-upCount-downCount;
+
+  // 테마 적용
+  useEffect(()=>{applyTheme(getStoredTheme())},[]);
+
+  if(!themeName)return <div style={{maxWidth:800,margin:"0 auto",padding:"40px 20px",textAlign:"center"}}>
+    <h1 style={{fontSize:"24px",fontWeight:700,marginBottom:"16px"}}>테마를 선택해주세요</h1>
+    <a href="index.html" style={{color:"#f59e0b",textDecoration:"none",fontSize:"15px"}}>← 대시보드로 돌아가기</a>
+  </div>;
+
+  return <div style={{maxWidth:900,margin:"0 auto",padding:"24px 20px 60px"}}>
+    {/* 헤더 */}
+    <div style={{marginBottom:"24px"}}>
+      <a href="index.html" style={{color:"var(--muted)",textDecoration:"none",fontSize:"14px",display:"inline-flex",alignItems:"center",gap:"6px",marginBottom:"16px",transition:"color .2s"}}
+        onMouseEnter={e=>e.currentTarget.style.color="#f59e0b"} onMouseLeave={e=>e.currentTarget.style.color="var(--muted)"}>
+        ← 대시보드
+      </a>
+      <div style={{display:"flex",alignItems:"center",gap:"14px",flexWrap:"wrap"}}>
+        <h1 style={{fontSize:"28px",fontWeight:800,margin:0}}>{themeName}</h1>
+        <span style={{padding:"4px 12px",borderRadius:"20px",fontSize:"14px",fontWeight:600,background:"rgba(245,158,11,0.12)",color:"#f59e0b"}}>
+          {stocks.length}종목
+        </span>
+        {themeInfo&&<span style={{fontSize:"20px",fontWeight:700,color:themeInfo.trend==="up"?"#22c55e":(themeInfo.trend==="down"?"#ef4444":"#6b7280")}}>
+          {themeInfo.trend==="up"?"▲":(themeInfo.trend==="down"?"▼":"─")} {themeInfo.change_pct}
+        </span>}
+      </div>
+      <div style={{display:"flex",gap:"16px",marginTop:"12px",flexWrap:"wrap"}}>
+        <span style={{fontSize:"14px"}}><span style={{color:"#22c55e",fontWeight:600}}>▲ 상승 {upCount}</span></span>
+        <span style={{fontSize:"14px"}}><span style={{color:"#6b7280",fontWeight:600}}>─ 보합 {flatCount}</span></span>
+        <span style={{fontSize:"14px"}}><span style={{color:"#ef4444",fontWeight:600}}>▼ 하락 {downCount}</span></span>
+      </div>
+    </div>
+
+    {/* 정렬 옵션 */}
+    <div style={{display:"flex",gap:"6px",marginBottom:"16px"}}>
+      {[{id:"rank",l:"복합점수순"},{id:"change",l:"등락률순"},{id:"volume",l:"거래대금순"}].map(x=>
+        <button key={x.id} onClick={()=>setSort(x.id)} style={{padding:"7px 14px",fontFamily:"inherit",fontSize:"14px",fontWeight:500,
+          background:sort===x.id?"var(--tab-bg)":"var(--hover)",border:"1px solid",cursor:"pointer",
+          borderColor:sort===x.id?"var(--tab-bd)":"transparent",borderRadius:"8px",
+          color:sort===x.id?"#f59e0b":"var(--muted)",transition:"all .2s"}}>{x.l}</button>
+      )}
+    </div>
+
+    {/* 종목 테이블 */}
+    <Box hover={false} style={{padding:0,overflow:"hidden"}}>
+      {/* 테이블 헤더 */}
+      <div style={{display:"grid",gridTemplateColumns:mobile?"32px 1fr 80px":"42px 1fr 110px 100px 100px",padding:mobile?"10px 12px":"12px 16px",
+        borderBottom:"1px solid var(--div2)",fontSize:"13px",fontWeight:600,color:"var(--muted)",gap:mobile?"6px":"8px"}}>
+        <span>#</span><span>종목명</span>{!mobile&&<span style={{textAlign:"right"}}>현재가</span>}<span style={{textAlign:"right"}}>등락률</span>{!mobile&&<span style={{textAlign:"right"}}>거래대금</span>}
+      </div>
+      {loading?<Loader/>:sorted.length===0?<div style={{padding:"40px",textAlign:"center",color:"var(--muted)"}}>종목 데이터가 없습니다</div>
+        :sorted.map((s,i)=><StockRow key={s.code} s={s} i={i} mobile={mobile}/>)}
+    </Box>
+
+    {/* 면책 */}
+    <div style={{marginTop:"24px",padding:"16px",borderRadius:"10px",background:"rgba(245,158,11,0.06)",border:"1px solid rgba(245,158,11,0.15)",fontSize:"13px",color:"var(--muted)",lineHeight:1.6}}>
+      본 데이터는 투자 권유가 아니며, 투자 판단의 참고 자료로만 활용하시기 바랍니다. 모든 투자의 책임은 투자자 본인에게 있습니다.
+    </div>
+  </div>;
+}
+
+ReactDOM.render(<App/>,document.getElementById("root"));
+</script>
+</body>
+</html>

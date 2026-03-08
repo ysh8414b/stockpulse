@@ -3233,6 +3233,63 @@ def build_all_themes_data(krx_data, theme_map, top_theme_names):
     return all_themes
 
 
+def save_theme_all_stocks(krx_data, theme_map):
+    """theme_map의 모든 테마 × 모든 종목을 개별 행으로 저장 (테마 상세 페이지용)"""
+    log("📊 전체 테마 종목 데이터 구축 중...")
+    rows = []
+
+    for theme_name, stocks in theme_map.items():
+        theme_stocks = []
+        seen_codes = set()
+
+        for s in stocks:
+            code = s["code"]
+            if code in seen_codes:
+                continue
+            seen_codes.add(code)
+
+            d = krx_data.get(code)
+            if not d:
+                continue
+
+            cp = d["change_pct"]
+            theme_stocks.append({
+                "name": d["name"], "code": code,
+                "change_pct": cp, "trading_value": d.get("trading_value", 0),
+                "price": d.get("price", ""), "change_amount": d.get("change_amount", ""),
+            })
+
+        if len(theme_stocks) < 1:
+            continue
+
+        # 복합 점수 기준 rank (기존 패턴 재사용)
+        max_abs_chg = max((abs(ts["change_pct"]) for ts in theme_stocks), default=1) or 1
+        max_tv = max((ts["trading_value"] for ts in theme_stocks), default=1) or 1
+        for ts in theme_stocks:
+            ts["_score"] = (abs(ts["change_pct"]) / max_abs_chg) * 50 + (ts["trading_value"] / max_tv) * 50
+        theme_stocks.sort(key=lambda x: x["_score"], reverse=True)
+
+        for rank, ts in enumerate(theme_stocks, 1):
+            cp = ts["change_pct"]
+            pct_display = f"+{cp:.2f}%" if cp >= 0 else f"{cp:.2f}%"
+            trend = "up" if cp > 0.005 else ("down" if cp < -0.005 else "flat")
+            rows.append({
+                "theme_name": theme_name,
+                "code": ts["code"],
+                "name": ts["name"],
+                "price": str(ts["price"]),
+                "change_pct": pct_display,
+                "change_amount": str(ts["change_amount"]),
+                "trading_value": int(ts["trading_value"]),
+                "trend": trend,
+                "rank": rank,
+                "date": TODAY,
+            })
+
+    log(f"  ✅ 전체 테마 종목 {len(rows)}개 구축 완료")
+    return rows
+
+
 # ─────────────────────────────────────────
 # 메인 실행
 # ─────────────────────────────────────────
@@ -3288,6 +3345,9 @@ def main():
     top_theme_names = [t["name"] for t in themes] if themes else []
     all_themes_data = build_all_themes_data(krx_data, theme_map, top_theme_names)
 
+    # 9-2. 전체 테마 종목 개별 저장 (테마 상세 페이지용)
+    theme_all_stocks = save_theme_all_stocks(krx_data, theme_map)
+
     # 10. 이슈 종목 (복합 점수 랭킹: 등락률+거래대금+테마+뉴스+섹터)
     stocks = crawl_issue_stocks(krx_data, themes, sectors, news)
 
@@ -3332,6 +3392,7 @@ def main():
     clear_today_data("themes")
     supabase_request("DELETE", "all_themes", params={"id": "gt.0"})
     supabase_request("DELETE", "sector_stocks", params={"id": "gt.0"})
+    supabase_request("DELETE", "theme_stocks_all", params={"id": "gt.0"})
 
     # 뉴스 저장
     if news:
@@ -3367,6 +3428,15 @@ def main():
     if all_themes_data:
         result = supabase_request("POST", "all_themes", data=all_themes_data)
         log(f"  📊 전체 테마 {len(all_themes_data)}개 저장 {'✅' if result else '❌'}")
+
+    # 전체 테마 종목 저장 (테마 상세 페이지용)
+    if theme_all_stocks:
+        # 대량 데이터 → 500개씩 배치 저장
+        batch_size = 500
+        for bi in range(0, len(theme_all_stocks), batch_size):
+            batch = theme_all_stocks[bi:bi+batch_size]
+            supabase_request("POST", "theme_stocks_all", data=batch)
+        log(f"  📊 테마 종목 {len(theme_all_stocks)}개 저장 ✅")
 
     # AI 요약 저장 (과거 데이터 보존 — 오늘 같은 시간대만 교체)
     if ai_summary:

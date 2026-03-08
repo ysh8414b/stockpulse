@@ -386,7 +386,7 @@ function ThemeNewsDropdown({newsList,mainTitle,mainUrl,onOpen}){
     </div>}
   </div>;
 }
-function ThemeItem({t,i,analysis}){
+function ThemeItem({t,i,analysis,stockCount}){
   const[newsOpen,setNewsOpen]=useState(false);
   const[anOpen,setAnOpen]=useState(false);
   const u=t.trend==="up";const f=t.trend==="flat";const clr=u?"#22c55e":(f?"#6b7280":"#ef4444");
@@ -417,8 +417,9 @@ function ThemeItem({t,i,analysis}){
             {analysis&&<span style={{color:"var(--dimmer)",fontSize:"18px",transform:anOpen?"rotate(90deg)":"none",transition:"transform .2s",marginLeft:"4px"}}>›</span>}
           </div>
         </div>
-        {t.leading_stocks&&<div className="theme-tags" style={{marginTop:"12px",paddingTop:"12px",borderTop:"1px solid var(--div)",display:"flex",gap:"8px",flexWrap:"wrap"}}>
+        {t.leading_stocks&&<div className="theme-tags" style={{marginTop:"12px",paddingTop:"12px",borderTop:"1px solid var(--div)",display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>
           {t.leading_stocks.split(",").map((s,j)=>{const parts=s.trim().split(":");const nm=parts[0];const cd=parts[1]||"";const pct=parts[2]||"";const pctVal=parseFloat(pct)||0;const pctClr=pctVal<0?"#ef4444":pctVal>0?"#22c55e":"var(--text-sub)";const validCode=cd&&/^\d{6}$/.test(cd);return validCode?<a key={j} href={`https://finance.naver.com/item/main.naver?code=${cd}`} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} className="theme-tag" style={{padding:"5px 11px",background:"var(--badge-bg)",borderRadius:"6px",fontSize:"15px",color:"var(--text-sub)",fontWeight:500,textDecoration:"none",cursor:"pointer",transition:"all .15s",border:"1px solid transparent"}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(249,115,22,0.12)";e.currentTarget.style.color="#f97316";e.currentTarget.style.borderColor="rgba(249,115,22,0.3)"}} onMouseLeave={e=>{e.currentTarget.style.background="var(--badge-bg)";e.currentTarget.style.color="var(--text-sub)";e.currentTarget.style.borderColor="transparent"}}>{nm}{pct&&<span style={{marginLeft:"5px",color:pctClr,fontSize:"13px",fontWeight:600}}>{pct}</span>}</a>:<span key={j} className="theme-tag" style={{padding:"5px 11px",background:"var(--badge-bg)",borderRadius:"6px",fontSize:"15px",color:"var(--text-sub)",fontWeight:500}}>{nm}{pct&&<span style={{marginLeft:"5px",color:pctClr,fontSize:"13px",fontWeight:600}}>{pct}</span>}</span>})}
+          {stockCount>10&&<a href={`theme_detail.html?theme=${encodeURIComponent(t.name)}`} onClick={e=>e.stopPropagation()} style={{padding:"5px 12px",background:"rgba(245,158,11,0.10)",borderRadius:"6px",fontSize:"13px",color:"#f59e0b",fontWeight:600,textDecoration:"none",cursor:"pointer",transition:"all .15s",border:"1px solid rgba(245,158,11,0.2)",whiteSpace:"nowrap"}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(245,158,11,0.22)";e.currentTarget.style.borderColor="rgba(245,158,11,0.5)"}} onMouseLeave={e=>{e.currentTarget.style.background="rgba(245,158,11,0.10)";e.currentTarget.style.borderColor="rgba(245,158,11,0.2)"}}>전체 {stockCount}종목 보기 →</a>}
         </div>}
         {anOpen&&analysis&&<div style={{marginTop:"16px",paddingTop:"16px",borderTop:"1px solid var(--div2)",animation:"fadeUp .3s ease both"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"12px",flexWrap:"wrap",gap:"8px"}}>
@@ -460,8 +461,9 @@ function AllThemeItem({t,displayRank}){
         <span style={{fontSize:"14px",color:"var(--dim)",transition:"transform .2s",transform:open?"rotate(180deg)":"rotate(0deg)"}}>▼</span>
       </div>
     </div>
-    {open&&t.leading_stocks&&<div style={{marginTop:"12px",paddingTop:"12px",borderTop:"1px solid var(--div)",display:"flex",gap:"8px",flexWrap:"wrap"}}>
+    {open&&t.leading_stocks&&<div style={{marginTop:"12px",paddingTop:"12px",borderTop:"1px solid var(--div)",display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>
       {t.leading_stocks.split(",").map((s,j)=>{const parts=s.trim().split(":");const nm=parts[0];const cd=parts[1]||"";const pct=parts[2]||"";const pctVal=parseFloat(pct)||0;const pctClr=pctVal<0?"#ef4444":pctVal>0?"#22c55e":"var(--text-sub)";const validCode=cd&&/^\d{6}$/.test(cd);return validCode?<a key={j} href={`https://finance.naver.com/item/main.naver?code=${cd}`} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{padding:"5px 11px",background:"var(--badge-bg)",borderRadius:"6px",fontSize:"15px",color:"var(--text-sub)",fontWeight:500,textDecoration:"none",cursor:"pointer",transition:"all .15s",border:"1px solid transparent"}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(249,115,22,0.12)";e.currentTarget.style.color="#f97316";e.currentTarget.style.borderColor="rgba(249,115,22,0.3)"}} onMouseLeave={e=>{e.currentTarget.style.background="var(--badge-bg)";e.currentTarget.style.color="var(--text-sub)";e.currentTarget.style.borderColor="transparent"}}>{nm}{pct&&<span style={{marginLeft:"5px",color:pctClr,fontSize:"13px",fontWeight:600}}>{pct}</span>}</a>:<span key={j} style={{padding:"5px 11px",background:"var(--badge-bg)",borderRadius:"6px",fontSize:"15px",color:"var(--text-sub)",fontWeight:500}}>{nm}{pct&&<span style={{marginLeft:"5px",color:pctClr,fontSize:"13px",fontWeight:600}}>{pct}</span>}</span>})}
+      {(t.stock_count||0)>10&&<a href={`theme_detail.html?theme=${encodeURIComponent(t.name)}`} onClick={e=>e.stopPropagation()} style={{padding:"5px 12px",background:"rgba(245,158,11,0.10)",borderRadius:"6px",fontSize:"13px",color:"#f59e0b",fontWeight:600,textDecoration:"none",cursor:"pointer",transition:"all .15s",border:"1px solid rgba(245,158,11,0.2)",whiteSpace:"nowrap"}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(245,158,11,0.22)";e.currentTarget.style.borderColor="rgba(245,158,11,0.5)"}} onMouseLeave={e=>{e.currentTarget.style.background="rgba(245,158,11,0.10)";e.currentTarget.style.borderColor="rgba(245,158,11,0.2)"}}>전체 {t.stock_count}종목 보기 →</a>}
     </div>}
   </Box>;
 }
@@ -474,6 +476,7 @@ function TabThemes({thm,allThm,thmAn,loading}){
   const filteredTop=query?thm.filter(t=>t.name.toLowerCase().includes(query)):thm;
   const nonTopThemes=filteredAll.filter(t=>!t.is_top);
   const isSearching=query.length>0;
+  const scMap={};allThm.forEach(a=>{if(a.stock_count)scMap[a.name]=a.stock_count});
   return <div className="fade-up">
     <div style={{marginBottom:"20px",position:"relative"}}>
       <input value={q} onChange={e=>setQ(e.target.value)} placeholder="테마 검색... (예: 방산, 반도체, AI)" className="search-wrap" style={{width:"100%",padding:"14px 20px 14px 46px",fontSize:"17px",background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:"10px",color:"var(--text)",outline:"none",fontFamily:"inherit",transition:"border-color .2s",boxSizing:"border-box"}} onFocus={e=>e.target.style.borderColor="#f97316"} onBlur={e=>e.target.style.borderColor="var(--card-bd)"}/>
@@ -482,7 +485,7 @@ function TabThemes({thm,allThm,thmAn,loading}){
     </div>
     {(isSearching?filteredTop.length>0:true)&&<div>
       <h2 style={{fontSize:"22px",fontWeight:700,marginBottom:"20px"}}><span style={{color:"#f97316"}}>◈</span> 인기 테마 TOP 10 {isSearching&&<span style={{fontSize:"15px",color:"var(--muted)",fontWeight:400}}>({filteredTop.length}건)</span>}</h2>
-      <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr)",gap:"12px"}}>{(isSearching?filteredTop:thm).map((t,i)=><ThemeItem key={t.name||i} t={t} i={i} analysis={thmAn?.[t.name]}/>)}</div>
+      <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr)",gap:"12px"}}>{(isSearching?filteredTop:thm).map((t,i)=><ThemeItem key={t.name||i} t={t} i={i} analysis={thmAn?.[t.name]} stockCount={scMap[t.name]||0}/>)}</div>
     </div>}
     {isSearching&&filteredTop.length===0&&filteredAll.length===0&&<Empty msg={`"${q}" 관련 테마 없음`}/>}
     {allThm.length>0&&<div style={{marginTop:"28px"}}>
