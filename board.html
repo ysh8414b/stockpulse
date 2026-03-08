@@ -62,6 +62,19 @@ const{useState,useEffect,useCallback,useRef}=React;
 
 const PER_PAGE=20;
 
+function LinkedText({text}){
+  if(!text)return null;
+  const pattern=/\[([^\]]+)\]\(([^)]+)\)/g;
+  const parts=[];let last=0,m;
+  while((m=pattern.exec(text))!==null){
+    if(m.index>last)parts.push(<React.Fragment key={last}>{text.slice(last,m.index)}</React.Fragment>);
+    parts.push(<a key={m.index} href={m[2]} style={{color:"#06b6d4",textDecoration:"underline",cursor:"pointer"}} target="_blank" rel="noopener">{m[1]}</a>);
+    last=pattern.lastIndex;
+  }
+  if(last<text.length)parts.push(<React.Fragment key={last}>{text.slice(last)}</React.Fragment>);
+  return parts.length?parts:text;
+}
+
 async function hashPassword(pw){
   const enc=new TextEncoder().encode(pw);
   const buf=await crypto.subtle.digest("SHA-256",enc);
@@ -327,7 +340,7 @@ function PostDetail({postId,onBack}){
           <span>{fmtFull(post.created_at)}</span>
           {post.updated_at&&post.updated_at!==post.created_at&&<span style={{color:"#06b6d4",fontSize:"12px"}}>(수정됨)</span>}
         </div>
-        <div style={{fontSize:"15px",lineHeight:1.8,color:"var(--text-sub)",whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{post.content}</div>
+        <div style={{fontSize:"15px",lineHeight:1.8,color:"var(--text-sub)",whiteSpace:"pre-wrap",wordBreak:"break-word"}}><LinkedText text={post.content}/></div>
       </>}
     </Box>
 
