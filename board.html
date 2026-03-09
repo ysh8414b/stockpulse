@@ -92,44 +92,57 @@ function LinkedText({text}){
   return parts.length?parts:text;
 }
 
-const FORMAT_COLORS=["#ef4444","#f97316","#eab308","#22c55e","#3b82f6","#6366f1","#8b5cf6","#ec4899"];
+const FORMAT_COLORS=["#000000","#ef4444","#f97316","#eab308","#22c55e","#3b82f6","#6366f1","#8b5cf6","#ec4899"];
 const FORMAT_SIZES=[12,14,16,18,20,24];
 
 function FormattedText({text}){
   if(!text)return null;
-  // BBCode + markdown link parser
-  const tokens=[];
-  // regex: [b]...[/b], [size=N]...[/size], [color=#hex]...[/color], [text](url)
-  const re=/\[b\]([\s\S]*?)\[\/b\]|\[size=(\d+)\]([\s\S]*?)\[\/size\]|\[color=(#[0-9a-fA-F]{3,6})\]([\s\S]*?)\[\/color\]|\[([^\]]+)\]\(([^)]+)\)/g;
-  let last=0,m,key=0;
-  function parseInner(str){
-    // recursively parse nested tags
-    const inner=[];
-    const re2=/\[b\]([\s\S]*?)\[\/b\]|\[size=(\d+)\]([\s\S]*?)\[\/size\]|\[color=(#[0-9a-fA-F]{3,6})\]([\s\S]*?)\[\/color\]|\[([^\]]+)\]\(([^)]+)\)/g;
-    let l2=0,m2,k2=0;
-    while((m2=re2.exec(str))!==null){
-      if(m2.index>l2)inner.push(<React.Fragment key={"t"+k2++}>{str.slice(l2,m2.index)}</React.Fragment>);
-      if(m2[1]!==undefined)inner.push(<span key={"b"+k2++} style={{fontWeight:700}}>{parseInner(m2[1])}</span>);
-      else if(m2[2]!==undefined)inner.push(<span key={"s"+k2++} style={{fontSize:Math.min(Math.max(parseInt(m2[2]),10),32)+"px"}}>{parseInner(m2[3])}</span>);
-      else if(m2[4]!==undefined)inner.push(<span key={"c"+k2++} style={{color:m2[4]}}>{parseInner(m2[5])}</span>);
-      else if(m2[6]!==undefined&&isSafeUrl(m2[7]))inner.push(<a key={"a"+k2++} href={m2[7]} style={{color:"#06b6d4",textDecoration:"underline"}} target="_blank" rel="noopener noreferrer">{m2[6]}</a>);
-      else inner.push(<React.Fragment key={"r"+k2++}>{m2[0]}</React.Fragment>);
-      l2=re2.lastIndex;
-    }
-    if(l2<str.length)inner.push(<React.Fragment key={"e"+k2}>{str.slice(l2)}</React.Fragment>);
-    return inner.length===1?inner[0]:inner;
-  }
+  // Stack-based BBCode parser — handles improperly nested tags gracefully
+  const re=/\[b\]|\[\/b\]|\[size=(\d+)\]|\[\/size\]|\[color=(#[0-9a-fA-F]{3,6})\]|\[\/color\]|\[([^\]]+)\]\(([^)]+)\)/g;
+  const toks=[];
+  let last=0,m;
   while((m=re.exec(text))!==null){
-    if(m.index>last)tokens.push(<React.Fragment key={key++}>{text.slice(last,m.index)}</React.Fragment>);
-    if(m[1]!==undefined)tokens.push(<span key={key++} style={{fontWeight:700}}>{parseInner(m[1])}</span>);
-    else if(m[2]!==undefined)tokens.push(<span key={key++} style={{fontSize:Math.min(Math.max(parseInt(m[2]),10),32)+"px"}}>{parseInner(m[3])}</span>);
-    else if(m[4]!==undefined)tokens.push(<span key={key++} style={{color:m[4]}}>{parseInner(m[5])}</span>);
-    else if(m[6]!==undefined&&isSafeUrl(m[7]))tokens.push(<a key={key++} href={m[7]} style={{color:"#06b6d4",textDecoration:"underline"}} target="_blank" rel="noopener noreferrer">{m[6]}</a>);
-    else tokens.push(<React.Fragment key={key++}>{m[0]}</React.Fragment>);
+    if(m.index>last)toks.push({t:'x',v:text.slice(last,m.index)});
+    const s=m[0];
+    if(s==='[b]')toks.push({t:'o',tag:'b'});
+    else if(s==='[/b]')toks.push({t:'c',tag:'b'});
+    else if(s==='[/size]')toks.push({t:'c',tag:'s'});
+    else if(s==='[/color]')toks.push({t:'c',tag:'cl'});
+    else if(m[1]!==undefined)toks.push({t:'o',tag:'s',v:parseInt(m[1])});
+    else if(m[2]!==undefined)toks.push({t:'o',tag:'cl',v:m[2]});
+    else if(m[3]!==undefined){
+      if(isSafeUrl(m[4]))toks.push({t:'a',l:m[3],u:m[4]});
+      else toks.push({t:'x',v:s});
+    }
     last=re.lastIndex;
   }
-  if(last<text.length)tokens.push(<React.Fragment key={key}>{text.slice(last)}</React.Fragment>);
-  return tokens.length?tokens:text;
+  if(last<text.length)toks.push({t:'x',v:text.slice(last)});
+  // Build tree with stack
+  const root={ch:[]};
+  const stk=[root];
+  for(const tk of toks){
+    const cur=stk[stk.length-1];
+    if(tk.t==='x'||tk.t==='a'){cur.ch.push(tk);continue;}
+    if(tk.t==='o'){const nd={tag:tk.tag,v:tk.v,ch:[]};cur.ch.push(nd);stk.push(nd);continue;}
+    if(tk.t==='c'){
+      let f=-1;
+      for(let i=stk.length-1;i>0;i--){if(stk[i].tag===tk.tag){f=i;break;}}
+      if(f>0)stk.length=f;
+    }
+  }
+  // Render tree to React elements
+  let k=0;
+  function rn(nd){
+    if(nd.t==='x')return <React.Fragment key={k++}>{nd.v}</React.Fragment>;
+    if(nd.t==='a')return <a key={k++} href={nd.u} style={{color:"#06b6d4",textDecoration:"underline"}} target="_blank" rel="noopener noreferrer">{nd.l}</a>;
+    const ch=nd.ch.map(c=>rn(c));
+    if(nd.tag==='b')return <span key={k++} style={{fontWeight:700}}>{ch}</span>;
+    if(nd.tag==='s')return <span key={k++} style={{fontSize:Math.min(Math.max(nd.v||14,10),32)+"px"}}>{ch}</span>;
+    if(nd.tag==='cl')return <span key={k++} style={{color:nd.v}}>{ch}</span>;
+    return ch;
+  }
+  const res=root.ch.map(c=>rn(c));
+  return res.length?res:text;
 }
 
 // --- WYSIWYG utilities ---
@@ -203,7 +216,18 @@ function htmlToBBCode(el){
     }
     return r;
   }
-  return convert(clone);
+  let result=convert(clone);
+  // Safety: fix improperly nested closing tags
+  // e.g. [b][size=16]text[/b][/size] → [b][size=16]text[/size][/b]
+  result=result.replace(/\[\/b\](\[\/size\])/g,"$1[/b]");
+  result=result.replace(/\[\/b\](\[\/color\])/g,"$1[/b]");
+  result=result.replace(/\[\/size\](\[\/color\])/g,"$1[/size]");
+  result=result.replace(/\[\/color\](\[\/size\])/g,"$1[/color]");
+  // Remove empty tag pairs
+  result=result.replace(/\[b\]\[\/b\]/g,"");
+  result=result.replace(/\[size=\d+\]\[\/size\]/g,"");
+  result=result.replace(/\[color=#[0-9a-fA-F]{3,6}\]\[\/color\]/g,"");
+  return result;
 }
 
 function bbcodeToHtml(text){
@@ -286,6 +310,22 @@ function WysiwygEditor({editorRef,initialHtml,placeholder,maxLength}){
   </>;
 }
 
+function removeAllFormatting(editorRef){
+  const sel=window.getSelection();
+  if(!sel.rangeCount)return;
+  const range=sel.getRangeAt(0);
+  if(!editorRef.current||!editorRef.current.contains(range.commonAncestorContainer))return;
+  if(range.collapsed)return;
+  const frag=range.extractContents();
+  const text=frag.textContent;
+  const tn=document.createTextNode(text);
+  range.insertNode(tn);
+  sel.removeAllRanges();
+  const nr=document.createRange();
+  nr.selectNodeContents(tn);
+  sel.addRange(nr);
+}
+
 function FormatToolbar({editorRef}){
   const[showSize,setShowSize]=useState(false);
   const[showColor,setShowColor]=useState(false);
@@ -293,6 +333,7 @@ function FormatToolbar({editorRef}){
   const applyBold=(e)=>{prevent(e);editorRef.current?.focus();document.execCommand("bold",false,null)};
   const applySize=(e,sz)=>{prevent(e);applySpanStyle(editorRef,"fontSize",sz+"px");setShowSize(false)};
   const applyColor=(e,c)=>{prevent(e);applySpanStyle(editorRef,"color",c);setShowColor(false)};
+  const resetFmt=(e)=>{prevent(e);removeAllFormatting(editorRef)};
   const tbtn={background:"none",border:"1px solid var(--card-bd)",borderRadius:"6px",padding:"4px 10px",cursor:"pointer",color:"var(--text)",fontSize:"13px",fontFamily:"inherit",transition:"all .2s",position:"relative"};
   return <div style={{display:"flex",gap:"4px",marginBottom:"6px",flexWrap:"wrap",alignItems:"center"}}>
     <button type="button" style={{...tbtn,fontWeight:700}} onMouseDown={applyBold} title="굵게">B</button>
@@ -304,10 +345,11 @@ function FormatToolbar({editorRef}){
     </div>
     <div style={{position:"relative"}}>
       <button type="button" style={tbtn} onMouseDown={(e)=>{prevent(e);setShowColor(!showColor);setShowSize(false)}} title="글자 색상">색상 ▾</button>
-      {showColor&&<div style={{position:"absolute",top:"100%",left:0,marginTop:"4px",background:"var(--bg)",border:"1px solid var(--card-bd)",borderRadius:"8px",padding:"8px",zIndex:10,display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"4px"}}>
-        {FORMAT_COLORS.map(c=><button key={c} type="button" style={{width:"28px",height:"28px",borderRadius:"6px",background:c,border:"2px solid var(--card-bd)",cursor:"pointer",transition:"transform .15s"}} onMouseEnter={e=>e.currentTarget.style.transform="scale(1.2)"} onMouseLeave={e=>e.currentTarget.style.transform="scale(1)"} onMouseDown={(e)=>applyColor(e,c)}/>)}
+      {showColor&&<div style={{position:"absolute",top:"100%",left:0,marginTop:"4px",background:"var(--bg)",border:"1px solid var(--card-bd)",borderRadius:"8px",padding:"8px",zIndex:10,display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:"4px"}}>
+        {FORMAT_COLORS.map(c=><button key={c} type="button" style={{width:"28px",height:"28px",borderRadius:"6px",background:c,border:c==="#000000"?"2px solid var(--muted)":"2px solid var(--card-bd)",cursor:"pointer",transition:"transform .15s"}} onMouseEnter={e=>e.currentTarget.style.transform="scale(1.2)"} onMouseLeave={e=>e.currentTarget.style.transform="scale(1)"} onMouseDown={(e)=>applyColor(e,c)}/>)}
       </div>}
     </div>
+    <button type="button" style={{...tbtn,fontSize:"12px"}} onMouseDown={resetFmt} title="서식 초기화">↩ 초기화</button>
   </div>;
 }
 
@@ -322,7 +364,10 @@ function fmt(dateStr){
   const now=new Date();
   const isToday=d.toDateString()===now.toDateString();
   if(isToday)return d.toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"});
-  return d.toLocaleDateString("ko-KR",{month:"numeric",day:"numeric"});
+  const yy=String(d.getFullYear()).slice(2);
+  const mm=String(d.getMonth()+1).padStart(2,"0");
+  const dd=String(d.getDate()).padStart(2,"0");
+  return yy+"."+mm+"."+dd;
 }
 function fmtFull(dateStr){
   const d=new Date(dateStr);
