@@ -35,6 +35,7 @@ jobs:
             theme_stock_map.json
             ai_themes_cache.json
             sector_map.json
+            new_theme_cache.json
           key: theme-cache-${{ hashFiles('crawl.py') }}-${{ github.run_id }}
           restore-keys: |
             theme-cache-${{ hashFiles('crawl.py') }}-
