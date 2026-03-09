@@ -89,6 +89,76 @@ function LinkedText({text}){
   return parts.length?parts:text;
 }
 
+const FORMAT_COLORS=["#ef4444","#f97316","#eab308","#22c55e","#3b82f6","#6366f1","#8b5cf6","#ec4899"];
+const FORMAT_SIZES=[12,14,16,18,20,24];
+
+function FormattedText({text}){
+  if(!text)return null;
+  // BBCode + markdown link parser
+  const tokens=[];
+  // regex: [b]...[/b], [size=N]...[/size], [color=#hex]...[/color], [text](url)
+  const re=/\[b\]([\s\S]*?)\[\/b\]|\[size=(\d+)\]([\s\S]*?)\[\/size\]|\[color=(#[0-9a-fA-F]{3,6})\]([\s\S]*?)\[\/color\]|\[([^\]]+)\]\(([^)]+)\)/g;
+  let last=0,m,key=0;
+  function parseInner(str){
+    // recursively parse nested tags
+    const inner=[];
+    const re2=/\[b\]([\s\S]*?)\[\/b\]|\[size=(\d+)\]([\s\S]*?)\[\/size\]|\[color=(#[0-9a-fA-F]{3,6})\]([\s\S]*?)\[\/color\]|\[([^\]]+)\]\(([^)]+)\)/g;
+    let l2=0,m2,k2=0;
+    while((m2=re2.exec(str))!==null){
+      if(m2.index>l2)inner.push(<React.Fragment key={"t"+k2++}>{str.slice(l2,m2.index)}</React.Fragment>);
+      if(m2[1]!==undefined)inner.push(<span key={"b"+k2++} style={{fontWeight:700}}>{parseInner(m2[1])}</span>);
+      else if(m2[2]!==undefined)inner.push(<span key={"s"+k2++} style={{fontSize:Math.min(Math.max(parseInt(m2[2]),10),32)+"px"}}>{parseInner(m2[3])}</span>);
+      else if(m2[4]!==undefined)inner.push(<span key={"c"+k2++} style={{color:m2[4]}}>{parseInner(m2[5])}</span>);
+      else if(m2[6]!==undefined&&isSafeUrl(m2[7]))inner.push(<a key={"a"+k2++} href={m2[7]} style={{color:"#06b6d4",textDecoration:"underline"}} target="_blank" rel="noopener noreferrer">{m2[6]}</a>);
+      else inner.push(<React.Fragment key={"r"+k2++}>{m2[0]}</React.Fragment>);
+      l2=re2.lastIndex;
+    }
+    if(l2<str.length)inner.push(<React.Fragment key={"e"+k2}>{str.slice(l2)}</React.Fragment>);
+    return inner.length===1?inner[0]:inner;
+  }
+  while((m=re.exec(text))!==null){
+    if(m.index>last)tokens.push(<React.Fragment key={key++}>{text.slice(last,m.index)}</React.Fragment>);
+    if(m[1]!==undefined)tokens.push(<span key={key++} style={{fontWeight:700}}>{parseInner(m[1])}</span>);
+    else if(m[2]!==undefined)tokens.push(<span key={key++} style={{fontSize:Math.min(Math.max(parseInt(m[2]),10),32)+"px"}}>{parseInner(m[3])}</span>);
+    else if(m[4]!==undefined)tokens.push(<span key={key++} style={{color:m[4]}}>{parseInner(m[5])}</span>);
+    else if(m[6]!==undefined&&isSafeUrl(m[7]))tokens.push(<a key={key++} href={m[7]} style={{color:"#06b6d4",textDecoration:"underline"}} target="_blank" rel="noopener noreferrer">{m[6]}</a>);
+    else tokens.push(<React.Fragment key={key++}>{m[0]}</React.Fragment>);
+    last=re.lastIndex;
+  }
+  if(last<text.length)tokens.push(<React.Fragment key={key}>{text.slice(last)}</React.Fragment>);
+  return tokens.length?tokens:text;
+}
+
+function FormatToolbar({textareaRef,value,onChange}){
+  const[showSize,setShowSize]=useState(false);
+  const[showColor,setShowColor]=useState(false);
+  const wrap=(before,after)=>{
+    const ta=textareaRef.current;
+    if(!ta)return;
+    const start=ta.selectionStart,end=ta.selectionEnd;
+    const sel=value.slice(start,end);
+    const nv=value.slice(0,start)+before+sel+after+value.slice(end);
+    onChange(nv);
+    setTimeout(()=>{ta.focus();ta.selectionStart=start+before.length;ta.selectionEnd=start+before.length+sel.length},0);
+  };
+  const tbtn={background:"none",border:"1px solid var(--card-bd)",borderRadius:"6px",padding:"4px 10px",cursor:"pointer",color:"var(--text)",fontSize:"13px",fontFamily:"inherit",transition:"all .2s",position:"relative"};
+  return <div style={{display:"flex",gap:"4px",marginBottom:"6px",flexWrap:"wrap",alignItems:"center"}}>
+    <button type="button" style={{...tbtn,fontWeight:700}} onClick={()=>wrap("[b]","[/b]")} title="굵게">B</button>
+    <div style={{position:"relative"}}>
+      <button type="button" style={tbtn} onClick={()=>{setShowSize(!showSize);setShowColor(false)}} title="글자 크기">크기 ▾</button>
+      {showSize&&<div style={{position:"absolute",top:"100%",left:0,marginTop:"4px",background:"var(--bg)",border:"1px solid var(--card-bd)",borderRadius:"8px",padding:"6px",zIndex:10,display:"flex",flexDirection:"column",gap:"2px",minWidth:"70px"}}>
+        {FORMAT_SIZES.map(s=><button key={s} type="button" style={{...tbtn,border:"none",padding:"4px 8px",fontSize:Math.min(s,18)+"px",width:"100%",textAlign:"left"}} onClick={()=>{wrap("[size="+s+"]","[/size]");setShowSize(false)}}>{s}px</button>)}
+      </div>}
+    </div>
+    <div style={{position:"relative"}}>
+      <button type="button" style={tbtn} onClick={()=>{setShowColor(!showColor);setShowSize(false)}} title="글자 색상">색상 ▾</button>
+      {showColor&&<div style={{position:"absolute",top:"100%",left:0,marginTop:"4px",background:"var(--bg)",border:"1px solid var(--card-bd)",borderRadius:"8px",padding:"8px",zIndex:10,display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"4px"}}>
+        {FORMAT_COLORS.map(c=><button key={c} type="button" style={{width:"28px",height:"28px",borderRadius:"6px",background:c,border:"2px solid var(--card-bd)",cursor:"pointer",transition:"transform .15s"}} onMouseEnter={e=>e.currentTarget.style.transform="scale(1.2)"} onMouseLeave={e=>e.currentTarget.style.transform="scale(1)"} onClick={()=>{wrap("[color="+c+"]","[/color]");setShowColor(false)}}/>)}
+      </div>}
+    </div>
+  </div>;
+}
+
 async function hashPassword(pw){
   const enc=new TextEncoder().encode(pw);
   const buf=await crypto.subtle.digest("SHA-256",enc);
@@ -237,6 +307,7 @@ function WriteForm({onCancel,onSaved}){
   const[content,setContent]=useState("");
   const[loading,setLoading]=useState(false);
   const[err,setErr]=useState("");
+  const contentRef=useRef(null);
 
   const submit=async()=>{
     if(!nick.trim()||nick.trim().length<1){setErr("닉네임을 입력하세요");return}
@@ -264,7 +335,8 @@ function WriteForm({onCancel,onSaved}){
         <input className="board-input" type="password" placeholder="비밀번호 (삭제 시 필요)" value={pw} onChange={e=>setPw(e.target.value)} maxLength={20} style={{flex:"1 1 140px"}}/>
       </div>
       <input className="board-input" placeholder="제목" value={title} onChange={e=>setTitle(e.target.value)} maxLength={100} style={{marginBottom:"12px"}}/>
-      <textarea className="board-textarea" placeholder="내용을 입력하세요" value={content} onChange={e=>setContent(e.target.value)} maxLength={5000}/>
+      <FormatToolbar textareaRef={contentRef} value={content} onChange={setContent}/>
+      <textarea ref={contentRef} className="board-textarea" placeholder="내용을 입력하세요" value={content} onChange={e=>setContent(e.target.value)} maxLength={5000}/>
       {err&&<div style={{color:"#ef4444",fontSize:"13px",marginTop:"8px"}}>{err}</div>}
       <div style={{display:"flex",gap:"8px",marginTop:"16px",justifyContent:"flex-end"}}>
         <button className="board-btn board-btn-secondary" onClick={onCancel}>취소</button>
@@ -287,6 +359,7 @@ function PostDetail({postId,onBack}){
   const[editContent,setEditContent]=useState("");
   const[editLoading,setEditLoading]=useState(false);
   const[editErr,setEditErr]=useState("");
+  const editContentRef=useRef(null);
 
   const loadPost=useCallback(async()=>{
     const data=await db("board_posts_public","id=eq."+postId);
@@ -380,28 +453,27 @@ function PostDetail({postId,onBack}){
           <span style={{fontWeight:700,fontSize:"18px"}}>글 수정</span>
         </div>
         <input className="board-input" value={editTitle} onChange={e=>setEditTitle(e.target.value)} maxLength={100} style={{marginBottom:"12px"}} placeholder="제목"/>
-        <textarea className="board-textarea" value={editContent} onChange={e=>setEditContent(e.target.value)} maxLength={5000} placeholder="내용"/>
+        <FormatToolbar textareaRef={editContentRef} value={editContent} onChange={setEditContent}/>
+        <textarea ref={editContentRef} className="board-textarea" value={editContent} onChange={e=>setEditContent(e.target.value)} maxLength={5000} placeholder="내용"/>
         {editErr&&<div style={{color:"#ef4444",fontSize:"13px",marginTop:"8px"}}>{editErr}</div>}
         <div style={{display:"flex",gap:"8px",marginTop:"16px",justifyContent:"flex-end"}}>
           <button className="board-btn board-btn-secondary" onClick={()=>{setEditing(false);setEditHash("")}} disabled={editLoading}>취소</button>
           <button className="board-btn board-btn-primary" onClick={submitEdit} disabled={editLoading}>{editLoading?"수정 중...":"수정완료"}</button>
         </div>
       </>:<>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"14px",gap:"10px",flexWrap:"wrap"}}>
-          <h2 style={{fontSize:"20px",fontWeight:700,lineHeight:1.4,flex:1,wordBreak:"break-word"}}>{post.is_pinned&&<span style={{color:"#06b6d4",fontSize:"13px",marginRight:"8px"}}>📌 공지</span>}{post.title}</h2>
-          <div style={{display:"flex",gap:"6px",flexShrink:0}}>
-            <button className="board-btn board-btn-secondary" onClick={()=>setEditModal(true)} style={{padding:"6px 14px",fontSize:"12px"}}>수정</button>
-            <button className="board-btn board-btn-secondary" onClick={()=>setPinModal(true)} style={{padding:"6px 14px",fontSize:"12px"}}>{post.is_pinned?"📌 공지해제":"📌 공지등록"}</button>
-            <button className="board-btn board-btn-danger" onClick={()=>setDelTarget({type:"post"})} style={{padding:"6px 14px",fontSize:"12px"}}>삭제</button>
-          </div>
-        </div>
-        <div style={{display:"flex",gap:"12px",alignItems:"center",color:"var(--muted)",fontSize:"13px",marginBottom:"18px",paddingBottom:"14px",borderBottom:"1px solid var(--div)"}}>
+        <h2 style={{fontSize:"20px",fontWeight:700,lineHeight:1.4,wordBreak:"break-word",marginBottom:"14px"}}>{post.is_pinned&&<span style={{color:"#06b6d4",fontSize:"13px",marginRight:"8px"}}>📌 공지</span>}{post.title}</h2>
+        <div style={{display:"flex",gap:"8px 12px",alignItems:"center",color:"var(--muted)",fontSize:"13px",marginBottom:"18px",paddingBottom:"14px",borderBottom:"1px solid var(--div)",flexWrap:"wrap"}}>
           <span style={{fontWeight:600,color:"var(--text-sub)"}}>{post.nickname}</span>
           <span>{fmtFull(post.created_at)}</span>
           {post.updated_at&&post.updated_at!==post.created_at&&<span style={{color:"#06b6d4",fontSize:"12px"}}>(수정됨)</span>}
           <span>👁 {post.view_count||0}</span>
+          <span style={{marginLeft:"auto",display:"flex",gap:"6px"}}>
+            <button className="board-btn board-btn-secondary" onClick={()=>setEditModal(true)} style={{padding:"4px 10px",fontSize:"12px"}}>수정</button>
+            <button className="board-btn board-btn-secondary" onClick={()=>setPinModal(true)} style={{padding:"4px 10px",fontSize:"12px"}}>{post.is_pinned?"공지해제":"📌 공지"}</button>
+            <button className="board-btn board-btn-danger" onClick={()=>setDelTarget({type:"post"})} style={{padding:"4px 10px",fontSize:"12px"}}>삭제</button>
+          </span>
         </div>
-        <div style={{fontSize:"15px",lineHeight:1.8,color:"var(--text-sub)",whiteSpace:"pre-wrap",wordBreak:"break-word"}}><LinkedText text={post.content}/></div>
+        <div style={{fontSize:"15px",lineHeight:1.8,color:"var(--text-sub)",whiteSpace:"pre-wrap",wordBreak:"break-word"}}><FormattedText text={post.content}/></div>
       </>}
     </Box>
 

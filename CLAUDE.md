@@ -278,6 +278,15 @@
 - 목록 뷰: 👁 아이콘 + 조회수 컬럼 (모바일에서는 숨김)
 - 상세 뷰: 닉네임/날짜 옆에 조회수 표시
 
+### 자유게시판 글쓰기 서식 기능 (2026-03-09)
+- BBCode 스타일 태그로 텍스트 서식 지원 (게시글 작성/수정만, 댓글은 미적용)
+- `FormatToolbar` 컴포넌트: B(굵게), 크기(12/14/16/18/20/24px 드롭다운), 색상(8색 팔레트)
+- `FormattedText` 컴포넌트: BBCode 파싱 + 링크 파싱, 중첩 태그 지원, XSS 안전 (React elements 변환)
+- 지원 태그: `[b]굵게[/b]`, `[size=N]크기[/size]`, `[color=#hex]색상[/color]`
+- WriteForm: textarea 위에 FormatToolbar 배치, ref로 선택 영역에 태그 삽입
+- PostDetail 수정 모드: 동일하게 FormatToolbar 배치
+- PostDetail 읽기 모드: `LinkedText` → `FormattedText`로 교체
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
