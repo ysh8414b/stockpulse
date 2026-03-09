@@ -30,6 +30,9 @@
     .board-input:focus{border-color:rgba(6,182,212,0.4)}
     .board-textarea{width:100%;padding:12px 14px;border-radius:8px;border:1px solid var(--inp-bd);background:var(--inp-bg);color:var(--text);font-size:14px;outline:none;font-family:inherit;resize:vertical;min-height:160px;line-height:1.7;transition:border-color .2s}
     .board-textarea:focus{border-color:rgba(6,182,212,0.4)}
+    .board-editor{width:100%;padding:12px 14px;border-radius:8px;border:1px solid var(--inp-bd);background:var(--inp-bg);color:var(--text);font-size:14px;outline:none;font-family:inherit;min-height:160px;line-height:1.7;transition:border-color .2s;overflow-y:auto;max-height:500px;word-break:break-word;white-space:pre-wrap}
+    .board-editor:focus{border-color:rgba(6,182,212,0.4)}
+    .board-editor:empty:before{content:attr(data-placeholder);color:var(--muted);pointer-events:none;display:block}
     .board-btn{padding:10px 22px;border-radius:8px;border:none;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .2s}
     .board-btn-primary{background:linear-gradient(135deg,#06b6d4,#8b5cf6);color:#fff}
     .board-btn-primary:hover{opacity:.9;transform:translateY(-1px)}
@@ -129,31 +132,112 @@ function FormattedText({text}){
   return tokens.length?tokens:text;
 }
 
-function FormatToolbar({textareaRef,value,onChange}){
+// --- WYSIWYG utilities ---
+function rgbToHex(rgb){
+  if(!rgb)return null;
+  if(rgb.startsWith("#"))return rgb;
+  const m=rgb.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+  if(!m)return null;
+  return "#"+[m[1],m[2],m[3]].map(x=>parseInt(x).toString(16).padStart(2,"0")).join("");
+}
+
+function htmlToBBCode(el){
+  let r="";
+  for(const n of el.childNodes){
+    if(n.nodeType===Node.TEXT_NODE){r+=n.textContent;continue}
+    if(n.nodeType!==Node.ELEMENT_NODE)continue;
+    const tag=n.tagName.toLowerCase();
+    const st=n.style||{};
+    if(tag==="br"){r+="\n";continue}
+    let before="",after="";
+    if(tag==="b"||tag==="strong"||st.fontWeight==="bold"||st.fontWeight==="700"){before+="[b]";after="[/b]"+after}
+    if(st.fontSize){const sz=parseInt(st.fontSize);if(sz>=10&&sz<=32&&sz!==14){before+="[size="+sz+"]";after="[/size]"+after}}
+    if(st.color){const hx=rgbToHex(st.color);if(hx){before+="[color="+hx+"]";after="[/color]"+after}}
+    if(tag==="div"||tag==="p"){
+      const inner=htmlToBBCode(n);
+      if(r&&!r.endsWith("\n"))r+="\n";
+      r+=before+inner+after;
+      continue;
+    }
+    r+=before+htmlToBBCode(n)+after;
+  }
+  return r;
+}
+
+function bbcodeToHtml(text){
+  if(!text)return"";
+  let h=text.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  h=h.replace(/\n/g,"<br>");
+  h=h.replace(/\[b\]([\s\S]*?)\[\/b\]/g,"<b>$1</b>");
+  h=h.replace(/\[size=(\d+)\]([\s\S]*?)\[\/size\]/g,(m,s,c)=>'<span style="font-size:'+Math.min(Math.max(parseInt(s),10),32)+'px">'+c+"</span>");
+  h=h.replace(/\[color=(#[0-9a-fA-F]{3,6})\]([\s\S]*?)\[\/color\]/g,'<span style="color:$1">$2</span>');
+  return h;
+}
+
+function applySpanStyle(editorRef,prop,value){
+  const sel=window.getSelection();
+  if(!sel.rangeCount)return;
+  const range=sel.getRangeAt(0);
+  if(!editorRef.current||!editorRef.current.contains(range.commonAncestorContainer))return;
+  if(range.collapsed)return;
+  const frag=range.extractContents();
+  const span=document.createElement("span");
+  span.style[prop]=value;
+  span.appendChild(frag);
+  range.insertNode(span);
+  sel.removeAllRanges();
+  const nr=document.createRange();
+  nr.selectNodeContents(span);
+  sel.addRange(nr);
+}
+
+function WysiwygEditor({editorRef,initialHtml,placeholder,maxLength}){
+  const[charCount,setCharCount]=useState(0);
+  const inited=useRef(false);
+  useEffect(()=>{
+    if(editorRef.current&&initialHtml&&!inited.current){
+      editorRef.current.innerHTML=initialHtml;
+      setCharCount(editorRef.current.textContent.length);
+      inited.current=true;
+    }
+  },[initialHtml]);
+  const handleInput=()=>{
+    const len=editorRef.current?.textContent?.length||0;
+    setCharCount(len);
+    if(len===0&&editorRef.current)editorRef.current.innerHTML="";
+  };
+  const handlePaste=(e)=>{
+    e.preventDefault();
+    const t=e.clipboardData.getData("text/plain");
+    document.execCommand("insertText",false,t);
+  };
+  const over=maxLength&&charCount>maxLength;
+  return <>
+    <div ref={editorRef} className="board-editor" contentEditable={true} data-placeholder={placeholder||""} onInput={handleInput} onPaste={handlePaste} suppressContentEditableWarning={true}/>
+    {maxLength&&<div style={{fontSize:"12px",textAlign:"right",marginTop:"4px",color:over?"#ef4444":"var(--muted)"}}>{charCount} / {maxLength}</div>}
+  </>;
+}
+
+function FormatToolbar({editorRef}){
   const[showSize,setShowSize]=useState(false);
   const[showColor,setShowColor]=useState(false);
-  const wrap=(before,after)=>{
-    const ta=textareaRef.current;
-    if(!ta)return;
-    const start=ta.selectionStart,end=ta.selectionEnd;
-    const sel=value.slice(start,end);
-    const nv=value.slice(0,start)+before+sel+after+value.slice(end);
-    onChange(nv);
-    setTimeout(()=>{ta.focus();ta.selectionStart=start+before.length;ta.selectionEnd=start+before.length+sel.length},0);
-  };
+  const prevent=(e)=>e.preventDefault();
+  const applyBold=(e)=>{prevent(e);editorRef.current?.focus();document.execCommand("bold",false,null)};
+  const applySize=(e,sz)=>{prevent(e);applySpanStyle(editorRef,"fontSize",sz+"px");setShowSize(false)};
+  const applyColor=(e,c)=>{prevent(e);applySpanStyle(editorRef,"color",c);setShowColor(false)};
   const tbtn={background:"none",border:"1px solid var(--card-bd)",borderRadius:"6px",padding:"4px 10px",cursor:"pointer",color:"var(--text)",fontSize:"13px",fontFamily:"inherit",transition:"all .2s",position:"relative"};
   return <div style={{display:"flex",gap:"4px",marginBottom:"6px",flexWrap:"wrap",alignItems:"center"}}>
-    <button type="button" style={{...tbtn,fontWeight:700}} onClick={()=>wrap("[b]","[/b]")} title="굵게">B</button>
+    <button type="button" style={{...tbtn,fontWeight:700}} onMouseDown={applyBold} title="굵게">B</button>
     <div style={{position:"relative"}}>
-      <button type="button" style={tbtn} onClick={()=>{setShowSize(!showSize);setShowColor(false)}} title="글자 크기">크기 ▾</button>
+      <button type="button" style={tbtn} onMouseDown={(e)=>{prevent(e);setShowSize(!showSize);setShowColor(false)}} title="글자 크기">크기 ▾</button>
       {showSize&&<div style={{position:"absolute",top:"100%",left:0,marginTop:"4px",background:"var(--bg)",border:"1px solid var(--card-bd)",borderRadius:"8px",padding:"6px",zIndex:10,display:"flex",flexDirection:"column",gap:"2px",minWidth:"70px"}}>
-        {FORMAT_SIZES.map(s=><button key={s} type="button" style={{...tbtn,border:"none",padding:"4px 8px",fontSize:Math.min(s,18)+"px",width:"100%",textAlign:"left"}} onClick={()=>{wrap("[size="+s+"]","[/size]");setShowSize(false)}}>{s}px</button>)}
+        {FORMAT_SIZES.map(s=><button key={s} type="button" style={{...tbtn,border:"none",padding:"4px 8px",fontSize:Math.min(s,18)+"px",width:"100%",textAlign:"left"}} onMouseDown={(e)=>applySize(e,s)}>{s}px</button>)}
       </div>}
     </div>
     <div style={{position:"relative"}}>
-      <button type="button" style={tbtn} onClick={()=>{setShowColor(!showColor);setShowSize(false)}} title="글자 색상">색상 ▾</button>
+      <button type="button" style={tbtn} onMouseDown={(e)=>{prevent(e);setShowColor(!showColor);setShowSize(false)}} title="글자 색상">색상 ▾</button>
       {showColor&&<div style={{position:"absolute",top:"100%",left:0,marginTop:"4px",background:"var(--bg)",border:"1px solid var(--card-bd)",borderRadius:"8px",padding:"8px",zIndex:10,display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"4px"}}>
-        {FORMAT_COLORS.map(c=><button key={c} type="button" style={{width:"28px",height:"28px",borderRadius:"6px",background:c,border:"2px solid var(--card-bd)",cursor:"pointer",transition:"transform .15s"}} onMouseEnter={e=>e.currentTarget.style.transform="scale(1.2)"} onMouseLeave={e=>e.currentTarget.style.transform="scale(1)"} onClick={()=>{wrap("[color="+c+"]","[/color]");setShowColor(false)}}/>)}
+        {FORMAT_COLORS.map(c=><button key={c} type="button" style={{width:"28px",height:"28px",borderRadius:"6px",background:c,border:"2px solid var(--card-bd)",cursor:"pointer",transition:"transform .15s"}} onMouseEnter={e=>e.currentTarget.style.transform="scale(1.2)"} onMouseLeave={e=>e.currentTarget.style.transform="scale(1)"} onMouseDown={(e)=>applyColor(e,c)}/>)}
       </div>}
     </div>
   </div>;
@@ -304,20 +388,21 @@ function WriteForm({onCancel,onSaved}){
   const[nick,setNick]=useState("");
   const[pw,setPw]=useState("");
   const[title,setTitle]=useState("");
-  const[content,setContent]=useState("");
   const[loading,setLoading]=useState(false);
   const[err,setErr]=useState("");
-  const contentRef=useRef(null);
+  const editorRef=useRef(null);
 
   const submit=async()=>{
     if(!nick.trim()||nick.trim().length<1){setErr("닉네임을 입력하세요");return}
     if(!pw.trim()||pw.trim().length<2){setErr("비밀번호는 2자 이상");return}
     if(!title.trim()){setErr("제목을 입력하세요");return}
-    if(!content.trim()){setErr("내용을 입력하세요");return}
+    const content=htmlToBBCode(editorRef.current).trim();
+    if(!content){setErr("내용을 입력하세요");return}
+    if(content.length>5000){setErr("내용이 너무 깁니다 (5000자 이내)");return}
     setLoading(true);setErr("");
     try{
       const h=await hashPassword(pw.trim());
-      const r=await fetch(SB_URL+"/rest/v1/rpc/insert_board_post",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({p_nickname:nick.trim(),p_password_hash:h,p_title:title.trim(),p_content:content.trim()})});
+      const r=await fetch(SB_URL+"/rest/v1/rpc/insert_board_post",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({p_nickname:nick.trim(),p_password_hash:h,p_title:title.trim(),p_content:content})});
       if(!r.ok){const t=await r.text();if(t.includes("too_fast"))throw new Error("too_fast");if(t.includes("reserved_name"))throw new Error("reserved_name");if(t.includes("banned_nickname"))throw new Error("banned_nickname");throw new Error(r.status)}
       onSaved();
     }catch(e){setErr(e.message==="too_fast"?"잠시 후 다시 시도하세요 (30초)":e.message==="reserved_name"?"사용할 수 없는 닉네임입니다":e.message==="banned_nickname"?"사용이 제한된 닉네임입니다":"글 등록 실패: "+e.message)}
@@ -335,8 +420,8 @@ function WriteForm({onCancel,onSaved}){
         <input className="board-input" type="password" placeholder="비밀번호 (삭제 시 필요)" value={pw} onChange={e=>setPw(e.target.value)} maxLength={20} style={{flex:"1 1 140px"}}/>
       </div>
       <input className="board-input" placeholder="제목" value={title} onChange={e=>setTitle(e.target.value)} maxLength={100} style={{marginBottom:"12px"}}/>
-      <FormatToolbar textareaRef={contentRef} value={content} onChange={setContent}/>
-      <textarea ref={contentRef} className="board-textarea" placeholder="내용을 입력하세요" value={content} onChange={e=>setContent(e.target.value)} maxLength={5000}/>
+      <FormatToolbar editorRef={editorRef}/>
+      <WysiwygEditor editorRef={editorRef} placeholder="내용을 입력하세요" maxLength={5000}/>
       {err&&<div style={{color:"#ef4444",fontSize:"13px",marginTop:"8px"}}>{err}</div>}
       <div style={{display:"flex",gap:"8px",marginTop:"16px",justifyContent:"flex-end"}}>
         <button className="board-btn board-btn-secondary" onClick={onCancel}>취소</button>
@@ -356,10 +441,10 @@ function PostDetail({postId,onBack}){
   const[editing,setEditing]=useState(false);
   const[editHash,setEditHash]=useState("");
   const[editTitle,setEditTitle]=useState("");
-  const[editContent,setEditContent]=useState("");
   const[editLoading,setEditLoading]=useState(false);
   const[editErr,setEditErr]=useState("");
-  const editContentRef=useRef(null);
+  const editEditorRef=useRef(null);
+  const[editInitialHtml,setEditInitialHtml]=useState("");
 
   const loadPost=useCallback(async()=>{
     const data=await db("board_posts_public","id=eq."+postId);
@@ -415,7 +500,7 @@ function PostDetail({postId,onBack}){
         setEditModal(false);
         setEditHash(hash);
         setEditTitle(post.title);
-        setEditContent(post.content);
+        setEditInitialHtml(bbcodeToHtml(post.content));
         setEditing(true);
         return true;
       }
@@ -425,10 +510,11 @@ function PostDetail({postId,onBack}){
 
   const submitEdit=async()=>{
     if(!editTitle.trim()){setEditErr("제목을 입력하세요");return}
-    if(!editContent.trim()){setEditErr("내용을 입력하세요");return}
+    const editContent=htmlToBBCode(editEditorRef.current).trim();
+    if(!editContent){setEditErr("내용을 입력하세요");return}
     setEditLoading(true);setEditErr("");
     try{
-      const r=await fetch(SB_URL+"/rest/v1/rpc/update_board_post",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({p_id:postId,p_hash:editHash,p_title:editTitle.trim(),p_content:editContent.trim()})});
+      const r=await fetch(SB_URL+"/rest/v1/rpc/update_board_post",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({p_id:postId,p_hash:editHash,p_title:editTitle.trim(),p_content:editContent})});
       if(!r.ok)throw new Error(r.status);
       const result=await r.json();
       if(result===true){setEditing(false);setEditHash("");loadPost()}
@@ -453,8 +539,8 @@ function PostDetail({postId,onBack}){
           <span style={{fontWeight:700,fontSize:"18px"}}>글 수정</span>
         </div>
         <input className="board-input" value={editTitle} onChange={e=>setEditTitle(e.target.value)} maxLength={100} style={{marginBottom:"12px"}} placeholder="제목"/>
-        <FormatToolbar textareaRef={editContentRef} value={editContent} onChange={setEditContent}/>
-        <textarea ref={editContentRef} className="board-textarea" value={editContent} onChange={e=>setEditContent(e.target.value)} maxLength={5000} placeholder="내용"/>
+        <FormatToolbar editorRef={editEditorRef}/>
+        <WysiwygEditor editorRef={editEditorRef} initialHtml={editInitialHtml} placeholder="내용" maxLength={5000}/>
         {editErr&&<div style={{color:"#ef4444",fontSize:"13px",marginTop:"8px"}}>{editErr}</div>}
         <div style={{display:"flex",gap:"8px",marginTop:"16px",justifyContent:"flex-end"}}>
           <button className="board-btn board-btn-secondary" onClick={()=>{setEditing(false);setEditHash("")}} disabled={editLoading}>취소</button>
