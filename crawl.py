@@ -3301,6 +3301,21 @@ def main():
     log(f"📅 날짜: {TODAY}")
     log("=" * 50)
 
+    # AI 브리핑 모드 판정 (크롤링 전에 미리 결정 — 크롤링 소요시간으로 인한 타이밍 누락 방지)
+    from datetime import datetime, timezone, timedelta
+    kst_start = datetime.now(timezone(timedelta(hours=9)))
+    ai_schedule = [(8, 0, "premarket"), (12, 5, "market"), (15, 35, "close"), (16, 0, "close")]
+    ai_mode = None
+    for h, m, mode in ai_schedule:
+        if h == kst_start.hour and abs(kst_start.minute - m) <= 15:
+            ai_mode = mode
+            break
+    if ai_mode:
+        label = {"premarket": "장전 해외시장", "market": "장중", "close": "장 마감"}[ai_mode]
+        log(f"  🤖 AI 브리핑 모드 감지: {label} (시작 시각 {kst_start.strftime('%H:%M')})")
+    else:
+        log(f"  ℹ️ AI 브리핑 없음 (시작 시각 {kst_start.strftime('%H:%M')}, 생성 시간: 08:00/12:05/15:35)")
+
     if not SUPABASE_KEY:
         log("❌ SUPABASE_KEY 환경변수가 설정되지 않았습니다!")
         log("  export SUPABASE_KEY='your-service-role-key'")
@@ -3354,33 +3369,45 @@ def main():
     stocks = crawl_issue_stocks(krx_data, themes, sectors, news)
 
     # 11. AI 시장 브리핑 (Groq) — 하루 3회만 생성 (08:00 해외시장/12:05 장중/15:35 마감)
-    from datetime import datetime, timezone, timedelta
-    kst_now = datetime.now(timezone(timedelta(hours=9)))
-    ai_schedule = [(8, 0, "premarket"), (12, 5, "market"), (15, 35, "close")]
-    ai_mode = None
-    for h, m, mode in ai_schedule:
-        if h == kst_now.hour and abs(kst_now.minute - m) <= 2:
-            ai_mode = mode
-            break
-    if ai_mode:
-        label = {"premarket": "장전 해외시장", "market": "장중", "close": "장 마감"}[ai_mode]
-        log(f"  🤖 AI 브리핑 생성 ({label}) — Groq 호출")
-        ai_summary = generate_ai_summary(indices, stocks, sectors, themes, news, mode=ai_mode, krx_data=krx_data)
-    else:
-        log(f"  ℹ️ AI 브리핑 스킵 (현재 {kst_now.strftime('%H:%M')}, 생성 시간: 08:00/12:05/15:35)")
-        ai_summary = None
-
-    # ─── 종목 심층 분석 (close 모드에서만) ───
+    # ai_mode는 main() 시작 시점에 미리 결정됨 (크롤링 소요시간 무관)
+    ai_summary = None
     stock_analysis = None
-    if ai_mode == "close" and stocks:
-        log("  📊 일간 종목 분석 생성 — Groq 호출")
-        stock_analysis = generate_stock_analysis(stocks, themes, sectors, news, krx_data)
-
-    # ─── 테마 심층 분석 (close 모드에서만) ───
     theme_analysis = None
-    if ai_mode == "close" and themes:
-        log("  🔥 테마 심층 분석 생성 — Groq 호출")
-        theme_analysis = generate_theme_analysis(themes, sectors, news, indices)
+    if ai_mode:
+        # 이미 같은 모드의 브리핑이 오늘 생성되었는지 체크 (중복 Groq 호출 방지)
+        mode_hours = {"premarket": ["07", "08"], "market": ["11", "12"], "close": ["15", "16"]}
+        existing = supabase_request("GET", "ai_summary", params={"date": f"eq.{TODAY}", "select": "generated_time"})
+        already_done = False
+        if existing:
+            for rec in existing:
+                gt = rec.get("generated_time", "")
+                if gt[:2] in mode_hours.get(ai_mode, []):
+                    already_done = True
+                    break
+        if already_done:
+            log(f"  ℹ️ AI 브리핑 이미 생성됨 ({ai_mode}) — 스킵")
+        else:
+            label = {"premarket": "장전 해외시장", "market": "장중", "close": "장 마감"}[ai_mode]
+            log(f"  🤖 AI 브리핑 생성 ({label}) — Groq 호출")
+            ai_summary = generate_ai_summary(indices, stocks, sectors, themes, news, mode=ai_mode, krx_data=krx_data)
+
+        # ─── 종목 심층 분석 (close 모드에서만) ───
+        if ai_mode == "close" and stocks:
+            existing_sa = supabase_request("GET", "stock_analysis", params={"date": f"eq.{TODAY}", "select": "id", "limit": "1"})
+            if existing_sa:
+                log("  ℹ️ 종목 분석 이미 생성됨 — 스킵")
+            else:
+                log("  📊 일간 종목 분석 생성 — Groq 호출")
+                stock_analysis = generate_stock_analysis(stocks, themes, sectors, news, krx_data)
+
+        # ─── 테마 심층 분석 (close 모드에서만) ───
+        if ai_mode == "close" and themes:
+            existing_ta = supabase_request("GET", "theme_analysis", params={"date": f"eq.{TODAY}", "select": "id", "limit": "1"})
+            if existing_ta:
+                log("  ℹ️ 테마 분석 이미 생성됨 — 스킵")
+            else:
+                log("  🔥 테마 심층 분석 생성 — Groq 호출")
+                theme_analysis = generate_theme_analysis(themes, sectors, news, indices)
 
     # ─── Supabase에 저장 ───
     log("")
