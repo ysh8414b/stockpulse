@@ -270,6 +270,14 @@
 - 대소문자 구분 없이 차단 (LOWER() 비교)
 - RLS: anon SELECT 허용 (클라이언트에서 조회 가능)
 
+### 자유게시판 조회수 기능 (2026-03-09)
+- `board_posts` 테이블에 `view_count INT DEFAULT 0` 컬럼 추가
+- `board_posts_public` 뷰에 `view_count` 포함하도록 재생성
+- `increment_view_count(p_id BIGINT)` RPC 함수: SECURITY DEFINER, 글 열 때 +1
+- board.html PostDetail: useEffect에서 postId 변경 시 1회 RPC 호출
+- 목록 뷰: 👁 아이콘 + 조회수 컬럼 (모바일에서는 숨김)
+- 상세 뷰: 닉네임/날짜 옆에 조회수 표시
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)

@@ -434,7 +434,27 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- ═══ 23. 채팅 메시지 전송 RPC (차단 닉네임 서버사이드 검사 + 관리자 우회) ═══
+-- ═══ 23. 조회수 시스템 ═══
+
+-- 23-1. board_posts에 view_count 컬럼 추가
+ALTER TABLE board_posts ADD COLUMN IF NOT EXISTS view_count INT DEFAULT 0;
+
+-- 23-2. board_posts_public 뷰 재생성 (view_count 포함)
+DROP VIEW IF EXISTS board_posts_public;
+CREATE VIEW board_posts_public AS
+  SELECT id, nickname, title, content, comment_count, view_count, is_pinned, created_at, updated_at
+  FROM board_posts
+  ORDER BY is_pinned DESC, created_at DESC;
+
+-- 23-3. 조회수 증가 RPC
+CREATE OR REPLACE FUNCTION increment_view_count(p_id BIGINT)
+RETURNS VOID AS $$
+BEGIN
+  UPDATE board_posts SET view_count = view_count + 1 WHERE id = p_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ═══ 24. 채팅 메시지 전송 RPC (차단 닉네임 서버사이드 검사 + 관리자 우회) ═══
 CREATE OR REPLACE FUNCTION insert_chat_message(p_nickname TEXT, p_message TEXT, p_admin_hash TEXT DEFAULT '')
 RETURNS BIGINT AS $$
 DECLARE

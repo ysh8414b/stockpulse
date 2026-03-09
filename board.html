@@ -25,6 +25,7 @@
     .board-table .col-nick{width:100px;color:var(--text-sub);font-size:13px}
     .board-table .col-date{width:110px;color:var(--muted);font-size:12px}
     .board-table .col-cmt{width:50px;text-align:center;font-size:12px;color:var(--muted)}
+    .board-table .col-view{width:55px;text-align:center;font-size:12px;color:var(--muted)}
     .board-input{width:100%;padding:10px 14px;border-radius:8px;border:1px solid var(--inp-bd);background:var(--inp-bg);color:var(--text);font-size:14px;outline:none;font-family:inherit;transition:border-color .2s}
     .board-input:focus{border-color:rgba(6,182,212,0.4)}
     .board-textarea{width:100%;padding:12px 14px;border-radius:8px;border:1px solid var(--inp-bd);background:var(--inp-bg);color:var(--text);font-size:14px;outline:none;font-family:inherit;resize:vertical;min-height:160px;line-height:1.7;transition:border-color .2s}
@@ -50,6 +51,7 @@
       .board-table .col-date{display:none}
       .board-table th:nth-child(4){display:none}
       .board-table .col-cmt{width:36px}
+      .board-table .col-view{width:36px}
       .board-meta-mobile{display:flex;gap:8px;font-size:12px;color:var(--muted);margin-top:4px}
     }
     @media(min-width:601px){.board-meta-mobile{display:none}}
@@ -297,7 +299,11 @@ function PostDetail({postId,onBack}){
     if(data)setComments(data);
   },[postId]);
 
-  useEffect(()=>{loadPost();loadComments();},[loadPost,loadComments]);
+  useEffect(()=>{
+    loadPost();loadComments();
+    // 조회수 증가 (1회)
+    fetch(SB_URL+"/rest/v1/rpc/increment_view_count",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({p_id:postId})}).catch(()=>{});
+  },[loadPost,loadComments]);
 
   const handleDelete=async(hash)=>{
     if(!delTarget)return false;
@@ -393,6 +399,7 @@ function PostDetail({postId,onBack}){
           <span style={{fontWeight:600,color:"var(--text-sub)"}}>{post.nickname}</span>
           <span>{fmtFull(post.created_at)}</span>
           {post.updated_at&&post.updated_at!==post.created_at&&<span style={{color:"#06b6d4",fontSize:"12px"}}>(수정됨)</span>}
+          <span>👁 {post.view_count||0}</span>
         </div>
         <div style={{fontSize:"15px",lineHeight:1.8,color:"var(--text-sub)",whiteSpace:"pre-wrap",wordBreak:"break-word"}}><LinkedText text={post.content}/></div>
       </>}
@@ -490,6 +497,7 @@ function App(){
                 <th className="col-nick">작성자</th>
                 <th className="col-date">날짜</th>
                 <th className="col-cmt">💬</th>
+                <th className="col-view">👁</th>
               </tr></thead>
               <tbody>{posts.map((p,i)=>{
                 const num=total-((page-1)*PER_PAGE)-i;
@@ -506,6 +514,7 @@ function App(){
                   <td className="col-nick">{p.nickname}</td>
                   <td className="col-date">{fmt(p.created_at)}</td>
                   <td className="col-cmt">{p.comment_count>0?p.comment_count:""}</td>
+                  <td className="col-view">{p.view_count>0?p.view_count:""}</td>
                 </tr>
               })}</tbody>
             </table>
