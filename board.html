@@ -141,27 +141,69 @@ function rgbToHex(rgb){
   return "#"+[m[1],m[2],m[3]].map(x=>parseInt(x).toString(16).padStart(2,"0")).join("");
 }
 
-function htmlToBBCode(el){
-  let r="";
-  for(const n of el.childNodes){
-    if(n.nodeType===Node.TEXT_NODE){r+=n.textContent;continue}
-    if(n.nodeType!==Node.ELEMENT_NODE)continue;
-    const tag=n.tagName.toLowerCase();
-    const st=n.style||{};
-    if(tag==="br"){r+="\n";continue}
-    let before="",after="";
-    if(tag==="b"||tag==="strong"||st.fontWeight==="bold"||st.fontWeight==="700"){before+="[b]";after="[/b]"+after}
-    if(st.fontSize){const sz=parseInt(st.fontSize);if(sz>=10&&sz<=32&&sz!==14){before+="[size="+sz+"]";after="[/size]"+after}}
-    if(st.color){const hx=rgbToHex(st.color);if(hx){before+="[color="+hx+"]";after="[/color]"+after}}
-    if(tag==="div"||tag==="p"){
-      const inner=htmlToBBCode(n);
-      if(r&&!r.endsWith("\n"))r+="\n";
-      r+=before+inner+after;
-      continue;
+function normalizeEditor(el){
+  // Flatten nested spans with same properties, remove empty spans
+  function walk(node){
+    if(node.nodeType!==Node.ELEMENT_NODE)return;
+    Array.from(node.childNodes).forEach(walk);
+    if(node.tagName==="SPAN"||node.tagName==="B"||node.tagName==="STRONG"){
+      // Remove if empty
+      if(!node.textContent.trim()&&!node.querySelector("br")){
+        node.remove();return;
+      }
+      // If this span has only one child that's a span, merge styles
+      if(node.tagName==="SPAN"&&node.childNodes.length===1&&node.firstChild.nodeType===Node.ELEMENT_NODE&&node.firstChild.tagName==="SPAN"){
+        const child=node.firstChild;
+        // Merge: child overrides parent for same property
+        if(node.style.color&&child.style.color)node.style.color="";
+        if(node.style.fontSize&&child.style.fontSize)node.style.fontSize="";
+        // Move child styles to parent if parent doesn't have them
+        if(child.style.color&&!node.style.color)node.style.color=child.style.color;
+        if(child.style.fontSize&&!node.style.fontSize)node.style.fontSize=child.style.fontSize;
+        if(child.style.fontWeight&&!node.style.fontWeight)node.style.fontWeight=child.style.fontWeight;
+        // Unwrap child
+        while(child.firstChild)node.insertBefore(child.firstChild,child);
+        child.remove();
+      }
+      // If span has no meaningful styles, unwrap it
+      if(node.tagName==="SPAN"&&!node.style.cssText.trim()){
+        while(node.firstChild)node.parentNode.insertBefore(node.firstChild,node);
+        node.remove();
+      }
     }
-    r+=before+htmlToBBCode(n)+after;
   }
-  return r;
+  walk(el);
+}
+
+function htmlToBBCode(el){
+  // Normalize first to flatten nested spans
+  const clone=el.cloneNode(true);
+  normalizeEditor(clone);
+  function convert(node){
+    let r="";
+    for(const n of node.childNodes){
+      if(n.nodeType===Node.TEXT_NODE){r+=n.textContent;continue}
+      if(n.nodeType!==Node.ELEMENT_NODE)continue;
+      const tag=n.tagName.toLowerCase();
+      const st=n.style||{};
+      if(tag==="br"){r+="\n";continue}
+      // Skip empty elements
+      if(!n.textContent.trim()&&!n.querySelector("br"))continue;
+      let before="",after="";
+      if(tag==="b"||tag==="strong"||st.fontWeight==="bold"||st.fontWeight==="700"){before+="[b]";after="[/b]"+after}
+      if(st.fontSize){const sz=parseInt(st.fontSize);if(sz>=10&&sz<=32&&sz!==14){before+="[size="+sz+"]";after="[/size]"+after}}
+      if(st.color){const hx=rgbToHex(st.color);if(hx){before+="[color="+hx+"]";after="[/color]"+after}}
+      if(tag==="div"||tag==="p"){
+        const inner=convert(n);
+        if(r&&!r.endsWith("\n"))r+="\n";
+        r+=before+inner+after;
+        continue;
+      }
+      r+=before+convert(n)+after;
+    }
+    return r;
+  }
+  return convert(clone);
 }
 
 function bbcodeToHtml(text){
@@ -181,6 +223,22 @@ function applySpanStyle(editorRef,prop,value){
   if(!editorRef.current||!editorRef.current.contains(range.commonAncestorContainer))return;
   if(range.collapsed)return;
   const frag=range.extractContents();
+  // Clean: remove existing same-property styles to prevent nesting
+  const cssProp=prop.replace(/([A-Z])/g,"-$1").toLowerCase();
+  function cleanProp(parent){
+    Array.from(parent.childNodes).forEach(node=>{
+      if(node.nodeType!==Node.ELEMENT_NODE)return;
+      cleanProp(node);
+      if(node.tagName==="SPAN"&&node.style[prop]){
+        node.style.removeProperty(cssProp);
+        if(!node.style.cssText.trim()){
+          while(node.firstChild)parent.insertBefore(node.firstChild,node);
+          parent.removeChild(node);
+        }
+      }
+    });
+  }
+  cleanProp(frag);
   const span=document.createElement("span");
   span.style[prop]=value;
   span.appendChild(frag);
@@ -209,11 +267,21 @@ function WysiwygEditor({editorRef,initialHtml,placeholder,maxLength}){
   const handlePaste=(e)=>{
     e.preventDefault();
     const t=e.clipboardData.getData("text/plain");
-    document.execCommand("insertText",false,t);
+    const lines=t.split(/\r\n|\r|\n/);
+    lines.forEach((line,i)=>{
+      if(i>0)document.execCommand("insertLineBreak",false,null);
+      if(line)document.execCommand("insertText",false,line);
+    });
+  };
+  const handleKeyDown=(e)=>{
+    if(e.key==="Enter"&&!e.shiftKey){
+      e.preventDefault();
+      document.execCommand("insertLineBreak",false,null);
+    }
   };
   const over=maxLength&&charCount>maxLength;
   return <>
-    <div ref={editorRef} className="board-editor" contentEditable={true} data-placeholder={placeholder||""} onInput={handleInput} onPaste={handlePaste} suppressContentEditableWarning={true}/>
+    <div ref={editorRef} className="board-editor" contentEditable={true} data-placeholder={placeholder||""} onInput={handleInput} onPaste={handlePaste} onKeyDown={handleKeyDown} suppressContentEditableWarning={true}/>
     {maxLength&&<div style={{fontSize:"12px",textAlign:"right",marginTop:"4px",color:over?"#ef4444":"var(--muted)"}}>{charCount} / {maxLength}</div>}
   </>;
 }
