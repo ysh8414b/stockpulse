@@ -3304,10 +3304,10 @@ def main():
     # AI 브리핑 모드 판정 (크롤링 전에 미리 결정 — 크롤링 소요시간으로 인한 타이밍 누락 방지)
     from datetime import datetime, timezone, timedelta
     kst_start = datetime.now(timezone(timedelta(hours=9)))
-    ai_schedule = [(8, 0, "premarket"), (12, 5, "market"), (15, 35, "close"), (16, 0, "close")]
+    ai_schedule = [(8, 0, 30, "premarket"), (12, 5, 15, "market"), (15, 35, 15, "close"), (16, 0, 15, "close")]
     ai_mode = None
-    for h, m, mode in ai_schedule:
-        if h == kst_start.hour and abs(kst_start.minute - m) <= 15:
+    for h, m, tolerance, mode in ai_schedule:
+        if h == kst_start.hour and abs(kst_start.minute - m) <= tolerance:
             ai_mode = mode
             break
     if ai_mode:
