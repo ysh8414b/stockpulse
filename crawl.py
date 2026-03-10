@@ -2030,8 +2030,37 @@ market_mood 판단: 해외시장 전반 상승+원화 강세면 bullish, 하락+
         # breadth 데이터 블록
         breadth_block = f"\n\n{breadth_text}" if breadth_text else ""
 
+        # ── 시장 팩트 요약 (AI가 뉴스 서사에 끌려가지 않도록 방향을 명시) ──
+        fact_lines = []
+        for m in (indices or []):
+            if m["name"] in ("코스피", "코스닥"):
+                try:
+                    pct_str = str(m.get("change_pct", "0")).replace("%", "").replace("+", "").strip()
+                    pct_val = float(pct_str) if pct_str else 0
+                    direction = "상승" if pct_val > 0 else "하락" if pct_val < 0 else "보합"
+                    fact_lines.append(f"{m['name']}: {m['value']} ({m['change_pct']}) → 오늘 {direction}")
+                except:
+                    fact_lines.append(f"{m['name']}: {m['value']} ({m['change_pct']})")
+        # breadth 기반 방향
+        if breadth_text:
+            import re
+            ad_match = re.search(r"상승 (\d+) : 하락 (\d+)", breadth_text)
+            if ad_match:
+                up_n, dn_n = int(ad_match.group(1)), int(ad_match.group(2))
+                if up_n > dn_n * 2:
+                    fact_lines.append(f"전체 종목: 상승 {up_n} vs 하락 {dn_n} → 압도적 매수 우위")
+                elif dn_n > up_n * 2:
+                    fact_lines.append(f"전체 종목: 상승 {up_n} vs 하락 {dn_n} → 압도적 매도 우위")
+                else:
+                    fact_lines.append(f"전체 종목: 상승 {up_n} vs 하락 {dn_n}")
+        fact_block = "\n".join(fact_lines)
+
         prompt = f"""너는 10년차 매크로 전략가 겸 트레이더다. 헤지펀드 CIO에게 보고하는 수준의 시장 분석을 수행하라.
 기준 시각: {now_str}
+
+★★★ 오늘 시장 팩트 (이것이 오늘의 실제 시장 방향이다) ★★★
+{fact_block}
+위 지수와 종목 데이터가 오늘의 실제 시장 결과다. 뉴스는 과거 사건을 보도할 수 있으므로, 지수·종목·체력 지표 데이터와 뉴스 서사가 충돌하면 반드시 지수 데이터를 따르라. 예: 지수가 +5% 상승인데 뉴스에 "폭락" 기사가 있으면, 그 뉴스는 과거 사건이므로 오늘 분석에서 현재 시장 방향으로 착각하지 말 것.
 
 아래 시장 데이터를 기반으로 깊이 있는 분석을 작성하라.
 핵심 원칙: 모든 팩트는 반드시 1차→2차→3차 파급 구조로 서술. "A 때문에 B" 수준은 금지. "A → B → C → D"까지 연쇄해야 한다.
@@ -2118,6 +2147,8 @@ market_mood 판단: 해외시장 전반 상승+원화 강세면 bullish, 하락+
 - 마지막 줄: 한 문장 결론 (핵심 키워드 + 행동 시사점)
 
 ## 절대 규칙:
+- ★★★ 최우선 규칙: 오늘 시장 방향은 [지수] 데이터와 [시장 체력 지표]로 판단하라. 코스피가 상승했으면 상승장 분석을, 하락했으면 하락장 분석을 작성하라. 뉴스에 과거 폭락/급등 기사가 있어도 오늘 지수 방향과 혼동하지 말 것
+- ★★★ 뉴스 시점 구분: 뉴스 제목에 "어제", "지난주", 과거 날짜가 포함되어 있으면 과거 사건이다. 과거 뉴스는 배경/맥락으로만 언급하고, 오늘 시장의 실제 방향(지수 등락률)과 혼동하면 절대 안 된다
 - 한글과 숫자만 사용 (한자/일본어/중국어 금지)
 - 감정적 표현 금지. 객관적·분석적 톤 유지
 - "~입니다" 존댓말 금지. "~다/~했다" 간결체 사용
@@ -2136,6 +2167,7 @@ market_mood 판단: 해외시장 전반 상승+원화 강세면 bullish, 하락+
 ❌ "향후 시장은 불확실하다" → 누구나 아는 말, 행동 시사점 없음
 ❌ "외국인 매도가 지속되고 있다" → 왜? 얼마나? 다음엔? 이 없음
 ❌ "관망하며 지켜보는 것이 좋겠다" → 가장 쓸모없는 조언
+❌ 코스피가 +5% 급등했는데 "역대급 낙폭", "폭락" 등 하락장 분석을 작성 → 지수 데이터 무시, 뉴스에 끌려간 치명적 오류
 
 ## 좋은 예시:
 ✅ "코스피 -12%는 2020년 3월 코로나 서킷브레이커(-8.4%)를 넘어선 역대급 낙폭이다. 당시 패턴: 1차 급락(-8%) → 3일간 추가 -15% → 정부 공매도 금지 발표 후 기술적 반등(+7%). 현재는 1차 급락 단계로 추가 하락 여력 존재."
@@ -2180,6 +2212,26 @@ market_mood 판단: 코스피·코스닥 모두 상승이면 bullish, 모두 하
         mood = parsed.get("market_mood", "neutral")
         if mood not in ("bullish", "bearish", "neutral"):
             mood = "neutral"
+
+        # ── mood 검증: 지수 데이터와 AI mood 불일치 감지 ──
+        if summary and mode != "premarket":
+            expected_mood = None
+            for m in (indices or []):
+                if m["name"] == "코스피":
+                    try:
+                        pct_str = str(m.get("change_pct", "0")).replace("%", "").replace("+", "").strip()
+                        kospi_pct = float(pct_str) if pct_str else 0
+                        if kospi_pct >= 2.0:
+                            expected_mood = "bullish"
+                        elif kospi_pct <= -2.0:
+                            expected_mood = "bearish"
+                    except:
+                        pass
+                    break
+
+            if expected_mood and expected_mood != mood:
+                log(f"  ⚠️ mood 불일치 감지: AI={mood}, 지수 기반={expected_mood} (코스피 {kospi_pct:+.2f}%) → mood 강제 보정")
+                mood = expected_mood
 
         if summary:
             log(f"  🤖 AI 시장 브리핑 생성 완료 (mood: {mood}, {len(summary)}자)")
