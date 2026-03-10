@@ -794,7 +794,7 @@ function App(){
   })()},[]);
 
   useEffect(()=>{const t=setInterval(()=>setTime(new Date()),1000);return()=>clearInterval(t)},[]);
-  const tabs=[{id:"themes",l:"인기 테마",ic:"◈",live:true},{id:"issues",l:"이슈 종목",ic:"◆"},{id:"news",l:"주요 뉴스",ic:"◇"},{id:"ai",l:"AI 브리핑",ic:"⬡"}];
+  const tabs=[{id:"issues",l:"이슈 종목",ic:"◆",live:true},{id:"themes",l:"인기 테마",ic:"◈"},{id:"news",l:"주요 뉴스",ic:"◇"},{id:"ai",l:"AI 브리핑",ic:"⬡"}];
 
   return <div>
     <Ticker idx={idx}/>
