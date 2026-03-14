@@ -3362,6 +3362,10 @@ def main():
         if h == kst_start.hour and abs(kst_start.minute - m) <= tolerance:
             ai_mode = mode
             break
+    # 주말(토/일)에는 AI 브리핑 스킵
+    if ai_mode and kst_start.weekday() >= 5:  # 5=토, 6=일
+        log(f"  ℹ️ 주말이므로 AI 브리핑 스킵 ({kst_start.strftime('%A')})")
+        ai_mode = None
     if ai_mode:
         label = {"premarket": "장전 해외시장", "market": "장중", "close": "장 마감"}[ai_mode]
         log(f"  🤖 AI 브리핑 모드 감지: {label} (시작 시각 {kst_start.strftime('%H:%M')})")
