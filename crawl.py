@@ -1867,7 +1867,6 @@ def generate_ai_summary(indices, stocks, sectors, themes, news, mode="market", k
         log("  ⚠️ GROQ_API_KEY 미설정 - AI 요약 건너뜀")
         return None
 
-    from datetime import datetime, timezone, timedelta
     kst = timezone(timedelta(hours=9))
     now_kst = datetime.now(kst)
     now_str = now_kst.strftime("%Y-%m-%d %H:%M")
@@ -3457,7 +3456,6 @@ def main():
 
     # 365일 초과 AI 요약 정리 + 90일 초과 종목/테마 분석 정리 (close 모드에서만)
     if ai_mode == "close":
-        from datetime import datetime, timedelta
         cutoff_ai = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
         supabase_request("DELETE", "ai_summary", params={"date": f"lt.{cutoff_ai}"})
         log(f"  🧹 {cutoff_ai} 이전 AI 요약 정리")
