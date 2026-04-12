@@ -259,13 +259,25 @@ function App(){
     const startDate=`${year}-${pad(month+1)}-01`;
     const endDay=new Date(year,month+1,0).getDate();
     const endDate=`${year}-${pad(month+1)}-${pad(endDay)}`;
-    db("theme_history",`select=date,rank,name,change_pct,trend&date=gte.${startDate}&date=lte.${endDate}&order=date,rank`).then(d=>{
-      setMonthData(d||[]);
+    db("theme_history",`select=date,rank,name,change_pct,trend,leading_stocks,up_count,down_count,flat_count&date=gte.${startDate}&date=lte.${endDate}&order=date,rank`).then(d=>{
+      // 주말/공휴일 데이터를 이전 평일(금요일)로 재매핑
+      const padD=n=>n<10?"0"+n:""+n;
+      const toWeekday=ds=>{
+        const dt=new Date(ds+"T12:00:00"); // 정오 기준으로 timezone 밀림 방지
+        const w=dt.getDay();
+        if(w===0)dt.setDate(dt.getDate()-2); // 일→금
+        else if(w===6)dt.setDate(dt.getDate()-1); // 토→금
+        return dt.getFullYear()+"-"+padD(dt.getMonth()+1)+"-"+padD(dt.getDate());
+      };
+      const mapped=(d||[]).map(r=>({...r,date:toWeekday(r.date)}));
+      // 같은 날짜에 중복 데이터 있으면 먼저 들어온 것만 유지
+      const seen=new Set();
+      const deduped=mapped.filter(r=>{const k=r.date+"|"+r.rank;if(seen.has(k))return false;seen.add(k);return true});
+      setMonthData(deduped);
       setLoading(false);
-      if(d&&d.length>0){
-        const today=new Date().toISOString().slice(0,10);
-        const dates=[...new Set(d.map(r=>r.date))].sort();
-        // 오늘 데이터가 있으면 오늘, 없으면(주말/공휴일) 가장 최근 거래일
+      if(deduped.length>0){
+        const now=new Date();const today=toWeekday(now.getFullYear()+"-"+padD(now.getMonth()+1)+"-"+padD(now.getDate()));
+        const dates=[...new Set(deduped.map(r=>r.date))].sort();
         setSelectedDate(dates.includes(today)?today:dates[dates.length-1]);
       }else{
         setSelectedDate(null);
@@ -274,11 +286,12 @@ function App(){
     });
   },[year,month]);
 
-  // 선택된 날짜의 전체 TOP 10 로드
+  // 선택된 날짜의 전체 TOP 10 로드 (월간 데이터에서 필터 — 날짜 재매핑 적용됨)
   useEffect(()=>{
-    if(!selectedDate){setDayThemes(null);return;}
-    db("theme_history",`date=eq.${selectedDate}&order=rank`).then(d=>setDayThemes(d||[]));
-  },[selectedDate]);
+    if(!selectedDate||!monthData){setDayThemes(null);return;}
+    const dayData=monthData.filter(r=>r.date===selectedDate).sort((a,b)=>a.rank-b.rank);
+    setDayThemes(dayData);
+  },[selectedDate,monthData]);
 
   const prevMonth=()=>{if(month===0){setMonth(11);setYear(y=>y-1)}else setMonth(m=>m-1)};
   const nextMonth=()=>{if(month===11){setMonth(0);setYear(y=>y+1)}else setMonth(m=>m+1)};
@@ -316,42 +329,27 @@ function App(){
             <span style={{display:"flex",alignItems:"center",gap:"4px"}}><span style={{width:6,height:6,borderRadius:"50%",background:"#ef4444",display:"inline-block"}}/>하락</span>
             <span style={{display:"flex",alignItems:"center",gap:"4px"}}><span style={{width:6,height:6,borderRadius:"50%",background:"#6b7280",display:"inline-block"}}/>보합</span>
           </div>
+          {/* 월간 테마 등장 횟수 (캘린더 하단) */}
+          {monthData&&monthData.length>0&&(()=>{
+            const counts={};
+            monthData.filter(r=>r.rank<=3).forEach(r=>{counts[r.name]=(counts[r.name]||0)+1});
+            const totalDays=[...new Set(monthData.map(r=>r.date))].length;
+            const sorted=Object.entries(counts).sort((a,b)=>b[1]-a[1]);
+            return <div style={{marginTop:"16px",paddingTop:"14px",borderTop:"1px solid var(--div)"}}>
+              <div style={{fontSize:"12px",fontWeight:600,color:"var(--muted)",marginBottom:"8px",display:"flex",justifyContent:"space-between"}}>
+                <span>📊 {month+1}월 등장 횟수</span>
+                <span style={{fontWeight:400,color:"var(--dim)"}}>{totalDays}일</span>
+              </div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:"4px"}}>
+                {sorted.slice(0,10).map(([name,cnt],i)=>
+                  <span key={name} style={{fontSize:"11px",padding:"3px 7px",borderRadius:"4px",background:i<3?"rgba(249,115,22,0.1)":"var(--badge-bg)",color:i<3?"#f97316":"var(--text-sub)",fontWeight:i<3?600:400,display:"inline-flex",alignItems:"center",gap:"3px"}}>
+                    {name}<span style={{fontWeight:700,color:i<3?"#f97316":"var(--muted)"}}>{cnt}</span>
+                  </span>
+                )}
+              </div>
+            </div>;
+          })()}
         </Box>
-
-        {/* 월간 테마 등장 횟수 */}
-        {monthData&&monthData.length>0&&(()=>{
-          const counts={};
-          monthData.forEach(r=>{
-            if(!counts[r.name])counts[r.name]={count:0,top3:0};
-            counts[r.name].count++;
-            if(r.rank<=3)counts[r.name].top3++;
-          });
-          const totalDays=[...new Set(monthData.map(r=>r.date))].length;
-          const sorted=Object.entries(counts).sort((a,b)=>b[1].count-a[1].count);
-          return <Box hover={false} style={{padding:"16px 20px",marginTop:"12px"}}>
-            <div style={{fontWeight:700,fontSize:"14px",marginBottom:"10px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-              <span>📊 {month+1}월 테마 등장 횟수</span>
-              <span style={{fontSize:"12px",color:"var(--dim)",fontWeight:400}}>{totalDays}일 집계</span>
-            </div>
-            <div style={{display:"grid",gap:"4px"}}>
-              {sorted.slice(0,15).map(([name,v],i)=>{
-                const pct=Math.round(v.count/totalDays*100);
-                return <div key={name} style={{display:"flex",alignItems:"center",gap:"8px",padding:"5px 0"}}>
-                  <span style={{width:20,fontSize:"12px",fontWeight:600,color:i<3?"#f59e0b":"var(--muted)",textAlign:"right",flexShrink:0}}>{i+1}</span>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"3px"}}>
-                      <span style={{fontSize:"13px",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{name}</span>
-                      <span style={{fontSize:"12px",fontWeight:700,color:"#f97316",flexShrink:0}}>{v.count}회</span>
-                    </div>
-                    <div style={{height:4,borderRadius:2,background:"var(--div)"}}>
-                      <div style={{height:4,borderRadius:2,background:pct>=80?"#f97316":pct>=50?"#f59e0b":"rgba(249,115,22,0.4)",width:pct+"%",transition:"width .3s"}}/>
-                    </div>
-                  </div>
-                </div>;
-              })}
-            </div>
-          </Box>;
-        })()}
 
         {/* 상세 패널 */}
         <div className="fade-up">
