@@ -133,7 +133,7 @@ a{color:inherit;text-decoration:none}
 .footer-links a{color:var(--dim);font-size:13px;transition:color .2s}
 .footer-links a:hover{color:var(--text)}
 .archive-grid{display:grid;grid-template-columns:320px 1fr;gap:28px;align-items:start}
-.theme-cal-grid{grid-template-columns:380px 1fr}
+.theme-cal-grid{grid-template-columns:460px 1fr}
 .theme-cal-badge{font-size:10px;padding:1px 3px;border-radius:3px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:14px;max-width:100%}
 @media(max-width:900px){
   .archive-grid{grid-template-columns:1fr}

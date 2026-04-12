@@ -158,7 +158,7 @@ function ThemeCalendar({year,month,data,selectedDate,onSelect}){
 
   return <div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:"2px",marginBottom:"4px"}}>
-      {days.map(d=><div key={d} style={{textAlign:"center",fontSize:"12px",color:"var(--muted)",padding:"6px 0",fontWeight:600}}>{d}</div>)}
+      {days.map(d=><div key={d} style={{textAlign:"center",fontSize:"14px",color:"var(--muted)",padding:"8px 0",fontWeight:600}}>{d}</div>)}
     </div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:"2px"}}>
       {weeks.flat().map((d,i)=>{
@@ -173,14 +173,14 @@ function ThemeCalendar({year,month,data,selectedDate,onSelect}){
           textAlign:"center",padding:"5px 2px",borderRadius:"8px",cursor:hasData?"pointer":"default",
           background:isSelected?"rgba(249,115,22,0.1)":isToday?"rgba(255,255,255,0.03)":"transparent",
           border:isSelected?"1px solid rgba(249,115,22,0.3)":isToday?"1px solid var(--div3)":"1px solid transparent",
-          opacity:hasData?1:0.35,transition:"all .2s",minHeight:"68px"
+          opacity:hasData?1:0.35,transition:"all .2s",minHeight:"78px"
         }} onMouseEnter={e=>{if(hasData&&!isSelected)e.currentTarget.style.background="rgba(249,115,22,0.05)"}} onMouseLeave={e=>{if(!isSelected)e.currentTarget.style.background=isToday?"rgba(255,255,255,0.03)":"transparent"}}>
-          <div style={{fontSize:"13px",fontWeight:isToday?700:isSelected?600:400,color:"var(--text)",marginBottom:"3px"}}>{d}</div>
+          <div style={{fontSize:"15px",fontWeight:isToday?700:isSelected?600:400,color:"var(--text)",marginBottom:"4px"}}>{d}</div>
           {dayThemes&&dayThemes.slice(0,3).map((t,ti)=><div key={ti} className="theme-cal-badge" style={{
-            fontSize:"10px",padding:"1px 3px",borderRadius:"3px",marginTop:"1px",
+            fontSize:"12px",padding:"2px 4px",borderRadius:"4px",marginTop:"2px",
             background:trendBg(t.trend),color:trendClr(t.trend),
-            whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",lineHeight:"14px"
-          }}>{t.name.length>5?t.name.slice(0,5)+"..":t.name}</div>)}
+            whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",lineHeight:"16px",fontWeight:500
+          }}>{t.name.length>6?t.name.slice(0,6)+"..":t.name}</div>)}
         </div>;
       })}
     </div>
