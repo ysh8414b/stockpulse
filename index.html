@@ -492,7 +492,7 @@ function TabThemes({thm,allThm,thmAn,loading}){
       {q&&<button onClick={()=>setQ("")} style={{position:"absolute",right:"14px",top:"50%",transform:"translateY(-50%)",background:"none",border:"none",fontSize:"19px",color:"var(--muted)",cursor:"pointer",padding:"4px"}}>✕</button>}
     </div>
     {(isSearching?filteredTop.length>0:true)&&<div>
-      <h2 style={{fontSize:"22px",fontWeight:700,marginBottom:"20px"}}><span style={{color:"#f97316"}}>◈</span> 인기 테마 TOP 10 {isSearching&&<span style={{fontSize:"15px",color:"var(--muted)",fontWeight:400}}>({filteredTop.length}건)</span>}</h2>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"20px"}}><h2 style={{fontSize:"22px",fontWeight:700,margin:0}}><span style={{color:"#f97316"}}>◈</span> 인기 테마 TOP 10 {isSearching&&<span style={{fontSize:"15px",color:"var(--muted)",fontWeight:400}}>({filteredTop.length}건)</span>}</h2><a href="theme_calendar.html" style={{fontSize:"14px",color:"var(--muted)",textDecoration:"none",display:"flex",alignItems:"center",gap:"4px",transition:"color .15s"}} onMouseEnter={e=>e.currentTarget.style.color="#f97316"} onMouseLeave={e=>e.currentTarget.style.color="var(--muted)"}>📅 테마 캘린더 →</a></div>
       <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr)",gap:"12px"}}>{(isSearching?filteredTop:thm).map((t,i)=><ThemeItem key={t.name||i} t={t} i={i} analysis={thmAn?.[t.name]} stockCount={scMap[t.name]||0}/>)}</div>
     </div>}
     {isSearching&&filteredTop.length===0&&filteredAll.length===0&&<Empty msg={`"${q}" 관련 테마 없음`}/>}
@@ -828,6 +828,7 @@ function App(){
       <div className="footer-links">
         <a href="chat.html">실시간 토론방</a>
         <a href="board.html">자유게시판</a>
+        <a href="theme_calendar.html">테마 캘린더</a>
         <a href="archive.html">AI 브리핑 아카이브</a>
         <a href="analysis.html">종목 리포트</a>
         <a href="guide.html">투자 가이드</a>

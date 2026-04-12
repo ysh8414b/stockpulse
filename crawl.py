@@ -3417,6 +3417,25 @@ def main():
         result = supabase_request("POST", "themes", data=themes)
         log(f"  🔥 테마 {len(themes)}개 저장 {'✅' if result else '❌'}")
 
+    # 테마 히스토리 저장 (과거 데이터 보존 — 캘린더용)
+    if themes:
+        history_data = []
+        for t in themes[:10]:
+            # leading_stocks에서 상위 3개만 추출 (저장 용량 절약)
+            ls = t.get("leading_stocks", "")
+            ls_short = ", ".join(ls.split(", ")[:3]) if ls else ""
+            history_data.append({
+                "date": TODAY, "rank": t["rank"], "name": t["name"],
+                "change_pct": t["change_pct"], "trend": t["trend"],
+                "leading_stocks": ls_short,
+                "up_count": t.get("up_count", 0),
+                "down_count": t.get("down_count", 0),
+                "flat_count": t.get("flat_count", 0),
+            })
+        supabase_request("DELETE", "theme_history", params={"date": f"eq.{TODAY}"})
+        result = supabase_request("POST", "theme_history", data=history_data)
+        log(f"  📅 테마 히스토리 {len(history_data)}개 저장 {'✅' if result else '❌'}")
+
     # 전체 테마 저장
     if all_themes_data:
         result = supabase_request("POST", "all_themes", data=all_themes_data)
@@ -3463,6 +3482,8 @@ def main():
         supabase_request("DELETE", "stock_analysis", params={"date": f"lt.{cutoff_sa}"})
         supabase_request("DELETE", "theme_analysis", params={"date": f"lt.{cutoff_sa}"})
         log(f"  🧹 {cutoff_sa} 이전 종목/테마 분석 정리")
+        supabase_request("DELETE", "theme_history", params={"date": f"lt.{cutoff_ai}"})
+        log(f"  🧹 {cutoff_ai} 이전 테마 히스토리 정리")
 
     log("")
     log("=" * 50)

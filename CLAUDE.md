@@ -8,6 +8,7 @@
 - `theme_detail.html` — 테마 종목 상세 (전체 종목 리스트, 정렬, 네이버 링크)
 - `chat.html` — 실시간 익명 토론방 (Supabase Realtime, WebSocket)
 - `board.html` — 자유게시판 (익명 글/댓글, 비밀번호 기반 삭제)
+- `theme_calendar.html` — 테마 캘린더 (매일 인기 테마 TOP 3 캘린더 뷰, 날짜별 TOP 10 상세)
 - `archive.html` — AI 브리핑 아카이브 (캘린더 기반 과거 브리핑 탐색)
 - `guide.html` — 투자 정보 가이드 (독창적 교육 콘텐츠)
 - `about.html` — 서비스 소개 + 연락처
@@ -302,6 +303,22 @@
 ### AI 브리핑 주말 스킵 (2026-03-14)
 - 토요일/일요일에는 AI 브리핑(Groq 호출), 종목 분석, 테마 분석 모두 스킵
 - `kst_start.weekday() >= 5` 체크로 `ai_mode`를 `None`으로 설정
+
+### 테마 캘린더 (2026-04-12)
+- 기존: 인기 테마는 당일 데이터만 존재 (매 크롤링마다 clear_today_data)
+- 변경: 테마 히스토리를 별도 테이블에 보존하여 캘린더 뷰 제공
+- **crawl.py**: 테마 저장 직후 `theme_history` 테이블에 TOP 10 저장 (DELETE+INSERT 패턴, 과거 보존)
+  - leading_stocks는 상위 3개만 저장 (용량 절약)
+  - close 모드에서 365일 초과 데이터 자동 정리
+- **Supabase `theme_history` 테이블 필요**: id(bigserial), date(text), rank(int), name(text), change_pct(text), trend(text), leading_stocks(text), up_count(int), down_count(int), flat_count(int)
+  - 인덱스: (date, rank) 복합 인덱스, RLS anon SELECT 허용
+- **theme_calendar.html**: 신규 페이지 (archive.html 패턴)
+  - 캘린더 셀에 TOP 3 테마 뱃지 표시 (trend별 색상: 상승 초록, 하락 빨강, 보합 회색)
+  - 날짜 클릭 시 해당일 TOP 10 테마 상세 (순위/테마명/등락률/대장주/상승하락수)
+  - 테마명 클릭 → theme_detail.html 이동, 대장주 클릭 → 네이버 증권
+  - 캘린더 그리드 380px (archive보다 넓음, 뱃지 텍스트 가독성)
+- index.html: 인기 테마 TOP 10 헤더에 "📅 테마 캘린더 →" 링크, 푸터에 추가
+- sitemap.xml에 theme_calendar.html 추가
 
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용

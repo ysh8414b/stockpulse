@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>테마 캘린더 — STOCKPULSE</title>
+  <meta name="description" content="STOCKPULSE 테마 캘린더. 매일 인기 테마 TOP 3를 캘린더에서 한눈에 확인하세요." />
+  <meta property="og:title" content="테마 캘린더 — STOCKPULSE" />
+  <meta property="og:description" content="매일 인기 테마 TOP 3를 캘린더에서 한눈에 확인하세요." />
+  <link rel="canonical" href="https://ysh8414b.github.io/stockpulse/theme_calendar.html" />
+  <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <script src="shared.js"></script>
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8471845294355265" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useEffect,useMemo}=React;
+
+function Box({children,style,hover=true,className=""}){
+  const[h,setH]=useState(false);
+  return <div className={className} style={{background:h&&hover?"var(--card-hbg)":"var(--card-bg)",border:"1px solid",borderColor:h&&hover?"var(--card-hbd)":"var(--card-bd)",borderRadius:"12px",padding:"18px 22px",transition:"all .25s",...style}} onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)}>{children}</div>;
+}
+
+function Loader(){return <div style={{display:"flex",justifyContent:"center",padding:"60px 0"}}><div style={{width:28,height:28,border:"3px solid var(--div3)",borderTop:"3px solid #f97316",borderRadius:"50%",animation:"spin 1s linear infinite"}}/></div>}
+
+const trendClr=t=>t==="up"?"#22c55e":t==="down"?"#ef4444":"#6b7280";
+const trendBg=t=>t==="up"?"rgba(34,197,94,0.12)":t==="down"?"rgba(239,68,68,0.12)":"rgba(107,114,128,0.12)";
+const trendArrow=t=>t==="up"?"▲":t==="down"?"▼":"—";
+const rankClr=r=>r===1?"#f59e0b":r===2?"#94a3b8":r===3?"#cd7f32":"var(--muted)";
+const rankBg=r=>r===1?"rgba(245,158,11,0.14)":r===2?"rgba(148,163,184,0.12)":r===3?"rgba(205,127,50,0.12)":"var(--badge-bg)";
+
+function ThemeCalendar({year,month,data,selectedDate,onSelect}){
+  const firstDay=new Date(year,month,1).getDay();
+  const daysInMonth=new Date(year,month+1,0).getDate();
+  const days=["일","월","화","수","목","금","토"];
+  const cells=[];
+  for(let i=0;i<firstDay;i++)cells.push(null);
+  for(let d=1;d<=daysInMonth;d++)cells.push(d);
+
+  const dataByDate=useMemo(()=>{
+    const m={};
+    if(data)data.forEach(r=>{
+      const d=r.date;
+      if(!m[d])m[d]=[];
+      m[d].push(r);
+    });
+    return m;
+  },[data]);
+
+  const pad=n=>n<10?"0"+n:""+n;
+
+  return <div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:"2px",marginBottom:"4px"}}>
+      {days.map(d=><div key={d} style={{textAlign:"center",fontSize:"12px",color:"var(--muted)",padding:"6px 0",fontWeight:600}}>{d}</div>)}
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:"2px"}}>
+      {cells.map((d,i)=>{
+        if(d===null)return <div key={i}/>;
+        const dateStr=`${year}-${pad(month+1)}-${pad(d)}`;
+        const dayThemes=dataByDate[dateStr];
+        const hasData=!!dayThemes;
+        const isSelected=selectedDate===dateStr;
+        const isToday=dateStr===new Date().toISOString().slice(0,10);
+        const dayOfWeek=(firstDay+d-1)%7;
+        const isWeekend=dayOfWeek===0||dayOfWeek===6;
+
+        return <div key={i} onClick={()=>hasData&&onSelect(dateStr)} style={{
+          textAlign:"center",padding:"5px 2px",borderRadius:"8px",cursor:hasData?"pointer":"default",
+          background:isSelected?"rgba(249,115,22,0.1)":isToday?"rgba(255,255,255,0.03)":"transparent",
+          border:isSelected?"1px solid rgba(249,115,22,0.3)":isToday?"1px solid var(--div3)":"1px solid transparent",
+          opacity:hasData?1:0.35,transition:"all .2s",minHeight:"68px"
+        }} onMouseEnter={e=>{if(hasData&&!isSelected)e.currentTarget.style.background="rgba(249,115,22,0.05)"}} onMouseLeave={e=>{if(!isSelected)e.currentTarget.style.background=isToday?"rgba(255,255,255,0.03)":"transparent"}}>
+          <div style={{fontSize:"13px",fontWeight:isToday?700:isSelected?600:400,color:isWeekend&&!isSelected?"var(--dim)":"var(--text)",marginBottom:"3px"}}>{d}</div>
+          {dayThemes&&dayThemes.slice(0,3).map((t,ti)=><div key={ti} className="theme-cal-badge" style={{
+            fontSize:"10px",padding:"1px 3px",borderRadius:"3px",marginTop:"1px",
+            background:trendBg(t.trend),color:trendClr(t.trend),
+            whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",lineHeight:"14px"
+          }}>{t.name.length>5?t.name.slice(0,5)+"..":t.name}</div>)}
+        </div>;
+      })}
+    </div>
+  </div>;
+}
+
+function ThemeDayDetail({themes,date}){
+  if(!themes||themes.length===0)return <Box hover={false} style={{padding:"40px",textAlign:"center"}}>
+    <div style={{fontSize:"36px",marginBottom:"12px",opacity:0.4}}>🔥</div>
+    <div style={{fontWeight:600,color:"var(--muted)"}}>이 날짜의 테마 데이터가 없습니다</div>
+  </Box>;
+
+  return <div style={{display:"grid",gap:"10px"}}>
+    <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"4px"}}>
+      <span style={{width:36,height:36,borderRadius:"10px",background:"rgba(249,115,22,0.12)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"20px"}}>🔥</span>
+      <div><div style={{fontWeight:700,fontSize:"17px"}}>{date} 인기 테마</div><div style={{color:"var(--muted)",fontSize:"13px",marginTop:"2px"}}>TOP {themes.length} 테마</div></div>
+    </div>
+    {themes.map((t,i)=>{
+      const pctNum=parseFloat(t.change_pct);
+      const pctClr=pctNum>0?"#22c55e":pctNum<0?"#ef4444":"#6b7280";
+      const stocks=t.leading_stocks?t.leading_stocks.split(", ").slice(0,3):[];
+      return <Box key={i} hover={true} style={{padding:"16px 20px"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:"12px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:"12px",flex:1,minWidth:0}}>
+            <span style={{width:34,height:34,borderRadius:"8px",fontSize:"16px",fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",background:rankBg(t.rank),color:rankClr(t.rank),flexShrink:0}}>{t.rank}</span>
+            <div style={{minWidth:0}}>
+              <a href={`theme_detail.html?theme=${encodeURIComponent(t.name)}`} style={{fontWeight:700,fontSize:"17px",color:"var(--text)",textDecoration:"none",transition:"color .15s"}} onMouseEnter={e=>e.currentTarget.style.color="#f97316"} onMouseLeave={e=>e.currentTarget.style.color="var(--text)"}>{t.name}</a>
+              <div style={{display:"flex",alignItems:"center",gap:"8px",marginTop:"4px",fontSize:"13px",color:"var(--muted)"}}>
+                <span style={{color:"#22c55e"}}>▲{t.up_count||0}</span>
+                <span>·</span>
+                <span style={{color:"#6b7280"}}>{t.flat_count||0}</span>
+                <span>·</span>
+                <span style={{color:"#ef4444"}}>▼{t.down_count||0}</span>
+              </div>
+            </div>
+          </div>
+          <div style={{textAlign:"right",flexShrink:0}}>
+            <div style={{fontSize:"18px",fontWeight:700,color:pctClr}}>{trendArrow(t.trend)} {t.change_pct}</div>
+          </div>
+        </div>
+        {stocks.length>0&&<div style={{marginTop:"10px",paddingTop:"10px",borderTop:"1px solid var(--div)",display:"flex",flexWrap:"wrap",gap:"6px"}}>
+          {stocks.map((s,si)=>{
+            const parts=s.split(":");
+            const name=parts[0];const code=parts[1];const pct=parts[2]||"";
+            const sp=parseFloat(pct);const sc=sp>0?"#22c55e":sp<0?"#ef4444":"#6b7280";
+            const validCode=code&&/^\d{6}$/.test(code);
+            return <a key={si} href={validCode?`https://finance.naver.com/item/main.naver?code=${code}`:"#"} target="_blank" rel="noopener noreferrer" onClick={e=>{if(!validCode)e.preventDefault()}} style={{
+              padding:"5px 10px",background:"var(--badge-bg)",borderRadius:"6px",fontSize:"13px",textDecoration:"none",color:"var(--text)",transition:"all .15s",border:"1px solid transparent",display:"inline-flex",alignItems:"center",gap:"5px"
+            }} onMouseEnter={e=>{e.currentTarget.style.background="rgba(249,115,22,0.1)";e.currentTarget.style.borderColor="rgba(249,115,22,0.3)";e.currentTarget.style.color="#f97316"}} onMouseLeave={e=>{e.currentTarget.style.background="var(--badge-bg)";e.currentTarget.style.borderColor="transparent";e.currentTarget.style.color="var(--text)"}}>
+              {name}{pct&&<span style={{fontWeight:600,fontSize:"12px",color:sc}}>{pct}</span>}
+            </a>;
+          })}
+        </div>}
+      </Box>;
+    })}
+  </div>;
+}
+
+function App(){
+  const[theme,setTheme]=useState(getStoredTheme());
+  const[year,setYear]=useState(new Date().getFullYear());
+  const[month,setMonth]=useState(new Date().getMonth());
+  const[monthData,setMonthData]=useState(null);
+  const[selectedDate,setSelectedDate]=useState(null);
+  const[dayThemes,setDayThemes]=useState(null);
+  const[loading,setLoading]=useState(true);
+
+  useEffect(()=>{document.body.className=theme==="light"?"light":"";setStoredTheme(theme)},[theme]);
+
+  const pad=n=>n<10?"0"+n:""+n;
+
+  // 월간 데이터 로드 (TOP 3만)
+  useEffect(()=>{
+    setLoading(true);
+    const startDate=`${year}-${pad(month+1)}-01`;
+    const endDay=new Date(year,month+1,0).getDate();
+    const endDate=`${year}-${pad(month+1)}-${pad(endDay)}`;
+    db("theme_history",`select=date,rank,name,change_pct,trend&date=gte.${startDate}&date=lte.${endDate}&rank=lte.3&order=date,rank`).then(d=>{
+      setMonthData(d||[]);
+      setLoading(false);
+      if(d&&d.length>0){
+        const today=new Date().toISOString().slice(0,10);
+        const dates=[...new Set(d.map(r=>r.date))];
+        const match=dates.includes(today)?today:dates[dates.length-1];
+        setSelectedDate(match);
+      }else{
+        setSelectedDate(null);
+        setDayThemes(null);
+      }
+    });
+  },[year,month]);
+
+  // 선택된 날짜의 전체 TOP 10 로드
+  useEffect(()=>{
+    if(!selectedDate){setDayThemes(null);return;}
+    db("theme_history",`date=eq.${selectedDate}&order=rank`).then(d=>setDayThemes(d||[]));
+  },[selectedDate]);
+
+  const prevMonth=()=>{if(month===0){setMonth(11);setYear(y=>y-1)}else setMonth(m=>m-1)};
+  const nextMonth=()=>{if(month===11){setMonth(0);setYear(y=>y+1)}else setMonth(m=>m+1)};
+  const isCurrentMonth=year===new Date().getFullYear()&&month===new Date().getMonth();
+
+  return <div>
+    <header className="page-header" style={{maxWidth:1440}}>
+      <a href="index.html" className="page-back">← 대시보드</a>
+      <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
+        <a href="index.html" style={{display:"flex",alignItems:"center",gap:"8px"}}>
+          <div style={{width:8,height:8,borderRadius:"50%",background:"#22c55e",boxShadow:"0 0 10px rgba(34,197,94,0.4)"}}/>
+          <span style={{fontSize:"18px",fontWeight:800,letterSpacing:"-0.03em",background:"var(--h-grad)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>STOCKPULSE</span>
+        </a>
+        <button onClick={()=>setTheme(t=>t==="dark"?"light":"dark")} style={{width:34,height:34,borderRadius:"8px",border:"1px solid var(--card-bd)",background:"var(--card-bg)",cursor:"pointer",fontSize:"16px",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .25s"}}>{theme==="dark"?"☀️":"🌙"}</button>
+      </div>
+    </header>
+
+    <main className="page-wrap" style={{maxWidth:1440,padding:"0 40px 60px"}}>
+      <div className="fade-up" style={{marginBottom:"32px"}}>
+        <h1 style={{fontSize:"24px",fontWeight:800,marginBottom:"6px"}}><span style={{color:"#f97316"}}>🔥</span> 테마 캘린더</h1>
+        <p style={{color:"var(--muted)",fontSize:"15px"}}>매일 인기 테마 TOP 3를 캘린더에서 한눈에 확인하세요. 최대 1년간 보관됩니다.</p>
+      </div>
+
+      <div className="archive-grid theme-cal-grid">
+        {/* 캘린더 패널 */}
+        <Box hover={false} className="sticky-cal" style={{padding:"20px",position:"sticky",top:"20px"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"16px"}}>
+            <button onClick={prevMonth} style={{width:32,height:32,borderRadius:"8px",border:"1px solid var(--card-bd)",background:"var(--card-bg)",cursor:"pointer",color:"var(--text)",fontSize:"16px",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .2s"}}>←</button>
+            <span style={{fontWeight:700,fontSize:"16px"}}>{year}년 {month+1}월</span>
+            <button onClick={nextMonth} disabled={isCurrentMonth} style={{width:32,height:32,borderRadius:"8px",border:"1px solid var(--card-bd)",background:"var(--card-bg)",cursor:isCurrentMonth?"not-allowed":"pointer",color:isCurrentMonth?"var(--dimmer)":"var(--text)",fontSize:"16px",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .2s",opacity:isCurrentMonth?0.4:1}}>→</button>
+          </div>
+          {loading?<Loader/>:<ThemeCalendar year={year} month={month} data={monthData} selectedDate={selectedDate} onSelect={setSelectedDate}/>}
+          <div style={{marginTop:"14px",display:"flex",gap:"12px",justifyContent:"center",fontSize:"12px",color:"var(--muted)"}}>
+            <span style={{display:"flex",alignItems:"center",gap:"4px"}}><span style={{width:6,height:6,borderRadius:"50%",background:"#22c55e",display:"inline-block"}}/>상승</span>
+            <span style={{display:"flex",alignItems:"center",gap:"4px"}}><span style={{width:6,height:6,borderRadius:"50%",background:"#ef4444",display:"inline-block"}}/>하락</span>
+            <span style={{display:"flex",alignItems:"center",gap:"4px"}}><span style={{width:6,height:6,borderRadius:"50%",background:"#6b7280",display:"inline-block"}}/>보합</span>
+          </div>
+        </Box>
+
+        {/* 상세 패널 */}
+        <div className="fade-up">
+          {selectedDate&&dayThemes?
+            <ThemeDayDetail themes={dayThemes} date={selectedDate}/>
+          :<Box hover={false} style={{padding:"60px 40px",textAlign:"center"}}>
+            <div style={{fontSize:"48px",marginBottom:"16px",opacity:0.3}}>📅</div>
+            <div style={{fontWeight:600,fontSize:"17px",color:"var(--muted)",marginBottom:"6px"}}>날짜를 선택하세요</div>
+            <div style={{fontSize:"14px",color:"var(--dim)"}}>캘린더에서 날짜를 클릭하면 해당 날의 인기 테마를 볼 수 있습니다</div>
+          </Box>}
+        </div>
+      </div>
+    </main>
+
+    <footer style={{borderTop:"1px solid var(--div2)",maxWidth:1440,margin:"0 auto",padding:"18px 40px",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:"8px",color:"var(--dimmer)",fontSize:"13px"}}>
+      <div><span style={{fontWeight:600,color:"var(--dim)"}}>STOCKPULSE</span> © 2026</div>
+      <div className="footer-links">
+        <a href="index.html">대시보드</a>
+        <a href="archive.html">AI 브리핑 아카이브</a>
+        <a href="guide.html">투자 가이드</a>
+        <a href="about.html">서비스 소개</a>
+        <a href="privacy.html">개인정보처리방침</a>
+        <a href="terms.html">이용약관</a>
+      </div>
+    </footer>
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
