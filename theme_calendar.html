@@ -33,6 +33,96 @@ const trendBg=t=>t==="up"?"rgba(34,197,94,0.12)":t==="down"?"rgba(239,68,68,0.12
 const trendArrow=t=>t==="up"?"▲":t==="down"?"▼":"—";
 const rankClr=r=>r===1?"#f59e0b":r===2?"#94a3b8":r===3?"#cd7f32":"var(--muted)";
 const rankBg=r=>r===1?"rgba(245,158,11,0.14)":r===2?"rgba(148,163,184,0.12)":r===3?"rgba(205,127,50,0.12)":"var(--badge-bg)";
+const formatValue=v=>{if(!v||v===0)return"-";const e=v/1e8;if(e>=10000)return(e/10000).toFixed(1)+"조";if(e>=1)return Math.round(e).toLocaleString()+"억";return v.toLocaleString()};
+
+function ThemeStockPanel({themeName,onClose}){
+  const[stocks,setStocks]=useState([]);
+  const[themeInfo,setThemeInfo]=useState(null);
+  const[loading,setLoading]=useState(true);
+  const[sort,setSort]=useState("rank");
+  const[visible,setVisible]=useState(false);
+  const isMob=window.innerWidth<=600;
+
+  useEffect(()=>{
+    if(!themeName)return;
+    setLoading(true);
+    requestAnimationFrame(()=>setVisible(true));
+    Promise.all([
+      db("theme_stocks_all",`theme_name=eq.${encodeURIComponent(themeName)}&order=rank`),
+      db("all_themes",`name=eq.${encodeURIComponent(themeName)}&limit=1`)
+    ]).then(([s,t])=>{
+      if(s?.length)setStocks(s);
+      if(t?.length)setThemeInfo(t[0]);
+      setLoading(false);
+    });
+  },[themeName]);
+
+  const close=()=>{setVisible(false);setTimeout(onClose,300)};
+
+  const sorted=useMemo(()=>{
+    const arr=[...stocks];
+    if(sort==="change")arr.sort((a,b)=>parseFloat(b.change_pct)-parseFloat(a.change_pct));
+    else if(sort==="volume")arr.sort((a,b)=>(b.trading_value||0)-(a.trading_value||0));
+    else arr.sort((a,b)=>a.rank-b.rank);
+    return arr;
+  },[stocks,sort]);
+
+  const upC=stocks.filter(s=>s.trend==="up").length;
+  const dnC=stocks.filter(s=>s.trend==="down").length;
+
+  return <div>
+    {/* 오버레이 */}
+    <div onClick={close} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:998,opacity:visible?1:0,transition:"opacity .3s"}}/>
+    {/* 패널 */}
+    <div style={{position:"fixed",top:0,right:0,bottom:0,width:isMob?"100%":"480px",maxWidth:"100vw",background:"var(--bg)",borderLeft:"1px solid var(--card-bd)",zIndex:999,transform:visible?"translateX(0)":"translateX(100%)",transition:"transform .3s ease",display:"flex",flexDirection:"column",boxShadow:"-4px 0 20px rgba(0,0,0,0.3)"}}>
+      {/* 헤더 */}
+      <div style={{padding:"20px 24px 16px",borderBottom:"1px solid var(--div2)",flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"12px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
+            <h2 style={{fontSize:"20px",fontWeight:800,margin:0}}>{themeName}</h2>
+            {themeInfo&&<span style={{padding:"3px 10px",borderRadius:"16px",fontSize:"13px",fontWeight:600,background:"rgba(245,158,11,0.12)",color:"#f59e0b"}}>{stocks.length}종목</span>}
+          </div>
+          <button onClick={close} style={{width:32,height:32,borderRadius:"8px",border:"1px solid var(--card-bd)",background:"var(--card-bg)",cursor:"pointer",fontSize:"18px",color:"var(--muted)",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+        </div>
+        {themeInfo&&<div style={{display:"flex",alignItems:"center",gap:"16px",flexWrap:"wrap"}}>
+          <span style={{fontSize:"18px",fontWeight:700,color:trendClr(themeInfo.trend)}}>{trendArrow(themeInfo.trend)} {themeInfo.change_pct}</span>
+          <span style={{fontSize:"13px",color:"var(--muted)"}}>
+            <span style={{color:"#22c55e"}}>▲{upC}</span> · <span style={{color:"#6b7280"}}>{stocks.length-upC-dnC}</span> · <span style={{color:"#ef4444"}}>▼{dnC}</span>
+          </span>
+        </div>}
+        <div style={{display:"flex",gap:"5px",marginTop:"12px"}}>
+          {[{id:"rank",l:"복합점수"},{id:"change",l:"등락률"},{id:"volume",l:"거래대금"}].map(x=>
+            <button key={x.id} onClick={()=>setSort(x.id)} style={{padding:"5px 12px",fontFamily:"inherit",fontSize:"13px",fontWeight:500,background:sort===x.id?"var(--tab-bg)":"var(--hover)",border:"1px solid",cursor:"pointer",borderColor:sort===x.id?"var(--tab-bd)":"transparent",borderRadius:"7px",color:sort===x.id?"#f59e0b":"var(--muted)",transition:"all .2s"}}>{x.l}</button>
+          )}
+        </div>
+      </div>
+      {/* 종목 리스트 */}
+      <div style={{flex:1,overflowY:"auto"}}>
+        {/* 컬럼 헤더 */}
+        <div style={{display:"grid",gridTemplateColumns:isMob?"28px 1fr 72px":"36px 1fr 90px 80px 80px",padding:isMob?"8px 12px":"10px 16px",borderBottom:"1px solid var(--div2)",fontSize:"12px",fontWeight:600,color:"var(--muted)",gap:isMob?"4px":"6px",position:"sticky",top:0,background:"var(--bg)",zIndex:1}}>
+          <span>#</span><span>종목명</span>{!isMob&&<span style={{textAlign:"right"}}>현재가</span>}<span style={{textAlign:"right"}}>등락률</span>{!isMob&&<span style={{textAlign:"right"}}>거래대금</span>}
+        </div>
+        {loading?<Loader/>:sorted.length===0?<div style={{padding:"40px",textAlign:"center",color:"var(--muted)"}}>종목 데이터가 없습니다</div>
+          :sorted.map((s,i)=>{
+            const clr=s.trend==="up"?"#22c55e":(s.trend==="down"?"#ef4444":"#6b7280");
+            const arrow=s.trend==="up"?"▲":(s.trend==="down"?"▼":"─");
+            return <a key={s.code} href={`https://finance.naver.com/item/main.naver?code=${s.code}`} target="_blank" rel="noopener noreferrer"
+              style={{display:"grid",gridTemplateColumns:isMob?"28px 1fr 72px":"36px 1fr 90px 80px 80px",alignItems:"center",padding:isMob?"9px 12px":"10px 16px",borderBottom:"1px solid var(--div)",textDecoration:"none",color:"inherit",cursor:"pointer",transition:"background .15s",gap:isMob?"4px":"6px"}}
+              onMouseEnter={e=>e.currentTarget.style.background="rgba(245,158,11,0.06)"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+              <span style={{width:isMob?24:28,height:isMob?24:28,borderRadius:"6px",fontSize:isMob?"11px":"12px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",background:i<3?"rgba(245,158,11,0.12)":"var(--badge-bg)",color:i<3?"#f59e0b":"var(--muted)"}}>{i+1}</span>
+              <div style={{minWidth:0}}>
+                <div style={{fontWeight:600,fontSize:isMob?"13px":"14px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}<span style={{color:"var(--dim)",fontSize:"11px",marginLeft:"4px"}}>{s.code}</span></div>
+                {isMob&&<div style={{fontSize:"11px",color:"var(--muted)",marginTop:"1px"}}>{s.price?`₩${Number(s.price).toLocaleString()}`:"-"} · {formatValue(s.trading_value)}</div>}
+              </div>
+              {!isMob&&<div style={{textAlign:"right",fontWeight:600,fontSize:"14px",fontVariantNumeric:"tabular-nums"}}>{s.price?`₩${Number(s.price).toLocaleString()}`:"-"}</div>}
+              <div style={{textAlign:"right",fontWeight:700,fontSize:isMob?"12px":"13px",color:clr}}>{arrow} {s.change_pct}</div>
+              {!isMob&&<div style={{textAlign:"right",fontSize:"12px",color:"var(--muted)",fontVariantNumeric:"tabular-nums"}}>{formatValue(s.trading_value)}</div>}
+            </a>;
+          })}
+      </div>
+    </div>
+  </div>;
+}
 
 function ThemeCalendar({year,month,data,selectedDate,onSelect}){
   const firstDay=new Date(year,month,1).getDay();
@@ -87,7 +177,7 @@ function ThemeCalendar({year,month,data,selectedDate,onSelect}){
   </div>;
 }
 
-function ThemeDayDetail({themes,date}){
+function ThemeDayDetail({themes,date,onThemeClick}){
   if(!themes||themes.length===0)return <Box hover={false} style={{padding:"40px",textAlign:"center"}}>
     <div style={{fontSize:"36px",marginBottom:"12px",opacity:0.4}}>🔥</div>
     <div style={{fontWeight:600,color:"var(--muted)"}}>이 날짜의 테마 데이터가 없습니다</div>
@@ -107,7 +197,7 @@ function ThemeDayDetail({themes,date}){
           <div style={{display:"flex",alignItems:"center",gap:"12px",flex:1,minWidth:0}}>
             <span style={{width:34,height:34,borderRadius:"8px",fontSize:"16px",fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",background:rankBg(t.rank),color:rankClr(t.rank),flexShrink:0}}>{t.rank}</span>
             <div style={{minWidth:0}}>
-              <a href={`theme_detail.html?theme=${encodeURIComponent(t.name)}`} style={{fontWeight:700,fontSize:"17px",color:"var(--text)",textDecoration:"none",transition:"color .15s"}} onMouseEnter={e=>e.currentTarget.style.color="#f97316"} onMouseLeave={e=>e.currentTarget.style.color="var(--text)"}>{t.name}</a>
+              <span onClick={e=>{e.stopPropagation();onThemeClick(t.name)}} style={{fontWeight:700,fontSize:"17px",color:"var(--text)",cursor:"pointer",transition:"color .15s"}} onMouseEnter={e=>e.currentTarget.style.color="#f97316"} onMouseLeave={e=>e.currentTarget.style.color="var(--text)"}>{t.name}</span>
               <div style={{display:"flex",alignItems:"center",gap:"8px",marginTop:"4px",fontSize:"13px",color:"var(--muted)"}}>
                 <span style={{color:"#22c55e"}}>▲{t.up_count||0}</span>
                 <span>·</span>
@@ -147,6 +237,7 @@ function App(){
   const[selectedDate,setSelectedDate]=useState(null);
   const[dayThemes,setDayThemes]=useState(null);
   const[loading,setLoading]=useState(true);
+  const[panelTheme,setPanelTheme]=useState(null);
 
   useEffect(()=>{document.body.className=theme==="light"?"light":"";setStoredTheme(theme)},[theme]);
 
@@ -220,7 +311,7 @@ function App(){
         {/* 상세 패널 */}
         <div className="fade-up">
           {selectedDate&&dayThemes?
-            <ThemeDayDetail themes={dayThemes} date={selectedDate}/>
+            <ThemeDayDetail themes={dayThemes} date={selectedDate} onThemeClick={setPanelTheme}/>
           :<Box hover={false} style={{padding:"60px 40px",textAlign:"center"}}>
             <div style={{fontSize:"48px",marginBottom:"16px",opacity:0.3}}>📅</div>
             <div style={{fontWeight:600,fontSize:"17px",color:"var(--muted)",marginBottom:"6px"}}>날짜를 선택하세요</div>
@@ -229,6 +320,8 @@ function App(){
         </div>
       </div>
     </main>
+
+    {panelTheme&&<ThemeStockPanel themeName={panelTheme} onClose={()=>setPanelTheme(null)}/>}
 
     <footer style={{borderTop:"1px solid var(--div2)",maxWidth:1440,margin:"0 auto",padding:"18px 40px",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:"8px",color:"var(--dimmer)",fontSize:"13px"}}>
       <div><span style={{fontWeight:600,color:"var(--dim)"}}>STOCKPULSE</span> © 2026</div>
