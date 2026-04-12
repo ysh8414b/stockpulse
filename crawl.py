@@ -3417,8 +3417,12 @@ def main():
         result = supabase_request("POST", "themes", data=themes)
         log(f"  🔥 테마 {len(themes)}개 저장 {'✅' if result else '❌'}")
 
-    # 테마 히스토리 저장 (과거 데이터 보존 — 캘린더용)
-    if themes:
+    # 테마 히스토리 저장 (과거 데이터 보존 — 캘린더용, 주말+공휴일 제외)
+    # 공휴일 판별: 전종목 등락률이 모두 0이면 장이 안 열린 날
+    is_market_open = kst_start.weekday() < 5 and any(
+        abs(s.get("change_pct", 0)) > 0 for s in krx_data[:100]
+    ) if krx_data else False
+    if themes and is_market_open:
         history_data = []
         for t in themes[:10]:
             # leading_stocks에서 상위 3개만 추출 (저장 용량 절약)

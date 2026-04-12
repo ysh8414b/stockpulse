@@ -125,12 +125,24 @@ function ThemeStockPanel({themeName,onClose}){
 }
 
 function ThemeCalendar({year,month,data,selectedDate,onSelect}){
-  const firstDay=new Date(year,month,1).getDay();
   const daysInMonth=new Date(year,month+1,0).getDate();
-  const days=["일","월","화","수","목","금","토"];
-  const cells=[];
-  for(let i=0;i<firstDay;i++)cells.push(null);
-  for(let d=1;d<=daysInMonth;d++)cells.push(d);
+  const days=["월","화","수","목","금"];
+
+  // 주차별로 평일만 모은 2차원 배열 생성
+  const weeks=useMemo(()=>{
+    const w=[];let cur=[];
+    for(let d=1;d<=daysInMonth;d++){
+      const dow=new Date(year,month,d).getDay();
+      if(dow===0||dow===6)continue; // 토,일 스킵
+      // 월요일이면 새 주 시작
+      if(dow===1&&cur.length>0){w.push(cur);cur=[];}
+      // 첫 주에서 월요일 전 빈칸 채우기
+      if(cur.length===0&&dow>1){for(let p=1;p<dow;p++)cur.push(null);}
+      cur.push(d);
+    }
+    if(cur.length>0){while(cur.length<5)cur.push(null);w.push(cur);}
+    return w;
+  },[year,month]);
 
   const dataByDate=useMemo(()=>{
     const m={};
@@ -145,19 +157,17 @@ function ThemeCalendar({year,month,data,selectedDate,onSelect}){
   const pad=n=>n<10?"0"+n:""+n;
 
   return <div>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:"2px",marginBottom:"4px"}}>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:"2px",marginBottom:"4px"}}>
       {days.map(d=><div key={d} style={{textAlign:"center",fontSize:"12px",color:"var(--muted)",padding:"6px 0",fontWeight:600}}>{d}</div>)}
     </div>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:"2px"}}>
-      {cells.map((d,i)=>{
+    <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:"2px"}}>
+      {weeks.flat().map((d,i)=>{
         if(d===null)return <div key={i}/>;
         const dateStr=`${year}-${pad(month+1)}-${pad(d)}`;
         const dayThemes=dataByDate[dateStr];
         const hasData=!!dayThemes;
         const isSelected=selectedDate===dateStr;
         const isToday=dateStr===new Date().toISOString().slice(0,10);
-        const dayOfWeek=(firstDay+d-1)%7;
-        const isWeekend=dayOfWeek===0||dayOfWeek===6;
 
         return <div key={i} onClick={()=>hasData&&onSelect(dateStr)} style={{
           textAlign:"center",padding:"5px 2px",borderRadius:"8px",cursor:hasData?"pointer":"default",
@@ -165,7 +175,7 @@ function ThemeCalendar({year,month,data,selectedDate,onSelect}){
           border:isSelected?"1px solid rgba(249,115,22,0.3)":isToday?"1px solid var(--div3)":"1px solid transparent",
           opacity:hasData?1:0.35,transition:"all .2s",minHeight:"68px"
         }} onMouseEnter={e=>{if(hasData&&!isSelected)e.currentTarget.style.background="rgba(249,115,22,0.05)"}} onMouseLeave={e=>{if(!isSelected)e.currentTarget.style.background=isToday?"rgba(255,255,255,0.03)":"transparent"}}>
-          <div style={{fontSize:"13px",fontWeight:isToday?700:isSelected?600:400,color:isWeekend&&!isSelected?"var(--dim)":"var(--text)",marginBottom:"3px"}}>{d}</div>
+          <div style={{fontSize:"13px",fontWeight:isToday?700:isSelected?600:400,color:"var(--text)",marginBottom:"3px"}}>{d}</div>
           {dayThemes&&dayThemes.slice(0,3).map((t,ti)=><div key={ti} className="theme-cal-badge" style={{
             fontSize:"10px",padding:"1px 3px",borderRadius:"3px",marginTop:"1px",
             background:trendBg(t.trend),color:trendClr(t.trend),
@@ -243,20 +253,20 @@ function App(){
 
   const pad=n=>n<10?"0"+n:""+n;
 
-  // 월간 데이터 로드 (TOP 3만)
+  // 월간 데이터 로드 (전체 TOP 10 — 캘린더 뱃지는 rank<=3만 표시, 카운트는 전체 사용)
   useEffect(()=>{
     setLoading(true);
     const startDate=`${year}-${pad(month+1)}-01`;
     const endDay=new Date(year,month+1,0).getDate();
     const endDate=`${year}-${pad(month+1)}-${pad(endDay)}`;
-    db("theme_history",`select=date,rank,name,change_pct,trend&date=gte.${startDate}&date=lte.${endDate}&rank=lte.3&order=date,rank`).then(d=>{
+    db("theme_history",`select=date,rank,name,change_pct,trend&date=gte.${startDate}&date=lte.${endDate}&order=date,rank`).then(d=>{
       setMonthData(d||[]);
       setLoading(false);
       if(d&&d.length>0){
         const today=new Date().toISOString().slice(0,10);
-        const dates=[...new Set(d.map(r=>r.date))];
-        const match=dates.includes(today)?today:dates[dates.length-1];
-        setSelectedDate(match);
+        const dates=[...new Set(d.map(r=>r.date))].sort();
+        // 오늘 데이터가 있으면 오늘, 없으면(주말/공휴일) 가장 최근 거래일
+        setSelectedDate(dates.includes(today)?today:dates[dates.length-1]);
       }else{
         setSelectedDate(null);
         setDayThemes(null);
@@ -307,6 +317,41 @@ function App(){
             <span style={{display:"flex",alignItems:"center",gap:"4px"}}><span style={{width:6,height:6,borderRadius:"50%",background:"#6b7280",display:"inline-block"}}/>보합</span>
           </div>
         </Box>
+
+        {/* 월간 테마 등장 횟수 */}
+        {monthData&&monthData.length>0&&(()=>{
+          const counts={};
+          monthData.forEach(r=>{
+            if(!counts[r.name])counts[r.name]={count:0,top3:0};
+            counts[r.name].count++;
+            if(r.rank<=3)counts[r.name].top3++;
+          });
+          const totalDays=[...new Set(monthData.map(r=>r.date))].length;
+          const sorted=Object.entries(counts).sort((a,b)=>b[1].count-a[1].count);
+          return <Box hover={false} style={{padding:"16px 20px",marginTop:"12px"}}>
+            <div style={{fontWeight:700,fontSize:"14px",marginBottom:"10px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span>📊 {month+1}월 테마 등장 횟수</span>
+              <span style={{fontSize:"12px",color:"var(--dim)",fontWeight:400}}>{totalDays}일 집계</span>
+            </div>
+            <div style={{display:"grid",gap:"4px"}}>
+              {sorted.slice(0,15).map(([name,v],i)=>{
+                const pct=Math.round(v.count/totalDays*100);
+                return <div key={name} style={{display:"flex",alignItems:"center",gap:"8px",padding:"5px 0"}}>
+                  <span style={{width:20,fontSize:"12px",fontWeight:600,color:i<3?"#f59e0b":"var(--muted)",textAlign:"right",flexShrink:0}}>{i+1}</span>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"3px"}}>
+                      <span style={{fontSize:"13px",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{name}</span>
+                      <span style={{fontSize:"12px",fontWeight:700,color:"#f97316",flexShrink:0}}>{v.count}회</span>
+                    </div>
+                    <div style={{height:4,borderRadius:2,background:"var(--div)"}}>
+                      <div style={{height:4,borderRadius:2,background:pct>=80?"#f97316":pct>=50?"#f59e0b":"rgba(249,115,22,0.4)",width:pct+"%",transition:"width .3s"}}/>
+                    </div>
+                  </div>
+                </div>;
+              })}
+            </div>
+          </Box>;
+        })()}
 
         {/* 상세 패널 */}
         <div className="fade-up">
