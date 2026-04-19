@@ -2654,26 +2654,26 @@ def crawl_issue_stocks(krx_data, themes=None, sectors=None, news=None):
         code = d["code"]
         n = max_tv_rank if max_tv_rank > 0 else 1
 
-        # 거래대금 점수 (25점) — 순위가 높을수록 점수 높음
-        tv_score = (1 - tv_rank_map[code] / n) * 25
+        # 거래대금 점수 (50점) — 순위가 높을수록 점수 높음
+        tv_score = (1 - tv_rank_map[code] / n) * 50
 
-        # 등락률 점수 (25점) — 절대값 순위
-        change_score = (1 - change_rank_map[code] / n) * 25
+        # 등락률 점수 (10점) — 절대값 순위
+        change_score = (1 - change_rank_map[code] / n) * 10
 
-        # 인기 테마 소속 (20점) — 소속이면 20점
-        theme_score = 20 if code in theme_stock_codes else 0
+        # 인기 테마 소속 (10점) — 소속이면 10점
+        theme_score = 10 if code in theme_stock_codes else 0
 
-        # 뉴스 언급 (20점) — 언급 횟수에 따라
+        # 뉴스 언급 (10점) — 언급 횟수에 따라
         mentions = news_mention_count.get(code, 0)
-        news_score = min(mentions * 10, 20)  # 1회=10점, 2회+=20점
+        news_score = min(mentions * 5, 10)  # 1회=5점, 2회+=10점
 
         # 상승 섹터 소속 (10점)
         sector_score = 10 if d.get("display_sector", "") in rising_sectors else 0
 
-        # 상한가/하한가 보너스 (15점) — 시총 3000억+ 조건
+        # 상한가/하한가 보너스 (10점) — 시총 3000억+ 조건
         limit_bonus = 0
         if abs(d["change_pct"]) >= LIMIT_PCT and d.get("market_cap", 0) >= 300_000_000_000:
-            limit_bonus = 15
+            limit_bonus = 10
 
         total = tv_score + change_score + theme_score + news_score + sector_score + limit_bonus
 
