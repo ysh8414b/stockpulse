@@ -225,7 +225,7 @@ function TabOverview({idx,stk,nws,sec,loading}){
 }
 
 // ═══ TAB: STOCKS ═══
-function TabStocks({stk,nws,loading}){
+function TabStocks({stk,nws,stkAn,loading}){
   const[q,setQ]=useState("");const[hov,setHov]=useState(null);const[exp,setExp]=useState(null);
   if(loading)return <Loader/>;if(!stk.length)return <Empty msg="이슈 종목 데이터 없음"/>;
   const f=q?stk.filter(s=>s.name.includes(q)||s.code.includes(q)||(s.tags||[]).some(t=>t.includes(q))):stk;
@@ -325,6 +325,7 @@ function TabStocks({stk,nws,loading}){
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"8px"}}><span style={{fontSize:"14px",fontWeight:600,color:"var(--text)"}}>{ax.icon} {ax.title}</span><span style={{padding:"3px 10px",borderRadius:"12px",fontSize:"12px",fontWeight:700,color:ax.color,background:`${ax.color}18`,border:`1px solid ${ax.color}30`}}>{ax.label}</span></div>
             <div style={{fontSize:"13px",color:"var(--text-sub)",lineHeight:1.5}}>{ax.detail}</div>
           </div>)}</div>
+          {stkAn&&stkAn[s.code]&&stkAn[s.code].catalyst_analysis&&(()=>{const sa=stkAn[s.code];const rC={strong:"#22c55e",moderate:"#f59e0b",weak:"#6b7280"};const rL={strong:"강",moderate:"보통",weak:"약"};const lcL={short:"단기·1~3일",mid:"중기·1~4주",long:"장기·1개월+"};const lcC={short:"#f59e0b",mid:"#8b5cf6",long:"#3b82f6"};const axes=[{icon:"🔥",title:"재료 분석",rating:sa.catalyst_rating,lifecycle:sa.catalyst_lifecycle,text:sa.catalyst_analysis},{icon:"💰",title:"수급 분석",rating:sa.supply_rating,text:sa.supply_analysis},{icon:"🎯",title:"모멘텀 분석",rating:sa.momentum_rating,text:sa.momentum_analysis}];return <div style={{marginTop:"4px",marginBottom:"14px",padding:"16px",background:"var(--card-bg)",borderRadius:"10px",border:"1px solid var(--div3)",animation:"fadeUp .3s ease both"}}><div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"14px",paddingBottom:"10px",borderBottom:"1px solid var(--div)"}}><span style={{fontSize:"14px"}}>🤖</span><span style={{fontWeight:700,fontSize:"15px"}}>AI 심층 분석</span><span style={{padding:"2px 8px",borderRadius:"6px",fontSize:"12px",fontWeight:600,background:"rgba(139,92,246,0.1)",color:"#a78bfa",border:"1px solid rgba(139,92,246,0.2)"}}>Groq AI</span></div>{axes.map((ax,axi)=>{const c=rC[ax.rating]||"#6b7280";return <div key={axi} style={{borderLeft:`3px solid ${c}`,paddingLeft:"14px",marginBottom:"14px"}}><div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"7px",flexWrap:"wrap"}}><span>{ax.icon}</span><span style={{fontWeight:700,fontSize:"15px"}}>{ax.title}</span><span style={{padding:"2px 9px",borderRadius:"10px",fontSize:"12px",fontWeight:700,color:c,background:`${c}18`,border:`1px solid ${c}30`}}>{rL[ax.rating]||ax.rating}</span>{ax.lifecycle&&<span style={{padding:"2px 9px",borderRadius:"10px",fontSize:"12px",fontWeight:600,color:lcC[ax.lifecycle]||"#6b7280",background:`${(lcC[ax.lifecycle]||"#6b7280")}18`}}>{lcL[ax.lifecycle]||ax.lifecycle}</span>}</div><div style={{fontSize:"14px",lineHeight:1.75,color:"var(--text-sub)",whiteSpace:"pre-wrap"}}>{ax.text}</div></div>})}{sa.verdict&&<div style={{padding:"12px 14px",background:"rgba(245,158,11,0.06)",border:"1px solid rgba(245,158,11,0.15)",borderRadius:"8px",marginBottom:"10px"}}><span style={{fontSize:"13px",fontWeight:700,color:"#f59e0b",marginRight:"8px"}}>📌 핵심 판단</span><span style={{fontSize:"14px",lineHeight:1.6,color:"var(--text)"}}>{sa.verdict}</span></div>}{sa.risk_note&&<div style={{padding:"12px 14px",background:"rgba(239,68,68,0.06)",border:"1px solid rgba(239,68,68,0.15)",borderRadius:"8px"}}><span style={{fontSize:"13px",fontWeight:700,color:"#ef4444",marginRight:"8px"}}>⚠️ 핵심 리스크</span><span style={{fontSize:"14px",lineHeight:1.6,color:"var(--text-sub)"}}>{sa.risk_note}</span></div>}</div>;})()}
           {related.length>0&&<div style={{marginBottom:"12px"}}><div style={{color:"var(--muted)",fontSize:"13px",fontWeight:600,marginBottom:"8px"}}>📰 관련 뉴스</div><div style={{display:"grid",gap:"6px"}}>{related.map((n,ni)=><a key={ni} href={n.link||n.url||"#"} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{display:"flex",alignItems:"center",gap:"8px",padding:"8px 12px",background:"var(--card-bg)",border:"1px solid var(--div2)",borderRadius:"8px",textDecoration:"none",color:"inherit",transition:"all .2s"}} onMouseEnter={e=>{e.currentTarget.style.borderColor="rgba(59,130,246,0.3)";e.currentTarget.style.background="rgba(59,130,246,0.04)"}} onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--div2)";e.currentTarget.style.background="var(--card-bg)"}}><span style={{color:"#3b82f6",fontSize:"13px",flexShrink:0}}>▸</span><span style={{fontSize:"14px",lineHeight:1.5,color:"var(--text-sub)",flex:1}}>{n.title}</span><span style={{fontSize:"12px",color:"var(--dim)",flexShrink:0,whiteSpace:"nowrap"}}>{n.source} · {n.time_ago}</span></a>)}</div></div>}
           {related.length===0&&<div style={{display:"flex",alignItems:"center",gap:"6px",padding:"10px 12px",background:"var(--card-bg)",border:"1px solid var(--div2)",borderRadius:"8px",marginBottom:"12px"}}><span style={{fontSize:"13px",color:"var(--dim)"}}>📰</span><span style={{fontSize:"14px",color:"var(--dim)"}}>관련 뉴스가 없습니다</span><a href={`https://finance.naver.com/item/news.naver?code=${s.code}`} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{fontSize:"13px",color:"#3b82f6",textDecoration:"none",marginLeft:"auto"}}>네이버 뉴스 보기 →</a></div>}
           <a href={`https://finance.naver.com/item/main.naver?code=${s.code}`} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{display:"inline-flex",alignItems:"center",gap:"6px",padding:"8px 16px",borderRadius:"8px",background:"rgba(6,182,212,0.08)",border:"1px solid rgba(6,182,212,0.2)",color:"#06b6d4",fontSize:"14px",fontWeight:600,textDecoration:"none",transition:"all .2s"}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(6,182,212,0.15)"}} onMouseLeave={e=>{e.currentTarget.style.background="rgba(6,182,212,0.08)"}}>네이버 증권 상세 →</a>
@@ -777,7 +778,7 @@ function App(){
   const[thm,setThm]=useState([]);
   const[allThm,setAllThm]=useState([]);
   const[aiSum,setAiSum]=useState(null);
-  const[thmAn,setThmAn]=useState({});
+  const[thmAn,setThmAn]=useState({});const[stkAn,setStkAn]=useState({});
   const[chatOpen,setChatOpen]=useState(false);
   const[lastUp,setLastUp]=useState(null);
   const[theme,setTheme]=useState(()=>{try{return localStorage.getItem("sp-theme")||"dark"}catch(e){return "dark"}});
@@ -789,8 +790,8 @@ function App(){
 
   useEffect(()=>{(async()=>{
     setLoading(true);
-    const[a,b,c,d,e,f,g,h]=await Promise.all([db("market_index","order=id"),db("issue_stocks","order=rank&limit=15"),db("news","order=created_at.desc&limit=20"),db("sectors","order=id"),db("themes","order=rank&limit=10"),db("ai_summary","order=id.desc&limit=1"),db("all_themes","order=rank"),db("theme_analysis","order=id")]);
-    if(a?.length)setIdx(a);if(b?.length)setStk(b);if(c?.length){setNws(c);setLastUp(c[0].date)}if(d?.length)setSec(d);if(e?.length)setThm(e);if(f?.length)setAiSum(f[0]);if(g?.length)setAllThm(g);if(h?.length){const m={};h.forEach(ta=>{m[ta.theme_name]=ta});setThmAn(m)}
+    const[a,b,c,d,e,f,g,h,ii]=await Promise.all([db("market_index","order=id"),db("issue_stocks","order=rank&limit=15"),db("news","order=created_at.desc&limit=20"),db("sectors","order=id"),db("themes","order=rank&limit=10"),db("ai_summary","order=id.desc&limit=1"),db("all_themes","order=rank"),db("theme_analysis","order=id"),db("stock_analysis","order=id.desc&limit=1")]);
+    if(a?.length)setIdx(a);if(b?.length)setStk(b);if(c?.length){setNws(c);setLastUp(c[0].date)}if(d?.length)setSec(d);if(e?.length)setThm(e);if(f?.length)setAiSum(f[0]);if(g?.length)setAllThm(g);if(h?.length){const m={};h.forEach(ta=>{m[ta.theme_name]=ta});setThmAn(m)}if(ii?.length&&ii[0].stocks){const sm={};(ii[0].stocks||[]).forEach(sa=>{if(sa.code)sm[sa.code]=sa});setStkAn(sm)}
     setLoading(false);
   })()},[]);
 
@@ -815,7 +816,7 @@ function App(){
     <div style={{display:"flex",maxWidth:1440,margin:"0 auto",minHeight:"calc(100vh - 200px)"}}>
       <main className="main-wrap" style={{flex:1,minWidth:0,padding:"22px 40px 60px",transition:"all .3s ease"}}>
         {tab==="overview"&&<TabOverview idx={idx} stk={stk} nws={nws} sec={sec} loading={loading}/>}
-        {tab==="issues"&&<TabStocks stk={stk} nws={nws} loading={loading}/>}
+        {tab==="issues"&&<TabStocks stk={stk} nws={nws} stkAn={stkAn} loading={loading}/>}
         {tab==="themes"&&<TabThemes thm={thm} allThm={allThm} thmAn={thmAn} loading={loading}/>}
         {tab==="news"&&<TabNews nws={nws} loading={loading}/>}
         {tab==="ai"&&<TabAI aiSum={aiSum} loading={loading}/>}
