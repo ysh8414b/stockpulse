@@ -1354,6 +1354,54 @@ def load_theme_keywords_from_db():
         log(f"  ⚠️ DB 키워드 로딩 실패 (코드 키워드 사용): {e}")
 
 
+def _score_theme_stock_relevance(name, chg, theme_name, theme_avg_chg, news_titles):
+    """
+    Phase 1: 테마-종목 관련도 점수 (0~100)
+    - 동반 상승 sign + 크기 정합성 (이탈자 감지)
+    - 뉴스 타이틀에서 종목명 + 테마키워드 공동 언급
+    기업개요 기반 매핑에 오늘의 시장 맥락을 덧씌워 오분류를 걸러냄.
+    """
+    if not name or len(name) < 2:
+        return 30.0
+
+    score = 30.0  # 기본점 (기업개요/업종 매핑 baseline)
+
+    # 1. 동반 상승 방향 일치
+    if theme_avg_chg > 0.2 and chg > 0.2:
+        score += 10
+    elif theme_avg_chg < -0.2 and chg < -0.2:
+        score += 10
+
+    # 2. 크기 정합성 — 핵심: 이탈자(다른 재료로 상승) 감지
+    abs_theme = max(abs(theme_avg_chg), 0.3)
+    ratio = abs(chg) / abs_theme
+    if 0.3 <= ratio <= 2.5:
+        score += 15
+    elif ratio >= 4.0 and ((theme_avg_chg > 0) == (chg > 0)):
+        # 같은 방향인데 너무 크게 이탈 → 다른 재료로 혼자 튐
+        score -= 20
+
+    # 3. 뉴스 타이틀 co-mention (종목명 + 테마 키워드 동시 등장)
+    theme_keywords = NEWS_THEME_KEYWORDS.get(theme_name, [])
+    if theme_keywords and news_titles:
+        co_mentions = 0
+        name_mentions = 0
+        for title in news_titles[:300]:
+            if not title:
+                continue
+            if name in title:
+                name_mentions += 1
+                if any(kw in title for kw in theme_keywords):
+                    co_mentions += 1
+        if co_mentions > 0:
+            score += 25
+        elif name_mentions >= 2:
+            # 뉴스 자주 나왔는데 테마 키워드 동반 없음 → 다른 이슈
+            score -= 12
+
+    return score
+
+
 def detect_themes_rule_based(news_titles, theme_map=None, krx_data=None):
     """뉴스 헤드라인 키워드 매칭 + 등락률 복합 점수로 핫 테마 선정"""
     if not news_titles:
@@ -3042,7 +3090,21 @@ def crawl_themes(krx_data, news_titles=None, theme_map=None):
             max_abs_chg = max((abs(ts["change_pct"]) for ts in theme_stocks), default=1) or 1
             max_tv = max((ts["trading_value"] for ts in theme_stocks), default=1) or 1
             for ts in theme_stocks:
-                ts["_score"] = (abs(ts["change_pct"]) / max_abs_chg) * 50 + (ts["trading_value"] / max_tv) * 50
+                base = (abs(ts["change_pct"]) / max_abs_chg) * 50 + (ts["trading_value"] / max_tv) * 50
+                rel = _score_theme_stock_relevance(ts["name"], ts["change_pct"], theme_def["name"], avg_change, news_titles)
+                ts["_rel"] = rel
+                # 관련도 가중치: 60 이상 full, 낮으면 20%까지 감점
+                w = max(0.2, min(1.0, rel / 60.0))
+                ts["_score"] = base * w
+
+            # 하드 필터: 관련도 15 미만은 명백한 이탈자 → 제외 (최소 3개 확보)
+            filtered = [ts for ts in theme_stocks if ts["_rel"] >= 15]
+            if len(filtered) >= 3:
+                dropped = [ts["name"] for ts in theme_stocks if ts["_rel"] < 15]
+                if dropped:
+                    log(f"     [{theme_def['name']}] 관련도 낮아 제외: {', '.join(dropped[:5])}")
+                theme_stocks = filtered
+
             theme_stocks.sort(key=lambda x: x["_score"], reverse=True)
             leaders = []
             for ts in theme_stocks[:10]:
@@ -3090,11 +3152,23 @@ def crawl_themes(krx_data, news_titles=None, theme_map=None):
             else:
                 trend, pct_str = "flat", "0.00%"
 
-            # 복합 점수: 등락률 절대값 50% + 거래대금 50% (정규화)
+            # 복합 점수 + 관련도 필터 (Phase 1)
             max_abs_chg = max((abs(ts["change_pct"]) for ts in theme_stocks), default=1) or 1
             max_tv = max((ts["trading_value"] for ts in theme_stocks), default=1) or 1
             for ts in theme_stocks:
-                ts["_score"] = (abs(ts["change_pct"]) / max_abs_chg) * 50 + (ts["trading_value"] / max_tv) * 50
+                base = (abs(ts["change_pct"]) / max_abs_chg) * 50 + (ts["trading_value"] / max_tv) * 50
+                rel = _score_theme_stock_relevance(ts["name"], ts["change_pct"], theme_def["name"], avg_change, news_titles)
+                ts["_rel"] = rel
+                w = max(0.2, min(1.0, rel / 60.0))
+                ts["_score"] = base * w
+
+            filtered = [ts for ts in theme_stocks if ts["_rel"] >= 15]
+            if len(filtered) >= 3:
+                dropped = [ts["name"] for ts in theme_stocks if ts["_rel"] < 15]
+                if dropped:
+                    log(f"     [{theme_def['name']}] 관련도 낮아 제외: {', '.join(dropped[:5])}")
+                theme_stocks = filtered
+
             theme_stocks.sort(key=lambda x: x["_score"], reverse=True)
             leaders = []
             for ts in theme_stocks[:10]:

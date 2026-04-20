@@ -791,7 +791,10 @@ function App(){
   useEffect(()=>{(async()=>{
     setLoading(true);
     const[a,b,c,d,e,f,g,h,ii]=await Promise.all([db("market_index","order=id"),db("issue_stocks","order=rank&limit=15"),db("news","order=created_at.desc&limit=20"),db("sectors","order=id"),db("themes","order=rank&limit=10"),db("ai_summary","order=id.desc&limit=1"),db("all_themes","order=rank"),db("theme_analysis","order=id"),db("stock_analysis","order=id.desc&limit=1")]);
-    if(a?.length)setIdx(a);if(b?.length)setStk(b);if(c?.length){setNws(c);setLastUp(c[0].date)}if(d?.length)setSec(d);if(e?.length)setThm(e);if(f?.length)setAiSum(f[0]);if(g?.length)setAllThm(g);if(h?.length){const m={};h.forEach(ta=>{m[ta.theme_name]=ta});setThmAn(m)}if(ii?.length&&ii[0].stocks){const sm={};(ii[0].stocks||[]).forEach(sa=>{if(sa.code)sm[sa.code]=sa});setStkAn(sm)}
+    try{
+    if(a?.length)setIdx(a);if(b?.length)setStk(b);if(c?.length){setNws(c);setLastUp(c[0].date)}if(d?.length)setSec(d);if(e?.length)setThm(e);if(f?.length)setAiSum(f[0]);if(g?.length)setAllThm(g);if(h?.length){const m={};h.forEach(ta=>{m[ta.theme_name]=ta});setThmAn(m)}
+    if(ii?.length){let arr=ii[0].stocks;if(typeof arr==="string"){try{arr=JSON.parse(arr)}catch(e){arr=null}}if(Array.isArray(arr)){const sm={};arr.forEach(sa=>{if(sa&&sa.code)sm[sa.code]=sa});setStkAn(sm)}}
+    }catch(e){console.error("data processing error:",e)}
     setLoading(false);
   })()},[]);
 
