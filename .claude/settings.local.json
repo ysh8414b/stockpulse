@@ -3,7 +3,8 @@
     "allow": [
       "Bash(python:*)",
       "WebFetch(domain:glama.ai)",
-      "WebFetch(domain:tgparkk.github.io)"
+      "WebFetch(domain:tgparkk.github.io)",
+      "mcp__Claude_Preview__preview_start"
     ]
   }
 }
