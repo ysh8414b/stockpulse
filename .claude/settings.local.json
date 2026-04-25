@@ -6,7 +6,8 @@
       "WebFetch(domain:tgparkk.github.io)",
       "mcp__Claude_Preview__preview_start",
       "Bash(curl -sI https://ainsightlab.kr/sitemap.xml)",
-      "Bash(curl -s https://ainsightlab.kr/sitemap.xml)"
+      "Bash(curl -s https://ainsightlab.kr/sitemap.xml)",
+      "Bash(curl -sI https://ainsightlab.kr/robots.txt)"
     ]
   }
 }
