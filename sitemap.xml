@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://ysh8414b.github.io/stockpulse/</loc><priority>1.0</priority></url>
-  <url><loc>https://ysh8414b.github.io/stockpulse/archive.html</loc><priority>0.8</priority></url>
-  <url><loc>https://ysh8414b.github.io/stockpulse/analysis.html</loc><priority>0.8</priority></url>
-  <url><loc>https://ysh8414b.github.io/stockpulse/theme_calendar.html</loc><priority>0.8</priority></url>
-  <url><loc>https://ysh8414b.github.io/stockpulse/theme_detail.html</loc><priority>0.7</priority></url>
-  <url><loc>https://ysh8414b.github.io/stockpulse/chat.html</loc><priority>0.6</priority></url>
-  <url><loc>https://ysh8414b.github.io/stockpulse/board.html</loc><priority>0.6</priority></url>
-  <url><loc>https://ysh8414b.github.io/stockpulse/guide.html</loc><priority>0.7</priority></url>
-  <url><loc>https://ysh8414b.github.io/stockpulse/about.html</loc><priority>0.5</priority></url>
-  <url><loc>https://ysh8414b.github.io/stockpulse/privacy.html</loc><priority>0.3</priority></url>
-  <url><loc>https://ysh8414b.github.io/stockpulse/terms.html</loc><priority>0.3</priority></url>
+  <url><loc>https://ainsightlab.kr/</loc><priority>1.0</priority></url>
+  <url><loc>https://ainsightlab.kr/archive.html</loc><priority>0.8</priority></url>
+  <url><loc>https://ainsightlab.kr/analysis.html</loc><priority>0.8</priority></url>
+  <url><loc>https://ainsightlab.kr/theme_calendar.html</loc><priority>0.8</priority></url>
+  <url><loc>https://ainsightlab.kr/theme_detail.html</loc><priority>0.7</priority></url>
+  <url><loc>https://ainsightlab.kr/chat.html</loc><priority>0.6</priority></url>
+  <url><loc>https://ainsightlab.kr/board.html</loc><priority>0.6</priority></url>
+  <url><loc>https://ainsightlab.kr/guide.html</loc><priority>0.7</priority></url>
+  <url><loc>https://ainsightlab.kr/about.html</loc><priority>0.5</priority></url>
+  <url><loc>https://ainsightlab.kr/privacy.html</loc><priority>0.3</priority></url>
+  <url><loc>https://ainsightlab.kr/terms.html</loc><priority>0.3</priority></url>
 </urlset>
