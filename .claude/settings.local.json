@@ -7,7 +7,10 @@
       "mcp__Claude_Preview__preview_start",
       "Bash(curl -sI https://ainsightlab.kr/sitemap.xml)",
       "Bash(curl -s https://ainsightlab.kr/sitemap.xml)",
-      "Bash(curl -sI https://ainsightlab.kr/robots.txt)"
+      "Bash(curl -sI https://ainsightlab.kr/robots.txt)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)"
     ]
   }
 }
