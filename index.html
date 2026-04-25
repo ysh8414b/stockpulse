@@ -244,11 +244,7 @@ function TabOverview({idx,stk,nws,sec,loading}){
     <div className="grid-2col" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"16px",marginBottom:"16px"}}>
       <Box className="card-pad" style={{padding:"22px 24px"}} hover={false}><div className="fade-up fade-up-d2">
         <h3 style={{fontSize:"17px",fontWeight:700,marginBottom:"18px",display:"flex",alignItems:"center",gap:"8px"}}><span style={{width:24,height:24,borderRadius:"6px",display:"inline-flex",alignItems:"center",justifyContent:"center",background:"rgba(245,158,11,0.12)",color:"#f59e0b",fontSize:"13px"}}>◆</span>이슈 종목 TOP 5</h3>
-        {stk.length===0?<Empty msg="이슈 종목 데이터 없음"/>:stk.slice(0,5).map((s,i)=><div key={s.code||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"13px 0",borderBottom:i<4?"1px solid var(--div)":"none"}}>
-          <div style={{display:"flex",alignItems:"center",gap:"12px"}}><span style={{width:26,height:26,borderRadius:"7px",fontSize:"13px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",background:i<3?"rgba(245,158,11,0.12)":"var(--badge-bg)",color:i<3?"#f59e0b":"var(--muted)"}}>{s.rank}</span>
-          <div><div style={{fontWeight:600,fontSize:"16px"}}>{s.name}<span style={{color:"var(--dim)",fontSize:"13px",marginLeft:"6px",fontWeight:400}}>{s.code}</span></div><div style={{color:"var(--muted)",fontSize:"13px",marginTop:"2px"}}>{s.reason}</div></div></div>
-          <div style={{textAlign:"right"}}><div style={{fontWeight:600,fontSize:"16px",fontVariantNumeric:"tabular-nums"}}>₩{s.price}</div><div style={{color:s.trend==="up"?"#22c55e":(s.trend==="down"?"#ef4444":"#6b7280"),fontSize:"14px",fontWeight:600}}>{s.trend==="up"?"▲":(s.trend==="down"?"▼":"─")} {s.change_pct}</div></div>
-        </div>)}
+        {stk.length===0?<Empty msg="이슈 종목 데이터 없음"/>:stk.slice(0,5).map((s,i)=><TopIssueRow key={s.code||i} s={s} i={i} isLast={i===4||i===stk.slice(0,5).length-1}/>)}
       </div></Box>
       <Box className="card-pad" style={{padding:"22px 24px"}} hover={false}><div className="fade-up fade-up-d3">
         <h3 style={{fontSize:"17px",fontWeight:700,marginBottom:"18px",display:"flex",alignItems:"center",gap:"8px"}}><span style={{width:24,height:24,borderRadius:"6px",display:"inline-flex",alignItems:"center",justifyContent:"center",background:"rgba(59,130,246,0.12)",color:"#3b82f6",fontSize:"13px"}}>◇</span>최신 주요 뉴스</h3>
@@ -399,6 +395,14 @@ function TabNews({nws,loading}){
 function SectorCard({s,u,isExp,onClick}){
   const[h,setH]=useState(false);const f=s.trend==="flat";const clr=u?"34,197,94":(f?"107,114,128":"239,68,68");
   return <div onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)} onClick={onClick} style={{background:f?"linear-gradient(145deg,rgba(107,114,128,0.07),rgba(107,114,128,0.02))":(u?"linear-gradient(145deg,rgba(34,197,94,0.07),rgba(34,197,94,0.02))":"linear-gradient(145deg,rgba(239,68,68,0.07),rgba(239,68,68,0.02))"),border:"1px solid",borderColor:isExp?"rgba(139,92,246,0.3)":(h?`rgba(${clr},0.25)`:`rgba(${clr},0.12)`),borderRadius:"10px",padding:"16px",textAlign:"center",cursor:"pointer",transition:"all .25s",transform:h?"translateY(-2px)":"none",boxShadow:h?`0 4px 16px rgba(${clr},0.1)`:"none",gridColumn:isExp?"1/-1":"auto"}}><div style={{fontSize:"22px",marginBottom:"4px"}}>{s.icon}</div><div style={{fontWeight:600,fontSize:"15px",marginBottom:"4px"}}>{s.name}</div><div style={{fontWeight:700,fontSize:"20px",color:u?"#22c55e":(f?"#6b7280":"#ef4444")}}>{s.change_pct}</div>{isExp&&<SectorStockList sectorName={s.name}/>}</div>;
+}
+function TopIssueRow({s,i,isLast}){
+  const[h,setH]=useState(false);
+  return <a href={`https://finance.naver.com/item/main.naver?code=${s.code}`} target="_blank" rel="noopener noreferrer" onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"13px 0",borderBottom:isLast?"none":"1px solid var(--div)",textDecoration:"none",color:"inherit",cursor:"pointer",background:h?"rgba(245,158,11,0.06)":"transparent",borderRadius:h?"6px":"0",paddingLeft:h?"8px":"0",paddingRight:h?"8px":"0",transition:"all .2s ease"}}>
+    <div style={{display:"flex",alignItems:"center",gap:"12px"}}><span style={{width:26,height:26,borderRadius:"7px",fontSize:"13px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",background:i<3?"rgba(245,158,11,0.12)":"var(--badge-bg)",color:i<3?"#f59e0b":"var(--muted)"}}>{s.rank}</span>
+    <div><div style={{fontWeight:h?700:600,fontSize:h?"17px":"16px",transition:"all .2s ease",color:h?"#f59e0b":"inherit"}}>{s.name}<span style={{color:"var(--dim)",fontSize:"13px",marginLeft:"6px",fontWeight:400}}>{s.code}</span></div><div style={{color:"var(--muted)",fontSize:"13px",marginTop:"2px"}}>{s.reason}</div></div></div>
+    <div style={{textAlign:"right"}}><div style={{fontWeight:600,fontSize:"16px",fontVariantNumeric:"tabular-nums"}}>₩{s.price}</div><div style={{color:s.trend==="up"?"#22c55e":(s.trend==="down"?"#ef4444":"#6b7280"),fontSize:"14px",fontWeight:600}}>{s.trend==="up"?"▲":(s.trend==="down"?"▼":"─")} {s.change_pct}</div></div>
+  </a>;
 }
 function SectorStockRow({st,i,isLast}){
   const[h,setH]=useState(false);
