@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Google Analytics (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-3G7NQ8B69G"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-3G7NQ8B69G');
+  </script>
+  <title>AI 브리핑 활용 가이드 — 자동 생성 시장 분석을 어떻게 읽을 것인가 — STOCKPULSE</title>
+  <meta name="description" content="STOCKPULSE AI 브리핑의 7개 섹션 의미, 시장 무드(bullish/bearish/neutral)의 근거, AI 분석의 한계, 그리고 다른 지표와 결합하는 실전 활용법." />
+  <meta property="og:title" content="AI 브리핑 활용 가이드 — STOCKPULSE" />
+  <meta property="og:description" content="자동 생성 분석을 어떻게 읽고, 어떤 한계를 알고, 어떻게 검증할 것인가." />
+  <link rel="canonical" href="https://ainsightlab.kr/guide-ai-briefing.html" />
+  <meta property="og:type" content="article" />
+  <meta property="og:site_name" content="STOCKPULSE" />
+  <meta property="og:url" content="https://ainsightlab.kr/guide-ai-briefing.html" />
+  <meta property="og:locale" content="ko_KR" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="keywords" content="AI 브리핑, 시장 분석, 시장 무드, AI 시장 분석, 주식 AI, 자동 분석" />
+  <meta name="robots" content="index, follow" />
+  <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="shared.js"></script>
+  <style>
+    .section-block{padding:16px 18px;border-radius:10px;background:var(--card-bg);border:1px solid var(--card-bd);margin:12px 0}
+    .section-title{font-weight:700;font-size:14px;margin-bottom:6px;display:flex;align-items:center;gap:8px}
+    .section-desc{font-size:13px;color:var(--text-sub);line-height:1.7}
+    .mood-card{padding:14px 18px;border-radius:10px;margin:10px 0;font-size:14px;line-height:1.7}
+    .mood-bull{background:rgba(34,197,94,0.05);border:1px solid rgba(34,197,94,0.2);color:var(--text-sub)}
+    .mood-bear{background:rgba(239,68,68,0.05);border:1px solid rgba(239,68,68,0.2);color:var(--text-sub)}
+    .mood-neutral{background:rgba(156,163,175,0.05);border:1px solid rgba(156,163,175,0.2);color:var(--text-sub)}
+    .tip-box{padding:16px 18px;border-radius:10px;border-left:3px solid rgba(6,182,212,0.5);background:rgba(6,182,212,0.04);margin:12px 0;font-size:14px;line-height:1.7;color:var(--text-sub)}
+    .warn-box{padding:14px 18px;border-radius:10px;border-left:3px solid rgba(245,158,11,0.5);background:rgba(245,158,11,0.04);margin:12px 0;font-size:14px;line-height:1.7;color:var(--text-sub)}
+    .limit-box{padding:14px 18px;border-radius:10px;border-left:3px solid rgba(239,68,68,0.5);background:rgba(239,68,68,0.04);margin:12px 0;font-size:14px;line-height:1.7;color:var(--text-sub)}
+  </style>
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8471845294355265" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root">
+  <header class="page-header">
+    <a href="guide.html" class="page-back">← 투자 가이드</a>
+    <a href="index.html" style="display:flex;align-items:center;gap:8px">
+      <div style="width:8px;height:8px;border-radius:50%;background:#22c55e;box-shadow:0 0 10px rgba(34,197,94,0.4)"></div>
+      <span style="font-size:18px;font-weight:800;letter-spacing:-0.03em;background:var(--h-grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent">STOCKPULSE</span>
+    </a>
+  </header>
+
+  <main class="page-wrap">
+    <div class="fade-up">
+      <h1 style="font-size:24px;font-weight:800;margin-bottom:8px">AI 브리핑 활용 가이드</h1>
+      <p style="color:var(--muted);font-size:15px;margin-bottom:24px">STOCKPULSE AI 브리핑이 어떻게 만들어지는지, 어떤 한계가 있는지, 그리고 어떻게 다른 지표와 결합해서 실전 매매에 쓸 것인지 정리했습니다.</p>
+
+      <div class="page-section">
+        <h2>들어가며 — AI 분석은 빠르지만 만능이 아니다</h2>
+        <p>STOCKPULSE의 AI 브리핑은 시장 데이터(지수·종목·섹터·테마·뉴스·수급)를 종합해 자동으로 시장 분석을 생성합니다. 사람이 읽으려면 30분 걸릴 데이터를 1~2분 안에 정리해주는 게 강점입니다. 하지만 만능이 아닙니다 — 어떤 부분을 신뢰하고 어떤 부분을 검증해야 하는지 알아야 제대로 활용할 수 있습니다.</p>
+        <p>이 가이드는 AI 브리핑을 "빠른 시장 요약"으로만 쓰지 않고 실전 매매 결정에 연결하는 방법을 다룹니다.</p>
+      </div>
+
+      <div class="page-section">
+        <h2>1. AI 브리핑은 어떻게 만들어지는가</h2>
+        <p>STOCKPULSE 크롤러는 매 5분마다 다음 데이터를 수집합니다:</p>
+        <ul>
+          <li>코스피·코스닥·다우·나스닥·S&P 500 지수, USD/KRW 환율</li>
+          <li>전 종목 시세, 거래대금, 등락률</li>
+          <li>10대 섹터별 등락률·종목 수</li>
+          <li>인기 테마 TOP 10과 관련 뉴스</li>
+          <li>이슈 종목 TOP 15와 외국인·기관·개인 순매수</li>
+          <li>네이버 뉴스 검색 결과</li>
+        </ul>
+        <p>이 데이터를 Groq AI(llama-3.3-70b 모델)에 입력해 7개 섹션의 시장 분석 텍스트를 생성합니다. 하루 3회(장 시작·점심·장 마감 후) 갱신되며, 과거 브리핑은 1년간 아카이브에 보관됩니다.</p>
+
+        <div class="tip-box">AI는 데이터를 읽고 패턴을 정리합니다. 하지만 "이 종목이 오를까?"같은 예측은 하지 않습니다. 어디까지나 <strong>현재 상태의 종합 진단</strong>입니다.</div>
+      </div>
+
+      <div class="page-section">
+        <h2>2. 7개 섹션의 의미와 활용법</h2>
+
+        <div class="section-block">
+          <div class="section-title">🔥 ① 핵심 촉발 / 1차→2차→3차 파급</div>
+          <div class="section-desc">오늘 시장을 움직인 핵심 이벤트와 그 연쇄 영향을 분석합니다. 단순히 "○○ 뉴스 때문에 하락"이 아니라, "○○ → 채권시장 → 환율 → 외국인 매도 → 대형주 하락"처럼 3단계 이상 인과관계를 추적합니다.<br><br><strong>활용법:</strong> 같은 뉴스가 다음 날 어떻게 추가 영향을 줄지 예측할 때 유용. 1차 영향만 끝났다면 2차·3차 영향이 다음 며칠 동안 진행됨.</div>
+        </div>
+
+        <div class="section-block">
+          <div class="section-title">💱 ② 환율·금리·유가·선물 연쇄</div>
+          <div class="section-desc">매크로 변수들이 어떻게 연쇄적으로 움직이고 있는지를 분석합니다. 한국 시장은 매크로에 매우 민감하므로, 매크로 흐름이 명확하면 시장 방향도 명확합니다.<br><br><strong>활용법:</strong> 매크로가 한 방향으로 정렬되면(예: 금리↓ + 환율↓ + 유가↓) 자산시장 위험선호 강세 신호. 정렬이 깨지면 방향 전환 가능성.</div>
+        </div>
+
+        <div class="section-block">
+          <div class="section-title">💰 ③ 수급 주체 분석 (외인·기관·개인)</div>
+          <div class="section-desc">외국인·기관·개인의 매매 패턴과 그 의도를 추정합니다. 단순 순매수 금액이 아니라, 어떤 섹터·종목에 집중했는지, 며칠째 같은 방향인지를 봅니다.<br><br><strong>활용법:</strong> 외국인+기관 동반 방향이 며칠 이어지면 추세 신호. 한 주체만 움직이면 단기 노이즈일 가능성.</div>
+        </div>
+
+        <div class="section-block">
+          <div class="section-title">🩺 ④ 시장 체력 진단 + 패닉 단계</div>
+          <div class="section-desc">상승/하락 종목 수, AD비율(상승종목÷하락종목), 등락 분포, 거래대금 분포 등 시장 breadth 지표를 분석해 시장의 건강도를 진단합니다. 지수가 올라도 breadth가 약하면 "껍데기 상승", 지수가 내려도 breadth가 살아있으면 "건강한 조정"입니다.<br><br><strong>활용법:</strong> 지수 숫자만 보지 말고 breadth로 검증. 지수 ≠ 시장 체력입니다.</div>
+        </div>
+
+        <div class="section-block">
+          <div class="section-title">📊 ⑤ 섹터·테마 자금 흐름</div>
+          <div class="section-desc">어느 섹터·테마로 자금이 들어오고 빠지는지를 분석합니다. 거래대금 비중 변화가 핵심 신호입니다.<br><br><strong>활용법:</strong> 어제까지 비중 5%였던 섹터가 오늘 12%면 본격 자금 유입 시작 신호. 종목 매매 결정에 직접 연결.</div>
+        </div>
+
+        <div class="section-block">
+          <div class="section-title">⚔️ ⑥ 매매 전략 + 리스크 관리</div>
+          <div class="section-desc">현 시점의 시장 국면에서 어떤 매매 자세를 취할 것인지, 어떤 리스크를 봐야 하는지에 대한 일반적 가이드입니다.<br><br><strong>활용법:</strong> "오늘 뭘 사라"는 추천이 아닙니다. 시장 분위기에 맞는 자세(공격/방어/관망) 판단의 참고용. 본인 포지션의 리스크 점검에 활용.</div>
+        </div>
+
+        <div class="section-block">
+          <div class="section-title">🧠 ⑦ 반등 조건 / 하락 트리거 / 결론</div>
+          <div class="section-desc">시장이 어떤 조건이 충족되면 반등할지, 어떤 트리거가 발생하면 추가 하락할지를 정리합니다.<br><br><strong>활용법:</strong> 매일 조건들을 체크리스트로 활용. 조건 충족 여부에 따라 시장 전환 신호 판단.</div>
+        </div>
+      </div>
+
+      <div class="page-section">
+        <h2>3. 시장 무드(Market Mood) 해석</h2>
+        <p>각 브리핑에는 <strong>bullish / bearish / neutral</strong> 셋 중 하나의 무드가 부여됩니다. 이 무드는 다음 데이터를 종합해 결정됩니다:</p>
+        <ul>
+          <li>코스피·코스닥 등락률</li>
+          <li>상승 종목 수 vs 하락 종목 수 (AD비율)</li>
+          <li>외국인·기관 순매수 방향</li>
+          <li>섹터 강세 분포</li>
+          <li>뉴스 톤 (호재 vs 악재 비중)</li>
+        </ul>
+
+        <div class="mood-card mood-bull">
+          <strong style="color:#22c55e">🟢 Bullish (강세)</strong> — 지수 상승 + breadth 양호 + 외국인 매수 우위 같은 조건이 정렬됐을 때. "전반적으로 매수 우위 시장"이라는 의미입니다. 다만 이 무드만으로 신규 진입을 결정하지는 마세요 — 이미 상승했을 가능성이 있으므로.
+        </div>
+        <div class="mood-card mood-bear">
+          <strong style="color:#ef4444">🔴 Bearish (약세)</strong> — 지수 하락 + breadth 악화 + 외국인 매도 같은 조건이 정렬됐을 때. 신규 매수에 신중하고, 손절선 점검의 신호로 활용. 다만 패닉이 극단으로 가면 단기 반등 자리가 만들어지기도 합니다.
+        </div>
+        <div class="mood-card mood-neutral">
+          <strong style="color:#9ca3af">⚪ Neutral (보합)</strong> — 방향이 불분명하거나 매크로 충돌이 있을 때. 추세 추종 매매보다 박스권 매매가 유리한 환경.
+        </div>
+
+        <div class="tip-box"><strong>아카이브 활용:</strong> AI 브리핑 아카이브에서 과거 무드와 다음 날 실제 시장 흐름을 비교해보면 본인 시장 환경에서 무드의 적중률을 직접 검증할 수 있습니다.</div>
+      </div>
+
+      <div class="page-section">
+        <h2>4. AI 분석의 한계</h2>
+        <p>AI 브리핑이 잘 작동하지 않는 영역이 있습니다. 아래 한계를 알고 보면 신뢰도가 더 정확해집니다.</p>
+
+        <div class="limit-box"><strong>① 비정형 충격에 약함:</strong> 전쟁 발발, 천재지변, 정치 쿠데타 같은 갑작스러운 사건에는 데이터가 늦게 반영됩니다. 뉴스 본문을 직접 확인하는 게 더 빠를 수 있습니다.</div>
+
+        <div class="limit-box"><strong>② 시점 차이:</strong> 브리핑은 5분 전 데이터로 만들어집니다. 변동성이 극단적인 날엔 5분도 너무 깁니다. 장중 폭락·폭등 시점에는 실시간 호가 화면을 우선 봐야 합니다.</div>
+
+        <div class="limit-box"><strong>③ 학습 데이터의 한계:</strong> AI 모델은 특정 시점까지의 데이터로 학습됐습니다. 그 이후 새로 등장한 테마·정책·기업에 대한 깊이 있는 분석은 약할 수 있습니다.</div>
+
+        <div class="limit-box"><strong>④ 뉴스 톤에 휘둘림:</strong> 시장이 강세인데 과거 폭락 뉴스가 많이 검색되면 AI가 약세 톤으로 분석할 수 있습니다(이를 보정하기 위해 시장 팩트 블록과 무드 검증 로직이 추가되어 있지만 완벽하지는 않습니다).</div>
+
+        <div class="limit-box"><strong>⑤ 종목 추천 아님:</strong> AI 브리핑은 시장 진단이지 매매 추천이 아닙니다. "○○ 종목 강세" 언급이 있어도 그건 "오늘 강했다"는 사실 진술이지 "내일도 오를 것"이라는 예측이 아닙니다.</div>
+      </div>
+
+      <div class="page-section">
+        <h2>5. 다른 지표와 결합하기</h2>
+        <p>AI 브리핑은 단독으로 쓰는 것보다 다음과 결합할 때 가장 강력합니다.</p>
+
+        <h3>+ 차트</h3>
+        <p>AI가 "강세"라고 했는데 코스피가 60일 이동평균선을 깨고 내려왔다면, 차트가 더 정확한 신호일 수 있습니다. 두 신호가 일치할 때만 행동하는 게 안전합니다.</p>
+
+        <h3>+ 수급 데이터</h3>
+        <p>AI가 "외국인 매수 우위"라고 했어도, 본인이 보고 있는 종목에 외국인이 들어왔는지는 별도 확인이 필요합니다. 시장 전체와 개별 종목은 다를 수 있습니다.</p>
+
+        <h3>+ 본인의 포지션</h3>
+        <p>AI 무드가 약세라도 본인이 이미 큰 포지션을 들고 있다면, 신규 매도가 정답이 아닐 수 있습니다. 손절선·익절선이 우선입니다. AI 무드는 신규 진입 결정 시 가장 유용합니다.</p>
+
+        <h3>+ 시간 지평</h3>
+        <p>AI 브리핑은 단기(며칠~몇 주) 지평입니다. 장기 투자자는 일일 무드보다 일주일 단위 변화 추세를 봐야 합니다. 매일 무드에 흔들리면 의미 있는 결정을 못 합니다.</p>
+      </div>
+
+      <div class="page-section">
+        <h2>6. 추천 활용 시나리오</h2>
+
+        <h3>장 시작 전 (오전 8:30~9:00)</h3>
+        <p>아침 브리핑을 읽고 그날의 매크로 흐름과 섹터 강약을 머리에 입력. 본인 포지션이 그 흐름에 맞게 정렬됐는지 점검.</p>
+
+        <h3>점심 (오후 12:00~13:00)</h3>
+        <p>오전 흐름을 정리한 점심 브리핑으로 오후 매매 자세 결정. 오전과 다른 흐름이 시작됐는지 확인.</p>
+
+        <h3>장 마감 후 (오후 4:00 이후)</h3>
+        <p>마감 브리핑으로 그날을 정리하고 다음 날 시나리오 준비. 반등 조건/하락 트리거 체크리스트 점검. 미국 시장 개장 전이므로 글로벌 흐름 예측에도 활용.</p>
+
+        <h3>주간 단위</h3>
+        <p>아카이브에서 한 주간 무드 추이를 확인. 일관되게 강세/약세였는지, 변동이 잦았는지로 시장 추세 강도 판단.</p>
+      </div>
+
+      <div style="margin-top:24px;padding:14px 18px;background:rgba(245,158,11,0.04);border:1px solid rgba(245,158,11,0.1);border-radius:10px;font-size:14px;color:#b4940f;line-height:1.6">
+        ⚠️ AI 브리핑은 자동 생성된 시장 분석으로, 정확성·수익을 보장하지 않습니다. 투자 추천이나 자문이 아니며, 모든 투자 판단의 책임은 본인에게 있습니다. AI가 잘못된 분석을 할 가능성을 항상 고려하고, 다른 지표와 본인의 판단으로 검증하세요.
+      </div>
+
+      <div style="margin-top:18px;display:flex;flex-wrap:wrap;gap:8px">
+        <a href="guide-sectors.html" style="padding:8px 14px;border-radius:8px;background:var(--card-bg);border:1px solid var(--card-bd);font-size:13px;color:var(--text-sub)">→ 섹터 로테이션 심층</a>
+        <a href="guide-themes.html" style="padding:8px 14px;border-radius:8px;background:var(--card-bg);border:1px solid var(--card-bd);font-size:13px;color:var(--text-sub)">→ 테마주 5원칙</a>
+        <a href="guide-supply.html" style="padding:8px 14px;border-radius:8px;background:var(--card-bg);border:1px solid var(--card-bd);font-size:13px;color:var(--text-sub)">→ 수급 읽기</a>
+        <a href="guide-indicators.html" style="padding:8px 14px;border-radius:8px;background:var(--card-bg);border:1px solid var(--card-bd);font-size:13px;color:var(--text-sub)">→ 가치 지표 활용</a>
+      </div>
+    </div>
+  </main>
+
+  <footer style="border-top:1px solid var(--div2);max-width:900px;margin:0 auto;padding:18px 40px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;color:var(--dimmer);font-size:13px">
+    <div><span style="font-weight:600;color:var(--dim)">STOCKPULSE</span> © 2026</div>
+    <div class="footer-links">
+      <a href="index.html">대시보드</a>
+      <a href="guide.html">투자 가이드</a>
+      <a href="about.html">서비스 소개</a>
+      <a href="privacy.html">개인정보처리방침</a>
+      <a href="terms.html">이용약관</a>
+    </div>
+  </footer>
+</div>
+<script>applyTheme(getStoredTheme())</script>
+</body>
+</html>

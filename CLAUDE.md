@@ -329,6 +329,26 @@
 - privacy.html 갱신: "분석 쿠키" 항목 + "Google Analytics 관련 고지" 섹션(수집 정보 범위, 옵트아웃 안내) 추가, 최종 수정일 2026-04-26으로 갱신
 - 확인 위치: GA4 → 보고서 → 실시간 / 참여도 / 획득 (일반 보고서는 24~48시간 후 누적 시작)
 
+### AdSense "가치 없는 콘텐츠" 거절 대응 (2026-04-27)
+- 거절 사유: 정책 위반 — "가치가 별로 없는 콘텐츠 (Low value content)". 익명 UGC + 자동 생성 콘텐츠 비중 높음, 오리지널 콘텐츠 부족이 원인으로 추정.
+- **광고 코드 정리 (대상 페이지에서 `adsbygoogle.js` 스크립트 제거)**:
+  - 익명 UGC: `chat.html`, `board.html` (모더레이션 없는 익명 게시판/채팅 → AdSense 정책 위험)
+  - 자동 생성: `analysis.html`, `archive.html`, `theme_detail.html`, `theme_calendar.html` (AI 생성 + 크롤링 데이터)
+  - 관리자: `admin.html` (본인만 봄)
+  - 광고 유지 페이지(콘텐츠 풍부): `index.html`, `guide.html`, `about.html`, `terms.html`, `privacy.html` + 신규 가이드 5종
+- **noindex 처리**: `chat.html`, `board.html`의 `<meta name="robots">`를 `noindex,nofollow`로 변경. sitemap.xml에서도 제거.
+- **오리지널 콘텐츠 5종 신규 작성** (각 약 3000~4500자, AdSense 가치 입증용):
+  - `guide-sectors.html`: 섹터 로테이션 심층 (경기 사이클 4단계, 10대 섹터 매크로 민감도, 매크로 변수별 영향)
+  - `guide-themes.html`: 테마주 5원칙 (생애주기 4단계, 대장주 우선·손절·분할매수·뉴스 사이클·섹터 분리)
+  - `guide-indicators.html`: PER/PBR/ROE 실전 (지표별 한계, 코리아 디스카운트, 듀퐁 분석, 5가지 함정)
+  - `guide-supply.html`: 외국인·기관·개인 수급 (주체별 특성, 환율-외국인 연동, 기관 5주체 분리, 프로그램 매매)
+  - `guide-ai-briefing.html`: AI 브리핑 활용 (7개 섹션 의미, 무드 해석, 5가지 한계, 다른 지표와 결합)
+- **guide.html**: 상단에 "📚 심층 가이드" 카드 그리드(5개 sub-page 링크) 추가
+- **상호 링크**: 각 sub-page 하단에 다른 sub-page로의 "→" 네비게이션 + 헤더에 "← 투자 가이드" back 링크
+- **sitemap.xml**: chat/board 제거, guide-* 5개 추가 (priority 0.8), guide.html priority 0.7→0.9
+- **Google Analytics**: 5개 신규 페이지 모두 GA4 추적 코드(`G-3G7NQ8B69G`) 포함
+- **재신청 전 체크**: 모든 sub-page 정상 로드, 광고 노출, 면책 고지(투자 추천 아님) 표시 확인
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
