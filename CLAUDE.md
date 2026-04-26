@@ -320,6 +320,15 @@
 - index.html: 인기 테마 TOP 10 헤더에 "📅 테마 캘린더 →" 링크, 푸터에 추가
 - sitemap.xml에 theme_calendar.html 추가
 
+### Google Analytics 4 도입 (2026-04-26)
+- 기존: 트래픽 분석 도구 없음 (AdSense 광고 노출 통계만 존재)
+- 변경: GA4 측정 ID `G-3G7NQ8B69G` 추적 코드를 11개 공개 페이지 `<head>`에 삽입
+- 대상 파일: index, analysis, theme_detail, chat, board, theme_calendar, archive, guide, about, privacy, terms
+- 제외: admin.html (관리자 자기 자신 트래픽이 통계를 왜곡하므로 의도적 제외)
+- 삽입 위치: `<meta viewport>` 직후 (가능한 빨리 로드)
+- privacy.html 갱신: "분석 쿠키" 항목 + "Google Analytics 관련 고지" 섹션(수집 정보 범위, 옵트아웃 안내) 추가, 최종 수정일 2026-04-26으로 갱신
+- 확인 위치: GA4 → 보고서 → 실시간 / 참여도 / 획득 (일반 보고서는 24~48시간 후 누적 시작)
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
