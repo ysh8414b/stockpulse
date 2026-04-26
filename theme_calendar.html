@@ -176,18 +176,16 @@ function ThemeCalendar({year,month,data,selectedDate,onSelect}){
         const isSelected=selectedDate===dateStr;
         const isToday=dateStr===new Date().toISOString().slice(0,10);
 
-        return <div key={i} onClick={()=>hasData&&onSelect(dateStr)} style={{
-          textAlign:"center",padding:"5px 2px",borderRadius:"8px",cursor:hasData?"pointer":"default",
+        return <div key={i} className="theme-cal-day" onClick={()=>hasData&&onSelect(dateStr)} style={{
+          cursor:hasData?"pointer":"default",
           background:isSelected?"rgba(249,115,22,0.1)":isToday?"rgba(255,255,255,0.03)":"transparent",
           border:isSelected?"1px solid rgba(249,115,22,0.3)":isToday?"1px solid var(--div3)":"1px solid transparent",
-          opacity:hasData?1:0.35,transition:"all .2s",minHeight:"78px"
+          opacity:hasData?1:0.35,minHeight:"78px"
         }} onMouseEnter={e=>{if(hasData&&!isSelected)e.currentTarget.style.background="rgba(249,115,22,0.05)"}} onMouseLeave={e=>{if(!isSelected)e.currentTarget.style.background=isToday?"rgba(255,255,255,0.03)":"transparent"}}>
           <div style={{fontSize:"15px",fontWeight:isToday?700:isSelected?600:400,color:"var(--text)",marginBottom:"4px"}}>{d}</div>
-          {dayThemes&&dayThemes.slice(0,3).map((t,ti)=><div key={ti} className="theme-cal-badge" style={{
-            fontSize:"12px",padding:"2px 4px",borderRadius:"4px",marginTop:"2px",
-            background:trendBg(t.trend),color:trendClr(t.trend),
-            whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",lineHeight:"16px",fontWeight:500
-          }}>{t.name.length>6?t.name.slice(0,6)+"..":t.name}</div>)}
+          {dayThemes&&dayThemes.slice(0,3).map((t,ti)=><div key={ti} className="theme-cal-badge" title={t.name} style={{
+            background:trendBg(t.trend),color:trendClr(t.trend)
+          }}>{t.name}</div>)}
         </div>;
       })}
     </div>
@@ -373,7 +371,7 @@ function App(){
 
     {panelTheme&&<ThemeStockPanel themeName={panelTheme} onClose={()=>setPanelTheme(null)}/>}
 
-    <footer style={{borderTop:"1px solid var(--div2)",maxWidth:1440,margin:"0 auto",padding:"18px 40px",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:"8px",color:"var(--dimmer)",fontSize:"13px"}}>
+    <footer className="theme-cal-footer" style={{borderTop:"1px solid var(--div2)",maxWidth:1440,margin:"0 auto",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:"8px",color:"var(--dimmer)",fontSize:"13px"}}>
       <div><span style={{fontWeight:600,color:"var(--dim)"}}>STOCKPULSE</span> © 2026</div>
       <div className="footer-links">
         <a href="index.html">대시보드</a>
