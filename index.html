@@ -531,14 +531,19 @@ function TabThemes({thm,allThm,thmAn,loading}){
   const[showAll,setShowAll]=useState(false);
   if(loading)return <Loader/>;if(!thm.length&&!allThm.length)return <Empty msg="테마 데이터 없음"/>;
   const query=q.trim().toLowerCase();
-  const filteredAll=query?allThm.filter(t=>t.name.toLowerCase().includes(query)):allThm;
-  const filteredTop=query?thm.filter(t=>t.name.toLowerCase().includes(query)):thm;
+  const matchTheme=(t)=>{
+    if(t.name.toLowerCase().includes(query))return true;
+    if(!t.leading_stocks)return false;
+    return t.leading_stocks.split(",").some(s=>(s.split(":")[0]||"").trim().toLowerCase().includes(query));
+  };
+  const filteredAll=query?allThm.filter(matchTheme):allThm;
+  const filteredTop=query?thm.filter(matchTheme):thm;
   const nonTopThemes=filteredAll.filter(t=>!t.is_top);
   const isSearching=query.length>0;
   const scMap={};allThm.forEach(a=>{if(a.stock_count)scMap[a.name]=a.stock_count});
   return <div className="fade-up">
     <div style={{marginBottom:"20px",position:"relative"}}>
-      <input value={q} onChange={e=>setQ(e.target.value)} placeholder="테마 검색... (예: 방산, 반도체, AI)" className="search-wrap" style={{width:"100%",padding:"14px 20px 14px 46px",fontSize:"17px",background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:"10px",color:"var(--text)",outline:"none",fontFamily:"inherit",transition:"border-color .2s",boxSizing:"border-box"}} onFocus={e=>e.target.style.borderColor="#f97316"} onBlur={e=>e.target.style.borderColor="var(--card-bd)"}/>
+      <input value={q} onChange={e=>setQ(e.target.value)} placeholder="테마/종목 검색... (예: 방산, 삼성전자, AI)" className="search-wrap" style={{width:"100%",padding:"14px 20px 14px 46px",fontSize:"17px",background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:"10px",color:"var(--text)",outline:"none",fontFamily:"inherit",transition:"border-color .2s",boxSizing:"border-box"}} onFocus={e=>e.target.style.borderColor="#f97316"} onBlur={e=>e.target.style.borderColor="var(--card-bd)"}/>
       <span style={{position:"absolute",left:"16px",top:"50%",transform:"translateY(-50%)",fontSize:"19px",color:"var(--muted)",pointerEvents:"none"}}>🔍</span>
       {q&&<button onClick={()=>setQ("")} style={{position:"absolute",right:"14px",top:"50%",transform:"translateY(-50%)",background:"none",border:"none",fontSize:"19px",color:"var(--muted)",cursor:"pointer",padding:"4px"}}>✕</button>}
     </div>
