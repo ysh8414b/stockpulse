@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 theme_stock_map.json
 ai_themes_cache.json
+.claude/worktrees/
