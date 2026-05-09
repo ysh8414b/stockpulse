@@ -866,8 +866,9 @@ function App(){
     if(initial)setLoading(false);
   };
   useEffect(()=>{fetchData(true);
-    // 5분마다 자동 재조회 (장중 실시간 반영)
-    const poll=setInterval(()=>fetchData(false),5*60*1000);
+    // 장중(KST 09:00~15:30, 평일)에만 폴링, 백그라운드에선 일시정지
+    const isMarketOpen=()=>{const n=new Date();const kst=new Date(n.getTime()+(9*60+n.getTimezoneOffset())*60*1000);const day=kst.getDay();if(day===0||day===6)return false;const m=kst.getHours()*60+kst.getMinutes();return m>=540&&m<=930};
+    const poll=setInterval(()=>{if(document.visibilityState!=="visible")return;if(!isMarketOpen())return;fetchData(false)},90*1000);
     // 탭이 다시 활성화될 때도 즉시 갱신
     const onVis=()=>{if(document.visibilityState==="visible")fetchData(false)};
     document.addEventListener("visibilitychange",onVis);
