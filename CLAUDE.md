@@ -349,6 +349,14 @@
 - **Google Analytics**: 5개 신규 페이지 모두 GA4 추적 코드(`G-3G7NQ8B69G`) 포함
 - **재신청 전 체크**: 모든 sub-page 정상 로드, 광고 노출, 면책 고지(투자 추천 아님) 표시 확인
 
+### 탭 상태 URL 해시 동기화 (2026-05-09)
+- 기존: 탭 state가 React state에만 존재 → 새로고침 시 항상 overview(시장 개요)로 복귀
+- 변경: index.html App에 URL 해시(`#themes`, `#issues`, `#news`, `#ai`) ↔ tab state 양방향 동기화
+- `getTabFromHash()`: 마운트 시 hash 읽어 초기 tab 결정 (whitelist: overview/issues/themes/news/ai)
+- `useEffect([tab])`: tab 변경 시 `history.replaceState`로 hash 갱신 (overview는 hash 제거)
+- `useEffect([])`: `hashchange` 이벤트 구독 → 브라우저 뒤로/앞으로 시 탭 동기화
+- 효과: 인기 테마 탭에서 새로고침해도 그대로 유지, URL 공유로 특정 탭 직접 진입 가능
+
 ### 인기 테마 검색에 종목명 매칭 추가 (2026-05-04)
 - 기존: TabThemes 검색이 테마명만 매칭 → "삼성전자" 검색해도 결과 없음
 - 변경: `leading_stocks`(테마당 상위 대장주) 내 종목명도 함께 매칭

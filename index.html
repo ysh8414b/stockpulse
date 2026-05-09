@@ -823,7 +823,9 @@ const Ticker=React.memo(function Ticker({idx}){
 });
 
 function App(){
-  const[tab,setTab]=useState("overview");
+  const VALID_TABS=["overview","issues","themes","news","ai"];
+  const getTabFromHash=()=>{const h=(window.location.hash||"").replace(/^#/,"");return VALID_TABS.includes(h)?h:"overview"};
+  const[tab,setTab]=useState(getTabFromHash);
   const[time,setTime]=useState(new Date());
   const[loading,setLoading]=useState(true);
   const[idx,setIdx]=useState(FB_IDX);
@@ -842,6 +844,17 @@ function App(){
     document.body.className=theme==="light"?"light":"";
     try{localStorage.setItem("sp-theme",theme)}catch(e){}
   },[theme]);
+
+  useEffect(()=>{
+    const desired=tab==="overview"?"":"#"+tab;
+    if(window.location.hash!==desired){history.replaceState(null,"",desired||window.location.pathname+window.location.search)}
+  },[tab]);
+
+  useEffect(()=>{
+    const onHash=()=>setTab(getTabFromHash());
+    window.addEventListener("hashchange",onHash);
+    return()=>window.removeEventListener("hashchange",onHash);
+  },[]);
 
   const fetchData=async(initial)=>{
     if(initial)setLoading(true);
