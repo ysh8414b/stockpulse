@@ -271,6 +271,24 @@ function TabStocks({stk,nws,stkAn,loading}){
   const[q,setQ]=useState("");const[hov,setHov]=useState(null);const[exp,setExp]=useState(null);
   if(loading)return <Loader/>;if(!stk.length)return <Empty msg="이슈 종목 데이터 없음"/>;
   const f=q?stk.filter(s=>s.name.includes(q)||s.code.includes(q)||(s.tags||[]).some(t=>t.includes(q))):stk;
+  // ── 자금 흐름 집계: 이슈 종목 TOP N의 primary tag 기준으로 거래대금/평균등락률 합산 ──
+  const parseVol=v=>{if(!v)return 0;if(v.includes("조"))return parseFloat(v.replace("조","").replace(/,/g,""))*10000;return parseFloat(v.replace("억","").replace(/,/g,""))||0;};
+  const flow=(()=>{
+    const agg={};
+    stk.forEach(s=>{
+      const tags=s.tags||[];
+      if(!tags.length||tags[0]==="기타")return;
+      const primary=tags[0];
+      const vol=parseVol(s.volume);
+      const chg=parseFloat((s.change_pct||"0").replace(/[+%]/g,""));
+      if(!agg[primary])agg[primary]={name:primary,count:0,volume:0,changeSum:0,stocks:[]};
+      agg[primary].count++;
+      agg[primary].volume+=vol;
+      agg[primary].changeSum+=chg;
+      agg[primary].stocks.push(s.name);
+    });
+    return Object.values(agg).map(t=>({...t,avgChange:t.count>0?t.changeSum/t.count:0})).sort((a,b)=>b.volume-a.volume).slice(0,6);
+  })();
   const getRelatedNews=(stock)=>{
     // 1) crawl.py에서 수집한 related_news 사용
     if(stock.related_news){
@@ -289,6 +307,37 @@ function TabStocks({stk,nws,stkAn,loading}){
       <h2 style={{fontSize:"20px",fontWeight:700}}><span style={{color:"#f59e0b"}}>◆</span> 오늘의 이슈 종목 <span style={{fontSize:"14px",color:"var(--dim)",fontWeight:400}}>{f.length}종목</span></h2>
       <div className="search-wrap" style={{position:"relative"}}><input value={q} onChange={e=>setQ(e.target.value)} placeholder="종목명, 코드, 테마 검색" style={{background:"var(--inp-bg)",border:"1px solid var(--inp-bd)",borderRadius:"8px",padding:"10px 14px 10px 34px",color:"var(--text)",fontSize:"15px",width:240,outline:"none",fontFamily:"inherit"}}/><span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"var(--dim)",fontSize:"15px"}}>⌕</span></div>
     </div>
+    {flow.length>0&&!q&&<div style={{marginBottom:"20px",padding:"18px 20px",background:"var(--card-bg)",borderRadius:"12px",border:"1px solid var(--card-bd)"}}>
+      <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"14px",flexWrap:"wrap"}}>
+        <span style={{fontSize:"16px"}}>💰</span>
+        <span style={{fontSize:"15px",fontWeight:700}}>오늘 자금이 몰린 테마</span>
+        <span style={{fontSize:"12px",color:"var(--dim)"}}>이슈 종목 TOP {stk.length} 기준 · 거래대금 합산순</span>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:"10px"}}>
+        {flow.map((t,i)=>{
+          const trend=t.avgChange>0.5?"up":t.avgChange<-0.5?"down":"flat";
+          const color=trend==="up"?"#22c55e":trend==="down"?"#ef4444":"#6b7280";
+          const medal=["🥇","🥈","🥉"][i]||`${i+1}`;
+          const volStr=t.volume>=10000?`${(t.volume/10000).toFixed(1)}조`:`${Math.round(t.volume).toLocaleString()}억`;
+          const names=t.stocks.length<=3?t.stocks.join(", "):`${t.stocks.slice(0,3).join(", ")} 외 ${t.stocks.length-3}`;
+          return <div key={t.name} onClick={()=>setQ(t.name)} style={{padding:"12px 14px",background:"var(--card)",borderRadius:"10px",border:`1px solid ${color}30`,cursor:"pointer",transition:"all .15s"}} onMouseEnter={e=>{e.currentTarget.style.background="var(--hover)";e.currentTarget.style.borderColor=`${color}60`;}} onMouseLeave={e=>{e.currentTarget.style.background="var(--card)";e.currentTarget.style.borderColor=`${color}30`;}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px",gap:"8px"}}>
+              <div style={{display:"flex",alignItems:"center",gap:"8px",minWidth:0,flex:1}}>
+                <span style={{fontSize:"14px",flexShrink:0}}>{medal}</span>
+                <span style={{fontWeight:700,fontSize:"15px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.name}</span>
+                <span style={{fontSize:"12px",color:"var(--dim)",flexShrink:0}}>{t.count}종목</span>
+              </div>
+              <span style={{fontWeight:700,fontSize:"14px",color:color,flexShrink:0,fontVariantNumeric:"tabular-nums"}}>{trend==="up"?"▲":trend==="down"?"▼":"─"} {t.avgChange>=0?"+":""}{t.avgChange.toFixed(2)}%</span>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}}>
+              <span style={{fontSize:"12px",color:"var(--muted)"}}>거래대금 합산</span>
+              <span style={{fontSize:"14px",fontWeight:700,color:"var(--text)",fontVariantNumeric:"tabular-nums"}}>{volStr}</span>
+            </div>
+            <div style={{fontSize:"12px",color:"var(--text-sub)",lineHeight:1.5,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{names}</div>
+          </div>;
+        })}
+      </div>
+    </div>}
     <Box style={{overflow:"hidden"}} hover={false}>
       <div className="stock-row stock-row-header" style={{display:"grid",gridTemplateColumns:"44px 1.2fr 110px 90px 120px 1.5fr 100px",padding:"13px 20px",background:"var(--row-head)",borderBottom:"1px solid var(--div3)",fontSize:"13px",color:"var(--muted)",fontWeight:600}}><span>#</span><span>종목</span><span style={{textAlign:"right"}}>현재가</span><span style={{textAlign:"right"}}>등락률</span><span style={{textAlign:"right"}}>거래대금</span><span style={{paddingLeft:"16px"}}>이슈 사유</span><span>테마</span></div>
       {f.map((s,i)=>{const related=exp===s.code?getRelatedNews(s):[];return <React.Fragment key={s.code||i}>
