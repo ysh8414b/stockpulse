@@ -841,15 +841,52 @@ def is_etf_etn(name):
     return any(kw in name for kw in skip)
 
 
-def classify_stock_tags(name, display_sector="", theme_names=None):
-    """종목 태그 분류 (섹터 기반 + 테마 소속)"""
+# 테마 구체성 점수 (낮을수록 더 구체적 → 우선 노출)
+# 키워드 기반 신생 테마(로봇/AI/2차전지 등)는 구체적, 업종 기반 광범위 분류(기계/건설/화학)는 후순위
+THEME_SPECIFICITY = {
+    # 1순위: 가장 구체적이고 시장에서 활발히 거론되는 테마
+    "로봇": 1, "휴머노이드": 1, "AI": 1, "양자컴퓨터": 1, "양자": 1,
+    "드론": 1, "UAM": 1, "전기차": 1, "2차전지": 1,
+    "원전": 1, "SMR": 1, "수소": 1, "태양광": 1,
+    "피지컬AI": 1, "협동로봇": 1,
+    # 2순위: 특화 산업 (구체적이지만 광범위)
+    "방산": 2, "조선": 2, "디스플레이": 2, "전자부품": 2,
+    "엔터": 2, "게임": 2, "화장품": 2, "바이오시밀러": 2,
+    # 3순위: 일반 산업 분류
+    "반도체": 3, "자동차": 3, "제약/바이오": 3, "전력/에너지": 3,
+    "통신": 3, "항공": 3, "물류": 3, "해운": 3,
+    "의료기기": 3, "패션": 3, "유통": 3, "식품": 3,
+    "석유/가스": 3,
+    # 4순위: 광범위한 분류 (가장 후순위)
+    "기계": 5, "건설": 5, "화학": 5, "철강/소재": 5, "금융": 5,
+    "IT/플랫폼": 5,
+}
+
+
+def classify_stock_tags(name, display_sector="", theme_names=None, theme_map_themes=None):
+    """종목 태그 분류 (theme_map 우선, display_sector fallback)
+
+    theme_map_themes: build_theme_stock_map의 종목별 분류 (예: ["로봇", "기계"])
+    → 있으면 display_sector보다 우선 + 구체성 순으로 정렬하여 가장 구체적인 테마 노출
+    """
     tags = []
 
-    # 1) display_sector 활용 (네이버 업종 기반)
-    if display_sector:
+    # 1) theme_map 분류가 있으면 우선 (구체적인 테마 — 로봇, 방산, 조선 등)
+    if theme_map_themes:
+        # 핫 테마(theme_names)에 포함된 테마는 최우선 (오늘 시장의 맥락에 맞춤)
+        hot_set = set(theme_names) if theme_names else set()
+        sorted_themes = sorted(
+            theme_map_themes,
+            key=lambda t: (0 if t in hot_set else 1, THEME_SPECIFICITY.get(t, 5)),
+        )
+        for t in sorted_themes[:2]:
+            if t not in tags:
+                tags.append(t)
+    elif display_sector:
+        # fallback: 네이버 업종 기반 display_sector
         tags.append(display_sector)
 
-    # 2) 인기 테마 소속이면 테마명 추가
+    # 2) 인기 테마 소속이면 테마명 추가 (오늘의 핫 테마 표시 — 위에서 안 들어갔으면 추가)
     if theme_names:
         for t in theme_names:
             if t not in tags:
@@ -2726,8 +2763,11 @@ def fetch_stock_news(stock_name, max_count=3):
 # ─────────────────────────────────────────
 # 2. 이슈 종목 (KRX 거래대금 상위)
 # ─────────────────────────────────────────
-def crawl_issue_stocks(krx_data, themes=None, sectors=None, news=None):
-    """복합 점수 기반 이슈 종목 선정 (거래대금+등락률+테마+뉴스+섹터)"""
+def crawl_issue_stocks(krx_data, themes=None, sectors=None, news=None, stock_themes=None):
+    """복합 점수 기반 이슈 종목 선정 (거래대금+등락률+테마+뉴스+섹터)
+
+    stock_themes: build_theme_stock_map가 반환한 종목별 테마 분류 (태그 우선순위에 사용)
+    """
     log("📈 이슈 종목 크롤링 시작...")
 
     # ── 1단계: 후보 필터링 (거래대금 1000억 이상, ETF 제외) ──
@@ -2872,7 +2912,12 @@ def crawl_issue_stocks(krx_data, themes=None, sectors=None, news=None):
             "change_pct": pct_str,
             "volume": volume_str,
             "reason": reason_str,
-            "tags": classify_stock_tags(d["name"], d.get("display_sector", ""), stock_theme_names.get(d["code"])),
+            "tags": classify_stock_tags(
+                d["name"],
+                d.get("display_sector", ""),
+                stock_theme_names.get(d["code"]),
+                theme_map_themes=(stock_themes.get(d["code"]) if stock_themes else None),
+            ),
             "trend": trend,
             "date": TODAY,
         })
@@ -3503,7 +3548,7 @@ def main():
     theme_all_stocks = save_theme_all_stocks(krx_data, theme_map)
 
     # 10. 이슈 종목 (복합 점수 랭킹: 등락률+거래대금+테마+뉴스+섹터)
-    stocks = crawl_issue_stocks(krx_data, themes, sectors, news)
+    stocks = crawl_issue_stocks(krx_data, themes, sectors, news, stock_themes=stock_themes)
 
     # 11. AI 시장 브리핑 (Groq) — 하루 3회만 생성 (08:00 해외시장/12:05 장중/15:35 마감)
     # ai_mode는 main() 시작 시점에 미리 결정됨 (크롤링 소요시간 무관)

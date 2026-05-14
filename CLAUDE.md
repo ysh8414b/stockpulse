@@ -384,6 +384,25 @@
   - 섹션 4(전략과 시나리오) 지시문에 "리스트가 비어 있으면 매크로 이벤트 언급 없이 시장 자체 모멘텀에 집중하라고 쓰라"
 - **유지보수 부담**: 매년 1월 갱신 필요. JSON `verified=false`인 항목은 Fed.gov, BOK, BLS 공식 일정과 대조 후 수정
 
+### theme_map 증분 빌드 + 이슈종목 태그 세분화 (2026-05-14)
+- 기존 1: `build_theme_stock_map`이 7일 캐시를 그대로 사용 → 신규 상장 종목(예: 코스모로보틱스)이 캐시 만료될 때까지 인기 테마/leading_stocks 어디에도 누락
+- 기존 2: 이슈종목 태그가 `display_sector`(10개 광범위 분류)만 사용 → 로보틱스 회사가 "건설"로 표시되는 문제 (NAVER_SECTOR_MAP에서 WICS=기계 → display="건설"이 catch-all로 묶여 있음)
+- **변경 1 - 증분 빌드** ([crawl.py:1030-1277](crawl.py:1030)):
+  - 캐시에 `processed_codes` 필드 추가 (테마 분류 시도한 모든 종목코드 기록, 테마 없어도 포함)
+  - 캐시 유효(7일 이내) 시 KRX 시총 3000억+ 종목 중 `processed_codes`에 없는 것만 추출 → 그들만 기업개요 fetch → 기존 stock_themes에 merge
+  - 신규 0개면 캐시 그대로 return (기존 동작)
+  - 캐시 저장 시 `date`는 원래 빌드 날짜 유지 (만료 시계 보존)
+  - 구버전 캐시(processed_codes 없음) 호환: `stocks.keys()`를 처리 이력으로 fallback → 첫 실행 시 미분류 종목 일회성 재크롤(약 200~500개)
+  - 시총 컷 변동 처리: 역매핑 단계에서 현재 시총 < 3000억이면 노출 제외(캐시는 유지)
+- **변경 2 - theme_map 데이터 공유** ([crawl.py:866-893](crawl.py:866), [crawl.py:2731](crawl.py:2731), [crawl.py:3523](crawl.py:3523)):
+  - `classify_stock_tags`에 `theme_map_themes` 파라미터 추가 → 있으면 display_sector보다 우선 사용
+  - `crawl_issue_stocks` 시그니처에 `stock_themes` 추가 → `main()`에서 `build_theme_stock_map`이 반환한 stock_themes 전달
+- **변경 3 - THEME_SPECIFICITY 우선순위** ([crawl.py:844-863](crawl.py:844)):
+  - 테마 구체성 점수 매핑 추가 (1순위: 로봇/AI/2차전지 등 신생, 2순위: 방산/조선 등 특화, 3순위: 일반, 5순위: 기계/건설/화학 등 광범위)
+  - 종목이 여러 테마에 속할 때(예: 코스모로보틱스 = ["기계","로봇"]) 구체성 낮은 숫자 우선 정렬 → "로봇·기계" 순으로 노출
+  - 핫 테마(theme_names, TOP 10 leading)에 포함된 테마는 추가로 최우선 부스트 → 오늘 시장 맥락 반영
+- **효과**: 코스모로보틱스 같은 신규 상장 종목이 다음 크롤링 5분 이내 theme_map 진입 + 이슈종목 태그도 "로봇·기계" 같은 구체적 분류로 표시됨
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
