@@ -1,0 +1,150 @@
+{
+  "_notes": "AI 브리핑 환각 방지용 매크로 이벤트 캘린더. 매년 1월에 갱신 권장. 마지막 이벤트가 30일 내로 다가오면 crawl 로그에 경고가 뜬다.",
+  "_sources": {
+    "FOMC": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+    "한국 금통위": "https://www.bok.or.kr/portal/bbs/B0000338/list.do?menuNo=200761",
+    "미국 CPI/PPI": "https://www.bls.gov/schedule/news_release/cpi.htm",
+    "미국 고용보고서": "https://www.bls.gov/schedule/news_release/empsit.htm",
+    "한국 옵션만기": "매월 둘째 목요일 (3·6·9·12월은 선물·옵션 동시만기)"
+  },
+  "_verification_status": "초기 시드 데이터. FOMC·금통위·CPI 일자는 공식 일정과 대조 후 수정 필요.",
+  "last_updated": "2026-05-10",
+  "events": [
+    {
+      "date": "2026-05-13",
+      "time": "21:30 KST",
+      "name": "미국 4월 CPI 발표",
+      "impact": "high",
+      "category": "macro_us",
+      "verified": false
+    },
+    {
+      "date": "2026-05-14",
+      "time": "15:20 KST",
+      "name": "한국 5월 옵션만기일",
+      "impact": "medium",
+      "category": "kr_derivatives",
+      "verified": true
+    },
+    {
+      "date": "2026-05-15",
+      "time": "21:30 KST",
+      "name": "미국 4월 소매판매·산업생산",
+      "impact": "medium",
+      "category": "macro_us",
+      "verified": false
+    },
+    {
+      "date": "2026-05-28",
+      "time": "10:00 KST",
+      "name": "한국은행 5월 금통위 기준금리 결정",
+      "impact": "high",
+      "category": "macro_kr",
+      "verified": false
+    },
+    {
+      "date": "2026-06-05",
+      "time": "21:30 KST",
+      "name": "미국 5월 고용보고서 (비농업 고용·실업률)",
+      "impact": "high",
+      "category": "macro_us",
+      "verified": true
+    },
+    {
+      "date": "2026-06-11",
+      "time": "21:30 KST",
+      "name": "미국 5월 CPI 발표",
+      "impact": "high",
+      "category": "macro_us",
+      "verified": false
+    },
+    {
+      "date": "2026-06-11",
+      "time": "15:20 KST",
+      "name": "한국 6월 선물·옵션 동시만기일 (네 마녀의 날)",
+      "impact": "high",
+      "category": "kr_derivatives",
+      "verified": true
+    },
+    {
+      "date": "2026-06-18",
+      "time": "03:00 KST",
+      "name": "FOMC 6월 기준금리 결정 + 점도표 + 파월 기자회견",
+      "impact": "high",
+      "category": "macro_us",
+      "verified": false
+    },
+    {
+      "date": "2026-07-03",
+      "time": "21:30 KST",
+      "name": "미국 6월 고용보고서",
+      "impact": "high",
+      "category": "macro_us",
+      "verified": true
+    },
+    {
+      "date": "2026-07-09",
+      "time": "10:00 KST",
+      "name": "한국은행 7월 금통위 기준금리 결정",
+      "impact": "high",
+      "category": "macro_kr",
+      "verified": false
+    },
+    {
+      "date": "2026-07-09",
+      "time": "15:20 KST",
+      "name": "한국 7월 옵션만기일",
+      "impact": "medium",
+      "category": "kr_derivatives",
+      "verified": true
+    },
+    {
+      "date": "2026-07-15",
+      "time": "21:30 KST",
+      "name": "미국 6월 CPI 발표",
+      "impact": "high",
+      "category": "macro_us",
+      "verified": false
+    },
+    {
+      "date": "2026-07-30",
+      "time": "03:00 KST",
+      "name": "FOMC 7월 기준금리 결정 + 파월 기자회견",
+      "impact": "high",
+      "category": "macro_us",
+      "verified": false
+    },
+    {
+      "date": "2026-08-07",
+      "time": "21:30 KST",
+      "name": "미국 7월 고용보고서",
+      "impact": "high",
+      "category": "macro_us",
+      "verified": true
+    },
+    {
+      "date": "2026-08-13",
+      "time": "15:20 KST",
+      "name": "한국 8월 옵션만기일",
+      "impact": "medium",
+      "category": "kr_derivatives",
+      "verified": true
+    },
+    {
+      "date": "2026-08-13",
+      "time": "21:30 KST",
+      "name": "미국 7월 CPI 발표",
+      "impact": "high",
+      "category": "macro_us",
+      "verified": false
+    },
+    {
+      "date": "2026-08-27",
+      "time": "10:00 KST",
+      "name": "한국은행 8월 금통위 기준금리 결정",
+      "impact": "high",
+      "category": "macro_kr",
+      "verified": false
+    }
+  ]
+}

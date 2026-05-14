@@ -1028,10 +1028,17 @@ def _fetch_company_overview(code):
 
 
 def build_theme_stock_map(krx_data):
-    """네이버 업종 + 기업개요 키워드로 테마-종목 매핑 DB 구축 (AI 불필요)"""
+    """네이버 업종 + 기업개요 키워드로 테마-종목 매핑 DB 구축 (AI 불필요)
+
+    캐시(7일) 유효 시 신규 상장/시총 진입 종목만 증분 분류하여 merge.
+    """
 
     # 캐시 유효기간: 7일
     CACHE_MAX_DAYS = 7
+    cached_stocks = {}
+    cached_processed = None  # None = 캐시 없음, set = 처리 이력
+    cached_date = None
+    cache_valid = False
     if os.path.exists(THEME_MAP_FILE):
         try:
             with open(THEME_MAP_FILE, "r", encoding="utf-8") as f:
@@ -1041,14 +1048,16 @@ def build_theme_stock_map(krx_data):
             if cached_date and cached_stocks:
                 days_old = (datetime.strptime(TODAY, "%Y-%m-%d") - datetime.strptime(cached_date, "%Y-%m-%d")).days
                 if days_old < CACHE_MAX_DAYS:
-                    log(f"  📂 테마 매핑 DB 캐시 사용 ({days_old}일 전, {len(cached_stocks)}개 종목)")
-                    return cached.get("theme_to_stocks", {}), cached_stocks
+                    # 구버전 캐시(processed_codes 없음) 호환: stocks 키를 처리 이력으로 가정
+                    cached_processed = set(cached.get("processed_codes", list(cached_stocks.keys())))
+                    cache_valid = True
                 else:
                     log(f"  🔄 테마 매핑 DB 캐시 만료 ({days_old}일 경과) - 재구축")
         except Exception:
             pass
 
-    log("  🏗️ 테마-종목 매핑 DB 구축 시작 (업종+키워드 기반)...")
+    if not cache_valid:
+        log("  🏗️ 테마-종목 매핑 DB 구축 시작 (업종+키워드 기반)...")
 
     # ── 네이버 업종명 → 테마 매핑 룰 (정확히 일치하는 업종명) ──
     SECTOR_TO_THEME = {
@@ -1154,7 +1163,20 @@ def build_theme_stock_map(krx_data):
             eligible.append((code, d["name"], d["market"]))
     eligible.sort(key=lambda x: krx_data[x[0]].get("market_cap", 0), reverse=True)
 
-    log(f"  📋 대상 종목: {len(eligible)}개 (시총 3000억+)")
+    # 증분 빌드: 캐시 유효 시 미처리 종목만 분류
+    if cache_valid:
+        eligible_to_fetch = [item for item in eligible if item[0] not in cached_processed]
+        if not eligible_to_fetch:
+            log(f"  📂 테마 매핑 DB 캐시 사용 ({len(cached_stocks)}개 종목, 신규 0개)")
+            return cached.get("theme_to_stocks", {}), cached_stocks
+        log(f"  📂 테마 매핑 DB 캐시 사용 ({len(cached_stocks)}개) + 신규 종목 증분 분류 ({len(eligible_to_fetch)}개)")
+        stock_themes = dict(cached_stocks)
+        processed_codes = set(cached_processed)
+    else:
+        log(f"  📋 대상 종목: {len(eligible)}개 (시총 3000억+)")
+        eligible_to_fetch = eligible
+        stock_themes = {}
+        processed_codes = set()
 
     # 기업개요 병렬 크롤링
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1167,9 +1189,9 @@ def build_theme_stock_map(krx_data):
         sector, overview = _fetch_company_overview(code)
         return code, name, market, sector, overview
 
-    log(f"  ⏳ 기업개요 병렬 크롤링 중 (스레드 20개)...")
+    log(f"  ⏳ 기업개요 병렬 크롤링 중 (스레드 20개, {len(eligible_to_fetch)}개)...")
     with ThreadPoolExecutor(max_workers=20) as executor:
-        futures = {executor.submit(_fetch_one, item): item for item in eligible}
+        futures = {executor.submit(_fetch_one, item): item for item in eligible_to_fetch}
         for future in as_completed(futures):
             try:
                 code, name, market, sector, overview = future.result()
@@ -1179,14 +1201,14 @@ def build_theme_stock_map(krx_data):
                 }
                 done_count[0] += 1
                 if done_count[0] % 200 == 0:
-                    log(f"     ... {done_count[0]}/{len(eligible)} 기업개요 수집")
+                    log(f"     ... {done_count[0]}/{len(eligible_to_fetch)} 기업개요 수집")
             except Exception:
                 pass
 
     log(f"  ✅ 기업개요 수집 완료: {len(stock_infos)}개")
 
-    # ── 룰 기반 테마 분류 ──
-    stock_themes = {}
+    # ── 룰 기반 테마 분류 (신규 종목만) ──
+    new_classified = 0
     for code, info in stock_infos.items():
         themes = set()
         sector = info.get("sector", "")
@@ -1207,28 +1229,39 @@ def build_theme_stock_map(krx_data):
             if pattern.search(overview):
                 themes.add(theme)
 
+        processed_codes.add(code)  # 테마 없어도 처리 이력에 기록 (재크롤 방지)
         if themes:
             stock_themes[code] = list(themes)
+            new_classified += 1
 
-    log(f"  ✅ 테마 분류 완료: {len(stock_themes)}개 종목 (룰 기반)")
+    if cache_valid:
+        log(f"  ✅ 신규 분류 완료: +{new_classified}개 → 총 {len(stock_themes)}개")
+    else:
+        log(f"  ✅ 테마 분류 완료: {len(stock_themes)}개 종목 (룰 기반)")
 
-    # 테마 → 종목 역매핑
+    # 테마 → 종목 역매핑 (krx_data 기반, 시총 컷 재적용)
     theme_to_stocks = {}
     for code, themes_list in stock_themes.items():
-        info = stock_infos.get(code, {})
+        d = krx_data.get(code)
+        if not d:
+            continue  # 상폐/삭제 종목
+        if d.get("market_cap", 0) < MIN_MARKET_CAP:
+            continue  # 시총이 컷 아래로 내려간 종목 (캐시는 유지, 노출만 제외)
         for theme in themes_list:
             if theme not in theme_to_stocks:
                 theme_to_stocks[theme] = []
             theme_to_stocks[theme].append({
-                "code": code, "name": info.get("name", ""),
-                "market": info.get("market", ""),
+                "code": code, "name": d.get("name", ""),
+                "market": d.get("market", ""),
             })
 
-    # JSON 저장
+    # JSON 저장 (캐시 빌드 날짜는 보존하여 7일 만료 시계 유지)
+    save_date = cached_date if cache_valid else TODAY
     cache_data = {
-        "date": TODAY,
+        "date": save_date,
         "stocks": stock_themes,
         "theme_to_stocks": theme_to_stocks,
+        "processed_codes": sorted(processed_codes),
     }
     try:
         with open(THEME_MAP_FILE, "w", encoding="utf-8") as f:
@@ -1909,6 +1942,62 @@ def discover_new_themes(news_titles, krx_data, theme_map):
         log(f"  ⚠️ 신규 테마 발굴 실패 (기존 테마로 계속): {e}")
 
 
+def load_economic_calendar(days_ahead=3):
+    """경제 캘린더 JSON 로드 → 오늘부터 days_ahead 이내 이벤트만 반환.
+    AI가 향후 이벤트(FOMC, CPI 등)를 환각하지 못하도록 프롬프트에 주입할 화이트리스트."""
+    cal_path = os.path.join(os.path.dirname(__file__), "economic_calendar.json")
+    if not os.path.exists(cal_path):
+        log("  ⚠️ economic_calendar.json 없음 — 캘린더 블록 생략")
+        return []
+
+    try:
+        with open(cal_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        log(f"  ⚠️ economic_calendar.json 파싱 실패: {e}")
+        return []
+
+    kst = timezone(timedelta(hours=9))
+    today = datetime.now(kst).date()
+    end = today + timedelta(days=days_ahead)
+
+    events = data.get("events", [])
+
+    # 만료 임박 경고: 마지막 이벤트가 30일 안쪽이면 갱신 필요
+    if events:
+        try:
+            last_date = max(datetime.strptime(e["date"], "%Y-%m-%d").date() for e in events)
+            days_left = (last_date - today).days
+            if days_left < 30:
+                log(f"  ⚠️ economic_calendar.json 갱신 필요 (마지막 이벤트까지 {days_left}일 남음)")
+        except Exception:
+            pass
+
+    upcoming = []
+    for e in events:
+        try:
+            d = datetime.strptime(e["date"], "%Y-%m-%d").date()
+            if today <= d <= end:
+                upcoming.append(e)
+        except Exception:
+            continue
+
+    upcoming.sort(key=lambda e: (e["date"], e.get("time", "")))
+    return upcoming
+
+
+def format_calendar_block(upcoming):
+    """프롬프트 주입용 텍스트 블록 생성. 빈 리스트면 명시적 '없음' 메시지를 반환해 환각 방지."""
+    if not upcoming:
+        return "[향후 3일 예정 매크로 이벤트]\n향후 3일 내 예정된 주요 매크로 이벤트 없음. 시장 자체 모멘텀과 종목 재료에 집중하라."
+    lines = ["[향후 3일 예정 매크로 이벤트]"]
+    for e in upcoming:
+        impact = e.get("impact", "medium")
+        time_str = e.get("time", "")
+        lines.append(f"- {e['date']} {time_str} {e['name']} (영향도: {impact})")
+    return "\n".join(lines)
+
+
 def generate_ai_summary(indices, stocks, sectors, themes, news, mode="market", krx_data=None):
     """Groq AI로 시장 브리핑 생성. mode: 'premarket'(장전 해외시장) / 'market'(장중) / 'close'(마감)"""
     if not GROQ_API_KEY:
@@ -1918,6 +2007,10 @@ def generate_ai_summary(indices, stocks, sectors, themes, news, mode="market", k
     kst = timezone(timedelta(hours=9))
     now_kst = datetime.now(kst)
     now_str = now_kst.strftime("%Y-%m-%d %H:%M")
+
+    # 향후 3일 매크로 이벤트 화이트리스트 (AI 환각 방지)
+    upcoming_events = load_economic_calendar(days_ahead=3)
+    calendar_block = format_calendar_block(upcoming_events)
 
     # 컨텍스트 구성
     idx_text = "\n".join(
@@ -2014,13 +2107,15 @@ KOSPI 평균 등락률: {kospi_avg:+.2f}% | KOSDAQ 평균: {kosdaq_avg:+.2f}%
 [주요 뉴스]
 {news_text}
 
+{calendar_block}
+
 ## 분석 구조 (3개 섹션):
 
 1) 해외시장 흐름
 미국 3대 지수 움직임의 배경과 맥락을 설명한다. 환율·유가·금 등 관련 변수가 있으면 자연스럽게 엮어서 하나의 흐름으로 서술한다. 개별 나열이 아니라 "왜 이렇게 움직였는지"에 초점을 맞춘다.
 
 2) 국내 영향 전망
-해외 흐름이 오늘 코스피·코스닥에 어떤 영향을 줄지 분석한다. 수혜/피해 예상 섹터를 근거와 함께 언급한다. 오늘 장에서 주목할 이벤트나 변수가 있으면 함께 짚는다.
+해외 흐름이 오늘 코스피·코스닥에 어떤 영향을 줄지 분석한다. 수혜/피해 예상 섹터를 근거와 함께 언급한다. 오늘 장에서 주목할 이벤트나 변수는 위 [향후 3일 예정 매크로 이벤트] 리스트에서만 인용하고, 리스트에 없으면 언급하지 않는다.
 
 3) 한 줄 결론
 오늘 시장 전망을 한 문장으로 요약한다.
@@ -2031,6 +2126,7 @@ KOSPI 평균 등락률: {kospi_avg:+.2f}% | KOSDAQ 평균: {kosdaq_avg:+.2f}%
 - 같은 말 반복하지 말 것. 각 문장이 새로운 정보를 담아야 한다
 - 숫자는 데이터 그대로 인용하되, 맥락을 붙여라 (예: "나스닥 +1.2%로 3거래일 연속 상승")
 - 불확실한 과거 수치를 단정하지 말 것
+- 향후 매크로 이벤트(FOMC, CPI, PPI, 고용보고서, 금통위 등)는 위 [향후 3일 예정 매크로 이벤트] 리스트에 있는 것만 언급하라. 리스트에 없는 일정을 추측·창작하지 마라
 - 800~1200자
 
 ## 출력 (JSON):
@@ -2108,6 +2204,8 @@ market_mood: 해외 전반 상승+원화 강세면 bullish, 하락+원화 약세
 [뉴스]
 {news_text}
 
+{calendar_block}
+
 ## 분석 구조 (4개 섹션):
 
 1) 오늘의 핵심
@@ -2120,7 +2218,7 @@ market_mood: 해외 전반 상승+원화 강세면 bullish, 하락+원화 약세
 AD비율, 급등/급락 종목 비율, 대형주 vs 전체 괴리 등으로 시장의 현재 상태를 진단한다. 하락장이면 패닉 단계(초입/중반/막바지)를, 상승장이면 과열 수준을 판단한다.
 
 4) 전략과 시나리오
-현금 비중, 유망 섹터, 진입/이탈 조건을 구체적으로 제시한다. "추가 상승 시나리오"와 "하락 전환 시나리오" 각각의 트리거를 명시한다. 향후 1~3일 주목할 이벤트를 짚고, 마지막에 핵심 결론을 한 문장으로 마무리한다.
+현금 비중, 유망 섹터, 진입/이탈 조건을 구체적으로 제시한다. "추가 상승 시나리오"와 "하락 전환 시나리오" 각각의 트리거를 명시한다. 향후 1~3일 주목할 이벤트는 위 [향후 3일 예정 매크로 이벤트] 리스트에 있는 항목만 인용한다. 리스트가 비어 있으면 매크로 이벤트 언급 없이 "이번 주 예정된 주요 매크로 이벤트가 없으므로 시장 자체 모멘텀과 종목 재료에 집중"이라고 쓴다. 마지막에 핵심 결론을 한 문장으로 마무리한다.
 
 ## 작성 규칙:
 - "~다/~했다" 간결체 (존댓말 금지)
@@ -2130,6 +2228,7 @@ AD비율, 급등/급락 종목 비율, 대형주 vs 전체 괴리 등으로 시�
 - 숫자는 데이터 그대로 인용하면서 맥락을 붙여라
 - "관망", "지켜보자" 같은 애매한 표현 대신 구체적 행동과 조건을 제시
 - 불확실한 과거 수치를 단정하지 말 것
+- 향후 매크로 이벤트(FOMC, CPI, PPI, 고용보고서, 금통위, 옵션만기 등)는 위 [향후 3일 예정 매크로 이벤트] 리스트에 있는 것만 언급하라. 리스트에 없는 일정(예: "Fed 금리 결정이 곧 있다")을 추측·창작하면 안 된다
 - 1500~2500자
 
 ## 출력 (JSON):
