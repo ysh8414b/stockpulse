@@ -403,6 +403,21 @@
   - 핫 테마(theme_names, TOP 10 leading)에 포함된 테마는 추가로 최우선 부스트 → 오늘 시장 맥락 반영
 - **효과**: 코스모로보틱스 같은 신규 상장 종목이 다음 크롤링 5분 이내 theme_map 진입 + 이슈종목 태그도 "로봇·기계" 같은 구체적 분류로 표시됨
 
+### AdSense 2차 거절 대응 — SEO fallback + 자동생성 페이지 noindex (2026-05-17)
+- 4월 27일 1차 정리 후에도 "가치 없는 콘텐츠" 사유로 재거절. 두 가지 신규 원인 추정:
+  1. **메인 페이지가 봇 입장에서 빈 셸** — index.html은 React SPA + Supabase 비동기 로드라 Googlebot이 raw HTML을 fetch했을 때 스크립트만 보이고 콘텐츠가 없음 (JS 실행 전). `<noscript>` fallback도 없었음
+  2. **사이트 전체 품질 신호 희석** — analysis/archive/theme_detail/theme_calendar는 광고는 뺐지만 indexable + sitemap에 그대로 남아 있어, 봇이 보기엔 "자동 생성 페이지 비중이 높은 사이트"로 분류될 위험
+- **변경 1 - index.html SEO fallback** ([index.html:194](index.html:194)):
+  - `<div id="root">` 안에 ~3000자 정적 콘텐츠 주입 (서비스 설명, 제공 기능 6개 상세, 데이터 출처, 가이드 5개 링크, 면책 고지)
+  - React `createRoot()`가 마운트되면 자동 교체 → cloaking 아님 (사용자 경험 그대로)
+  - `</div>` 다음에 `<noscript>` 블록 추가 (JS 비활성 사용자도 콘텐츠 접근 가능)
+  - 검증: fetch로 raw HTML 확인 → `hasH1`, `hasSeoFallback`, `hasGuideSectorsLink`, `hasNoscript` 모두 true
+- **변경 2 - 자동 생성 페이지 noindex 처리**:
+  - `analysis.html`, `archive.html`, `theme_detail.html`, `theme_calendar.html`의 robots 메타를 `index,follow` → `noindex,nofollow`로 변경
+  - sitemap.xml에서 4개 페이지 URL 제거 (남은 항목: 메인 + guide 6개 + about/privacy/terms = 9개)
+  - 인덱싱은 막지만 사용자가 직접 접근하거나 내부 링크로는 정상 이용 가능
+- **AdSense 재신청 전 체크리스트**: (1) raw HTML view-source로 봇이 보는 콘텐츠 확인 (2) Search Console에서 4개 페이지 noindex 적용 확인 (3) 사이트 메인이 오리지널 가이드 페이지로 충분히 라우팅되는지 확인
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
