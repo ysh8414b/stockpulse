@@ -57,7 +57,7 @@ function formatValue(v){
   return v.toLocaleString();
 }
 
-function useIsMobile(){const[m,setM]=useState(window.innerWidth<600);useEffect(()=>{const h=()=>setM(window.innerWidth<600);window.addEventListener("resize",h);return()=>window.removeEventListener("resize",h)},[]);return m}
+function useIsMobile(){const[m,setM]=useState(window.innerWidth<820);useEffect(()=>{const h=()=>setM(window.innerWidth<820);window.addEventListener("resize",h);return()=>window.removeEventListener("resize",h)},[]);return m}
 
 function StockRow({s,i,mobile}){
   const[h,setH]=useState(false);
