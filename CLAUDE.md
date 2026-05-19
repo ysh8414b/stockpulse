@@ -418,7 +418,7 @@
   - 인덱싱은 막지만 사용자가 직접 접근하거나 내부 링크로는 정상 이용 가능
 - **AdSense 재신청 전 체크리스트**: (1) raw HTML view-source로 봇이 보는 콘텐츠 확인 (2) Search Console에서 4개 페이지 noindex 적용 확인 (3) 사이트 메인이 오리지널 가이드 페이지로 충분히 라우팅되는지 확인
 
-### 과대낙폭 탭 + 일봉 누적 (2026-05-19)
+### 과대 낙폭 탭 + 일봉 누적 (2026-05-19)
 - 신규 탭: MA20(20일 이동평균) 대비 -20% 이하로 하락한 시총 3000억+ 종목을 거래대금 순으로 노출
 - **`setup_oversold.sql`**: `daily_prices`(code, date PK / close / trading_value / market_cap)와 `oversold_stocks`(date, rank, code, name, price, ma20, deviation, change_pct, trading_value, market_cap, market, display_sector, tags JSONB) 테이블 + 인덱스 + RLS
 - **`backfill_daily_prices.py`**: 1회 실행용. 시총 3000억+ 종목에 대해 야후 chart API (`{code}.KS/.KQ` interval=1d range=2mo)로 최근 40일치 일봉을 받아와 `daily_prices`에 INSERT. crawl.py의 `fetch_naver_market_data`/`is_etf_etn`/`supabase_request` 재사용
@@ -431,7 +431,7 @@
 - **`index.html` 변경**:
   - 신규 컴포넌트: `OversoldRow` (랭크 뱃지, 종목명+코드+태그, MA20·거래대금, 현재가·이격률 -X.XX%) / `TabOversold` (검색 input, 거래대금 정렬 리스트, 면책 고지)
   - `VALID_TABS`에 "oversold" 추가 → URL 해시 동기화 동작
-  - 탭 nav: `이슈종목 / 인기테마 / 주요뉴스 / 과대낙폭 / AI브리핑` 순. 아이콘 `▼` 파란색
+  - 탭 nav: `이슈종목 / 인기테마 / 주요뉴스 / 과대 낙폭 / AI브리핑` 순. 아이콘 `▼` 파란색
   - `App` 상태에 `ovs` 추가. `fetchData`에 `db("oversold_stocks","order=date.desc,rank.asc&limit=100")` 추가 후 최신 date만 필터링하여 setOvs
   - 빈 데이터/404일 때 graceful degradation으로 empty state 카드 노출 ("현재 MA20 대비 -20% 이하 종목 없음")
 - **운영 순서**: (1) Supabase에 `setup_oversold.sql` 실행 → (2) `python backfill_daily_prices.py` 1회 실행 (20거래일치 백필 확보) → (3) 다음 close 모드(15:35) 크롤링부터 `oversold_stocks` 자동 채워짐
@@ -441,7 +441,7 @@
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
 - 테마 순위가 장 마감 후에도 변동됨 (뉴스 갱신 때문)
-- 과대낙폭 탭은 close 모드(15:35) 1회만 갱신됨 (장중에는 전일 데이터 표시)
+- 과대 낙폭 탭은 close 모드(15:35) 1회만 갱신됨 (장중에는 전일 데이터 표시)
 
 ## 개발 서버
 - `python -m http.server 8000` (launch.json 설정됨)

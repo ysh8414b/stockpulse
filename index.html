@@ -311,7 +311,7 @@ function Dot({s,size=8}){const c={positive:"#22c55e",negative:"#ef4444",neutral:
 function Tag({children,color="purple"}){const m={purple:{b:"rgba(139,92,246,0.12)",t:"#a78bfa"},blue:{b:"rgba(59,130,246,0.12)",t:"#60a5fa"},cyan:{b:"rgba(6,182,212,0.12)",t:"#22d3ee"}}[color]||{b:"rgba(139,92,246,0.12)",t:"#a78bfa"};return <span style={{display:"inline-block",padding:"2px 8px",background:m.b,color:m.t,borderRadius:"4px",fontSize:"12px",fontWeight:600}}>{children}</span>;}
 function Box({children,style:s={},hover=true,onClick,className:cn}){const[h,setH]=useState(false);return <div className={cn} onClick={onClick} onMouseEnter={()=>hover&&setH(true)} onMouseLeave={()=>hover&&setH(false)} style={{background:h?"var(--card-hbg)":"var(--card-bg)",border:"1px solid",borderColor:h?"var(--card-hbd)":"var(--card-bd)",borderRadius:"14px",transition:"all .25s",transform:h?"translateY(-1px)":"none",cursor:onClick?"pointer":"default",...s}}>{children}</div>;}
 function Loader(){return <div style={{display:"flex",justifyContent:"center",alignItems:"center",padding:"60px",gap:"12px"}}><div style={{width:20,height:20,border:"2px solid rgba(6,182,212,0.2)",borderTop:"2px solid #06b6d4",borderRadius:"50%",animation:"spin .8s linear infinite"}}/><span style={{color:"var(--muted)",fontSize:"15px"}}>데이터 로딩 중...</span></div>;}
-function Empty({msg}){return <div style={{textAlign:"center",padding:"60px 20px",color:"var(--dim)"}}><div style={{fontSize:"36px",marginBottom:"12px"}}>📭</div><div style={{fontSize:"16px",lineHeight:1.6}}>{msg}</div><div style={{fontSize:"14px",marginTop:"8px",color:"var(--dimmer)"}}>GitHub Actions에서 크롤링을 실행하면 데이터가 채워집니다</div></div>;}
+function Empty({msg}){return <div style={{textAlign:"center",padding:"60px 20px",color:"var(--dim)"}}><div style={{fontSize:"36px",marginBottom:"12px"}}>📭</div><div style={{fontSize:"16px",lineHeight:1.6}}>{msg}</div><div style={{fontSize:"14px",marginTop:"8px",color:"var(--dimmer)"}}>잠시 후 데이터가 갱신됩니다</div></div>;}
 
 // ═══ NEWS ROW (호버 + 링크) ═══
 function NewsRow({n,isLast}){
@@ -757,7 +757,7 @@ function TabAI({aiSum,loading}){
   </div>;
 }
 
-// ═══ TAB: OVERSOLD (과대낙폭) ═══
+// ═══ TAB: OVERSOLD (과대 낙폭) ═══
 function OversoldRow({s,isLast}){
   const[h,setH]=useState(false);
   const dev=parseFloat(s.deviation||0);
@@ -798,7 +798,7 @@ function TabOversold({ovs,loading}){
   if(loading)return <Loader/>;
   if(!ovs||!ovs.length)return <div className="fade-up">
     <div style={{marginBottom:"18px"}}>
-      <h2 style={{fontSize:"20px",fontWeight:700}}><span style={{color:"#3b82f6"}}>▼</span> 과대낙폭 종목</h2>
+      <h2 style={{fontSize:"20px",fontWeight:700}}><span style={{color:"#3b82f6"}}>▼</span> 과대 낙폭 종목</h2>
       <div style={{color:"var(--muted)",fontSize:"14px",marginTop:"4px"}}>과한 낙폭이라고 생각되는 종목 (장 마감 기준)</div>
     </div>
     <Empty msg="종목 없음"/>
@@ -807,7 +807,7 @@ function TabOversold({ovs,loading}){
   return <div className="fade-up">
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"18px",flexWrap:"wrap",gap:"12px"}}>
       <div>
-        <h2 style={{fontSize:"20px",fontWeight:700}}><span style={{color:"#3b82f6"}}>▼</span> 과대낙폭 종목 <span style={{fontSize:"14px",color:"var(--dim)",fontWeight:400}}>{f.length}종목</span></h2>
+        <h2 style={{fontSize:"20px",fontWeight:700}}><span style={{color:"#3b82f6"}}>▼</span> 과대 낙폭 종목 <span style={{fontSize:"14px",color:"var(--dim)",fontWeight:400}}>{f.length}종목</span></h2>
         <div style={{color:"var(--muted)",fontSize:"14px",marginTop:"4px"}}>과한 낙폭이라고 생각되는 종목 · 거래대금 순</div>
       </div>
       <div className="search-wrap" style={{position:"relative"}}><input value={q} onChange={e=>setQ(e.target.value)} placeholder="종목명, 코드 검색" style={{background:"var(--inp-bg)",border:"1px solid var(--inp-bd)",borderRadius:"8px",padding:"10px 14px 10px 34px",color:"var(--text)",fontSize:"15px",width:220,outline:"none",fontFamily:"inherit"}}/><span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"var(--dim)",fontSize:"15px"}}>⌕</span></div>
@@ -1078,7 +1078,7 @@ function App(){
   },[]);
 
   useEffect(()=>{const t=setInterval(()=>setTime(new Date()),1000);return()=>clearInterval(t)},[]);
-  const tabs=[{id:"issues",l:"이슈 종목",ic:"◆"},{id:"themes",l:"인기 테마",ic:"◈",live:true},{id:"news",l:"주요 뉴스",ic:"◇"},{id:"oversold",l:"과대낙폭",ic:"▼"},{id:"ai",l:"AI 브리핑",ic:"⬡"}];
+  const tabs=[{id:"issues",l:"이슈 종목",ic:"◆"},{id:"themes",l:"인기 테마",ic:"◈",live:true},{id:"news",l:"주요 뉴스",ic:"◇"},{id:"oversold",l:"과대 낙폭",ic:"▼"},{id:"ai",l:"AI 브리핑",ic:"⬡"}];
 
   return <div>
     <Ticker idx={idx}/>

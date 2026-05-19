@@ -2979,7 +2979,7 @@ def crawl_issue_stocks(krx_data, themes=None, sectors=None, news=None, stock_the
 
 
 # ─────────────────────────────────────────
-# 2-1. 일별 종가 누적 + 과대낙폭 종목 (MA20 이격 -20% 이하)
+# 2-1. 일별 종가 누적 + 과대 낙폭 종목 (MA20 이격 -20% 이하)
 # ─────────────────────────────────────────
 OVERSOLD_MIN_MARKET_CAP = 300_000_000_000  # 시총 3000억 원
 OVERSOLD_THRESHOLD = -20.0                  # MA20 대비 -20% 이하
@@ -3030,7 +3030,7 @@ def crawl_oversold_stocks(krx_data):
     3) (price - ma20) / ma20 * 100 <= -20% AND 시총 3000억+ AND 데이터 충분(>=20개)
     4) 거래대금 내림차순 정렬
     """
-    log("📉 과대낙폭 종목 산출 시작...")
+    log("📉 과대 낙폭 종목 산출 시작...")
 
     # daily_prices에서 최근 60일 데이터 fetch (페이지네이션)
     cutoff = (datetime.now(timezone(timedelta(hours=9))) - timedelta(days=OVERSOLD_HISTORY_DAYS)).strftime("%Y-%m-%d")
@@ -3105,7 +3105,7 @@ def crawl_oversold_stocks(krx_data):
             "tags": classify_stock_tags(d["name"], d.get("display_sector", "")),
         })
 
-    log(f"  ✅ 과대낙폭 {len(result)}개 종목 (MA20 대비 -20% 이하, 시총 3000억+)")
+    log(f"  ✅ 과대 낙폭 {len(result)}개 종목 (MA20 대비 -20% 이하, 시총 3000억+)")
     for s in result[:5]:
         log(f"     {s['rank']}. {s['name']} {s['deviation']:+.2f}% (현재 {s['price']:,.0f} vs MA20 {s['ma20']:,.0f})")
     return result
@@ -3683,7 +3683,7 @@ def main():
     # 10. 이슈 종목 (복합 점수 랭킹: 등락률+거래대금+테마+뉴스+섹터)
     stocks = crawl_issue_stocks(krx_data, themes, sectors, news, stock_themes=stock_themes)
 
-    # 10-1. 일별 종가 누적 + 과대낙폭 종목 (close 모드에서만 — 종가 확정)
+    # 10-1. 일별 종가 누적 + 과대 낙폭 종목 (close 모드에서만 — 종가 확정)
     oversold = None
     if ai_mode == "close":
         save_daily_close(krx_data)
@@ -3834,14 +3834,14 @@ def main():
         result = supabase_request("POST", "theme_analysis", data=theme_analysis)
         log(f"  🔥 테마 분석 {len(theme_analysis)}개 저장 {'✅' if result else '❌'}")
 
-    # 과대낙폭 종목 저장 (close 모드에서만, 오늘 데이터 교체)
+    # 과대 낙폭 종목 저장 (close 모드에서만, 오늘 데이터 교체)
     if oversold is not None:
         supabase_request("DELETE", "oversold_stocks", params={"date": f"eq.{TODAY}"})
         if oversold:
             result = supabase_request("POST", "oversold_stocks", data=oversold)
-            log(f"  📉 과대낙폭 {len(oversold)}개 저장 {'✅' if result else '❌'}")
+            log(f"  📉 과대 낙폭 {len(oversold)}개 저장 {'✅' if result else '❌'}")
         else:
-            log("  ℹ️ 과대낙폭 종목 없음 — 빈 상태로 갱신")
+            log("  ℹ️ 과대 낙폭 종목 없음 — 빈 상태로 갱신")
 
     # 365일 초과 AI 요약 정리 + 90일 초과 종목/테마 분석 정리 (close 모드에서만)
     if ai_mode == "close":
@@ -3859,7 +3859,7 @@ def main():
         supabase_request("DELETE", "daily_prices", params={"date": f"lt.{cutoff_dp}"})
         cutoff_os = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
         supabase_request("DELETE", "oversold_stocks", params={"date": f"lt.{cutoff_os}"})
-        log(f"  🧹 {cutoff_dp} 이전 일봉 / {cutoff_os} 이전 과대낙폭 정리")
+        log(f"  🧹 {cutoff_dp} 이전 일봉 / {cutoff_os} 이전 과대 낙폭 정리")
 
     log("")
     log("=" * 50)
