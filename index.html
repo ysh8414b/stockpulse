@@ -799,7 +799,7 @@ function TabOversold({ovs,loading}){
   if(!ovs||!ovs.length)return <div className="fade-up">
     <div style={{marginBottom:"18px"}}>
       <h2 style={{fontSize:"20px",fontWeight:700}}><span style={{color:"#3b82f6"}}>▼</span> 과대 낙폭 종목</h2>
-      <div style={{color:"var(--muted)",fontSize:"14px",marginTop:"4px"}}>과한 낙폭이라고 생각되는 종목 (장 마감 기준)</div>
+      <div style={{color:"var(--muted)",fontSize:"14px",marginTop:"4px"}}>단기 과매도 추정 종목 (장 마감 기준)</div>
     </div>
     <Empty msg="종목 없음"/>
   </div>;
@@ -808,7 +808,7 @@ function TabOversold({ovs,loading}){
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"18px",flexWrap:"wrap",gap:"12px"}}>
       <div>
         <h2 style={{fontSize:"20px",fontWeight:700}}><span style={{color:"#3b82f6"}}>▼</span> 과대 낙폭 종목 <span style={{fontSize:"14px",color:"var(--dim)",fontWeight:400}}>{f.length}종목</span></h2>
-        <div style={{color:"var(--muted)",fontSize:"14px",marginTop:"4px"}}>과한 낙폭이라고 생각되는 종목 · 거래대금 순</div>
+        <div style={{color:"var(--muted)",fontSize:"14px",marginTop:"4px"}}>단기 과매도 추정 종목 · 거래대금 순</div>
       </div>
       <div className="search-wrap" style={{position:"relative"}}><input value={q} onChange={e=>setQ(e.target.value)} placeholder="종목명, 코드 검색" style={{background:"var(--inp-bg)",border:"1px solid var(--inp-bd)",borderRadius:"8px",padding:"10px 14px 10px 34px",color:"var(--text)",fontSize:"15px",width:220,outline:"none",fontFamily:"inherit"}}/><span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"var(--dim)",fontSize:"15px"}}>⌕</span></div>
     </div>
