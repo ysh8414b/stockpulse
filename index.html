@@ -757,6 +757,70 @@ function TabAI({aiSum,loading}){
   </div>;
 }
 
+// ═══ TAB: OVERSOLD (과대낙폭) ═══
+function OversoldRow({s,isLast}){
+  const[h,setH]=useState(false);
+  const dev=parseFloat(s.deviation||0);
+  const cp=parseFloat(s.change_pct||0);
+  const cpStr=cp>0?`+${cp.toFixed(2)}%`:`${cp.toFixed(2)}%`;
+  const cpColor=cp>0?"#22c55e":(cp<0?"#ef4444":"#6b7280");
+  const tv=parseInt(s.trading_value||0);
+  const tvEok=tv/100000000;
+  const volStr=tvEok>=10000?`${(tvEok/10000).toFixed(1)}조`:`${Math.round(tvEok).toLocaleString()}억`;
+  const tags=Array.isArray(s.tags)?s.tags:(typeof s.tags==="string"?(()=>{try{return JSON.parse(s.tags)}catch(e){return[]}})():[]);
+  return <a href={`https://finance.naver.com/item/main.naver?code=${s.code}`} target="_blank" rel="noopener noreferrer" onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"16px 18px",borderBottom:isLast?"none":"1px solid var(--div)",textDecoration:"none",color:"inherit",cursor:"pointer",background:h?"rgba(59,130,246,0.05)":"transparent",borderRadius:h?"8px":"0",transition:"all .2s ease"}}>
+    <div style={{display:"flex",alignItems:"center",gap:"14px",minWidth:0,flex:1}}>
+      <span style={{width:30,height:30,borderRadius:"8px",fontSize:"13px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",background:s.rank<=3?"rgba(59,130,246,0.15)":"var(--badge-bg)",color:s.rank<=3?"#3b82f6":"var(--muted)",flexShrink:0}}>{s.rank}</span>
+      <div style={{minWidth:0,flex:1}}>
+        <div style={{display:"flex",alignItems:"center",gap:"8px",flexWrap:"wrap",marginBottom:"4px"}}>
+          <span style={{fontWeight:h?700:600,fontSize:h?"17px":"16px",transition:"all .2s ease",color:h?"#60a5fa":"inherit"}}>{s.name}</span>
+          <span style={{color:"var(--dim)",fontSize:"13px"}}>{s.code}</span>
+          {tags.slice(0,2).map((t,i)=><Tag key={i} color="purple">{t}</Tag>)}
+        </div>
+        <div style={{color:"var(--muted)",fontSize:"13px",display:"flex",gap:"10px",flexWrap:"wrap"}}>
+          <span>MA20 <span style={{color:"var(--text-sub)",fontVariantNumeric:"tabular-nums"}}>₩{Math.round(s.ma20).toLocaleString()}</span></span>
+          <span style={{color:"var(--dimmer)"}}>·</span>
+          <span>거래대금 <span style={{color:"var(--text-sub)"}}>{volStr}</span></span>
+        </div>
+      </div>
+    </div>
+    <div style={{textAlign:"right",flexShrink:0,marginLeft:"12px"}}>
+      <div style={{fontWeight:600,fontSize:"16px",fontVariantNumeric:"tabular-nums"}}>₩{Math.round(s.price).toLocaleString()}</div>
+      <div style={{display:"flex",gap:"8px",alignItems:"baseline",justifyContent:"flex-end",marginTop:"2px"}}>
+        <span style={{color:cpColor,fontSize:"13px",fontWeight:600}}>{cp>0?"▲":(cp<0?"▼":"─")} {cpStr}</span>
+      </div>
+      <div style={{color:"#3b82f6",fontSize:"15px",fontWeight:700,marginTop:"3px"}}>이격 {dev.toFixed(2)}%</div>
+    </div>
+  </a>;
+}
+function TabOversold({ovs,loading}){
+  const[q,setQ]=useState("");
+  if(loading)return <Loader/>;
+  if(!ovs||!ovs.length)return <div className="fade-up">
+    <div style={{marginBottom:"18px"}}>
+      <h2 style={{fontSize:"20px",fontWeight:700}}><span style={{color:"#3b82f6"}}>▼</span> 과대낙폭 종목</h2>
+      <div style={{color:"var(--muted)",fontSize:"14px",marginTop:"4px"}}>과한 낙폭이라고 생각되는 종목 (장 마감 기준)</div>
+    </div>
+    <Empty msg="종목 없음"/>
+  </div>;
+  const f=q?ovs.filter(s=>(s.name||"").includes(q)||(s.code||"").includes(q)):ovs;
+  return <div className="fade-up">
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"18px",flexWrap:"wrap",gap:"12px"}}>
+      <div>
+        <h2 style={{fontSize:"20px",fontWeight:700}}><span style={{color:"#3b82f6"}}>▼</span> 과대낙폭 종목 <span style={{fontSize:"14px",color:"var(--dim)",fontWeight:400}}>{f.length}종목</span></h2>
+        <div style={{color:"var(--muted)",fontSize:"14px",marginTop:"4px"}}>과한 낙폭이라고 생각되는 종목 · 거래대금 순</div>
+      </div>
+      <div className="search-wrap" style={{position:"relative"}}><input value={q} onChange={e=>setQ(e.target.value)} placeholder="종목명, 코드 검색" style={{background:"var(--inp-bg)",border:"1px solid var(--inp-bd)",borderRadius:"8px",padding:"10px 14px 10px 34px",color:"var(--text)",fontSize:"15px",width:220,outline:"none",fontFamily:"inherit"}}/><span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"var(--dim)",fontSize:"15px"}}>⌕</span></div>
+    </div>
+    <Box className="card-pad" style={{padding:"6px 8px"}} hover={false}>
+      <div>{f.map((s,i)=><OversoldRow key={s.code||i} s={s} isLast={i===f.length-1}/>)}</div>
+    </Box>
+    <div style={{marginTop:"16px",padding:"14px 18px",background:"rgba(59,130,246,0.04)",border:"1px solid rgba(59,130,246,0.1)",borderRadius:"10px",fontSize:"14px",color:"var(--muted)",lineHeight:1.7}}>
+      ℹ️ 엔벨로프 -20% 이격은 단기 과매도 신호로 해석될 수 있으나 추가 하락의 시작일 수도 있습니다. 투자 추천이 아닌 정보 제공 목적입니다.
+    </div>
+  </div>;
+}
+
 // ═══ CHAT PANEL ═══
 const sbClient=window.supabase.createClient(SB_URL,SB_KEY);
 const CHAT_NICK_COLORS=["#06b6d4","#8b5cf6","#f59e0b","#22c55e","#ec4899","#3b82f6","#ef4444","#14b8a6","#f97316","#a855f7","#6366f1","#10b981"];
@@ -959,7 +1023,7 @@ const Ticker=React.memo(function Ticker({idx}){
 });
 
 function App(){
-  const VALID_TABS=["overview","issues","themes","news","ai"];
+  const VALID_TABS=["overview","issues","themes","news","oversold","ai"];
   const getTabFromHash=()=>{const h=(window.location.hash||"").replace(/^#/,"");return VALID_TABS.includes(h)?h:"overview"};
   const[tab,setTab]=useState(getTabFromHash);
   const[time,setTime]=useState(new Date());
@@ -971,6 +1035,7 @@ function App(){
   const[thm,setThm]=useState([]);
   const[allThm,setAllThm]=useState([]);
   const[aiSum,setAiSum]=useState(null);
+  const[ovs,setOvs]=useState([]);
   const[thmAn,setThmAn]=useState({});const[stkAn,setStkAn]=useState({});
   const[chatOpen,setChatOpen]=useState(false);
   const[lastUp,setLastUp]=useState(null);
@@ -994,10 +1059,11 @@ function App(){
 
   const fetchData=async(initial)=>{
     if(initial)setLoading(true);
-    const[a,b,c,d,e,f,g,h,ii]=await Promise.all([db("market_index","order=id"),db("issue_stocks","order=rank&limit=15"),db("news","order=created_at.desc&limit=20"),db("sectors","order=id"),db("themes","order=rank&limit=10"),db("ai_summary","order=id.desc&limit=1"),db("all_themes","order=rank"),db("theme_analysis","order=id"),db("stock_analysis","order=id.desc&limit=1")]);
+    const[a,b,c,d,e,f,g,h,ii,jj]=await Promise.all([db("market_index","order=id"),db("issue_stocks","order=rank&limit=15"),db("news","order=created_at.desc&limit=20"),db("sectors","order=id"),db("themes","order=rank&limit=10"),db("ai_summary","order=id.desc&limit=1"),db("all_themes","order=rank"),db("theme_analysis","order=id"),db("stock_analysis","order=id.desc&limit=1"),db("oversold_stocks","order=date.desc,rank.asc&limit=100")]);
     try{
     if(a?.length)setIdx(a);if(b?.length)setStk(b);if(c?.length){setNws(c);setLastUp(c[0].date)}if(d?.length)setSec(d);if(e?.length)setThm(e);if(f?.length)setAiSum(f[0]);if(g?.length)setAllThm(g);if(h?.length){const m={};h.forEach(ta=>{m[ta.theme_name]=ta});setThmAn(m)}
     if(ii?.length){let arr=ii[0].stocks;if(typeof arr==="string"){try{arr=JSON.parse(arr)}catch(e){arr=null}}if(Array.isArray(arr)){const sm={};arr.forEach(sa=>{if(sa&&sa.code)sm[sa.code]=sa});setStkAn(sm)}}
+    if(jj?.length){const latest=jj[0].date;setOvs(jj.filter(r=>r.date===latest))}
     }catch(e){console.error("data processing error:",e)}
     if(initial)setLoading(false);
   };
@@ -1012,7 +1078,7 @@ function App(){
   },[]);
 
   useEffect(()=>{const t=setInterval(()=>setTime(new Date()),1000);return()=>clearInterval(t)},[]);
-  const tabs=[{id:"issues",l:"이슈 종목",ic:"◆"},{id:"themes",l:"인기 테마",ic:"◈",live:true},{id:"news",l:"주요 뉴스",ic:"◇"},{id:"ai",l:"AI 브리핑",ic:"⬡"}];
+  const tabs=[{id:"issues",l:"이슈 종목",ic:"◆"},{id:"themes",l:"인기 테마",ic:"◈",live:true},{id:"news",l:"주요 뉴스",ic:"◇"},{id:"oversold",l:"과대낙폭",ic:"▼"},{id:"ai",l:"AI 브리핑",ic:"⬡"}];
 
   return <div>
     <Ticker idx={idx}/>
@@ -1035,6 +1101,7 @@ function App(){
         {tab==="issues"&&<TabStocks stk={stk} nws={nws} stkAn={stkAn} loading={loading}/>}
         {tab==="themes"&&<TabThemes thm={thm} allThm={allThm} thmAn={thmAn} loading={loading}/>}
         {tab==="news"&&<TabNews nws={nws} loading={loading}/>}
+        {tab==="oversold"&&<TabOversold ovs={ovs} loading={loading}/>}
         {tab==="ai"&&<TabAI aiSum={aiSum} loading={loading}/>}
       </main>
       {chatOpen&&<div className="chat-side-panel" style={{width:380,flexShrink:0,height:"calc(100vh - 200px)",position:"sticky",top:0,animation:"fadeUp .3s ease both"}}><ChatPanel open={chatOpen} onClose={()=>setChatOpen(false)}/></div>}

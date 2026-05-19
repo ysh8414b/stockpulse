@@ -418,10 +418,30 @@
   - 인덱싱은 막지만 사용자가 직접 접근하거나 내부 링크로는 정상 이용 가능
 - **AdSense 재신청 전 체크리스트**: (1) raw HTML view-source로 봇이 보는 콘텐츠 확인 (2) Search Console에서 4개 페이지 noindex 적용 확인 (3) 사이트 메인이 오리지널 가이드 페이지로 충분히 라우팅되는지 확인
 
+### 과대낙폭 탭 + 일봉 누적 (2026-05-19)
+- 신규 탭: MA20(20일 이동평균) 대비 -20% 이하로 하락한 시총 3000억+ 종목을 거래대금 순으로 노출
+- **`setup_oversold.sql`**: `daily_prices`(code, date PK / close / trading_value / market_cap)와 `oversold_stocks`(date, rank, code, name, price, ma20, deviation, change_pct, trading_value, market_cap, market, display_sector, tags JSONB) 테이블 + 인덱스 + RLS
+- **`backfill_daily_prices.py`**: 1회 실행용. 시총 3000억+ 종목에 대해 야후 chart API (`{code}.KS/.KQ` interval=1d range=2mo)로 최근 40일치 일봉을 받아와 `daily_prices`에 INSERT. crawl.py의 `fetch_naver_market_data`/`is_etf_etn`/`supabase_request` 재사용
+- **`crawl.py` 변경**:
+  - `save_daily_close(krx_data)` — close 모드에서만 호출. 시총 3000억+ 종목의 당일 종가를 `daily_prices`에 누적 저장. 같은 (code, date) PK 충돌 방지를 위해 `DELETE date=eq.TODAY` 선행
+  - `crawl_oversold_stocks(krx_data)` — `daily_prices`에서 최근 60일치를 페이지네이션(1000행씩)으로 로드 → 종목별 최근 20개 종가 평균 계산 → `(price - ma20)/ma20*100 <= -20` 필터 → 거래대금 내림차순 정렬
+  - 상수: `OVERSOLD_MIN_MARKET_CAP=3000억`, `OVERSOLD_THRESHOLD=-20.0`, `OVERSOLD_MA_WINDOW=20`, `OVERSOLD_HISTORY_DAYS=60`
+  - `main()`: `crawl_issue_stocks` 직후(ai_mode=="close"인 경우만) 위 두 함수 호출 → 저장 단계에서 `DELETE date=eq.TODAY` 후 `POST oversold_stocks`
+  - close 모드 cleanup 블록에 `daily_prices` 60일 / `oversold_stocks` 90일 초과 삭제 추가
+- **`index.html` 변경**:
+  - 신규 컴포넌트: `OversoldRow` (랭크 뱃지, 종목명+코드+태그, MA20·거래대금, 현재가·이격률 -X.XX%) / `TabOversold` (검색 input, 거래대금 정렬 리스트, 면책 고지)
+  - `VALID_TABS`에 "oversold" 추가 → URL 해시 동기화 동작
+  - 탭 nav: `이슈종목 / 인기테마 / 주요뉴스 / 과대낙폭 / AI브리핑` 순. 아이콘 `▼` 파란색
+  - `App` 상태에 `ovs` 추가. `fetchData`에 `db("oversold_stocks","order=date.desc,rank.asc&limit=100")` 추가 후 최신 date만 필터링하여 setOvs
+  - 빈 데이터/404일 때 graceful degradation으로 empty state 카드 노출 ("현재 MA20 대비 -20% 이하 종목 없음")
+- **운영 순서**: (1) Supabase에 `setup_oversold.sql` 실행 → (2) `python backfill_daily_prices.py` 1회 실행 (20거래일치 백필 확보) → (3) 다음 close 모드(15:35) 크롤링부터 `oversold_stocks` 자동 채워짐
+- **부하**: close 모드 1회만 동작. INSERT 800~1000행 + GET 16000~20000행(60일×800종목) + 산출 메모리 연산. 폴링 영향 없음
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
 - 테마 순위가 장 마감 후에도 변동됨 (뉴스 갱신 때문)
+- 과대낙폭 탭은 close 모드(15:35) 1회만 갱신됨 (장중에는 전일 데이터 표시)
 
 ## 개발 서버
 - `python -m http.server 8000` (launch.json 설정됨)

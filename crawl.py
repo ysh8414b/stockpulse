@@ -2979,6 +2979,139 @@ def crawl_issue_stocks(krx_data, themes=None, sectors=None, news=None, stock_the
 
 
 # ─────────────────────────────────────────
+# 2-1. 일별 종가 누적 + 과대낙폭 종목 (MA20 이격 -20% 이하)
+# ─────────────────────────────────────────
+OVERSOLD_MIN_MARKET_CAP = 300_000_000_000  # 시총 3000억 원
+OVERSOLD_THRESHOLD = -20.0                  # MA20 대비 -20% 이하
+OVERSOLD_MA_WINDOW = 20                     # 이동평균 일수
+OVERSOLD_HISTORY_DAYS = 60                  # daily_prices 보존 기간
+
+
+def save_daily_close(krx_data):
+    """close 모드에서 시총 3000억+ 종목의 당일 종가를 daily_prices에 누적 저장.
+
+    같은 (code, date)가 이미 있으면 PK 충돌이 나므로 먼저 DELETE 후 INSERT.
+    """
+    if not krx_data:
+        return 0
+
+    rows = []
+    for d in krx_data.values():
+        if d.get("market_cap", 0) < OVERSOLD_MIN_MARKET_CAP:
+            continue
+        if is_etf_etn(d["name"]):
+            continue
+        if d.get("price", 0) <= 0:
+            continue
+        rows.append({
+            "code": d["code"],
+            "date": TODAY,
+            "close": float(d["price"]),
+            "trading_value": int(d.get("trading_value", 0)),
+            "market_cap": int(d.get("market_cap", 0)),
+        })
+
+    if not rows:
+        log("  ⚠️ 저장할 일봉 데이터 없음")
+        return 0
+
+    # 오늘 날짜 데이터 선제거 (재실행 안전)
+    supabase_request("DELETE", "daily_prices", params={"date": f"eq.{TODAY}"})
+    supabase_request("POST", "daily_prices", data=rows)
+    log(f"  📅 일별 종가 {len(rows)}개 종목 저장 ✅")
+    return len(rows)
+
+
+def crawl_oversold_stocks(krx_data):
+    """MA20 대비 -20% 이하 낙폭 종목을 거래대금 순으로 산출.
+
+    1) daily_prices에서 최근 60일치 가져옴 (모든 종목 한 번에)
+    2) 종목별로 최근 20개 종가 평균 계산 → 현재가와 비교
+    3) (price - ma20) / ma20 * 100 <= -20% AND 시총 3000억+ AND 데이터 충분(>=20개)
+    4) 거래대금 내림차순 정렬
+    """
+    log("📉 과대낙폭 종목 산출 시작...")
+
+    # daily_prices에서 최근 60일 데이터 fetch (페이지네이션)
+    cutoff = (datetime.now(timezone(timedelta(hours=9))) - timedelta(days=OVERSOLD_HISTORY_DAYS)).strftime("%Y-%m-%d")
+    all_rows = []
+    page_size = 1000
+    offset = 0
+    while True:
+        params = {
+            "date": f"gte.{cutoff}",
+            "select": "code,date,close",
+            "order": "code,date.desc",
+            "limit": str(page_size),
+            "offset": str(offset),
+        }
+        batch = supabase_request("GET", "daily_prices", params=params)
+        if not batch:
+            break
+        all_rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        offset += page_size
+
+    if not all_rows:
+        log("  ⚠️ daily_prices 데이터 없음 — 백필 필요")
+        return []
+
+    # 종목별 최근 N일 종가 모음
+    by_code = {}
+    for r in all_rows:
+        c = r["code"]
+        by_code.setdefault(c, []).append(float(r["close"]))
+
+    # 후보 필터링 + MA20 계산
+    candidates = []
+    for code, d in krx_data.items():
+        if d.get("market_cap", 0) < OVERSOLD_MIN_MARKET_CAP:
+            continue
+        if is_etf_etn(d["name"]):
+            continue
+        price = d.get("price", 0)
+        if price <= 0:
+            continue
+        closes = by_code.get(code, [])
+        # 오늘 종가는 by_code에 이미 들어있을 수 있음(save_daily_close 후 호출) → MA20 모집단으로 그대로 사용
+        if len(closes) < OVERSOLD_MA_WINDOW:
+            continue
+        ma20 = sum(closes[:OVERSOLD_MA_WINDOW]) / OVERSOLD_MA_WINDOW
+        if ma20 <= 0:
+            continue
+        deviation = (price - ma20) / ma20 * 100.0
+        if deviation <= OVERSOLD_THRESHOLD:
+            candidates.append((d, ma20, deviation))
+
+    # 거래대금 내림차순 정렬
+    candidates.sort(key=lambda x: x[0].get("trading_value", 0), reverse=True)
+
+    result = []
+    for rank_idx, (d, ma20, deviation) in enumerate(candidates, 1):
+        result.append({
+            "date": TODAY,
+            "rank": rank_idx,
+            "code": d["code"],
+            "name": d["name"],
+            "price": float(d["price"]),
+            "ma20": round(ma20, 2),
+            "deviation": round(deviation, 2),
+            "change_pct": float(d.get("change_pct", 0)),
+            "trading_value": int(d.get("trading_value", 0)),
+            "market_cap": int(d.get("market_cap", 0)),
+            "market": d.get("market", ""),
+            "display_sector": d.get("display_sector", ""),
+            "tags": classify_stock_tags(d["name"], d.get("display_sector", "")),
+        })
+
+    log(f"  ✅ 과대낙폭 {len(result)}개 종목 (MA20 대비 -20% 이하, 시총 3000억+)")
+    for s in result[:5]:
+        log(f"     {s['rank']}. {s['name']} {s['deviation']:+.2f}% (현재 {s['price']:,.0f} vs MA20 {s['ma20']:,.0f})")
+    return result
+
+
+# ─────────────────────────────────────────
 # 3. 시장 지수 (Yahoo Finance API)
 # ─────────────────────────────────────────
 def crawl_market_index():
@@ -3550,6 +3683,12 @@ def main():
     # 10. 이슈 종목 (복합 점수 랭킹: 등락률+거래대금+테마+뉴스+섹터)
     stocks = crawl_issue_stocks(krx_data, themes, sectors, news, stock_themes=stock_themes)
 
+    # 10-1. 일별 종가 누적 + 과대낙폭 종목 (close 모드에서만 — 종가 확정)
+    oversold = None
+    if ai_mode == "close":
+        save_daily_close(krx_data)
+        oversold = crawl_oversold_stocks(krx_data)
+
     # 11. AI 시장 브리핑 (Groq) — 하루 3회만 생성 (08:00 해외시장/12:05 장중/15:35 마감)
     # ai_mode는 main() 시작 시점에 미리 결정됨 (크롤링 소요시간 무관)
     ai_summary = None
@@ -3695,6 +3834,15 @@ def main():
         result = supabase_request("POST", "theme_analysis", data=theme_analysis)
         log(f"  🔥 테마 분석 {len(theme_analysis)}개 저장 {'✅' if result else '❌'}")
 
+    # 과대낙폭 종목 저장 (close 모드에서만, 오늘 데이터 교체)
+    if oversold is not None:
+        supabase_request("DELETE", "oversold_stocks", params={"date": f"eq.{TODAY}"})
+        if oversold:
+            result = supabase_request("POST", "oversold_stocks", data=oversold)
+            log(f"  📉 과대낙폭 {len(oversold)}개 저장 {'✅' if result else '❌'}")
+        else:
+            log("  ℹ️ 과대낙폭 종목 없음 — 빈 상태로 갱신")
+
     # 365일 초과 AI 요약 정리 + 90일 초과 종목/테마 분석 정리 (close 모드에서만)
     if ai_mode == "close":
         cutoff_ai = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
@@ -3706,6 +3854,12 @@ def main():
         log(f"  🧹 {cutoff_sa} 이전 종목/테마 분석 정리")
         supabase_request("DELETE", "theme_history", params={"date": f"lt.{cutoff_ai}"})
         log(f"  🧹 {cutoff_ai} 이전 테마 히스토리 정리")
+        # daily_prices 60일 + oversold_stocks 90일 초과 정리
+        cutoff_dp = (datetime.now() - timedelta(days=OVERSOLD_HISTORY_DAYS)).strftime("%Y-%m-%d")
+        supabase_request("DELETE", "daily_prices", params={"date": f"lt.{cutoff_dp}"})
+        cutoff_os = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+        supabase_request("DELETE", "oversold_stocks", params={"date": f"lt.{cutoff_os}"})
+        log(f"  🧹 {cutoff_dp} 이전 일봉 / {cutoff_os} 이전 과대낙폭 정리")
 
     log("")
     log("=" * 50)
