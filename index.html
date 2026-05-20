@@ -767,6 +767,9 @@ function OversoldRow({s,isLast}){
   const tv=parseInt(s.trading_value||0);
   const tvEok=tv/100000000;
   const volStr=tvEok>=10000?`${(tvEok/10000).toFixed(1)}조`:`${Math.round(tvEok).toLocaleString()}억`;
+  const mc=parseInt(s.market_cap||0);
+  const mcEok=mc/100000000;
+  const mcStr=mcEok>=10000?`${(mcEok/10000).toFixed(1)}조`:`${Math.round(mcEok).toLocaleString()}억`;
   const tags=Array.isArray(s.tags)?s.tags:(typeof s.tags==="string"?(()=>{try{return JSON.parse(s.tags)}catch(e){return[]}})():[]);
   return <a href={`https://finance.naver.com/item/main.naver?code=${s.code}`} target="_blank" rel="noopener noreferrer" onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"16px 18px",borderBottom:isLast?"none":"1px solid var(--div)",textDecoration:"none",color:"inherit",cursor:"pointer",background:h?"rgba(59,130,246,0.05)":"transparent",borderRadius:h?"8px":"0",transition:"all .2s ease"}}>
     <div style={{display:"flex",alignItems:"center",gap:"14px",minWidth:0,flex:1}}>
@@ -778,7 +781,7 @@ function OversoldRow({s,isLast}){
           {tags.slice(0,2).map((t,i)=><Tag key={i} color="purple">{t}</Tag>)}
         </div>
         <div style={{color:"var(--muted)",fontSize:"13px",display:"flex",gap:"10px",flexWrap:"wrap"}}>
-          <span>MA20 <span style={{color:"var(--text-sub)",fontVariantNumeric:"tabular-nums"}}>₩{Math.round(s.ma20).toLocaleString()}</span></span>
+          <span>시총 <span style={{color:"var(--text-sub)"}}>{mcStr}</span></span>
           <span style={{color:"var(--dimmer)"}}>·</span>
           <span>거래대금 <span style={{color:"var(--text-sub)"}}>{volStr}</span></span>
         </div>
@@ -789,7 +792,6 @@ function OversoldRow({s,isLast}){
       <div style={{display:"flex",gap:"8px",alignItems:"baseline",justifyContent:"flex-end",marginTop:"2px"}}>
         <span style={{color:cpColor,fontSize:"13px",fontWeight:600}}>{cp>0?"▲":(cp<0?"▼":"─")} {cpStr}</span>
       </div>
-      <div style={{color:"#3b82f6",fontSize:"15px",fontWeight:700,marginTop:"3px"}}>이격 {dev.toFixed(2)}%</div>
     </div>
   </a>;
 }
