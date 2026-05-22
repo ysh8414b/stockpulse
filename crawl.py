@@ -3073,6 +3073,9 @@ def crawl_oversold_stocks(krx_data):
         price = d.get("price", 0)
         if price <= 0:
             continue
+        # 당일 상승 종목 제외 (낙폭 종목 탭이므로 하락/보합만 노출)
+        if d.get("change_pct", 0) > 0:
+            continue
         closes = by_code.get(code, [])
         # 오늘 종가는 by_code에 이미 들어있을 수 있음(save_daily_close 후 호출) → MA20 모집단으로 그대로 사용
         if len(closes) < OVERSOLD_MA_WINDOW:
@@ -3631,6 +3634,12 @@ def main():
     else:
         log(f"  ℹ️ AI 브리핑 없음 (시작 시각 {kst_start.strftime('%H:%M')}, 생성 시간: 08:00/12:05/15:35)")
 
+    # 과대 낙폭 종목 장중 갱신: 평일 15:00~15:19 KST (확정 종가 전 현재 시세 기준)
+    # → close 모드(15:35/16:00)에서 확정 종가로 다시 갱신됨
+    oversold_intraday = (kst_start.weekday() < 5 and kst_start.hour == 15 and kst_start.minute < 20)
+    if oversold_intraday:
+        log(f"  📉 과대 낙폭 장중 갱신 모드 (시작 시각 {kst_start.strftime('%H:%M')})")
+
     if not SUPABASE_KEY:
         log("❌ SUPABASE_KEY 환경변수가 설정되지 않았습니다!")
         log("  export SUPABASE_KEY='your-service-role-key'")
@@ -3683,9 +3692,9 @@ def main():
     # 10. 이슈 종목 (복합 점수 랭킹: 등락률+거래대금+테마+뉴스+섹터)
     stocks = crawl_issue_stocks(krx_data, themes, sectors, news, stock_themes=stock_themes)
 
-    # 10-1. 일별 종가 누적 + 과대 낙폭 종목 (close 모드에서만 — 종가 확정)
+    # 10-1. 일별 종가 누적 + 과대 낙폭 종목 (15:00 장중 + close 모드 15:35/16:00)
     oversold = None
-    if ai_mode == "close":
+    if ai_mode == "close" or oversold_intraday:
         save_daily_close(krx_data)
         oversold = crawl_oversold_stocks(krx_data)
 

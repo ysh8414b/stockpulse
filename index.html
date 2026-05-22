@@ -795,10 +795,33 @@ function OversoldRow({s,isLast}){
     </div>
   </a>;
 }
-function TabOversold({ovs,loading}){
+function ThemeAppearCounts({hist}){
+  if(!hist||!hist.length)return null;
+  const counts={};
+  hist.filter(r=>r.rank<=3).forEach(r=>{counts[r.name]=(counts[r.name]||0)+1});
+  const days=[...new Set(hist.map(r=>r.date))].length;
+  const sorted=Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,12);
+  if(!sorted.length)return null;
+  return <Box hover={false} style={{marginBottom:"16px",padding:"14px 18px"}}>
+    <div style={{fontSize:"13px",fontWeight:600,color:"var(--muted)",marginBottom:"10px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px",flexWrap:"wrap"}}>
+      <span>📊 최근 {days}일 인기 테마 등장 횟수 <span style={{fontWeight:400,color:"var(--dim)"}}>· TOP 3 기준</span></span>
+      <a href="theme_calendar.html" style={{fontSize:"12px",color:"#3b82f6",textDecoration:"none",fontWeight:500}}>테마 캘린더 →</a>
+    </div>
+    <div style={{display:"flex",flexWrap:"wrap",gap:"5px"}}>
+      {sorted.map(([name,cnt],i)=>
+        <a key={name} href={`theme_detail.html?theme=${encodeURIComponent(name)}`} style={{textDecoration:"none",fontSize:"12px",padding:"4px 9px",borderRadius:"5px",background:i<3?"rgba(249,115,22,0.1)":"var(--badge-bg)",color:i<3?"#f97316":"var(--text-sub)",fontWeight:i<3?600:400,display:"inline-flex",alignItems:"center",gap:"4px"}}>
+          {name}<span style={{fontWeight:700,color:i<3?"#f97316":"var(--muted)"}}>{cnt}</span>
+        </a>
+      )}
+    </div>
+  </Box>;
+}
+
+function TabOversold({ovs,hist,loading}){
   const[q,setQ]=useState("");
   if(loading)return <Loader/>;
   if(!ovs||!ovs.length)return <div className="fade-up">
+    <ThemeAppearCounts hist={hist}/>
     <div style={{marginBottom:"18px"}}>
       <h2 style={{fontSize:"20px",fontWeight:700}}><span style={{color:"#3b82f6"}}>▼</span> 과대 낙폭 종목</h2>
       <div style={{color:"var(--muted)",fontSize:"14px",marginTop:"4px"}}>단기 과매도 추정 종목 · 장 마감 후 갱신</div>
@@ -807,6 +830,7 @@ function TabOversold({ovs,loading}){
   </div>;
   const f=q?ovs.filter(s=>(s.name||"").includes(q)||(s.code||"").includes(q)):ovs;
   return <div className="fade-up">
+    <ThemeAppearCounts hist={hist}/>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"18px",flexWrap:"wrap",gap:"12px"}}>
       <div>
         <h2 style={{fontSize:"20px",fontWeight:700}}><span style={{color:"#3b82f6"}}>▼</span> 과대 낙폭 종목 <span style={{fontSize:"14px",color:"var(--dim)",fontWeight:400}}>{f.length}종목</span></h2>
@@ -818,7 +842,7 @@ function TabOversold({ovs,loading}){
       <div>{f.map((s,i)=><OversoldRow key={s.code||i} s={s} isLast={i===f.length-1}/>)}</div>
     </Box>
     <div style={{marginTop:"16px",padding:"14px 18px",background:"rgba(59,130,246,0.04)",border:"1px solid rgba(59,130,246,0.1)",borderRadius:"10px",fontSize:"14px",color:"var(--muted)",lineHeight:1.7}}>
-      ℹ️ 과대 낙폭 종목은 장 마감 후(15:35) 하루 1회 갱신됩니다. 장중에는 전일 데이터가 표시됩니다.<br/>
+      ℹ️ 과대 낙폭 종목은 평일 15:00(장중 시세) 및 장 마감 후(15:35/16:00 확정 종가)에 갱신됩니다.<br/>
       투자 추천이 아닌 정보 제공 목적입니다.
     </div>
   </div>;
@@ -1039,6 +1063,7 @@ function App(){
   const[allThm,setAllThm]=useState([]);
   const[aiSum,setAiSum]=useState(null);
   const[ovs,setOvs]=useState([]);
+  const[thmHist,setThmHist]=useState([]);
   const[thmAn,setThmAn]=useState({});const[stkAn,setStkAn]=useState({});
   const[chatOpen,setChatOpen]=useState(false);
   const[lastUp,setLastUp]=useState(null);
@@ -1062,11 +1087,13 @@ function App(){
 
   const fetchData=async(initial)=>{
     if(initial)setLoading(true);
-    const[a,b,c,d,e,f,g,h,ii,jj]=await Promise.all([db("market_index","order=id"),db("issue_stocks","order=rank&limit=15"),db("news","order=created_at.desc&limit=20"),db("sectors","order=id"),db("themes","order=rank&limit=10"),db("ai_summary","order=id.desc&limit=1"),db("all_themes","order=rank"),db("theme_analysis","order=id"),db("stock_analysis","order=id.desc&limit=1"),db("oversold_stocks","order=date.desc,rank.asc&limit=100")]);
+    const histStart=(()=>{const n=new Date();const kst=new Date(n.getTime()+(9*60+n.getTimezoneOffset())*60*1000);kst.setDate(kst.getDate()-30);return kst.toISOString().slice(0,10)})();
+    const[a,b,c,d,e,f,g,h,ii,jj,kk]=await Promise.all([db("market_index","order=id"),db("issue_stocks","order=rank&limit=15"),db("news","order=created_at.desc&limit=20"),db("sectors","order=id"),db("themes","order=rank&limit=10"),db("ai_summary","order=id.desc&limit=1"),db("all_themes","order=rank"),db("theme_analysis","order=id"),db("stock_analysis","order=id.desc&limit=1"),db("oversold_stocks","order=date.desc,rank.asc&limit=100"),db("theme_history",`select=date,name,rank,trend&date=gte.${histStart}&order=date.desc`)]);
     try{
     if(a?.length)setIdx(a);if(b?.length)setStk(b);if(c?.length){setNws(c);setLastUp(c[0].date)}if(d?.length)setSec(d);if(e?.length)setThm(e);if(f?.length)setAiSum(f[0]);if(g?.length)setAllThm(g);if(h?.length){const m={};h.forEach(ta=>{m[ta.theme_name]=ta});setThmAn(m)}
     if(ii?.length){let arr=ii[0].stocks;if(typeof arr==="string"){try{arr=JSON.parse(arr)}catch(e){arr=null}}if(Array.isArray(arr)){const sm={};arr.forEach(sa=>{if(sa&&sa.code)sm[sa.code]=sa});setStkAn(sm)}}
     if(jj?.length){const latest=jj[0].date;setOvs(jj.filter(r=>r.date===latest))}
+    if(kk?.length)setThmHist(kk);
     }catch(e){console.error("data processing error:",e)}
     if(initial)setLoading(false);
   };
@@ -1104,7 +1131,7 @@ function App(){
         {tab==="issues"&&<TabStocks stk={stk} nws={nws} stkAn={stkAn} loading={loading}/>}
         {tab==="themes"&&<TabThemes thm={thm} allThm={allThm} thmAn={thmAn} loading={loading}/>}
         {tab==="news"&&<TabNews nws={nws} loading={loading}/>}
-        {tab==="oversold"&&<TabOversold ovs={ovs} loading={loading}/>}
+        {tab==="oversold"&&<TabOversold ovs={ovs} hist={thmHist} loading={loading}/>}
         {tab==="ai"&&<TabAI aiSum={aiSum} loading={loading}/>}
       </main>
       {chatOpen&&<div className="chat-side-panel" style={{width:380,flexShrink:0,height:"calc(100vh - 200px)",position:"sticky",top:0,animation:"fadeUp .3s ease both"}}><ChatPanel open={chatOpen} onClose={()=>setChatOpen(false)}/></div>}

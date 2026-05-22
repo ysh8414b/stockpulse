@@ -437,11 +437,26 @@
 - **운영 순서**: (1) Supabase에 `setup_oversold.sql` 실행 → (2) `python backfill_daily_prices.py` 1회 실행 (20거래일치 백필 확보) → (3) 다음 close 모드(15:35) 크롤링부터 `oversold_stocks` 자동 채워짐
 - **부하**: close 모드 1회만 동작. INSERT 800~1000행 + GET 16000~20000행(60일×800종목) + 산출 메모리 연산. 폴링 영향 없음
 
+### 과대 낙폭 종목 15:00 장중 갱신 추가 (2026-05-22)
+- 기존: `save_daily_close`/`crawl_oversold_stocks`가 `ai_mode=="close"`(15:35/16:00)에서만 실행 → 장중에는 전일 데이터만 표시
+- 변경: 평일 15:00~15:19 KST 장중에도 현재 시세 기준으로 갱신 추가 (사용자 요청 "3시 업데이트")
+  - `main()`에 `oversold_intraday = (kst_start.weekday() < 5 and kst_start.hour == 15 and kst_start.minute < 20)` 플래그 추가
+  - 트리거 조건: `if ai_mode == "close" or oversold_intraday:` → 15:00 장중 + 15:35/16:00 확정 종가 둘 다 갱신
+  - 15:00 장중에는 미확정 시세를 `daily_prices`에 임시 저장하지만 15:35 close 모드에서 `DELETE date=eq.TODAY` 후 확정 종가로 덮어씀 → 일봉 무결성 유지
+  - cleanup(60일/90일 정리)은 여전히 close 모드에서만 실행 (1일 1회)
+- 한계: GitHub Actions cron 지연 가능성 때문에 15:00 단일 시점이 아닌 15:00~15:19 윈도우로 잡음. 해당 윈도우 내 */5 실행마다 oversold 재계산(중복 GET 발생)되나 마지막 쓰기가 유효
+- **당일 상승 종목 제외 (2026-05-22)**: `crawl_oversold_stocks` 후보 필터에 `if d.get("change_pct", 0) > 0: continue` 추가 → 낙폭 종목 탭이므로 당일 상승 종목은 MA20 대비 -20% 이하라도 노출 안 함 (하락/보합만)
+- **낙폭과대 탭에 테마 등장 횟수 위젯 추가 (2026-05-22)**: index.html `TabOversold` 상단에 최근 30일 인기 테마 등장 횟수 표시 (theme_calendar.html의 월간 등장 횟수와 동일 로직 — rank<=3 카운트)
+  - 신규 컴포넌트 `ThemeAppearCounts({hist})`: hist에서 rank≤3 테마별 카운트 → 내림차순 TOP 12 뱃지, 상위 3개 주황 강조, 각 뱃지 클릭 시 theme_detail.html 이동, "테마 캘린더 →" 링크 포함
+  - `App`에 `thmHist` state 추가, `fetchData` Promise.all에 `db("theme_history", select=date,name,rank,trend&date=gte.{30일전}&order=date.desc)` 추가 → `setThmHist`
+  - `TabOversold`에 `hist` prop 전달, 종목 유무 두 분기 모두 상단에 위젯 렌더링
+  - 안내문도 갱신 시점(15:00 장중 + 15:35/16:00) 반영하도록 수정
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
 - 테마 순위가 장 마감 후에도 변동됨 (뉴스 갱신 때문)
-- 과대 낙폭 탭은 close 모드(15:35) 1회만 갱신됨 (장중에는 전일 데이터 표시)
+- 과대 낙폭 탭은 평일 15:00(장중, 현재 시세 기준) + close 모드(15:35/16:00, 확정 종가)에 갱신됨. 그 외 시간대에는 마지막 갱신 데이터 표시
 
 ## 개발 서버
 - `python -m http.server 8000` (launch.json 설정됨)
