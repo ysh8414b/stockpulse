@@ -452,6 +452,19 @@
   - `TabOversold`에 `hist` prop 전달, 종목 유무 두 분기 모두 상단에 위젯 렌더링
   - 안내문도 갱신 시점(15:00 장중 + 15:35/16:00) 반영하도록 수정
 
+### 과대 낙폭 탭 테마 뱃지 → 사이드 패널 (2026-05-23)
+- 기존: `ThemeAppearCounts` 뱃지 클릭 시 `theme_detail.html?theme=...`로 페이지 이동 → 컨텍스트(낙폭 종목 화면) 끊김
+- 변경: 우측에 sticky 사이드 패널이 열려 iframe으로 `theme_detail.html` 로드 → 본 화면 유지
+- **index.html**:
+  - `App`에 `themePanel` state + `openThemePanel(name)` 핸들러 추가 (호출 시 챗 패널 자동 닫음 — 상호 배타)
+  - 챗 토글도 대칭으로 `themePanel` 자동 닫음
+  - `ThemeAppearCounts({hist,onThemeClick})`: `onThemeClick` prop 추가, 있으면 anchor `onClick`에서 `preventDefault()` 후 콜백 호출 (없으면 기존 네비게이션 fallback — 다른 곳에서 재사용 가능)
+  - `TabOversold`에 `onThemeClick` prop 추가하여 두 분기(빈/정상 데이터) 모두 forward
+  - 패널 헤더: 테마명 + `↗`(새 창) + `✕`(닫기), 바디: `<iframe>` `theme_detail.html?theme=...`
+  - 패널 폭 480px (챗 패널 380px보다 넓음 — 테마 종목 테이블 가독성)
+- **style.css**: `.chat-side-panel` 미디어쿼리에 `.theme-side-panel`도 함께 포함 (max-width 480px, <600px에서 100%)
+- 효과: 낙폭 탭에서 테마 뱃지 클릭 → 화면 분할 형태로 테마 종목 확인 → ✕ 닫고 다시 종목 확인 가능
+
 ### 과대 낙폭 갱신 시각 표시 (2026-05-22)
 - 사용자가 "데이터가 언제 갱신됐는지 알 수 없다"는 불편 제기 → 갱신 날짜+시각 뱃지 추가
 - **setup_oversold.sql**: `oversold_stocks` 테이블에 `generated_time TEXT DEFAULT ''` 컬럼 추가 + `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 마이그레이션 구문 포함 (기존 테이블 안전 적용)
