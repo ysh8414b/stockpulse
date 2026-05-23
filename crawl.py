@@ -3090,6 +3090,7 @@ def crawl_oversold_stocks(krx_data):
     # 거래대금 내림차순 정렬
     candidates.sort(key=lambda x: x[0].get("trading_value", 0), reverse=True)
 
+    gen_time = datetime.now(timezone(timedelta(hours=9))).strftime("%H:%M")
     result = []
     for rank_idx, (d, ma20, deviation) in enumerate(candidates, 1):
         result.append({
@@ -3106,6 +3107,7 @@ def crawl_oversold_stocks(krx_data):
             "market": d.get("market", ""),
             "display_sector": d.get("display_sector", ""),
             "tags": classify_stock_tags(d["name"], d.get("display_sector", "")),
+            "generated_time": gen_time,
         })
 
     log(f"  ✅ 과대 낙폭 {len(result)}개 종목 (MA20 대비 -20% 이하, 시총 3000억+)")

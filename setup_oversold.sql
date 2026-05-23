@@ -44,8 +44,12 @@ CREATE TABLE IF NOT EXISTS oversold_stocks (
     market_cap BIGINT DEFAULT 0,         -- 시가총액 (원)
     market TEXT DEFAULT '',              -- KOSPI / KOSDAQ
     display_sector TEXT DEFAULT '',      -- 디스플레이 섹터
-    tags JSONB DEFAULT '[]'::jsonb       -- 종목 태그 (테마/섹터)
+    tags JSONB DEFAULT '[]'::jsonb,      -- 종목 태그 (테마/섹터)
+    generated_time TEXT DEFAULT ''       -- 산출 시각 (KST, HH:MM)
 );
+
+-- 기존 테이블에 generated_time 컬럼이 없으면 추가 (재실행 안전)
+ALTER TABLE oversold_stocks ADD COLUMN IF NOT EXISTS generated_time TEXT DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_oversold_date_rank ON oversold_stocks(date, rank);
 CREATE INDEX IF NOT EXISTS idx_oversold_date ON oversold_stocks(date);

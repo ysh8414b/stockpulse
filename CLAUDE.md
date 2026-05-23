@@ -452,6 +452,13 @@
   - `TabOversold`에 `hist` prop 전달, 종목 유무 두 분기 모두 상단에 위젯 렌더링
   - 안내문도 갱신 시점(15:00 장중 + 15:35/16:00) 반영하도록 수정
 
+### 과대 낙폭 갱신 시각 표시 (2026-05-22)
+- 사용자가 "데이터가 언제 갱신됐는지 알 수 없다"는 불편 제기 → 갱신 날짜+시각 뱃지 추가
+- **setup_oversold.sql**: `oversold_stocks` 테이블에 `generated_time TEXT DEFAULT ''` 컬럼 추가 + `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 마이그레이션 구문 포함 (기존 테이블 안전 적용)
+- **crawl.py `crawl_oversold_stocks`**: 함수 시작 시점에 `gen_time = datetime.now(KST).strftime("%H:%M")` 한 번 계산 → 모든 결과 행에 `generated_time` 필드 채워서 INSERT (ai_summary와 동일 패턴)
+- **index.html `TabOversold`**: 제목 우측에 `📅 YYYY-MM-DD HH:MM 갱신` 블루 pill 뱃지 표시. `generated_time` 없는 구버전 데이터는 날짜만 표시 (graceful fallback)
+- **운영 메모**: Supabase에 `ALTER TABLE oversold_stocks ADD COLUMN IF NOT EXISTS generated_time TEXT DEFAULT '';` 1회 실행 필요. 다음 크롤링부터 시각 채워짐
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
