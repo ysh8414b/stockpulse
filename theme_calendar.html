@@ -178,21 +178,28 @@ function ThemeCalendar({year,month,data,selectedDate,onSelect}){
       {weeks.flat().map((d,i)=>{
         if(d===null)return <div key={i}/>;
         const dateStr=`${year}-${pad(month+1)}-${pad(d)}`;
-        const dayThemes=dataByDate[dateStr];
-        const hasData=!!dayThemes;
+        const dayThemesRaw=dataByDate[dateStr];
+        const isHoliday=dayThemesRaw&&dayThemesRaw.some(t=>t.name==="__HOLIDAY__");
+        const dayThemes=dayThemesRaw?dayThemesRaw.filter(t=>t.name!=="__HOLIDAY__"):null;
+        const hasThemes=dayThemes&&dayThemes.length>0;
+        const hasData=hasThemes||isHoliday;
+        const clickable=hasThemes;
         const isSelected=selectedDate===dateStr;
         const isToday=dateStr===new Date().toISOString().slice(0,10);
 
-        return <div key={i} className="theme-cal-day" onClick={()=>hasData&&onSelect(dateStr)} style={{
-          cursor:hasData?"pointer":"default",
+        return <div key={i} className="theme-cal-day" onClick={()=>clickable&&onSelect(dateStr)} style={{
+          cursor:clickable?"pointer":"default",
           background:isSelected?"rgba(249,115,22,0.1)":isToday?"rgba(255,255,255,0.03)":"transparent",
           border:isSelected?"1px solid rgba(249,115,22,0.3)":isToday?"1px solid var(--div3)":"1px solid transparent",
           opacity:hasData?1:0.35,minHeight:"78px"
-        }} onMouseEnter={e=>{if(hasData&&!isSelected)e.currentTarget.style.background="rgba(249,115,22,0.05)"}} onMouseLeave={e=>{if(!isSelected)e.currentTarget.style.background=isToday?"rgba(255,255,255,0.03)":"transparent"}}>
+        }} onMouseEnter={e=>{if(clickable&&!isSelected)e.currentTarget.style.background="rgba(249,115,22,0.05)"}} onMouseLeave={e=>{if(!isSelected)e.currentTarget.style.background=isToday?"rgba(255,255,255,0.03)":"transparent"}}>
           <div style={{fontSize:"15px",fontWeight:isToday?700:isSelected?600:400,color:"var(--text)",marginBottom:"4px"}}>{d}</div>
-          {dayThemes&&dayThemes.slice(0,3).map((t,ti)=><div key={ti} className="theme-cal-badge" title={t.name} style={{
-            background:trendBg(t.trend),color:trendClr(t.trend)
-          }}>{t.name}</div>)}
+          {isHoliday?
+            <div className="theme-cal-badge" title="시장 휴장일" style={{background:"rgba(107,114,128,0.15)",color:"#9ca3af",fontWeight:600}}>🏖️ 휴장</div>
+            :dayThemes&&dayThemes.slice(0,3).map((t,ti)=><div key={ti} className="theme-cal-badge" title={t.name} style={{
+              background:trendBg(t.trend),color:trendClr(t.trend)
+            }}>{t.name}</div>)
+          }
         </div>;
       })}
     </div>
@@ -200,7 +207,14 @@ function ThemeCalendar({year,month,data,selectedDate,onSelect}){
 }
 
 function ThemeDayDetail({themes,date,onThemeClick}){
-  if(!themes||themes.length===0)return <Box hover={false} style={{padding:"40px",textAlign:"center"}}>
+  const isHoliday=themes&&themes.some(t=>t.name==="__HOLIDAY__");
+  const realThemes=themes?themes.filter(t=>t.name!=="__HOLIDAY__"):[];
+  if(isHoliday&&realThemes.length===0)return <Box hover={false} style={{padding:"40px",textAlign:"center"}}>
+    <div style={{fontSize:"36px",marginBottom:"12px",opacity:0.5}}>🏖️</div>
+    <div style={{fontWeight:600,color:"var(--muted)",marginBottom:"4px"}}>{date}</div>
+    <div style={{fontSize:"14px",color:"var(--dim)"}}>한국 시장 휴장일입니다</div>
+  </Box>;
+  if(realThemes.length===0)return <Box hover={false} style={{padding:"40px",textAlign:"center"}}>
     <div style={{fontSize:"36px",marginBottom:"12px",opacity:0.4}}>🔥</div>
     <div style={{fontWeight:600,color:"var(--muted)"}}>이 날짜의 테마 데이터가 없습니다</div>
   </Box>;
@@ -208,9 +222,9 @@ function ThemeDayDetail({themes,date,onThemeClick}){
   return <div style={{display:"grid",gap:"10px"}}>
     <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"4px"}}>
       <span style={{width:36,height:36,borderRadius:"10px",background:"rgba(249,115,22,0.12)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"20px"}}>🔥</span>
-      <div><div style={{fontWeight:700,fontSize:"17px"}}>{date} 인기 테마</div><div style={{color:"var(--muted)",fontSize:"13px",marginTop:"2px"}}>TOP {themes.length} 테마</div></div>
+      <div><div style={{fontWeight:700,fontSize:"17px"}}>{date} 인기 테마</div><div style={{color:"var(--muted)",fontSize:"13px",marginTop:"2px"}}>TOP {realThemes.length} 테마</div></div>
     </div>
-    {themes.map((t,i)=>{
+    {realThemes.map((t,i)=>{
       const pctNum=parseFloat(t.change_pct);
       const pctClr=pctNum>0?"#22c55e":pctNum<0?"#ef4444":"#6b7280";
       const stocks=t.leading_stocks?t.leading_stocks.split(", ").slice(0,3):[];
@@ -287,10 +301,11 @@ function App(){
       const deduped=mapped.filter(r=>{const k=r.date+"|"+r.rank;if(seen.has(k))return false;seen.add(k);return true});
       setMonthData(deduped);
       setLoading(false);
-      if(deduped.length>0){
+      // 자동 선택: 실제 테마 있는 날짜 우선 (휴장 마커 제외)
+      const realDates=[...new Set(deduped.filter(r=>r.name!=="__HOLIDAY__").map(r=>r.date))].sort();
+      if(realDates.length>0){
         const now=new Date();const today=toWeekday(now.getFullYear()+"-"+padD(now.getMonth()+1)+"-"+padD(now.getDate()));
-        const dates=[...new Set(deduped.map(r=>r.date))].sort();
-        setSelectedDate(dates.includes(today)?today:dates[dates.length-1]);
+        setSelectedDate(realDates.includes(today)?today:realDates[realDates.length-1]);
       }else{
         setSelectedDate(null);
         setDayThemes(null);
@@ -344,8 +359,8 @@ function App(){
           {/* 월간 테마 등장 횟수 (캘린더 하단) */}
           {monthData&&monthData.length>0&&(()=>{
             const counts={};
-            monthData.filter(r=>r.rank<=3).forEach(r=>{counts[r.name]=(counts[r.name]||0)+1});
-            const totalDays=[...new Set(monthData.map(r=>r.date))].length;
+            monthData.filter(r=>r.name!=="__HOLIDAY__"&&r.rank>=1&&r.rank<=3).forEach(r=>{counts[r.name]=(counts[r.name]||0)+1});
+            const totalDays=[...new Set(monthData.filter(r=>r.name!=="__HOLIDAY__").map(r=>r.date))].length;
             const sorted=Object.entries(counts).sort((a,b)=>b[1]-a[1]);
             return <div style={{marginTop:"16px",paddingTop:"14px",borderTop:"1px solid var(--div)"}}>
               <div style={{fontSize:"12px",fontWeight:600,color:"var(--muted)",marginBottom:"8px",display:"flex",justifyContent:"space-between"}}>

@@ -3660,6 +3660,23 @@ def main():
         log("❌ 시세 데이터 조회 실패 - 크롤링 중단")
         return
 
+    # 휴장일 판별 (평일이지만 한국 시장이 안 열린 날 — 공휴일/임시휴장)
+    # 전종목 상위 200개 중 등락률 0이 아닌 종목이 하나도 없으면 휴장으로 간주
+    is_weekday = kst_start.weekday() < 5
+    is_trading_day = is_weekday and any(
+        abs(s.get("change_pct", 0)) > 0 for s in list(krx_data.values())[:200]
+    )
+    if is_weekday and not is_trading_day:
+        log(f"  🏖️ 평일이지만 한국 시장 휴장일로 판단됨 (전종목 등락률 0)")
+        # 장중/마감 AI 브리핑 + 종목/테마 분석 스킵 (premarket는 해외 시장 요약이라 유지)
+        if ai_mode in ("market", "close"):
+            log(f"     → {ai_mode} AI 브리핑/종목분석/테마분석 스킵")
+            ai_mode = None
+        # 과대 낙폭 장중 갱신 스킵 (확정 종가도 없으므로 daily_prices 누적도 안 함)
+        if oversold_intraday:
+            log(f"     → 과대 낙폭 장중 갱신 스킵")
+            oversold_intraday = False
+
     # 3. 종목코드 매핑 구축 (AI 테마 코드 보정용)
     global KNOWN_STOCK_CODES
     KNOWN_STOCK_CODES = build_stock_code_map(krx_data)
@@ -3786,11 +3803,7 @@ def main():
         log(f"  🔥 테마 {len(themes)}개 저장 {'✅' if result else '❌'}")
 
     # 테마 히스토리 저장 (과거 데이터 보존 — 캘린더용, 주말+공휴일 제외)
-    # 공휴일 판별: 전종목 등락률이 모두 0이면 장이 안 열린 날
-    is_market_open = kst_start.weekday() < 5 and any(
-        abs(s.get("change_pct", 0)) > 0 for s in list(krx_data.values())[:100]
-    ) if krx_data else False
-    if themes and is_market_open:
+    if themes and is_trading_day:
         history_data = []
         for t in themes[:10]:
             # leading_stocks에서 상위 3개만 추출 (저장 용량 절약)
@@ -3807,6 +3820,16 @@ def main():
         supabase_request("DELETE", "theme_history", params={"date": f"eq.{TODAY}"})
         result = supabase_request("POST", "theme_history", data=history_data)
         log(f"  📅 테마 히스토리 {len(history_data)}개 저장 {'✅' if result else '❌'}")
+    elif is_weekday and not is_trading_day:
+        # 휴장일 마커: 캘린더에서 "휴장" 뱃지로 표시 (rank=0, name="__HOLIDAY__")
+        holiday_marker = [{
+            "date": TODAY, "rank": 0, "name": "__HOLIDAY__",
+            "change_pct": "", "trend": "flat", "leading_stocks": "",
+            "up_count": 0, "down_count": 0, "flat_count": 0,
+        }]
+        supabase_request("DELETE", "theme_history", params={"date": f"eq.{TODAY}"})
+        result = supabase_request("POST", "theme_history", data=holiday_marker)
+        log(f"  🏖️ 휴장일 마커 저장 {'✅' if result else '❌'}")
 
     # 전체 테마 저장
     if all_themes_data:
