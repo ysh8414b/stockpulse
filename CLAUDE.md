@@ -490,7 +490,48 @@
   - 재고 탭: 상태별 필터(품절/부족/정상) + 입출고 기록 모달(입고+/출고-/조정±) + 최근 50건 이력 + 이력 삭제 시 재고 자동 재계산
   - 외부 노출 차단: `<meta robots="noindex,nofollow">`, sitemap.xml 미등록
 - **운영 순서**: (1) Supabase SQL 에디터에서 `setup_aps.sql` 실행 → (2) `aps.html` 직접 URL 접근 → (3) 기존 관리자 비밀번호로 로그인 → 즉시 사용
-- **MVP 범위 제외**: 수요예측/MRP/CRP/간트차트/작업지시서/공정 라우팅 (후속 단계)
+- **MVP 범위 제외**: 수요예측/MRP/CRP/작업지시서/공정 라우팅 (후속 단계)
+
+### APS 간트차트 뷰 추가 (2026-06-11)
+- 생산계획 탭 내부에 리스트/간트 토글 추가 (별도 탭 아님, 같은 데이터 두 가지 뷰)
+- **`aps.html` `GanttView` 컴포넌트**:
+  - 28일 윈도우(GANTT_DAYS), 28px 컬럼(GANTT_COL_W), 38px 행(GANTT_ROW_H), 200px sticky 좌측 라벨(GANTT_LABEL_W)
+  - 막대: `start_date → due_date`, `STATUS_PILL` 색상(계획 회색/진행중 시안/완료 초록/취소 빨강)
+  - 좌/우 4px 두꺼운 테두리 = 윈도우 밖으로 연장된 계획
+  - 오늘 빨강 세로선(`opacity:.6`), 헤더에도 빨강 배경 강조
+  - 주말 배경 강조(`rgba(148,163,184,0.06)`), 일요일 빨강/토요일 파랑 라벨
+  - 막대 클릭 → 기존 `PlanForm` 모달로 수정 (state 공유)
+  - 네비게이션: `← 2주 / 오늘 / 2주 →` (앵커는 `오늘-3일`이 기본)
+  - 윈도우 밖 계획은 자동 숨김 + "표시 N/M건" 카운터 표시
+  - 상태 필터(`filter`)는 리스트/간트 양쪽에 공유 적용
+- **`PlansTab`에 `viewMode` state 추가**: `list`(기본) / `gantt` 토글, `.aps-view-toggle` CSS로 segmented 버튼 UI
+- 별도 SQL 변경 없음 (기존 `aps_plans` 데이터 그대로 사용)
+
+### APS v2 — 라인 마스터 + 시간 단위 간트 (2026-06-11)
+- 일 단위 → 시간 단위 전환. 행 구조도 계획별 → **라인별**로 변경 (옵션 A 표준 생산 간트)
+- **`setup_aps_v2.sql`** (신규, setup_aps.sql 위에 추가 실행):
+  - `aps_lines` (라인 마스터: code/name/memo)
+  - `aps_settings` (key/value, 초기값 `work_start_hour=8`, `work_end_hour=17`)
+  - `aps_plans` DROP/CREATE: `start_date/due_date(DATE)` → `start_at/end_at(TIMESTAMPTZ)`, `line_id` 컬럼 추가
+  - `aps_stock_txns.related_plan_id` FK 자동 복구 (CASCADE로 잃어버린 것)
+  - 신규 RPC: `aps_list_lines`/`aps_upsert_line`/`aps_delete_line`, `aps_get_settings`/`aps_set_setting`
+  - `aps_list_plans`/`aps_upsert_plan` 시그니처 교체 (DROP FUNCTION 후 CREATE) — start_at/end_at TIMESTAMPTZ, line_id 추가
+- **`aps.html` 주요 변경**:
+  - 4번째 탭 **🏭 라인** 추가 (LineForm + LinesTab CRUD, 사용 중 라인 삭제 거부)
+  - **SettingsModal**: 근무 시작/종료 시각 (0~24h) 편집
+  - **KST 변환 헬퍼**: `isoToKstInput` / `kstInputToIso` / `isoToKstHourFloat` / `isoToKstDateStr` / `fmtKstDateTime` / `fmtKstTime` — 서버 TIMESTAMPTZ ↔ datetime-local 입력 변환 일관성
+  - **PlanForm**: 라인 picker(미지정 허용) + datetime-local 입력 (KST 표시). 기본값 = 오늘 + 근무 시작 시각
+  - **PlansTab**: viewMode 기본값 `gantt`, 리스트 컬럼에 **라인** 추가, 시작일/납기일 → 시작/종료(시각 포함). 지연 판단도 시간 단위 비교
+  - **GanttView 완전 재작성**:
+    - 행 = 라인 (없으면 가상 "미지정" 라인 자동 추가)
+    - 컬럼 = 1시간 단위, 폭 64px, 범위 = `work_start_hour`~`work_end_hour`
+    - 단일 일자 선택 (이전 날 / 오늘 / 다음 날 / 날짜 picker)
+    - **레인 자동 분할**: 같은 라인 시간 겹침 → greedy lane 할당, 행 높이 = lane 수 × 48px
+    - 근무 외 시간으로 연장된 막대는 좌/우 4px 두꺼운 테두리
+    - 빨강 세로선 = 현재 KST 시각 (오늘 보고 있을 때만)
+    - 막대 클릭 → PlanForm 모달 (재사용)
+    - ⚙ 버튼 → SettingsModal
+- **운영 순서**: Supabase에서 `setup_aps_v2.sql` 실행 1회 → 🏭 라인 탭에서 라인 등록 → 생산계획 추가 시 라인/시간 선택 → 간트 자동 표시
 
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용

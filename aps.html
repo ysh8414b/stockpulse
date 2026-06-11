@@ -49,6 +49,12 @@
     .aps-empty-emoji{font-size:32px;margin-bottom:8px;opacity:.7}
     .aps-err{color:#ef4444;font-size:12px;margin-top:6px}
     .aps-section-title{font-size:14px;font-weight:700;color:var(--text);margin:18px 0 10px}
+    .aps-gantt-bar{cursor:pointer;transition:opacity .15s,transform .15s,box-shadow .15s;overflow:hidden;display:flex;align-items:center;border-radius:4px}
+    .aps-gantt-bar:hover{opacity:.85;transform:translateY(-1px);box-shadow:0 2px 8px rgba(0,0,0,0.25);z-index:3}
+    .aps-view-toggle{display:flex;gap:0;border:1px solid var(--card-bd);border-radius:7px;overflow:hidden}
+    .aps-view-toggle button{padding:6px 12px;border:none;background:var(--card-bg);color:var(--muted);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s}
+    .aps-view-toggle button.on{background:rgba(6,182,212,0.14);color:#06b6d4}
+    .aps-view-toggle button:not(:last-child){border-right:1px solid var(--card-bd)}
     @media(max-width:700px){
       .aps-shell{padding:12px 14px 50px}
       .aps-header{padding:14px 14px}
@@ -106,6 +112,52 @@ function todayStr(){
   const d=new Date();
   const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),da=String(d.getDate()).padStart(2,"0");
   return `${y}-${m}-${da}`;
+}
+
+// ═══ KST 시간 변환 (서버 TIMESTAMPTZ ↔ 브라우저 datetime-local) ═══
+// 모든 시간은 KST(UTC+9) 기준으로 입력/표시. ISO 문자열로 서버 저장.
+const KST_OFFSET_MS=9*3600*1000;
+function isoToKstInput(iso){
+  // "2026-06-12T00:00:00+00:00" → "2026-06-12T09:00" (KST datetime-local 입력값)
+  if(!iso)return"";
+  const d=new Date(iso);
+  if(isNaN(d.getTime()))return"";
+  const kst=new Date(d.getTime()+KST_OFFSET_MS);
+  return kst.toISOString().slice(0,16);
+}
+function kstInputToIso(input){
+  // "2026-06-12T09:00" (KST로 해석) → "2026-06-12T09:00:00+09:00"
+  if(!input)return null;
+  if(input.length===16)return input+":00+09:00";
+  return input+"+09:00";
+}
+function isoToKstDateStr(iso){
+  if(!iso)return"";
+  const d=new Date(iso);
+  return new Date(d.getTime()+KST_OFFSET_MS).toISOString().slice(0,10);
+}
+function isoToKstHourFloat(iso){
+  if(!iso)return 0;
+  const d=new Date(iso);
+  const kst=new Date(d.getTime()+KST_OFFSET_MS);
+  return kst.getUTCHours()+kst.getUTCMinutes()/60+kst.getUTCSeconds()/3600;
+}
+function fmtKstDateTime(iso){
+  if(!iso)return"";
+  const d=new Date(iso);
+  if(isNaN(d.getTime()))return"";
+  const kst=new Date(d.getTime()+KST_OFFSET_MS);
+  const m=String(kst.getUTCMonth()+1).padStart(2,"0");
+  const da=String(kst.getUTCDate()).padStart(2,"0");
+  const h=String(kst.getUTCHours()).padStart(2,"0");
+  const mi=String(kst.getUTCMinutes()).padStart(2,"0");
+  return `${m}/${da} ${h}:${mi}`;
+}
+function fmtKstTime(iso){
+  if(!iso)return"";
+  const d=new Date(iso);
+  const kst=new Date(d.getTime()+KST_OFFSET_MS);
+  return `${String(kst.getUTCHours()).padStart(2,"0")}:${String(kst.getUTCMinutes()).padStart(2,"0")}`;
 }
 
 // ═══ 상수 ═══
@@ -494,6 +546,174 @@ function ItemsTab({adminHash}){
 }
 
 // ═══════════════════════════════════════════
+// 라인 탭
+// ═══════════════════════════════════════════
+function LineForm({adminHash,initial,onSaved,onCancel}){
+  const isEdit=!!initial;
+  const[code,setCode]=useState(initial?.code||"");
+  const[name,setName]=useState(initial?.name||"");
+  const[memo,setMemo]=useState(initial?.memo||"");
+  const[err,setErr]=useState("");
+  const[loading,setLoading]=useState(false);
+
+  const submit=async()=>{
+    if(!code.trim()){setErr("라인 코드를 입력하세요");return}
+    if(!name.trim()){setErr("라인 이름을 입력하세요");return}
+    setLoading(true);setErr("");
+    try{
+      await rpc("aps_upsert_line",{
+        p_admin_hash:adminHash,
+        p_id:isEdit?initial.id:null,
+        p_code:code.trim(),
+        p_name:name.trim(),
+        p_memo:memo.trim()
+      });
+      onSaved();
+    }catch(e){
+      setErr(errMsg(e,{duplicate_code:"이미 존재하는 라인 코드입니다",unauthorized:"인증 실패"}));
+    }
+    setLoading(false);
+  };
+
+  return <div className="aps-modal-bg" onClick={onCancel}>
+    <div className="aps-modal" onClick={e=>e.stopPropagation()}>
+      <div style={{fontWeight:700,fontSize:"16px",marginBottom:"14px"}}>{isEdit?"🏭 라인 수정":"🏭 라인 추가"}</div>
+      <div className="aps-form-grid">
+        <div>
+          <div className="aps-form-label">코드 *</div>
+          <input className="aps-input" value={code} onChange={e=>setCode(e.target.value)} maxLength={20} placeholder="예: L1, A-1"/>
+        </div>
+        <div>
+          <div className="aps-form-label">라인 이름 *</div>
+          <input className="aps-input" value={name} onChange={e=>setName(e.target.value)} maxLength={50} placeholder="예: 1호기, 조립 라인 A"/>
+        </div>
+        <div style={{gridColumn:"1 / -1"}}>
+          <div className="aps-form-label">메모</div>
+          <textarea className="aps-input" value={memo} onChange={e=>setMemo(e.target.value)} maxLength={300} rows={2} style={{resize:"vertical"}}/>
+        </div>
+      </div>
+      {err&&<div className="aps-err">{err}</div>}
+      <div style={{display:"flex",gap:"8px",justifyContent:"flex-end",marginTop:"14px"}}>
+        <button className="aps-btn aps-btn-secondary" onClick={onCancel} disabled={loading}>취소</button>
+        <button className="aps-btn aps-btn-primary" onClick={submit} disabled={loading}>{loading?"저장 중...":(isEdit?"수정":"추가")}</button>
+      </div>
+    </div>
+  </div>;
+}
+
+function LinesTab({adminHash}){
+  const[lines,setLines]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[editing,setEditing]=useState(null);
+  const[showForm,setShowForm]=useState(false);
+
+  const load=useCallback(async()=>{
+    try{
+      const data=await rpc("aps_list_lines",{p_admin_hash:adminHash});
+      setLines(data||[]);
+    }catch(e){console.error(e)}
+    setLoading(false);
+  },[adminHash]);
+  useEffect(()=>{load()},[load]);
+
+  const del=async(l)=>{
+    if(!confirm(`라인 "${l.name}" 을(를) 삭제하시겠습니까?`))return;
+    try{
+      await rpc("aps_delete_line",{p_admin_hash:adminHash,p_id:l.id});
+      load();
+    }catch(e){
+      const m=errMsg(e,{has_plans:"이 라인에 배정된 생산계획이 있어 삭제할 수 없습니다",unauthorized:"인증 실패"});
+      alert(m);
+    }
+  };
+
+  return <div>
+    <div className="aps-toolbar">
+      <div style={{fontSize:13,color:"var(--muted)"}}>생산 라인 마스터 · 총 {lines.length}개</div>
+      <div style={{flex:1}}></div>
+      <button className="aps-btn aps-btn-primary" onClick={()=>{setEditing(null);setShowForm(true)}}>+ 라인 추가</button>
+    </div>
+
+    {loading?<Loader/>:lines.length===0?
+      <Empty emoji="🏭" text="등록된 라인이 없습니다. 우측 상단에서 추가하세요."/>:
+      <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8}}>
+        <table className="aps-table">
+          <thead><tr>
+            <th style={{width:100}}>코드</th>
+            <th>라인 이름</th>
+            <th className="hide-mobile">메모</th>
+            <th className="center" style={{width:140}}>작업</th>
+          </tr></thead>
+          <tbody>
+            {lines.map(l=><tr key={l.id}>
+              <td style={{fontFamily:"monospace",color:"var(--text-sub)"}}>{l.code}</td>
+              <td style={{fontWeight:600}}>{l.name}</td>
+              <td className="hide-mobile" style={{color:"var(--muted)",fontSize:12}}>{l.memo||"-"}</td>
+              <td className="center">
+                <div style={{display:"flex",gap:4,justifyContent:"center"}}>
+                  <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>{setEditing(l);setShowForm(true)}}>수정</button>
+                  <button className="aps-btn aps-btn-danger aps-btn-sm" onClick={()=>del(l)}>삭제</button>
+                </div>
+              </td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+    }
+
+    {showForm&&<LineForm adminHash={adminHash} initial={editing} onCancel={()=>setShowForm(false)} onSaved={()=>{setShowForm(false);load()}}/>}
+  </div>;
+}
+
+// ═══════════════════════════════════════════
+// 설정 모달 (근무시간)
+// ═══════════════════════════════════════════
+function SettingsModal({adminHash,settings,onSaved,onCancel}){
+  const[startH,setStartH]=useState(settings.work_start_hour||"8");
+  const[endH,setEndH]=useState(settings.work_end_hour||"17");
+  const[err,setErr]=useState("");
+  const[loading,setLoading]=useState(false);
+
+  const submit=async()=>{
+    const s=parseInt(startH),e=parseInt(endH);
+    if(isNaN(s)||s<0||s>23){setErr("시작 시각은 0~23 사이여야 합니다");return}
+    if(isNaN(e)||e<1||e>24){setErr("종료 시각은 1~24 사이여야 합니다");return}
+    if(e<=s){setErr("종료 시각은 시작 시각보다 커야 합니다");return}
+    setLoading(true);setErr("");
+    try{
+      await rpc("aps_set_setting",{p_admin_hash:adminHash,p_key:"work_start_hour",p_value:String(s)});
+      await rpc("aps_set_setting",{p_admin_hash:adminHash,p_key:"work_end_hour",p_value:String(e)});
+      onSaved({work_start_hour:String(s),work_end_hour:String(e)});
+    }catch(ex){
+      setErr("저장 실패: "+ex.message);
+    }
+    setLoading(false);
+  };
+
+  return <div className="aps-modal-bg" onClick={onCancel}>
+    <div className="aps-modal" onClick={e=>e.stopPropagation()} style={{maxWidth:420}}>
+      <div style={{fontWeight:700,fontSize:"16px",marginBottom:"14px"}}>⚙️ 근무시간 설정</div>
+      <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>간트차트 시간축 범위 (KST 24시간 기준). 24시간 운영이면 0–24로 설정.</div>
+      <div className="aps-form-grid">
+        <div>
+          <div className="aps-form-label">시작 시각 (시)</div>
+          <input className="aps-input" type="number" min="0" max="23" step="1" value={startH} onChange={e=>setStartH(e.target.value)}/>
+        </div>
+        <div>
+          <div className="aps-form-label">종료 시각 (시)</div>
+          <input className="aps-input" type="number" min="1" max="24" step="1" value={endH} onChange={e=>setEndH(e.target.value)}/>
+        </div>
+      </div>
+      {err&&<div className="aps-err">{err}</div>}
+      <div style={{display:"flex",gap:"8px",justifyContent:"flex-end",marginTop:"14px"}}>
+        <button className="aps-btn aps-btn-secondary" onClick={onCancel} disabled={loading}>취소</button>
+        <button className="aps-btn aps-btn-primary" onClick={submit} disabled={loading}>{loading?"저장 중...":"저장"}</button>
+      </div>
+    </div>
+  </div>;
+}
+
+// ═══════════════════════════════════════════
 // 재고 탭
 // ═══════════════════════════════════════════
 function StockForm({adminHash,items,onSaved,onCancel,initialItem}){
@@ -689,12 +909,16 @@ function InventoryTab({adminHash}){
 // ═══════════════════════════════════════════
 // 생산계획 탭
 // ═══════════════════════════════════════════
-function PlanForm({adminHash,items,initial,onSaved,onCancel}){
+function PlanForm({adminHash,items,lines,settings,initial,onSaved,onCancel}){
   const isEdit=!!initial;
+  const wsh=parseInt(settings?.work_start_hour||"8");
+  const defaultStartInput=`${todayStr()}T${String(wsh).padStart(2,"0")}:00`;
+  const defaultEndInput=`${todayStr()}T${String(Math.min(wsh+1,23)).padStart(2,"0")}:00`;
   const[itemId,setItemId]=useState(initial?.item_id||"");
+  const[lineId,setLineId]=useState(initial?.line_id||"");
   const[qty,setQty]=useState(initial?.qty||"");
-  const[start,setStart]=useState(initial?.start_date||todayStr());
-  const[due,setDue]=useState(initial?.due_date||todayStr());
+  const[startAt,setStartAt]=useState(initial?isoToKstInput(initial.start_at):defaultStartInput);
+  const[endAt,setEndAt]=useState(initial?isoToKstInput(initial.end_at):defaultEndInput);
   const[status,setStatus]=useState(initial?.status||"planned");
   const[memo,setMemo]=useState(initial?.memo||"");
   const[err,setErr]=useState("");
@@ -704,28 +928,28 @@ function PlanForm({adminHash,items,initial,onSaved,onCancel}){
     if(!itemId){setErr("품목을 선택하세요");return}
     const q=Number(qty);
     if(!q||q<=0){setErr("수량은 0보다 커야 합니다");return}
-    if(!start||!due){setErr("날짜를 입력하세요");return}
-    if(due<start){setErr("납기는 시작일 이후여야 합니다");return}
+    if(!startAt||!endAt){setErr("시작/종료 시각을 입력하세요");return}
+    if(endAt<=startAt){setErr("종료 시각은 시작 시각보다 뒤여야 합니다");return}
     setLoading(true);setErr("");
     try{
       await rpc("aps_upsert_plan",{
         p_admin_hash:adminHash,
         p_id:isEdit?initial.id:null,
         p_item_id:Number(itemId),
+        p_line_id:lineId?Number(lineId):null,
         p_qty:q,
-        p_start_date:start,
-        p_due_date:due,
+        p_start_at:kstInputToIso(startAt),
+        p_end_at:kstInputToIso(endAt),
         p_status:status,
         p_memo:memo.trim()
       });
       onSaved();
     }catch(e){
-      setErr(errMsg(e,{invalid_dates:"납기일이 시작일보다 이전입니다",unauthorized:"인증 실패"}));
+      setErr(errMsg(e,{invalid_times:"종료 시각이 시작 시각 이전입니다",unauthorized:"인증 실패"}));
     }
     setLoading(false);
   };
 
-  // 생산 가능한 품목은 제품/반제품만
   const producible=items.filter(i=>i.type==="product"||i.type==="semi");
 
   return <div className="aps-modal-bg" onClick={onCancel}>
@@ -737,6 +961,13 @@ function PlanForm({adminHash,items,initial,onSaved,onCancel}){
           <select className="aps-select" style={{width:"100%"}} value={itemId} onChange={e=>setItemId(e.target.value)}>
             <option value="">- 제품/반제품 선택 -</option>
             {producible.map(i=><option key={i.id} value={i.id}>[{TYPE_LABEL[i.type]}] {i.code} - {i.name}</option>)}
+          </select>
+        </div>
+        <div style={{gridColumn:"1 / -1"}}>
+          <div className="aps-form-label">라인 {lines.length===0&&<span style={{color:"#f59e0b"}}>(먼저 등록 필요)</span>}</div>
+          <select className="aps-select" style={{width:"100%"}} value={lineId} onChange={e=>setLineId(e.target.value)} disabled={lines.length===0}>
+            <option value="">- 라인 미지정 -</option>
+            {lines.map(l=><option key={l.id} value={l.id}>{l.code} · {l.name}</option>)}
           </select>
         </div>
         <div>
@@ -753,12 +984,12 @@ function PlanForm({adminHash,items,initial,onSaved,onCancel}){
           </select>
         </div>
         <div>
-          <div className="aps-form-label">시작일 *</div>
-          <input className="aps-input" type="date" value={start} onChange={e=>setStart(e.target.value)}/>
+          <div className="aps-form-label">시작 시각 * <span style={{color:"var(--muted)",fontWeight:400}}>(KST)</span></div>
+          <input className="aps-input" type="datetime-local" value={startAt} onChange={e=>setStartAt(e.target.value)}/>
         </div>
         <div>
-          <div className="aps-form-label">납기일 *</div>
-          <input className="aps-input" type="date" value={due} onChange={e=>setDue(e.target.value)}/>
+          <div className="aps-form-label">종료 시각 * <span style={{color:"var(--muted)",fontWeight:400}}>(KST)</span></div>
+          <input className="aps-input" type="datetime-local" value={endAt} onChange={e=>setEndAt(e.target.value)}/>
         </div>
         <div style={{gridColumn:"1 / -1"}}>
           <div className="aps-form-label">메모</div>
@@ -774,21 +1005,228 @@ function PlanForm({adminHash,items,initial,onSaved,onCancel}){
   </div>;
 }
 
+// ═══ 간트차트 뷰 (시간 단위, 라인 행) ═══
+const GANTT_HOUR_W=64;        // 1시간 컬럼 폭
+const GANTT_ROW_H=48;          // 라인 행 높이
+const GANTT_LABEL_W=140;       // 좌측 라인 라벨 폭
+const GANTT_HEADER_H=44;
+const GANTT_LANE_GAP=2;        // 레인 간 간격
+
+function GanttView({plans,lines,settings,onPlanClick,onOpenSettings}){
+  const workStart=parseInt(settings?.work_start_hour||"8");
+  const workEnd=parseInt(settings?.work_end_hour||"17");
+  const hourCount=Math.max(1,workEnd-workStart);
+  const hours=useMemo(()=>{const a=[];for(let i=0;i<hourCount;i++)a.push(workStart+i);return a},[workStart,hourCount]);
+
+  const[dayStr,setDayStr]=useState(()=>todayStr());
+
+  // 선택 일자의 KST 00:00 / 24:00 UTC 시각 계산
+  const dayBounds=useMemo(()=>{
+    // dayStr는 KST 기준 YYYY-MM-DD. KST 00:00 = UTC (전날 15:00)
+    const dayStartIso=dayStr+"T00:00:00+09:00";
+    const dayStartMs=new Date(dayStartIso).getTime();
+    const workStartMs=dayStartMs+workStart*3600*1000;
+    const workEndMs=dayStartMs+workEnd*3600*1000;
+    return{dayStartMs,workStartMs,workEndMs};
+  },[dayStr,workStart,workEnd]);
+
+  // 라인이 없으면 "라인 미지정" 가상 라인 하나 추가
+  const displayLines=useMemo(()=>{
+    const ls=[...lines];
+    const hasUnassigned=plans.some(p=>!p.line_id);
+    if(hasUnassigned||ls.length===0)ls.push({id:null,code:"-",name:"미지정",virtual:true});
+    return ls;
+  },[lines,plans]);
+
+  // 라인별 표시 계획 + 레인 할당
+  const layoutByLine=useMemo(()=>{
+    const{workStartMs,workEndMs}=dayBounds;
+    const result=new Map();
+    for(const line of displayLines){
+      // 이 라인 계획 중 윈도우와 겹치는 것만
+      const linePlans=plans.filter(p=>(p.line_id||null)===(line.id||null)).map(p=>{
+        const ps=new Date(p.start_at).getTime();
+        const pe=new Date(p.end_at).getTime();
+        if(pe<=workStartMs||ps>=workEndMs)return null;
+        const vs=Math.max(ps,workStartMs);
+        const ve=Math.min(pe,workEndMs);
+        const leftHour=(vs-workStartMs)/3600000;          // 0 ~ hourCount
+        const widthHour=(ve-vs)/3600000;
+        return{
+          plan:p,
+          startMs:ps,endMs:pe,
+          leftHour,widthHour,
+          leftEdge:ps<workStartMs,rightEdge:pe>workEndMs,
+          lane:0
+        };
+      }).filter(Boolean);
+
+      // 시작순 정렬 후 레인 할당 (greedy)
+      linePlans.sort((a,b)=>a.startMs-b.startMs);
+      const laneEnds=[]; // 각 레인의 마지막 endMs
+      for(const lp of linePlans){
+        let placed=false;
+        for(let i=0;i<laneEnds.length;i++){
+          if(laneEnds[i]<=lp.startMs){
+            lp.lane=i;laneEnds[i]=lp.endMs;placed=true;break;
+          }
+        }
+        if(!placed){lp.lane=laneEnds.length;laneEnds.push(lp.endMs);}
+      }
+      result.set(line.id===null?"null":line.id,{laneCount:Math.max(1,laneEnds.length),plans:linePlans});
+    }
+    return result;
+  },[plans,displayLines,dayBounds]);
+
+  // 오늘인지 + 현재 시각 라인 위치
+  const nowKst=isoToKstHourFloat(new Date().toISOString());
+  const todayKstDate=isoToKstDateStr(new Date().toISOString());
+  const isViewingToday=dayStr===todayKstDate;
+  const nowLeftHour=nowKst-workStart;
+  const showNowLine=isViewingToday&&nowLeftHour>=0&&nowLeftHour<=hourCount;
+
+  const gridW=hourCount*GANTT_HOUR_W;
+  const totalVisible=Array.from(layoutByLine.values()).reduce((a,v)=>a+v.plans.length,0);
+
+  const shiftDay=(n)=>{
+    const d=new Date(dayStr+"T00:00:00+09:00");
+    d.setUTCDate(d.getUTCDate()+n);
+    setDayStr(d.toISOString().slice(0,10));
+  };
+
+  return <div>
+    <div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center",flexWrap:"wrap"}}>
+      <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>shiftDay(-1)}>← 이전 날</button>
+      <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>setDayStr(todayStr())}>오늘</button>
+      <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>shiftDay(1)}>다음 날 →</button>
+      <input className="aps-input" type="date" value={dayStr} onChange={e=>setDayStr(e.target.value)} style={{width:150,padding:"6px 10px"}}/>
+      <span style={{fontSize:12,color:"var(--muted)",marginLeft:8}}>
+        근무 {String(workStart).padStart(2,"0")}:00 – {String(workEnd).padStart(2,"0")}:00 · 표시 {totalVisible}/{plans.length}건
+      </span>
+      <div style={{flex:1}}></div>
+      <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={onOpenSettings}>⚙ 근무시간</button>
+    </div>
+
+    {plans.length===0?
+      <Empty emoji="📅" text="표시할 생산계획이 없습니다"/>:
+      <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8,background:"var(--bg)"}}>
+        <div style={{display:"flex",minWidth:GANTT_LABEL_W+gridW}}>
+
+          {/* ─── 좌측 라인 라벨 컬럼 ─── */}
+          <div style={{width:GANTT_LABEL_W,flexShrink:0,position:"sticky",left:0,zIndex:2,background:"var(--bg)",borderRight:"1px solid var(--div2)"}}>
+            <div style={{height:GANTT_HEADER_H,padding:"10px 12px",fontSize:12,fontWeight:600,color:"var(--muted)",borderBottom:"1px solid var(--div2)",background:"var(--card-bg)",boxSizing:"border-box"}}>라인</div>
+            {displayLines.map(line=>{
+              const key=line.id===null?"null":line.id;
+              const info=layoutByLine.get(key)||{laneCount:1,plans:[]};
+              const rowH=GANTT_ROW_H*info.laneCount;
+              return <div key={key} style={{height:rowH,padding:"6px 12px",borderBottom:"1px solid var(--div)",boxSizing:"border-box",overflow:"hidden",display:"flex",flexDirection:"column",justifyContent:"center"}}>
+                <div style={{fontWeight:600,fontSize:13,color:line.virtual?"var(--muted)":"var(--text)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{line.name}</div>
+                <div style={{fontSize:10,color:"var(--muted)",fontFamily:"monospace"}}>{line.code}</div>
+                {info.plans.length>0&&<div style={{fontSize:10,color:"var(--dimmer)",marginTop:2}}>{info.plans.length}건</div>}
+              </div>;
+            })}
+          </div>
+
+          {/* ─── 우측 시간 그리드 ─── */}
+          <div style={{position:"relative"}}>
+            {/* 헤더 (시간) */}
+            <div style={{display:"flex",height:GANTT_HEADER_H,borderBottom:"1px solid var(--div2)",background:"var(--card-bg)"}}>
+              {hours.map((h,i)=><div key={i} style={{
+                width:GANTT_HOUR_W,flexShrink:0,
+                borderRight:i===hourCount-1?"none":"1px solid var(--div)",
+                fontSize:11,textAlign:"center",padding:"10px 0",color:"var(--muted)",
+                fontWeight:500,boxSizing:"border-box"
+              }}>
+                {String(h).padStart(2,"0")}:00
+              </div>)}
+            </div>
+
+            {/* 각 라인 행 */}
+            {displayLines.map(line=>{
+              const key=line.id===null?"null":line.id;
+              const info=layoutByLine.get(key)||{laneCount:1,plans:[]};
+              const rowH=GANTT_ROW_H*info.laneCount;
+              const laneH=(GANTT_ROW_H-8)/Math.max(1,info.laneCount);
+              return <div key={key} style={{height:rowH,position:"relative",borderBottom:"1px solid var(--div)",display:"flex"}}>
+                {/* 배경 셀 (시간 그리드) */}
+                {hours.map((h,i)=><div key={i} style={{
+                  width:GANTT_HOUR_W,flexShrink:0,
+                  borderRight:i===hourCount-1?"none":"1px solid var(--div)",
+                  boxSizing:"border-box"
+                }}/>)}
+                {/* 막대 (레인별 스택) */}
+                {info.plans.map(lp=>{
+                  const sp=STATUS_PILL[lp.plan.status]||{};
+                  return <div key={lp.plan.id} className="aps-gantt-bar" onClick={()=>onPlanClick(lp.plan)}
+                    title={`${lp.plan.item_name} · ${fmtKstDateTime(lp.plan.start_at)} ~ ${fmtKstDateTime(lp.plan.end_at)} · ${STATUS_LABEL[lp.plan.status]} · ${fmtNum(lp.plan.qty)}${lp.plan.item_unit}`}
+                    style={{
+                      position:"absolute",
+                      left:lp.leftHour*GANTT_HOUR_W+2,
+                      width:Math.max(lp.widthHour*GANTT_HOUR_W-4,12),
+                      top:4+lp.lane*(laneH+GANTT_LANE_GAP),
+                      height:laneH,
+                      background:sp.bg||"var(--card-bg)",
+                      border:`1px solid ${sp.fg||"var(--card-bd)"}`,
+                      borderLeftWidth:lp.leftEdge?4:1,
+                      borderRightWidth:lp.rightEdge?4:1,
+                      padding:"0 6px",
+                      fontSize:10,fontWeight:600,
+                      color:sp.fg||"var(--text)",
+                      whiteSpace:"nowrap"
+                    }}>
+                    {lp.plan.item_name} · {fmtNum(lp.plan.qty)}{lp.plan.item_unit}
+                  </div>;
+                })}
+              </div>;
+            })}
+
+            {/* 현재 시각 세로 선 */}
+            {showNowLine&&<div style={{
+              position:"absolute",
+              left:nowLeftHour*GANTT_HOUR_W-1,
+              top:0,
+              width:2,
+              height:GANTT_HEADER_H+displayLines.reduce((a,line)=>{
+                const k=line.id===null?"null":line.id;
+                return a+GANTT_ROW_H*((layoutByLine.get(k)?.laneCount)||1);
+              },0),
+              background:"#ef4444",
+              pointerEvents:"none",
+              zIndex:1,
+              opacity:.6
+            }}/>}
+          </div>
+        </div>
+      </div>
+    }
+    <div style={{fontSize:11,color:"var(--dimmer)",marginTop:8,lineHeight:1.5}}>
+      ※ 막대 클릭 → 수정 · 좌우 두꺼운 테두리 = 근무 외 시간으로 연장 · 빨강 세로선 = 현재 시각 · 같은 라인 시간 겹침은 레인 자동 분할
+    </div>
+  </div>;
+}
+
 function PlansTab({adminHash}){
   const[plans,setPlans]=useState([]);
   const[items,setItems]=useState([]);
+  const[lines,setLines]=useState([]);
+  const[settings,setSettings]=useState({work_start_hour:"8",work_end_hour:"17"});
   const[loading,setLoading]=useState(true);
   const[filter,setFilter]=useState("all");
   const[editing,setEditing]=useState(null);
   const[showForm,setShowForm]=useState(false);
+  const[showSettings,setShowSettings]=useState(false);
+  const[viewMode,setViewMode]=useState("gantt");
 
   const load=useCallback(async()=>{
     try{
-      const[plD,itD]=await Promise.all([
+      const[plD,itD,lnD,stD]=await Promise.all([
         rpc("aps_list_plans",{p_admin_hash:adminHash,p_status:null}),
-        rpc("aps_list_items",{p_admin_hash:adminHash})
+        rpc("aps_list_items",{p_admin_hash:adminHash}),
+        rpc("aps_list_lines",{p_admin_hash:adminHash}),
+        rpc("aps_get_settings",{p_admin_hash:adminHash})
       ]);
-      setPlans(plD||[]);setItems(itD||[]);
+      setPlans(plD||[]);setItems(itD||[]);setLines(lnD||[]);
+      if(stD&&typeof stD==="object")setSettings(s=>({...s,...stD}));
     }catch(e){console.error(e)}
     setLoading(false);
   },[adminHash]);
@@ -808,8 +1246,8 @@ function PlansTab({adminHash}){
     try{
       await rpc("aps_upsert_plan",{
         p_admin_hash:adminHash,p_id:p.id,
-        p_item_id:p.item_id,p_qty:p.qty,
-        p_start_date:p.start_date,p_due_date:p.due_date,
+        p_item_id:p.item_id,p_line_id:p.line_id,p_qty:p.qty,
+        p_start_at:p.start_at,p_end_at:p.end_at,
         p_status:newStatus,p_memo:p.memo||""
       });
       load();
@@ -824,7 +1262,7 @@ function PlansTab({adminHash}){
     }catch(e){alert("삭제 실패: "+e.message)}
   };
 
-  const today=todayStr();
+  const nowMs=Date.now();
 
   return <div>
     <div className="aps-toolbar">
@@ -836,25 +1274,35 @@ function PlansTab({adminHash}){
         <button className={filter==="canceled"?"on":""} onClick={()=>setFilter("canceled")}>취소 {counts.canceled}</button>
       </div>
       <div style={{flex:1}}></div>
+      <div className="aps-view-toggle">
+        <button className={viewMode==="list"?"on":""} onClick={()=>setViewMode("list")}>📋 리스트</button>
+        <button className={viewMode==="gantt"?"on":""} onClick={()=>setViewMode("gantt")}>📊 간트</button>
+      </div>
       <button className="aps-btn aps-btn-primary" onClick={()=>{setEditing(null);setShowForm(true)}} disabled={items.filter(i=>i.type!=="material").length===0}>+ 생산계획 추가</button>
     </div>
 
-    {loading?<Loader/>:filtered.length===0?
+    {loading?<Loader/>:viewMode==="gantt"?
+      <GanttView plans={filtered} lines={lines} settings={settings}
+        onPlanClick={p=>{setEditing(p);setShowForm(true)}}
+        onOpenSettings={()=>setShowSettings(true)}/>:
+      filtered.length===0?
       <Empty emoji="📅" text={plans.length===0?"생산계획이 없습니다. 우측 상단에서 추가하세요.":"해당 상태의 계획이 없습니다"}/>:
       <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8}}>
         <table className="aps-table">
           <thead><tr>
             <th className="center" style={{width:50}}>#</th>
             <th>품목</th>
-            <th className="right" style={{width:100}}>수량</th>
-            <th className="center hide-mobile" style={{width:100}}>시작일</th>
-            <th className="center" style={{width:100}}>납기일</th>
-            <th className="center" style={{width:80}}>상태</th>
-            <th className="center" style={{width:200}}>작업</th>
+            <th className="hide-mobile" style={{width:110}}>라인</th>
+            <th className="right" style={{width:90}}>수량</th>
+            <th className="center hide-mobile" style={{width:130}}>시작</th>
+            <th className="center" style={{width:130}}>종료</th>
+            <th className="center" style={{width:70}}>상태</th>
+            <th className="center" style={{width:180}}>작업</th>
           </tr></thead>
           <tbody>
             {filtered.map(p=>{
-              const overdue=p.status!=="done"&&p.status!=="canceled"&&p.due_date<today;
+              const endMs=p.end_at?new Date(p.end_at).getTime():0;
+              const overdue=p.status!=="done"&&p.status!=="canceled"&&endMs>0&&endMs<nowMs;
               return <tr key={p.id}>
                 <td className="center" style={{color:"var(--muted)",fontSize:"12px"}}>{p.id}</td>
                 <td>
@@ -862,10 +1310,13 @@ function PlansTab({adminHash}){
                   <div style={{fontSize:"11px",color:"var(--muted)"}}>{p.item_code}</div>
                   {p.memo&&<div style={{fontSize:"11px",color:"var(--dimmer)",marginTop:2}}>{p.memo}</div>}
                 </td>
+                <td className="hide-mobile" style={{fontSize:12}}>
+                  {p.line_name?<><div style={{fontWeight:500}}>{p.line_name}</div><div style={{fontSize:10,color:"var(--muted)",fontFamily:"monospace"}}>{p.line_code}</div></>:<span style={{color:"var(--muted)"}}>미지정</span>}
+                </td>
                 <td className="right" style={{fontWeight:600}}>{fmtNum(p.qty)} <span style={{fontSize:"11px",color:"var(--muted)",fontWeight:400}}>{p.item_unit}</span></td>
-                <td className="center hide-mobile" style={{fontSize:"12px",color:"var(--muted)"}}>{fmtDate(p.start_date)}</td>
+                <td className="center hide-mobile" style={{fontSize:"12px",color:"var(--muted)"}}>{fmtKstDateTime(p.start_at)}</td>
                 <td className="center" style={{fontSize:"12px",color:overdue?"#ef4444":"var(--muted)",fontWeight:overdue?700:400}}>
-                  {fmtDate(p.due_date)}{overdue&&<div style={{fontSize:"10px"}}>지연</div>}
+                  {fmtKstDateTime(p.end_at)}{overdue&&<div style={{fontSize:"10px"}}>지연</div>}
                 </td>
                 <td className="center"><Pill map={STATUS_PILL} k={p.status} label={STATUS_LABEL[p.status]}/></td>
                 <td className="center">
@@ -883,14 +1334,15 @@ function PlansTab({adminHash}){
       </div>
     }
 
-    {showForm&&<PlanForm adminHash={adminHash} items={items} initial={editing} onCancel={()=>setShowForm(false)} onSaved={()=>{setShowForm(false);load()}}/>}
+    {showForm&&<PlanForm adminHash={adminHash} items={items} lines={lines} settings={settings} initial={editing} onCancel={()=>setShowForm(false)} onSaved={()=>{setShowForm(false);load()}}/>}
+    {showSettings&&<SettingsModal adminHash={adminHash} settings={settings} onCancel={()=>setShowSettings(false)} onSaved={(s)=>{setSettings(prev=>({...prev,...s}));setShowSettings(false)}}/>}
   </div>;
 }
 
 // ═══════════════════════════════════════════
 // App (탭 네비게이션 + 로그인 게이트)
 // ═══════════════════════════════════════════
-const VALID_TABS=["items","inventory","plans"];
+const VALID_TABS=["items","lines","plans","inventory"];
 function getTabFromHash(){
   const h=(window.location.hash||"").replace(/^#/,"");
   return VALID_TABS.includes(h)?h:"items";
@@ -962,10 +1414,12 @@ function App(){
       {checking?<Loader/>:!loggedIn?<LoginScreen onLogin={handleLogin}/>:<>
         <div className="aps-tabs">
           <button className={"aps-tab"+(tab==="items"?" active":"")} onClick={()=>setTab("items")}>📦 품목 / BOM</button>
+          <button className={"aps-tab"+(tab==="lines"?" active":"")} onClick={()=>setTab("lines")}>🏭 라인</button>
           <button className={"aps-tab"+(tab==="plans"?" active":"")} onClick={()=>setTab("plans")}>📅 생산계획</button>
           <button className={"aps-tab"+(tab==="inventory"?" active":"")} onClick={()=>setTab("inventory")}>📊 재고</button>
         </div>
         {tab==="items"&&<ItemsTab adminHash={adminHash}/>}
+        {tab==="lines"&&<LinesTab adminHash={adminHash}/>}
         {tab==="plans"&&<PlansTab adminHash={adminHash}/>}
         {tab==="inventory"&&<InventoryTab adminHash={adminHash}/>}
       </>}
