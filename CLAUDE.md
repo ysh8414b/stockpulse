@@ -472,6 +472,26 @@
 - **index.html `TabOversold`**: 제목 우측에 `📅 YYYY-MM-DD HH:MM 갱신` 블루 pill 뱃지 표시. `generated_time` 없는 구버전 데이터는 날짜만 표시 (graceful fallback)
 - **운영 메모**: Supabase에 `ALTER TABLE oversold_stocks ADD COLUMN IF NOT EXISTS generated_time TEXT DEFAULT '';` 1회 실행 필요. 다음 크롤링부터 시각 채워짐
 
+### APS 생산계획 시스템 (2026-06-11)
+- 사이트 본 기능과 무관한 별도 도메인. 관리자 페이지(admin.html)의 동일 인증을 빌려 쓰는 관리자 전용 모듈
+- **`setup_aps.sql`** (1회 실행): 테이블 4개 + VIEW 1개 + 인증 헬퍼 + CRUD RPC 14개
+  - `aps_items` (품목 마스터: 제품/반제품/원자재 + 단위/안전재고/리드타임)
+  - `aps_bom` (자재명세서: parent → child + qty + loss_rate, 자기참조 CHECK)
+  - `aps_plans` (생산계획: item / qty / start_date / due_date / status[planned·in_progress·done·canceled])
+  - `aps_stock_txns` (입출고 트랜잭션: 부호 포함 qty, type[in/out/adjust], 선택적 plan 연결)
+  - `aps_inventory_view` (`SUM(qty)` 기반 현재 재고 + 안전재고 대비 status[out/low/ok])
+  - 모든 테이블 RLS ENABLE + 정책 없음 → REST 직접 접근 차단, `aps_assert_admin(hash)` 첫 줄 검증하는 SECURITY DEFINER RPC로만 접근
+  - 인증은 기존 `board_admins.password_hash` 그대로 검증 (별도 계정 불필요)
+- **`aps.html`** (신규): React 18 SPA, 1100px 폭 데스크탑 최적화
+  - 로그인: admin.html의 `admin_login` RPC + `sessionStorage("sp-admin-hash")` 재사용 (한 번 로그인하면 admin.html과 양쪽 호환)
+  - 탭 3개: 📦 품목/BOM, 📅 생산계획, 📊 재고 (URL 해시 동기화)
+  - 품목 탭: 구분/검색 필터 + CRUD 모달 + BOM 편집 모달(자식품목 추가/소요량·로스율 인라인 편집/삭제)
+  - 생산계획 탭: 상태별 필터 + CRUD + 빠른 상태 전환(▶시작/✓완료) + 납기 초과 빨강 강조
+  - 재고 탭: 상태별 필터(품절/부족/정상) + 입출고 기록 모달(입고+/출고-/조정±) + 최근 50건 이력 + 이력 삭제 시 재고 자동 재계산
+  - 외부 노출 차단: `<meta robots="noindex,nofollow">`, sitemap.xml 미등록
+- **운영 순서**: (1) Supabase SQL 에디터에서 `setup_aps.sql` 실행 → (2) `aps.html` 직접 URL 접근 → (3) 기존 관리자 비밀번호로 로그인 → 즉시 사용
+- **MVP 범위 제외**: 수요예측/MRP/CRP/간트차트/작업지시서/공정 라우팅 (후속 단계)
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)

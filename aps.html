@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>APS 생산계획 — STOCKPULSE</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <script src="shared.js"></script>
+  <style>
+    .aps-shell{max-width:1100px;margin:0 auto;padding:20px 32px 60px;box-sizing:border-box}
+    .aps-header{display:flex;align-items:center;justify-content:space-between;padding:20px 32px;max-width:1100px;margin:0 auto;box-sizing:border-box}
+    .aps-tabs{display:flex;gap:4px;border-bottom:1px solid var(--div2);margin-bottom:20px;overflow-x:auto}
+    .aps-tab{padding:10px 18px;border:none;background:none;color:var(--muted);font-size:14px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;font-family:inherit;white-space:nowrap;transition:color .15s,border-color .15s}
+    .aps-tab:hover{color:var(--text)}
+    .aps-tab.active{color:var(--text);border-bottom-color:#06b6d4}
+    .aps-table{width:100%;border-collapse:collapse;font-size:13px}
+    .aps-table th{text-align:left;padding:9px 10px;font-size:12px;font-weight:600;color:var(--muted);border-bottom:1px solid var(--div2);background:var(--card-bg)}
+    .aps-table td{padding:10px;border-bottom:1px solid var(--div);vertical-align:middle}
+    .aps-table tr:hover td{background:var(--hover)}
+    .aps-table th.right,.aps-table td.right{text-align:right}
+    .aps-table th.center,.aps-table td.center{text-align:center}
+    .aps-input{width:100%;padding:8px 12px;border-radius:7px;border:1px solid var(--inp-bd);background:var(--inp-bg);color:var(--text);font-size:13px;outline:none;font-family:inherit;box-sizing:border-box;transition:border-color .15s}
+    .aps-input:focus{border-color:rgba(6,182,212,0.4)}
+    .aps-select{padding:8px 12px;border-radius:7px;border:1px solid var(--inp-bd);background:var(--inp-bg);color:var(--text);font-size:13px;outline:none;font-family:inherit;cursor:pointer;box-sizing:border-box}
+    .aps-btn{padding:8px 16px;border-radius:7px;border:none;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s}
+    .aps-btn-primary{background:linear-gradient(135deg,#06b6d4,#8b5cf6);color:#fff}
+    .aps-btn-primary:hover{opacity:.9;transform:translateY(-1px)}
+    .aps-btn-secondary{background:var(--card-bg);border:1px solid var(--card-bd);color:var(--text)}
+    .aps-btn-secondary:hover{background:var(--card-hbg);border-color:var(--card-hbd)}
+    .aps-btn-danger{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#ef4444}
+    .aps-btn-danger:hover{background:rgba(239,68,68,0.2)}
+    .aps-btn-sm{padding:5px 10px;font-size:12px}
+    .aps-pill{display:inline-block;padding:2px 9px;border-radius:10px;font-size:11px;font-weight:600;letter-spacing:.02em}
+    .aps-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+    .aps-filter{display:flex;gap:4px;flex-wrap:wrap}
+    .aps-filter button{padding:6px 12px;border-radius:6px;border:1px solid var(--card-bd);background:var(--card-bg);color:var(--muted);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s}
+    .aps-filter button.on{background:rgba(6,182,212,0.12);border-color:rgba(6,182,212,0.4);color:#06b6d4}
+    .aps-form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:10px}
+    .aps-form-label{font-size:12px;color:var(--muted);margin-bottom:4px;font-weight:500}
+    .aps-modal-bg{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px;box-sizing:border-box}
+    .aps-modal{background:var(--bg);border:1px solid var(--card-bd);border-radius:12px;padding:24px;width:100%;max-width:560px;max-height:90vh;overflow:auto;box-sizing:border-box}
+    .aps-modal-lg{max-width:760px}
+    .aps-empty{padding:50px 20px;text-align:center;color:var(--muted);font-size:13px}
+    .aps-empty-emoji{font-size:32px;margin-bottom:8px;opacity:.7}
+    .aps-err{color:#ef4444;font-size:12px;margin-top:6px}
+    .aps-section-title{font-size:14px;font-weight:700;color:var(--text);margin:18px 0 10px}
+    @media(max-width:700px){
+      .aps-shell{padding:12px 14px 50px}
+      .aps-header{padding:14px 14px}
+      .aps-table{font-size:12px}
+      .aps-table th,.aps-table td{padding:7px 6px}
+      .aps-table .hide-mobile{display:none}
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useEffect,useCallback,useMemo,useRef}=React;
+
+// ═══ Helpers ═══
+async function hashPassword(pw){
+  const enc=new TextEncoder().encode(pw);
+  const buf=await crypto.subtle.digest("SHA-256",enc);
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+async function rpc(name,body){
+  const r=await fetch(SB_URL+"/rest/v1/rpc/"+name,{
+    method:"POST",
+    headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},
+    body:JSON.stringify(body||{})
+  });
+  if(!r.ok){
+    let msg="";
+    try{const t=await r.text();msg=t}catch(e){msg=String(r.status)}
+    throw new Error(msg||String(r.status));
+  }
+  const txt=await r.text();
+  if(!txt)return null;
+  try{return JSON.parse(txt)}catch(e){return txt}
+}
+function errMsg(e,map){
+  const s=String(e?.message||e||"");
+  for(const k in map){if(s.includes(k))return map[k]}
+  return "오류: "+s.slice(0,80);
+}
+function fmtDate(s){
+  if(!s)return "";
+  try{const d=new Date(s);return d.toLocaleDateString("ko-KR",{year:"numeric",month:"2-digit",day:"2-digit"}).replace(/\.\s?/g,"-").replace(/-$/,"")}catch(e){return s}
+}
+function fmtDateTime(s){
+  if(!s)return "";
+  try{const d=new Date(s);return d.toLocaleString("ko-KR",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"})}catch(e){return s}
+}
+function fmtNum(n){
+  if(n==null||isNaN(n))return "0";
+  const num=Number(n);
+  return num.toLocaleString("ko-KR",{maximumFractionDigits:3});
+}
+function todayStr(){
+  const d=new Date();
+  const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),da=String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${da}`;
+}
+
+// ═══ 상수 ═══
+const TYPE_LABEL={product:"제품",semi:"반제품",material:"원자재"};
+const TYPE_PILL={
+  product:{bg:"rgba(34,197,94,0.12)",fg:"#22c55e"},
+  semi:{bg:"rgba(139,92,246,0.12)",fg:"#8b5cf6"},
+  material:{bg:"rgba(6,182,212,0.12)",fg:"#06b6d4"}
+};
+const STATUS_LABEL={planned:"계획",in_progress:"진행중",done:"완료",canceled:"취소"};
+const STATUS_PILL={
+  planned:{bg:"rgba(148,163,184,0.18)",fg:"#94a3b8"},
+  in_progress:{bg:"rgba(6,182,212,0.14)",fg:"#06b6d4"},
+  done:{bg:"rgba(34,197,94,0.14)",fg:"#22c55e"},
+  canceled:{bg:"rgba(239,68,68,0.14)",fg:"#ef4444"}
+};
+const TXN_LABEL={in:"입고",out:"출고",adjust:"조정"};
+const TXN_PILL={
+  in:{bg:"rgba(34,197,94,0.12)",fg:"#22c55e"},
+  out:{bg:"rgba(239,68,68,0.12)",fg:"#ef4444"},
+  adjust:{bg:"rgba(245,158,11,0.12)",fg:"#f59e0b"}
+};
+const STOCK_PILL={
+  out:{bg:"rgba(239,68,68,0.14)",fg:"#ef4444",label:"품절"},
+  low:{bg:"rgba(245,158,11,0.14)",fg:"#f59e0b",label:"부족"},
+  ok:{bg:"rgba(34,197,94,0.12)",fg:"#22c55e",label:"정상"}
+};
+
+function Pill({map,k,label}){
+  const m=map[k]||{bg:"var(--card-bg)",fg:"var(--muted)"};
+  return <span className="aps-pill" style={{background:m.bg,color:m.fg}}>{label||m.label||k}</span>;
+}
+function Loader(){
+  return <div style={{textAlign:"center",padding:"60px 0"}}><div className="loader"></div></div>;
+}
+function Empty({emoji,text}){
+  return <div className="aps-empty"><div className="aps-empty-emoji">{emoji||"📭"}</div>{text}</div>;
+}
+
+// ═══ 로그인 화면 ═══
+function LoginScreen({onLogin}){
+  const[pw,setPw]=useState("");
+  const[err,setErr]=useState("");
+  const[loading,setLoading]=useState(false);
+  const[cooldown,setCooldown]=useState(false);
+
+  const submit=async()=>{
+    if(!pw.trim()||pw.trim().length<2){setErr("비밀번호를 입력하세요");return}
+    if(cooldown)return;
+    setLoading(true);setErr("");
+    try{
+      const h=await hashPassword(pw.trim());
+      const data=await rpc("admin_login",{p_hash:h});
+      if(!data){
+        setErr("관리자 비밀번호가 아닙니다");
+        setCooldown(true);
+        setTimeout(()=>setCooldown(false),3000);
+      }else{
+        onLogin(h,data);
+      }
+    }catch(e){setErr("로그인 실패: "+e.message)}
+    setLoading(false);
+  };
+
+  return <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"60vh"}}>
+    <div style={{background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:12,padding:"32px 28px",width:380,maxWidth:"100%"}}>
+      <div style={{textAlign:"center",marginBottom:"20px"}}>
+        <div style={{fontSize:"36px",marginBottom:"8px"}}>🏭</div>
+        <div style={{fontSize:"20px",fontWeight:700}}>APS 관리자 로그인</div>
+        <div style={{fontSize:"12px",color:"var(--muted)",marginTop:"4px"}}>생산계획 시스템 — 관리자 비밀번호로 로그인</div>
+      </div>
+      <input className="aps-input" type="password" placeholder="관리자 비밀번호" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} autoFocus/>
+      {err&&<div className="aps-err">{err}</div>}
+      <button className="aps-btn aps-btn-primary" onClick={submit} disabled={loading||cooldown} style={{width:"100%",marginTop:"14px"}}>{loading?"확인 중...":cooldown?"잠시 후 다시":"로그인"}</button>
+      <div style={{marginTop:"14px",textAlign:"center",fontSize:"12px",color:"var(--dimmer)"}}>관리자 페이지(admin.html)와 동일한 비밀번호 사용</div>
+    </div>
+  </div>;
+}
+
+// ═══════════════════════════════════════════
+// 품목 / BOM 탭
+// ═══════════════════════════════════════════
+function ItemForm({adminHash,initial,onSaved,onCancel}){
+  const isEdit=!!initial;
+  const[code,setCode]=useState(initial?.code||"");
+  const[name,setName]=useState(initial?.name||"");
+  const[type,setType]=useState(initial?.type||"product");
+  const[unit,setUnit]=useState(initial?.unit||"EA");
+  const[spec,setSpec]=useState(initial?.spec||"");
+  const[safety,setSafety]=useState(initial?.safety_stock??0);
+  const[lt,setLt]=useState(initial?.lead_time_days??0);
+  const[memo,setMemo]=useState(initial?.memo||"");
+  const[err,setErr]=useState("");
+  const[loading,setLoading]=useState(false);
+
+  const submit=async()=>{
+    if(!code.trim()){setErr("코드를 입력하세요");return}
+    if(!name.trim()){setErr("품목명을 입력하세요");return}
+    setLoading(true);setErr("");
+    try{
+      await rpc("aps_upsert_item",{
+        p_admin_hash:adminHash,
+        p_id:isEdit?initial.id:null,
+        p_code:code.trim(),
+        p_name:name.trim(),
+        p_type:type,
+        p_unit:unit.trim()||"EA",
+        p_spec:spec.trim(),
+        p_safety_stock:Number(safety)||0,
+        p_lead_time_days:parseInt(lt)||0,
+        p_memo:memo.trim()
+      });
+      onSaved();
+    }catch(e){
+      setErr(errMsg(e,{duplicate_code:"이미 존재하는 코드입니다",unauthorized:"인증 실패"}));
+    }
+    setLoading(false);
+  };
+
+  return <div className="aps-modal-bg" onClick={onCancel}>
+    <div className="aps-modal" onClick={e=>e.stopPropagation()}>
+      <div style={{fontWeight:700,fontSize:"16px",marginBottom:"16px"}}>{isEdit?"품목 수정":"품목 추가"}</div>
+      <div className="aps-form-grid">
+        <div>
+          <div className="aps-form-label">코드 *</div>
+          <input className="aps-input" value={code} onChange={e=>setCode(e.target.value)} maxLength={30} placeholder="예: P001"/>
+        </div>
+        <div>
+          <div className="aps-form-label">구분 *</div>
+          <select className="aps-select" style={{width:"100%"}} value={type} onChange={e=>setType(e.target.value)}>
+            <option value="product">제품</option>
+            <option value="semi">반제품</option>
+            <option value="material">원자재</option>
+          </select>
+        </div>
+        <div style={{gridColumn:"1 / -1"}}>
+          <div className="aps-form-label">품목명 *</div>
+          <input className="aps-input" value={name} onChange={e=>setName(e.target.value)} maxLength={80}/>
+        </div>
+        <div>
+          <div className="aps-form-label">단위</div>
+          <input className="aps-input" value={unit} onChange={e=>setUnit(e.target.value)} maxLength={10} placeholder="EA, KG, M..."/>
+        </div>
+        <div>
+          <div className="aps-form-label">안전재고</div>
+          <input className="aps-input" type="number" value={safety} onChange={e=>setSafety(e.target.value)} step="0.001" min="0"/>
+        </div>
+        <div>
+          <div className="aps-form-label">리드타임(일)</div>
+          <input className="aps-input" type="number" value={lt} onChange={e=>setLt(e.target.value)} step="1" min="0"/>
+        </div>
+        <div style={{gridColumn:"1 / -1"}}>
+          <div className="aps-form-label">규격/사양</div>
+          <input className="aps-input" value={spec} onChange={e=>setSpec(e.target.value)} maxLength={200}/>
+        </div>
+        <div style={{gridColumn:"1 / -1"}}>
+          <div className="aps-form-label">메모</div>
+          <textarea className="aps-input" value={memo} onChange={e=>setMemo(e.target.value)} maxLength={500} rows={2} style={{resize:"vertical"}}/>
+        </div>
+      </div>
+      {err&&<div className="aps-err">{err}</div>}
+      <div style={{display:"flex",gap:"8px",justifyContent:"flex-end",marginTop:"14px"}}>
+        <button className="aps-btn aps-btn-secondary" onClick={onCancel} disabled={loading}>취소</button>
+        <button className="aps-btn aps-btn-primary" onClick={submit} disabled={loading}>{loading?"저장 중...":(isEdit?"수정":"추가")}</button>
+      </div>
+    </div>
+  </div>;
+}
+
+function BomEditor({adminHash,parent,allItems,onClose}){
+  const[rows,setRows]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[childId,setChildId]=useState("");
+  const[qty,setQty]=useState("");
+  const[loss,setLoss]=useState("0");
+  const[err,setErr]=useState("");
+  const[adding,setAdding]=useState(false);
+
+  const load=useCallback(async()=>{
+    setLoading(true);
+    try{
+      const data=await rpc("aps_list_bom",{p_admin_hash:adminHash,p_parent_id:parent.id});
+      setRows(data||[]);
+    }catch(e){console.error(e)}
+    setLoading(false);
+  },[adminHash,parent.id]);
+
+  useEffect(()=>{load()},[load]);
+
+  const candidates=useMemo(()=>allItems.filter(i=>i.id!==parent.id&&!rows.find(r=>r.child_id===i.id)),[allItems,parent.id,rows]);
+
+  const add=async()=>{
+    if(!childId){setErr("자재를 선택하세요");return}
+    const q=Number(qty);
+    if(!q||q<=0){setErr("소요량은 0보다 커야 합니다");return}
+    setAdding(true);setErr("");
+    try{
+      await rpc("aps_upsert_bom",{
+        p_admin_hash:adminHash,p_id:null,
+        p_parent_id:parent.id,p_child_id:Number(childId),
+        p_qty:q,p_loss_rate:Number(loss)||0
+      });
+      setChildId("");setQty("");setLoss("0");
+      load();
+    }catch(e){
+      setErr(errMsg(e,{duplicate_child:"이미 등록된 자재입니다",self_reference:"자기 자신은 등록할 수 없습니다",unauthorized:"인증 실패"}));
+    }
+    setAdding(false);
+  };
+
+  const updateRow=async(r,field,v)=>{
+    try{
+      await rpc("aps_upsert_bom",{
+        p_admin_hash:adminHash,p_id:r.id,
+        p_parent_id:parent.id,p_child_id:r.child_id,
+        p_qty:field==="qty"?Number(v)||0:Number(r.qty),
+        p_loss_rate:field==="loss_rate"?Number(v)||0:Number(r.loss_rate)
+      });
+      load();
+    }catch(e){alert("수정 실패: "+e.message)}
+  };
+
+  const del=async(id)=>{
+    if(!confirm("이 자재를 BOM에서 제거하시겠습니까?"))return;
+    try{
+      await rpc("aps_delete_bom",{p_admin_hash:adminHash,p_id:id});
+      load();
+    }catch(e){alert("삭제 실패: "+e.message)}
+  };
+
+  return <div className="aps-modal-bg" onClick={onClose}>
+    <div className="aps-modal aps-modal-lg" onClick={e=>e.stopPropagation()}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"4px"}}>
+        <div style={{fontWeight:700,fontSize:"16px"}}>📋 BOM 편집</div>
+        <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={onClose}>닫기</button>
+      </div>
+      <div style={{fontSize:"13px",color:"var(--muted)",marginBottom:"14px"}}>
+        <strong style={{color:"var(--text)"}}>{parent.name}</strong> ({parent.code}, {TYPE_LABEL[parent.type]}) 자재명세서
+      </div>
+
+      <div style={{background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:8,padding:"12px",marginBottom:"14px"}}>
+        <div style={{fontSize:"13px",fontWeight:600,marginBottom:"8px"}}>자재 추가</div>
+        <div style={{display:"flex",gap:"6px",flexWrap:"wrap",alignItems:"center"}}>
+          <select className="aps-select" value={childId} onChange={e=>setChildId(e.target.value)} style={{flex:"2 1 180px",minWidth:140}}>
+            <option value="">- 자재 선택 -</option>
+            {candidates.map(i=><option key={i.id} value={i.id}>[{TYPE_LABEL[i.type]}] {i.code} - {i.name}</option>)}
+          </select>
+          <input className="aps-input" type="number" step="0.001" min="0" placeholder="소요량" value={qty} onChange={e=>setQty(e.target.value)} style={{flex:"1 1 90px",minWidth:80}}/>
+          <input className="aps-input" type="number" step="0.1" min="0" max="99" placeholder="로스율%" value={loss} onChange={e=>setLoss(e.target.value)} style={{flex:"1 1 80px",minWidth:80}}/>
+          <button className="aps-btn aps-btn-primary aps-btn-sm" onClick={add} disabled={adding}>{adding?"...":"추가"}</button>
+        </div>
+        {err&&<div className="aps-err">{err}</div>}
+      </div>
+
+      {loading?<Loader/>:rows.length===0?
+        <Empty emoji="📦" text="등록된 자재가 없습니다"/>:
+        <div style={{overflow:"auto"}}><table className="aps-table">
+          <thead><tr>
+            <th>자재</th>
+            <th className="center" style={{width:80}}>구분</th>
+            <th className="right" style={{width:110}}>소요량</th>
+            <th className="right" style={{width:90}}>로스율%</th>
+            <th className="center" style={{width:60}}>삭제</th>
+          </tr></thead>
+          <tbody>
+            {rows.map(r=><tr key={r.id}>
+              <td>
+                <div style={{fontWeight:600}}>{r.child_name}</div>
+                <div style={{fontSize:"11px",color:"var(--muted)"}}>{r.child_code}</div>
+              </td>
+              <td className="center"><Pill map={TYPE_PILL} k={r.child_type} label={TYPE_LABEL[r.child_type]}/></td>
+              <td className="right">
+                <input className="aps-input" type="number" step="0.001" min="0.001" defaultValue={r.qty} onBlur={e=>{const v=Number(e.target.value);if(v&&v!==Number(r.qty))updateRow(r,"qty",v)}} style={{textAlign:"right",padding:"5px 8px"}}/>
+                <span style={{fontSize:"11px",color:"var(--muted)",marginLeft:4}}>{r.child_unit}</span>
+              </td>
+              <td className="right">
+                <input className="aps-input" type="number" step="0.1" min="0" max="99" defaultValue={r.loss_rate} onBlur={e=>{const v=Number(e.target.value);if(v!==Number(r.loss_rate))updateRow(r,"loss_rate",v)}} style={{textAlign:"right",padding:"5px 8px"}}/>
+              </td>
+              <td className="center"><button className="aps-btn aps-btn-danger aps-btn-sm" onClick={()=>del(r.id)}>삭제</button></td>
+            </tr>)}
+          </tbody>
+        </table></div>
+      }
+      <div style={{fontSize:"11px",color:"var(--dimmer)",marginTop:"10px"}}>※ 소요량/로스율은 칸 밖을 클릭하면 자동 저장됩니다</div>
+    </div>
+  </div>;
+}
+
+function ItemsTab({adminHash}){
+  const[items,setItems]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[filter,setFilter]=useState("all");
+  const[query,setQuery]=useState("");
+  const[editing,setEditing]=useState(null);
+  const[showForm,setShowForm]=useState(false);
+  const[bomTarget,setBomTarget]=useState(null);
+
+  const load=useCallback(async()=>{
+    try{
+      const data=await rpc("aps_list_items",{p_admin_hash:adminHash});
+      setItems(data||[]);
+    }catch(e){console.error(e)}
+    setLoading(false);
+  },[adminHash]);
+  useEffect(()=>{load()},[load]);
+
+  const filtered=useMemo(()=>{
+    let arr=items;
+    if(filter!=="all")arr=arr.filter(i=>i.type===filter);
+    const q=query.trim().toLowerCase();
+    if(q)arr=arr.filter(i=>i.code.toLowerCase().includes(q)||i.name.toLowerCase().includes(q));
+    return arr;
+  },[items,filter,query]);
+
+  const del=async(it)=>{
+    if(!confirm(`품목 "${it.name}" 을(를) 삭제하시겠습니까?`))return;
+    try{
+      await rpc("aps_delete_item",{p_admin_hash:adminHash,p_id:it.id});
+      load();
+    }catch(e){
+      const m=errMsg(e,{has_txns:"입출고 이력이 있어 삭제할 수 없습니다",has_plans:"생산계획에 사용 중이라 삭제할 수 없습니다",used_in_bom:"다른 품목의 BOM에 사용 중입니다",unauthorized:"인증 실패"});
+      alert(m);
+    }
+  };
+
+  const counts=useMemo(()=>({
+    all:items.length,
+    product:items.filter(i=>i.type==="product").length,
+    semi:items.filter(i=>i.type==="semi").length,
+    material:items.filter(i=>i.type==="material").length
+  }),[items]);
+
+  return <div>
+    <div className="aps-toolbar">
+      <div className="aps-filter">
+        <button className={filter==="all"?"on":""} onClick={()=>setFilter("all")}>전체 {counts.all}</button>
+        <button className={filter==="product"?"on":""} onClick={()=>setFilter("product")}>제품 {counts.product}</button>
+        <button className={filter==="semi"?"on":""} onClick={()=>setFilter("semi")}>반제품 {counts.semi}</button>
+        <button className={filter==="material"?"on":""} onClick={()=>setFilter("material")}>원자재 {counts.material}</button>
+      </div>
+      <input className="aps-input" placeholder="코드/품목명 검색" value={query} onChange={e=>setQuery(e.target.value)} style={{flex:"1 1 180px",maxWidth:240}}/>
+      <button className="aps-btn aps-btn-primary" onClick={()=>{setEditing(null);setShowForm(true)}}>+ 품목 추가</button>
+    </div>
+
+    {loading?<Loader/>:filtered.length===0?
+      <Empty emoji="📦" text={items.length===0?"등록된 품목이 없습니다. 우측 상단에서 추가하세요.":"검색 결과가 없습니다"}/>:
+      <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8}}>
+        <table className="aps-table">
+          <thead><tr>
+            <th style={{width:100}}>코드</th>
+            <th>품목명</th>
+            <th className="center" style={{width:70}}>구분</th>
+            <th className="center hide-mobile" style={{width:60}}>단위</th>
+            <th className="right hide-mobile" style={{width:90}}>안전재고</th>
+            <th className="right hide-mobile" style={{width:70}}>리드(일)</th>
+            <th className="center" style={{width:170}}>작업</th>
+          </tr></thead>
+          <tbody>
+            {filtered.map(i=><tr key={i.id}>
+              <td style={{fontFamily:"monospace",color:"var(--text-sub)"}}>{i.code}</td>
+              <td>
+                <div style={{fontWeight:600}}>{i.name}</div>
+                {i.spec&&<div style={{fontSize:"11px",color:"var(--muted)"}}>{i.spec}</div>}
+              </td>
+              <td className="center"><Pill map={TYPE_PILL} k={i.type} label={TYPE_LABEL[i.type]}/></td>
+              <td className="center hide-mobile">{i.unit}</td>
+              <td className="right hide-mobile">{fmtNum(i.safety_stock)}</td>
+              <td className="right hide-mobile">{i.lead_time_days}</td>
+              <td className="center">
+                <div style={{display:"flex",gap:4,justifyContent:"center"}}>
+                  {(i.type==="product"||i.type==="semi")&&
+                    <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>setBomTarget(i)}>BOM</button>}
+                  <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>{setEditing(i);setShowForm(true)}}>수정</button>
+                  <button className="aps-btn aps-btn-danger aps-btn-sm" onClick={()=>del(i)}>삭제</button>
+                </div>
+              </td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+    }
+
+    {showForm&&<ItemForm adminHash={adminHash} initial={editing} onCancel={()=>setShowForm(false)} onSaved={()=>{setShowForm(false);load()}}/>}
+    {bomTarget&&<BomEditor adminHash={adminHash} parent={bomTarget} allItems={items} onClose={()=>{setBomTarget(null);load()}}/>}
+  </div>;
+}
+
+// ═══════════════════════════════════════════
+// 재고 탭
+// ═══════════════════════════════════════════
+function StockForm({adminHash,items,onSaved,onCancel,initialItem}){
+  const[itemId,setItemId]=useState(initialItem?.item_id||initialItem?.id||"");
+  const[type,setType]=useState("in");
+  const[qty,setQty]=useState("");
+  const[memo,setMemo]=useState("");
+  const[err,setErr]=useState("");
+  const[loading,setLoading]=useState(false);
+
+  const submit=async()=>{
+    if(!itemId){setErr("품목을 선택하세요");return}
+    const q=Number(qty);
+    if(!q){setErr("수량을 입력하세요");return}
+    if(type!=="adjust"&&q<=0){setErr("입고/출고 수량은 0보다 커야 합니다");return}
+    setLoading(true);setErr("");
+    try{
+      await rpc("aps_record_stock",{
+        p_admin_hash:adminHash,
+        p_item_id:Number(itemId),
+        p_txn_type:type,
+        p_qty:q,
+        p_related_plan_id:null,
+        p_memo:memo.trim()
+      });
+      onSaved();
+    }catch(e){
+      setErr(errMsg(e,{invalid_qty:"수량이 올바르지 않습니다",unauthorized:"인증 실패"}));
+    }
+    setLoading(false);
+  };
+
+  return <div className="aps-modal-bg" onClick={onCancel}>
+    <div className="aps-modal" onClick={e=>e.stopPropagation()}>
+      <div style={{fontWeight:700,fontSize:"16px",marginBottom:"14px"}}>📦 입출고 기록</div>
+      <div className="aps-form-grid">
+        <div style={{gridColumn:"1 / -1"}}>
+          <div className="aps-form-label">품목 *</div>
+          <select className="aps-select" style={{width:"100%"}} value={itemId} onChange={e=>setItemId(e.target.value)}>
+            <option value="">- 품목 선택 -</option>
+            {items.map(i=><option key={i.id} value={i.id}>[{TYPE_LABEL[i.type]}] {i.code} - {i.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <div className="aps-form-label">유형 *</div>
+          <select className="aps-select" style={{width:"100%"}} value={type} onChange={e=>setType(e.target.value)}>
+            <option value="in">입고 (+)</option>
+            <option value="out">출고 (-)</option>
+            <option value="adjust">조정 (±)</option>
+          </select>
+        </div>
+        <div>
+          <div className="aps-form-label">수량 * {type==="adjust"&&<span style={{color:"#f59e0b"}}>(부호 포함)</span>}</div>
+          <input className="aps-input" type="number" step="0.001" value={qty} onChange={e=>setQty(e.target.value)} placeholder={type==="adjust"?"+10 또는 -5":"양수"}/>
+        </div>
+        <div style={{gridColumn:"1 / -1"}}>
+          <div className="aps-form-label">메모</div>
+          <input className="aps-input" value={memo} onChange={e=>setMemo(e.target.value)} maxLength={200} placeholder="입고처/출고처/사유 등"/>
+        </div>
+      </div>
+      {err&&<div className="aps-err">{err}</div>}
+      <div style={{display:"flex",gap:"8px",justifyContent:"flex-end",marginTop:"14px"}}>
+        <button className="aps-btn aps-btn-secondary" onClick={onCancel} disabled={loading}>취소</button>
+        <button className="aps-btn aps-btn-primary" onClick={submit} disabled={loading}>{loading?"기록 중...":"기록"}</button>
+      </div>
+    </div>
+  </div>;
+}
+
+function InventoryTab({adminHash}){
+  const[inv,setInv]=useState([]);
+  const[items,setItems]=useState([]);
+  const[txns,setTxns]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[filter,setFilter]=useState("all"); // all/out/low/ok
+  const[query,setQuery]=useState("");
+  const[showForm,setShowForm]=useState(false);
+
+  const load=useCallback(async()=>{
+    try{
+      const[invD,itD,txnD]=await Promise.all([
+        rpc("aps_list_inventory",{p_admin_hash:adminHash}),
+        rpc("aps_list_items",{p_admin_hash:adminHash}),
+        rpc("aps_list_stock_txns",{p_admin_hash:adminHash,p_item_id:null,p_limit:50})
+      ]);
+      setInv(invD||[]);setItems(itD||[]);setTxns(txnD||[]);
+    }catch(e){console.error(e)}
+    setLoading(false);
+  },[adminHash]);
+  useEffect(()=>{load()},[load]);
+
+  const filtered=useMemo(()=>{
+    let arr=inv;
+    if(filter!=="all")arr=arr.filter(i=>i.stock_status===filter);
+    const q=query.trim().toLowerCase();
+    if(q)arr=arr.filter(i=>i.code.toLowerCase().includes(q)||i.name.toLowerCase().includes(q));
+    return arr;
+  },[inv,filter,query]);
+
+  const counts=useMemo(()=>({
+    all:inv.length,
+    out:inv.filter(i=>i.stock_status==="out").length,
+    low:inv.filter(i=>i.stock_status==="low").length,
+    ok:inv.filter(i=>i.stock_status==="ok").length
+  }),[inv]);
+
+  const delTxn=async(id)=>{
+    if(!confirm("이 입출고 기록을 삭제하시겠습니까?\n재고는 자동으로 재계산됩니다."))return;
+    try{
+      await rpc("aps_delete_stock_txn",{p_admin_hash:adminHash,p_id:id});
+      load();
+    }catch(e){alert("삭제 실패: "+e.message)}
+  };
+
+  return <div>
+    <div className="aps-toolbar">
+      <div className="aps-filter">
+        <button className={filter==="all"?"on":""} onClick={()=>setFilter("all")}>전체 {counts.all}</button>
+        <button className={filter==="out"?"on":""} onClick={()=>setFilter("out")}>품절 {counts.out}</button>
+        <button className={filter==="low"?"on":""} onClick={()=>setFilter("low")}>부족 {counts.low}</button>
+        <button className={filter==="ok"?"on":""} onClick={()=>setFilter("ok")}>정상 {counts.ok}</button>
+      </div>
+      <input className="aps-input" placeholder="코드/품목명 검색" value={query} onChange={e=>setQuery(e.target.value)} style={{flex:"1 1 180px",maxWidth:240}}/>
+      <button className="aps-btn aps-btn-primary" onClick={()=>setShowForm(true)} disabled={items.length===0}>+ 입출고 기록</button>
+    </div>
+
+    {loading?<Loader/>:filtered.length===0?
+      <Empty emoji="📊" text={inv.length===0?"품목을 먼저 등록하세요":"검색 결과가 없습니다"}/>:
+      <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8}}>
+        <table className="aps-table">
+          <thead><tr>
+            <th style={{width:100}}>코드</th>
+            <th>품목명</th>
+            <th className="center" style={{width:70}}>구분</th>
+            <th className="right" style={{width:110}}>현재재고</th>
+            <th className="right hide-mobile" style={{width:100}}>안전재고</th>
+            <th className="right hide-mobile" style={{width:100}}>차이</th>
+            <th className="center" style={{width:70}}>상태</th>
+          </tr></thead>
+          <tbody>
+            {filtered.map(i=><tr key={i.item_id}>
+              <td style={{fontFamily:"monospace",color:"var(--text-sub)"}}>{i.code}</td>
+              <td style={{fontWeight:600}}>{i.name}</td>
+              <td className="center"><Pill map={TYPE_PILL} k={i.type} label={TYPE_LABEL[i.type]}/></td>
+              <td className="right" style={{fontWeight:600,color:i.stock_status==="out"?"#ef4444":i.stock_status==="low"?"#f59e0b":"var(--text)"}}>
+                {fmtNum(i.current_stock)} <span style={{fontSize:"11px",color:"var(--muted)",fontWeight:400}}>{i.unit}</span>
+              </td>
+              <td className="right hide-mobile" style={{color:"var(--muted)"}}>{fmtNum(i.safety_stock)}</td>
+              <td className="right hide-mobile" style={{color:Number(i.stock_diff)<0?"#ef4444":"var(--muted)"}}>{Number(i.stock_diff)>=0?"+":""}{fmtNum(i.stock_diff)}</td>
+              <td className="center"><Pill map={STOCK_PILL} k={i.stock_status}/></td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+    }
+
+    <div className="aps-section-title">📜 최근 입출고 이력 ({txns.length})</div>
+    {txns.length===0?
+      <Empty emoji="📜" text="입출고 기록이 없습니다"/>:
+      <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8}}>
+        <table className="aps-table">
+          <thead><tr>
+            <th style={{width:120}}>일시</th>
+            <th>품목</th>
+            <th className="center" style={{width:60}}>유형</th>
+            <th className="right" style={{width:100}}>수량</th>
+            <th className="hide-mobile">메모</th>
+            <th className="center" style={{width:60}}>삭제</th>
+          </tr></thead>
+          <tbody>
+            {txns.map(t=><tr key={t.id}>
+              <td style={{fontSize:"11px",color:"var(--muted)"}}>{fmtDateTime(t.created_at)}</td>
+              <td>
+                <div style={{fontWeight:600}}>{t.item_name}</div>
+                <div style={{fontSize:"11px",color:"var(--muted)"}}>{t.item_code}</div>
+              </td>
+              <td className="center"><Pill map={TXN_PILL} k={t.txn_type} label={TXN_LABEL[t.txn_type]}/></td>
+              <td className="right" style={{fontWeight:600,color:Number(t.qty)>0?"#22c55e":Number(t.qty)<0?"#ef4444":"var(--text)"}}>
+                {Number(t.qty)>0?"+":""}{fmtNum(t.qty)} <span style={{fontSize:"11px",color:"var(--muted)",fontWeight:400}}>{t.unit}</span>
+              </td>
+              <td className="hide-mobile" style={{color:"var(--muted)",fontSize:"12px"}}>{t.memo||"-"}</td>
+              <td className="center"><button className="aps-btn aps-btn-danger aps-btn-sm" onClick={()=>delTxn(t.id)}>삭제</button></td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+    }
+
+    {showForm&&<StockForm adminHash={adminHash} items={items} onCancel={()=>setShowForm(false)} onSaved={()=>{setShowForm(false);load()}}/>}
+  </div>;
+}
+
+// ═══════════════════════════════════════════
+// 생산계획 탭
+// ═══════════════════════════════════════════
+function PlanForm({adminHash,items,initial,onSaved,onCancel}){
+  const isEdit=!!initial;
+  const[itemId,setItemId]=useState(initial?.item_id||"");
+  const[qty,setQty]=useState(initial?.qty||"");
+  const[start,setStart]=useState(initial?.start_date||todayStr());
+  const[due,setDue]=useState(initial?.due_date||todayStr());
+  const[status,setStatus]=useState(initial?.status||"planned");
+  const[memo,setMemo]=useState(initial?.memo||"");
+  const[err,setErr]=useState("");
+  const[loading,setLoading]=useState(false);
+
+  const submit=async()=>{
+    if(!itemId){setErr("품목을 선택하세요");return}
+    const q=Number(qty);
+    if(!q||q<=0){setErr("수량은 0보다 커야 합니다");return}
+    if(!start||!due){setErr("날짜를 입력하세요");return}
+    if(due<start){setErr("납기는 시작일 이후여야 합니다");return}
+    setLoading(true);setErr("");
+    try{
+      await rpc("aps_upsert_plan",{
+        p_admin_hash:adminHash,
+        p_id:isEdit?initial.id:null,
+        p_item_id:Number(itemId),
+        p_qty:q,
+        p_start_date:start,
+        p_due_date:due,
+        p_status:status,
+        p_memo:memo.trim()
+      });
+      onSaved();
+    }catch(e){
+      setErr(errMsg(e,{invalid_dates:"납기일이 시작일보다 이전입니다",unauthorized:"인증 실패"}));
+    }
+    setLoading(false);
+  };
+
+  // 생산 가능한 품목은 제품/반제품만
+  const producible=items.filter(i=>i.type==="product"||i.type==="semi");
+
+  return <div className="aps-modal-bg" onClick={onCancel}>
+    <div className="aps-modal" onClick={e=>e.stopPropagation()}>
+      <div style={{fontWeight:700,fontSize:"16px",marginBottom:"14px"}}>{isEdit?"📅 생산계획 수정":"📅 생산계획 추가"}</div>
+      <div className="aps-form-grid">
+        <div style={{gridColumn:"1 / -1"}}>
+          <div className="aps-form-label">품목 *</div>
+          <select className="aps-select" style={{width:"100%"}} value={itemId} onChange={e=>setItemId(e.target.value)}>
+            <option value="">- 제품/반제품 선택 -</option>
+            {producible.map(i=><option key={i.id} value={i.id}>[{TYPE_LABEL[i.type]}] {i.code} - {i.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <div className="aps-form-label">수량 *</div>
+          <input className="aps-input" type="number" step="0.001" min="0" value={qty} onChange={e=>setQty(e.target.value)}/>
+        </div>
+        <div>
+          <div className="aps-form-label">상태</div>
+          <select className="aps-select" style={{width:"100%"}} value={status} onChange={e=>setStatus(e.target.value)}>
+            <option value="planned">계획</option>
+            <option value="in_progress">진행중</option>
+            <option value="done">완료</option>
+            <option value="canceled">취소</option>
+          </select>
+        </div>
+        <div>
+          <div className="aps-form-label">시작일 *</div>
+          <input className="aps-input" type="date" value={start} onChange={e=>setStart(e.target.value)}/>
+        </div>
+        <div>
+          <div className="aps-form-label">납기일 *</div>
+          <input className="aps-input" type="date" value={due} onChange={e=>setDue(e.target.value)}/>
+        </div>
+        <div style={{gridColumn:"1 / -1"}}>
+          <div className="aps-form-label">메모</div>
+          <textarea className="aps-input" value={memo} onChange={e=>setMemo(e.target.value)} maxLength={500} rows={2} style={{resize:"vertical"}}/>
+        </div>
+      </div>
+      {err&&<div className="aps-err">{err}</div>}
+      <div style={{display:"flex",gap:"8px",justifyContent:"flex-end",marginTop:"14px"}}>
+        <button className="aps-btn aps-btn-secondary" onClick={onCancel} disabled={loading}>취소</button>
+        <button className="aps-btn aps-btn-primary" onClick={submit} disabled={loading}>{loading?"저장 중...":(isEdit?"수정":"추가")}</button>
+      </div>
+    </div>
+  </div>;
+}
+
+function PlansTab({adminHash}){
+  const[plans,setPlans]=useState([]);
+  const[items,setItems]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[filter,setFilter]=useState("all");
+  const[editing,setEditing]=useState(null);
+  const[showForm,setShowForm]=useState(false);
+
+  const load=useCallback(async()=>{
+    try{
+      const[plD,itD]=await Promise.all([
+        rpc("aps_list_plans",{p_admin_hash:adminHash,p_status:null}),
+        rpc("aps_list_items",{p_admin_hash:adminHash})
+      ]);
+      setPlans(plD||[]);setItems(itD||[]);
+    }catch(e){console.error(e)}
+    setLoading(false);
+  },[adminHash]);
+  useEffect(()=>{load()},[load]);
+
+  const filtered=useMemo(()=>filter==="all"?plans:plans.filter(p=>p.status===filter),[plans,filter]);
+
+  const counts=useMemo(()=>({
+    all:plans.length,
+    planned:plans.filter(p=>p.status==="planned").length,
+    in_progress:plans.filter(p=>p.status==="in_progress").length,
+    done:plans.filter(p=>p.status==="done").length,
+    canceled:plans.filter(p=>p.status==="canceled").length
+  }),[plans]);
+
+  const changeStatus=async(p,newStatus)=>{
+    try{
+      await rpc("aps_upsert_plan",{
+        p_admin_hash:adminHash,p_id:p.id,
+        p_item_id:p.item_id,p_qty:p.qty,
+        p_start_date:p.start_date,p_due_date:p.due_date,
+        p_status:newStatus,p_memo:p.memo||""
+      });
+      load();
+    }catch(e){alert("상태 변경 실패: "+e.message)}
+  };
+
+  const del=async(p)=>{
+    if(!confirm(`생산계획 #${p.id} (${p.item_name}) 을(를) 삭제하시겠습니까?`))return;
+    try{
+      await rpc("aps_delete_plan",{p_admin_hash:adminHash,p_id:p.id});
+      load();
+    }catch(e){alert("삭제 실패: "+e.message)}
+  };
+
+  const today=todayStr();
+
+  return <div>
+    <div className="aps-toolbar">
+      <div className="aps-filter">
+        <button className={filter==="all"?"on":""} onClick={()=>setFilter("all")}>전체 {counts.all}</button>
+        <button className={filter==="planned"?"on":""} onClick={()=>setFilter("planned")}>계획 {counts.planned}</button>
+        <button className={filter==="in_progress"?"on":""} onClick={()=>setFilter("in_progress")}>진행중 {counts.in_progress}</button>
+        <button className={filter==="done"?"on":""} onClick={()=>setFilter("done")}>완료 {counts.done}</button>
+        <button className={filter==="canceled"?"on":""} onClick={()=>setFilter("canceled")}>취소 {counts.canceled}</button>
+      </div>
+      <div style={{flex:1}}></div>
+      <button className="aps-btn aps-btn-primary" onClick={()=>{setEditing(null);setShowForm(true)}} disabled={items.filter(i=>i.type!=="material").length===0}>+ 생산계획 추가</button>
+    </div>
+
+    {loading?<Loader/>:filtered.length===0?
+      <Empty emoji="📅" text={plans.length===0?"생산계획이 없습니다. 우측 상단에서 추가하세요.":"해당 상태의 계획이 없습니다"}/>:
+      <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8}}>
+        <table className="aps-table">
+          <thead><tr>
+            <th className="center" style={{width:50}}>#</th>
+            <th>품목</th>
+            <th className="right" style={{width:100}}>수량</th>
+            <th className="center hide-mobile" style={{width:100}}>시작일</th>
+            <th className="center" style={{width:100}}>납기일</th>
+            <th className="center" style={{width:80}}>상태</th>
+            <th className="center" style={{width:200}}>작업</th>
+          </tr></thead>
+          <tbody>
+            {filtered.map(p=>{
+              const overdue=p.status!=="done"&&p.status!=="canceled"&&p.due_date<today;
+              return <tr key={p.id}>
+                <td className="center" style={{color:"var(--muted)",fontSize:"12px"}}>{p.id}</td>
+                <td>
+                  <div style={{fontWeight:600}}>{p.item_name}</div>
+                  <div style={{fontSize:"11px",color:"var(--muted)"}}>{p.item_code}</div>
+                  {p.memo&&<div style={{fontSize:"11px",color:"var(--dimmer)",marginTop:2}}>{p.memo}</div>}
+                </td>
+                <td className="right" style={{fontWeight:600}}>{fmtNum(p.qty)} <span style={{fontSize:"11px",color:"var(--muted)",fontWeight:400}}>{p.item_unit}</span></td>
+                <td className="center hide-mobile" style={{fontSize:"12px",color:"var(--muted)"}}>{fmtDate(p.start_date)}</td>
+                <td className="center" style={{fontSize:"12px",color:overdue?"#ef4444":"var(--muted)",fontWeight:overdue?700:400}}>
+                  {fmtDate(p.due_date)}{overdue&&<div style={{fontSize:"10px"}}>지연</div>}
+                </td>
+                <td className="center"><Pill map={STATUS_PILL} k={p.status} label={STATUS_LABEL[p.status]}/></td>
+                <td className="center">
+                  <div style={{display:"flex",gap:4,justifyContent:"center",flexWrap:"wrap"}}>
+                    {p.status==="planned"&&<button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>changeStatus(p,"in_progress")}>▶ 시작</button>}
+                    {p.status==="in_progress"&&<button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>changeStatus(p,"done")}>✓ 완료</button>}
+                    <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>{setEditing(p);setShowForm(true)}}>수정</button>
+                    <button className="aps-btn aps-btn-danger aps-btn-sm" onClick={()=>del(p)}>삭제</button>
+                  </div>
+                </td>
+              </tr>;
+            })}
+          </tbody>
+        </table>
+      </div>
+    }
+
+    {showForm&&<PlanForm adminHash={adminHash} items={items} initial={editing} onCancel={()=>setShowForm(false)} onSaved={()=>{setShowForm(false);load()}}/>}
+  </div>;
+}
+
+// ═══════════════════════════════════════════
+// App (탭 네비게이션 + 로그인 게이트)
+// ═══════════════════════════════════════════
+const VALID_TABS=["items","inventory","plans"];
+function getTabFromHash(){
+  const h=(window.location.hash||"").replace(/^#/,"");
+  return VALID_TABS.includes(h)?h:"items";
+}
+
+function App(){
+  const[theme,setTheme]=useState(getStoredTheme());
+  const[adminHash,setAdminHash]=useState(sessionStorage.getItem("sp-admin-hash")||"");
+  const[adminInfo,setAdminInfo]=useState(null);
+  const[checking,setChecking]=useState(!!sessionStorage.getItem("sp-admin-hash"));
+  const[tab,setTab]=useState(getTabFromHash());
+
+  useEffect(()=>{applyTheme(theme)},[theme]);
+  const toggleTheme=()=>{const t=theme==="dark"?"light":"dark";setTheme(t);setStoredTheme(t);applyTheme(t)};
+
+  // URL 해시 ↔ tab 동기화
+  useEffect(()=>{
+    const newHash="#"+tab;
+    if(window.location.hash!==newHash)history.replaceState(null,"",newHash);
+  },[tab]);
+  useEffect(()=>{
+    const fn=()=>setTab(getTabFromHash());
+    window.addEventListener("hashchange",fn);
+    return()=>window.removeEventListener("hashchange",fn);
+  },[]);
+
+  // 세션 복원
+  useEffect(()=>{
+    if(!adminHash){setChecking(false);return}
+    (async()=>{
+      try{
+        const data=await rpc("admin_login",{p_hash:adminHash});
+        if(data){setAdminInfo(data)}
+        else{sessionStorage.removeItem("sp-admin-hash");setAdminHash("")}
+      }catch(e){sessionStorage.removeItem("sp-admin-hash");setAdminHash("")}
+      setChecking(false);
+    })();
+  },[]);
+
+  const handleLogin=(hash,info)=>{
+    sessionStorage.setItem("sp-admin-hash",hash);
+    setAdminHash(hash);setAdminInfo(info);
+  };
+  const handleLogout=()=>{
+    sessionStorage.removeItem("sp-admin-hash");
+    setAdminHash("");setAdminInfo(null);
+  };
+
+  const loggedIn=!!adminHash&&!!adminInfo;
+
+  return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column"}}>
+    <header className="aps-header">
+      <div style={{display:"flex",alignItems:"center",gap:"12px"}}>
+        <a href="index.html" style={{fontSize:"14px",fontWeight:700,color:"var(--text)",textDecoration:"none"}}>← STOCKPULSE</a>
+        <span style={{fontSize:"13px",color:"var(--muted)"}}>|</span>
+        <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
+          <span style={{fontSize:"18px"}}>🏭</span>
+          <span style={{fontWeight:700,fontSize:"15px"}}>APS 생산계획</span>
+        </div>
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
+        {loggedIn&&<span style={{fontSize:"12px",color:"var(--muted)"}}>👤 {adminInfo.nickname}</span>}
+        {loggedIn&&<button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={handleLogout}>로그아웃</button>}
+        <button onClick={toggleTheme} style={{background:"none",border:"none",fontSize:"20px",cursor:"pointer"}}>{theme==="dark"?"☀️":"🌙"}</button>
+      </div>
+    </header>
+
+    <div className="aps-shell" style={{flex:1}}>
+      {checking?<Loader/>:!loggedIn?<LoginScreen onLogin={handleLogin}/>:<>
+        <div className="aps-tabs">
+          <button className={"aps-tab"+(tab==="items"?" active":"")} onClick={()=>setTab("items")}>📦 품목 / BOM</button>
+          <button className={"aps-tab"+(tab==="plans"?" active":"")} onClick={()=>setTab("plans")}>📅 생산계획</button>
+          <button className={"aps-tab"+(tab==="inventory"?" active":"")} onClick={()=>setTab("inventory")}>📊 재고</button>
+        </div>
+        {tab==="items"&&<ItemsTab adminHash={adminHash}/>}
+        {tab==="plans"&&<PlansTab adminHash={adminHash}/>}
+        {tab==="inventory"&&<InventoryTab adminHash={adminHash}/>}
+      </>}
+    </div>
+
+    <footer style={{borderTop:"1px solid var(--div2)",maxWidth:1100,margin:"0 auto",padding:"14px 32px",color:"var(--dimmer)",fontSize:"12px",width:"100%",boxSizing:"border-box",textAlign:"center"}}>
+      STOCKPULSE APS © 2026 — 관리자 전용 생산계획 시스템
+    </footer>
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
