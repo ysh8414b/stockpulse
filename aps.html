@@ -1008,7 +1008,7 @@ function PlanForm({adminHash,items,lines,settings,initial,onSaved,onCancel}){
 // ═══ 간트차트 뷰 (시간 단위, 라인 행) ═══
 const GANTT_HOUR_W=64;        // 1시간 컬럼 폭
 const GANTT_ROW_H=48;          // 라인 행 높이
-const GANTT_LABEL_W=140;       // 좌측 라인 라벨 폭
+const GANTT_LABEL_W=170;       // 좌측 라인 라벨 폭 (한글 6~9자 + 코드)
 const GANTT_HEADER_H=44;
 const GANTT_LANE_GAP=2;        // 레인 간 간격
 
@@ -1119,26 +1119,39 @@ function GanttView({plans,lines,settings,onPlanClick,onOpenSettings}){
               const key=line.id===null?"null":line.id;
               const info=layoutByLine.get(key)||{laneCount:1,plans:[]};
               const rowH=GANTT_ROW_H*info.laneCount;
-              return <div key={key} style={{height:rowH,padding:"6px 12px",borderBottom:"1px solid var(--div)",boxSizing:"border-box",overflow:"hidden",display:"flex",flexDirection:"column",justifyContent:"center"}}>
-                <div style={{fontWeight:600,fontSize:13,color:line.virtual?"var(--muted)":"var(--text)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{line.name}</div>
-                <div style={{fontSize:10,color:"var(--muted)",fontFamily:"monospace"}}>{line.code}</div>
-                {info.plans.length>0&&<div style={{fontSize:10,color:"var(--dimmer)",marginTop:2}}>{info.plans.length}건</div>}
+              return <div key={key} style={{height:rowH,padding:"6px 10px",borderBottom:"1px solid var(--div)",boxSizing:"border-box",overflow:"hidden",display:"flex",flexDirection:"column",justifyContent:"center"}}>
+                <div style={{fontWeight:600,fontSize:13,color:line.virtual?"var(--muted)":"var(--text)",lineHeight:1.25,wordBreak:"keep-all",overflowWrap:"break-word"}}>{line.name}</div>
+                <div style={{fontSize:10,color:"var(--muted)",fontFamily:"monospace",marginTop:1}}>{line.code}{info.plans.length>0&&<span style={{marginLeft:6,color:"var(--dimmer)"}}>· {info.plans.length}건</span>}</div>
               </div>;
             })}
           </div>
 
           {/* ─── 우측 시간 그리드 ─── */}
           <div style={{position:"relative"}}>
-            {/* 헤더 (시간) */}
-            <div style={{display:"flex",height:GANTT_HEADER_H,borderBottom:"1px solid var(--div2)",background:"var(--card-bg)"}}>
+            {/* 헤더 (시간) — 라벨이 컬럼 경계선에 위치 (N+1개, 시작 + 매시 + 종료) */}
+            <div style={{display:"flex",height:GANTT_HEADER_H,borderBottom:"1px solid var(--div2)",background:"var(--card-bg)",position:"relative"}}>
+              {/* 배경 셀 (시간 경계선용) */}
               {hours.map((h,i)=><div key={i} style={{
                 width:GANTT_HOUR_W,flexShrink:0,
                 borderRight:i===hourCount-1?"none":"1px solid var(--div)",
-                fontSize:11,textAlign:"center",padding:"10px 0",color:"var(--muted)",
-                fontWeight:500,boxSizing:"border-box"
-              }}>
-                {String(h).padStart(2,"0")}:00
-              </div>)}
+                boxSizing:"border-box"
+              }}/>)}
+              {/* 경계선 시간 라벨 (workStart ~ workEnd, hourCount+1개) */}
+              {Array.from({length:hourCount+1}).map((_,i)=>{
+                const isFirst=i===0;
+                const isLast=i===hourCount;
+                return <div key={"t"+i} style={{
+                  position:"absolute",
+                  top:0,height:GANTT_HEADER_H,
+                  left:i*GANTT_HOUR_W,
+                  transform:isFirst?"none":isLast?"translateX(-100%)":"translateX(-50%)",
+                  fontSize:11,color:"var(--muted)",fontWeight:500,
+                  display:"flex",alignItems:"center",padding:"0 6px",
+                  whiteSpace:"nowrap",pointerEvents:"none"
+                }}>
+                  {String(workStart+i).padStart(2,"0")}:00
+                </div>;
+              })}
             </div>
 
             {/* 각 라인 행 */}
