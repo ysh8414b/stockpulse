@@ -564,6 +564,18 @@
     - 🗑 365일 정리 수동 버튼도 제공
 - **운영 순서**: Supabase에서 `setup_aps_v3.sql` 실행 1회 → 기존 시작/완료 버튼 그대로 사용 → 통계 탭에서 누적 데이터 확인
 
+### APS — 생산계획 리스트·간트 날짜 동기화 (2026-06-12)
+- 기존: 간트차트의 이전날/오늘/다음날 버튼이 GanttView 내부 state(`dayStr`)만 갱신 → 리스트 뷰는 항상 전체(상태 필터만) → 사용자가 날짜를 바꿔도 리스트는 그대로
+- 변경: `dayStr`를 `PlansTab`으로 끌어올려 리스트·간트 공유, 선택된 날짜와 겹치는 계획만 표시
+- **`GanttView`**: `dayStr` prop 받도록 시그니처 변경, 내부 `useState`와 `shiftDay`/날짜 nav 버튼 제거. 좌상단 "근무 ··표시 X/Y건" 정보 + ⚙ 근무시간 버튼만 유지
+- **`PlansTab`**: `dayStr`(default `todayStr()`) + `allDates`(default false) state 추가, `shiftDay(n)` 헬퍼 보유
+- **`overlapsDay(p)`** useMemo: KST 00:00~24:00 범위와 plan의 `[start_at, end_at]` 겹침 판정 (둘 다 ms 비교)
+- **`statusFiltered`**(상태 필터만) → 간트로 전달, **`listFiltered`**(상태+날짜 필터) → 리스트로 전달. `allDates=true`면 날짜 필터 skip → 리스트는 전체, 간트는 그 특성상 항상 선택일
+- **상태 카운트**: `allDates`에 따라 base를 plans 전체 또는 해당 날짜만으로 동적 계산 → 토글 시 "전체 N"도 함께 갱신
+- **두 번째 toolbar 행 추가**: `← 이전 날 / 오늘 / 다음 날 → / date picker / 🗓 전체 날짜 OFF·ON 토글 / 정보 텍스트`. `allDates=true`면 nav 버튼·picker disabled, opacity 0.5
+- **정보 텍스트**: OFF 시 "리스트·간트 모두 YYYY-MM-DD", ON 시 "리스트: 전체 / 간트: 선택일"
+- **empty 메시지**: 날짜 모드 시 "YYYY-MM-DD에 해당 상태의 계획이 없습니다"로 갱신 (전체 모드는 기존 "해당 상태의 계획이 없습니다" 유지)
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)

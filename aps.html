@@ -1012,13 +1012,11 @@ const GANTT_LABEL_W=170;       // 좌측 라인 라벨 폭 (한글 6~9자 + 코�
 const GANTT_HEADER_H=44;
 const GANTT_LANE_GAP=2;        // 레인 간 간격
 
-function GanttView({plans,lines,settings,onPlanClick,onOpenSettings}){
+function GanttView({plans,lines,settings,dayStr,onPlanClick,onOpenSettings}){
   const workStart=parseInt(settings?.work_start_hour||"8");
   const workEnd=parseInt(settings?.work_end_hour||"17");
   const hourCount=Math.max(1,workEnd-workStart);
   const hours=useMemo(()=>{const a=[];for(let i=0;i<hourCount;i++)a.push(workStart+i);return a},[workStart,hourCount]);
-
-  const[dayStr,setDayStr]=useState(()=>todayStr());
 
   // 선택 일자의 KST 00:00 / 24:00 UTC 시각 계산
   const dayBounds=useMemo(()=>{
@@ -1088,19 +1086,9 @@ function GanttView({plans,lines,settings,onPlanClick,onOpenSettings}){
   const gridW=hourCount*GANTT_HOUR_W;
   const totalVisible=Array.from(layoutByLine.values()).reduce((a,v)=>a+v.plans.length,0);
 
-  const shiftDay=(n)=>{
-    const d=new Date(dayStr+"T00:00:00+09:00");
-    d.setUTCDate(d.getUTCDate()+n);
-    setDayStr(d.toISOString().slice(0,10));
-  };
-
   return <div>
     <div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center",flexWrap:"wrap"}}>
-      <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>shiftDay(-1)}>← 이전 날</button>
-      <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>setDayStr(todayStr())}>오늘</button>
-      <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>shiftDay(1)}>다음 날 →</button>
-      <input className="aps-input" type="date" value={dayStr} onChange={e=>setDayStr(e.target.value)} style={{width:150,padding:"6px 10px"}}/>
-      <span style={{fontSize:12,color:"var(--muted)",marginLeft:8}}>
+      <span style={{fontSize:12,color:"var(--muted)"}}>
         근무 {String(workStart).padStart(2,"0")}:00 – {String(workEnd).padStart(2,"0")}:00 · 표시 {totalVisible}/{plans.length}건
       </span>
       <div style={{flex:1}}></div>
@@ -1233,6 +1221,15 @@ function PlansTab({adminHash}){
   const[showForm,setShowForm]=useState(false);
   const[showSettings,setShowSettings]=useState(false);
   const[viewMode,setViewMode]=useState("gantt");
+  const[dayStr,setDayStr]=useState(()=>todayStr());
+  const[allDates,setAllDates]=useState(false);
+
+  const shiftDay=(n)=>{
+    const d=new Date(dayStr+"T00:00:00+09:00");
+    d.setUTCDate(d.getUTCDate()+n);
+    setDayStr(d.toISOString().slice(0,10));
+    setAllDates(false);
+  };
 
   const load=useCallback(async()=>{
     try{
@@ -1249,15 +1246,33 @@ function PlansTab({adminHash}){
   },[adminHash]);
   useEffect(()=>{load()},[load]);
 
-  const filtered=useMemo(()=>filter==="all"?plans:plans.filter(p=>p.status===filter),[plans,filter]);
+  // 선택된 날짜와 겹치는 계획만 (KST 00:00 ~ 24:00)
+  const overlapsDay=useMemo(()=>{
+    const dayStartMs=new Date(dayStr+"T00:00:00+09:00").getTime();
+    const dayEndMs=dayStartMs+24*3600*1000;
+    return (p)=>{
+      if(!p.start_at||!p.end_at)return false;
+      const s=new Date(p.start_at).getTime();
+      const e=new Date(p.end_at).getTime();
+      return s<dayEndMs && e>dayStartMs;
+    };
+  },[dayStr]);
 
-  const counts=useMemo(()=>({
-    all:plans.length,
-    planned:plans.filter(p=>p.status==="planned").length,
-    in_progress:plans.filter(p=>p.status==="in_progress").length,
-    done:plans.filter(p=>p.status==="done").length,
-    canceled:plans.filter(p=>p.status==="canceled").length
-  }),[plans]);
+  // 리스트: 상태 + (날짜 토글 OFF면 날짜 필터)
+  // 간트: 상태만 — 자체적으로 dayStr 기준 윈도우 적용
+  const statusFiltered=useMemo(()=>filter==="all"?plans:plans.filter(p=>p.status===filter),[plans,filter]);
+  const listFiltered=useMemo(()=>allDates?statusFiltered:statusFiltered.filter(overlapsDay),[statusFiltered,allDates,overlapsDay]);
+
+  const counts=useMemo(()=>{
+    const base=allDates?plans:plans.filter(overlapsDay);
+    return{
+      all:base.length,
+      planned:base.filter(p=>p.status==="planned").length,
+      in_progress:base.filter(p=>p.status==="in_progress").length,
+      done:base.filter(p=>p.status==="done").length,
+      canceled:base.filter(p=>p.status==="canceled").length
+    };
+  },[plans,allDates,overlapsDay]);
 
   const changeStatus=async(p,newStatus)=>{
     try{
@@ -1296,12 +1311,29 @@ function PlansTab({adminHash}){
       <button className="aps-btn aps-btn-primary" onClick={()=>{setEditing(null);setShowForm(true)}} disabled={items.filter(i=>i.type!=="material").length===0}>+ 생산계획 추가</button>
     </div>
 
+    <div className="aps-toolbar" style={{marginTop:-4}}>
+      <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>shiftDay(-1)} disabled={allDates}>← 이전 날</button>
+      <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>{setDayStr(todayStr());setAllDates(false)}}>오늘</button>
+      <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>shiftDay(1)} disabled={allDates}>다음 날 →</button>
+      <input className="aps-input" type="date" value={dayStr} onChange={e=>{setDayStr(e.target.value);setAllDates(false)}} style={{width:150,padding:"6px 10px",opacity:allDates?0.5:1}} disabled={allDates}/>
+      <button
+        className={"aps-btn aps-btn-sm "+(allDates?"aps-btn-primary":"aps-btn-secondary")}
+        onClick={()=>setAllDates(v=>!v)}
+        title="리스트에서 모든 날짜의 계획을 표시 (간트는 항상 선택된 날짜)"
+      >🗓 전체 날짜 {allDates?"ON":"OFF"}</button>
+      <span style={{fontSize:11,color:"var(--dimmer)",marginLeft:4}}>
+        {allDates
+          ? "리스트: 전체 / 간트: 선택일"
+          : `리스트·간트 모두 ${dayStr}`}
+      </span>
+    </div>
+
     {loading?<Loader/>:viewMode==="gantt"?
-      <GanttView plans={filtered} lines={lines} settings={settings}
+      <GanttView plans={statusFiltered} lines={lines} settings={settings} dayStr={dayStr}
         onPlanClick={p=>{setEditing(p);setShowForm(true)}}
         onOpenSettings={()=>setShowSettings(true)}/>:
-      filtered.length===0?
-      <Empty emoji="📅" text={plans.length===0?"생산계획이 없습니다. 우측 상단에서 추가하세요.":"해당 상태의 계획이 없습니다"}/>:
+      listFiltered.length===0?
+      <Empty emoji="📅" text={plans.length===0?"생산계획이 없습니다. 우측 상단에서 추가하세요.":(allDates?"해당 상태의 계획이 없습니다":`${dayStr}에 해당 상태의 계획이 없습니다`)}/>:
       <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8}}>
         <table className="aps-table">
           <thead><tr>
@@ -1315,7 +1347,7 @@ function PlansTab({adminHash}){
             <th className="center" style={{width:180}}>작업</th>
           </tr></thead>
           <tbody>
-            {filtered.map(p=>{
+            {listFiltered.map(p=>{
               const endMs=p.end_at?new Date(p.end_at).getTime():0;
               const overdue=p.status!=="done"&&p.status!=="canceled"&&endMs>0&&endMs<nowMs;
               return <tr key={p.id}>
