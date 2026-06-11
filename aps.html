@@ -1157,8 +1157,12 @@ function GanttView({plans,lines,settings,onPlanClick,onOpenSettings}){
                 {/* 막대 (레인별 스택) */}
                 {info.plans.map(lp=>{
                   const sp=STATUS_PILL[lp.plan.status]||{};
+                  const tipPlan=`계획: ${fmtKstDateTime(lp.plan.start_at)} ~ ${fmtKstDateTime(lp.plan.end_at)}`;
+                  const tipActual=lp.plan.actual_start_at||lp.plan.actual_end_at
+                    ?`\n실제: ${fmtKstDateTime(lp.plan.actual_start_at)||"-"} ~ ${fmtKstDateTime(lp.plan.actual_end_at)||"진행중"}`
+                    :"";
                   return <div key={lp.plan.id} className="aps-gantt-bar" onClick={()=>onPlanClick(lp.plan)}
-                    title={`${lp.plan.item_name} · ${fmtKstDateTime(lp.plan.start_at)} ~ ${fmtKstDateTime(lp.plan.end_at)} · ${STATUS_LABEL[lp.plan.status]} · ${fmtNum(lp.plan.qty)}${lp.plan.item_unit}`}
+                    title={`${lp.plan.item_name} · ${STATUS_LABEL[lp.plan.status]} · ${fmtNum(lp.plan.qty)}${lp.plan.item_unit}\n${tipPlan}${tipActual}`}
                     style={{
                       position:"absolute",
                       left:lp.leftHour*GANTT_HOUR_W+2,
@@ -1244,11 +1248,9 @@ function PlansTab({adminHash}){
 
   const changeStatus=async(p,newStatus)=>{
     try{
-      await rpc("aps_upsert_plan",{
-        p_admin_hash:adminHash,p_id:p.id,
-        p_item_id:p.item_id,p_line_id:p.line_id,p_qty:p.qty,
-        p_start_at:p.start_at,p_end_at:p.end_at,
-        p_status:newStatus,p_memo:p.memo||""
+      // aps_set_plan_status는 서버에서 actual_start_at/actual_end_at에 now() 자동 기록
+      await rpc("aps_set_plan_status",{
+        p_admin_hash:adminHash,p_id:p.id,p_status:newStatus
       });
       load();
     }catch(e){alert("상태 변경 실패: "+e.message)}
@@ -1314,9 +1316,14 @@ function PlansTab({adminHash}){
                   {p.line_name?<><div style={{fontWeight:500}}>{p.line_name}</div><div style={{fontSize:10,color:"var(--muted)",fontFamily:"monospace"}}>{p.line_code}</div></>:<span style={{color:"var(--muted)"}}>미지정</span>}
                 </td>
                 <td className="right" style={{fontWeight:600}}>{fmtNum(p.qty)} <span style={{fontSize:"11px",color:"var(--muted)",fontWeight:400}}>{p.item_unit}</span></td>
-                <td className="center hide-mobile" style={{fontSize:"12px",color:"var(--muted)"}}>{fmtKstDateTime(p.start_at)}</td>
+                <td className="center hide-mobile" style={{fontSize:"12px",color:"var(--muted)"}}>
+                  <div>계획: {fmtKstDateTime(p.start_at)}</div>
+                  {p.actual_start_at&&<div style={{color:"#22c55e",fontSize:11,marginTop:2}}>실제: {fmtKstDateTime(p.actual_start_at)}</div>}
+                </td>
                 <td className="center" style={{fontSize:"12px",color:overdue?"#ef4444":"var(--muted)",fontWeight:overdue?700:400}}>
-                  {fmtKstDateTime(p.end_at)}{overdue&&<div style={{fontSize:"10px"}}>지연</div>}
+                  <div>계획: {fmtKstDateTime(p.end_at)}</div>
+                  {p.actual_end_at&&<div style={{color:"#22c55e",fontSize:11,marginTop:2,fontWeight:400}}>실제: {fmtKstDateTime(p.actual_end_at)}</div>}
+                  {overdue&&<div style={{fontSize:"10px"}}>지연</div>}
                 </td>
                 <td className="center"><Pill map={STATUS_PILL} k={p.status} label={STATUS_LABEL[p.status]}/></td>
                 <td className="center">
@@ -1340,9 +1347,165 @@ function PlansTab({adminHash}){
 }
 
 // ═══════════════════════════════════════════
+// 통계 탭 (품목별 누적 생산 시간 + 1년 retention)
+// ═══════════════════════════════════════════
+const RANGE_LABEL={"7":"7일","30":"30일","90":"90일","365":"1년","all":"전체"};
+const RANGES=["7","30","90","365","all"];
+
+function fmtHours(h){
+  const n=Number(h)||0;
+  if(n===0)return "0";
+  if(n<1)return Math.round(n*60)+"분";
+  const hh=Math.floor(n);
+  const mm=Math.round((n-hh)*60);
+  return mm===0?`${hh}시간`:`${hh}시간 ${mm}분`;
+}
+
+function StatsTab({adminHash}){
+  const[stats,setStats]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[range,setRange]=useState("30");
+  const[sortBy,setSortBy]=useState("count");  // count/total/avg/rate
+  const[cleanupMsg,setCleanupMsg]=useState("");
+
+  const load=useCallback(async(rangeKey)=>{
+    setLoading(true);
+    try{
+      const days=rangeKey==="all"?null:parseInt(rangeKey);
+      const data=await rpc("aps_get_item_stats",{p_admin_hash:adminHash,p_days_back:days});
+      setStats(data||[]);
+    }catch(e){console.error(e)}
+    setLoading(false);
+  },[adminHash]);
+  useEffect(()=>{load(range)},[load,range]);
+
+  // 1일 1회 자동 cleanup
+  useEffect(()=>{
+    const key="aps-cleanup-last";
+    const last=localStorage.getItem(key);
+    const today=todayStr();
+    if(last===today)return;
+    (async()=>{
+      try{
+        const removed=await rpc("aps_cleanup_old_plans",{p_admin_hash:adminHash,p_days:365});
+        localStorage.setItem(key,today);
+        if(removed>0)setCleanupMsg(`365일 초과 ${removed}건 자동 정리됨`);
+      }catch(e){console.warn("cleanup failed",e)}
+    })();
+  },[adminHash]);
+
+  const sorted=useMemo(()=>{
+    const arr=[...stats];
+    arr.sort((a,b)=>{
+      if(sortBy==="count")return b.plan_count-a.plan_count;
+      if(sortBy==="total")return Number(b.total_actual_hours)-Number(a.total_actual_hours);
+      if(sortBy==="avg")  return Number(b.avg_actual_hours)-Number(a.avg_actual_hours);
+      if(sortBy==="rate") return Number(b.qty_per_hour)-Number(a.qty_per_hour);
+      return 0;
+    });
+    return arr;
+  },[stats,sortBy]);
+
+  const withData=sorted.filter(s=>s.plan_count>0);
+  const withoutData=sorted.filter(s=>s.plan_count===0);
+  const totalCompletedCount=withData.reduce((a,s)=>a+s.plan_count,0);
+  const totalHours=withData.reduce((a,s)=>a+Number(s.total_actual_hours),0);
+
+  const runCleanup=async()=>{
+    if(!confirm("365일 초과된 완료/취소 계획을 삭제합니다. 계속하시겠습니까?"))return;
+    try{
+      const removed=await rpc("aps_cleanup_old_plans",{p_admin_hash:adminHash,p_days:365});
+      setCleanupMsg(`${removed}건 삭제됨`);
+      load(range);
+    }catch(e){alert("정리 실패: "+e.message)}
+  };
+
+  return <div>
+    <div className="aps-toolbar">
+      <div className="aps-filter">
+        {RANGES.map(r=><button key={r} className={range===r?"on":""} onClick={()=>setRange(r)}>{RANGE_LABEL[r]}</button>)}
+      </div>
+      <div style={{flex:1}}></div>
+      <div className="aps-view-toggle">
+        <button className={sortBy==="count"?"on":""} onClick={()=>setSortBy("count")}>건수순</button>
+        <button className={sortBy==="total"?"on":""} onClick={()=>setSortBy("total")}>총시간순</button>
+        <button className={sortBy==="avg"?"on":""} onClick={()=>setSortBy("avg")}>평균순</button>
+        <button className={sortBy==="rate"?"on":""} onClick={()=>setSortBy("rate")}>생산률순</button>
+      </div>
+      <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={runCleanup}>🗑 365일 정리</button>
+    </div>
+
+    {cleanupMsg&&<div style={{padding:"10px 14px",marginBottom:14,background:"rgba(245,158,11,0.08)",border:"1px solid rgba(245,158,11,0.2)",borderRadius:8,fontSize:12,color:"#f59e0b"}}>{cleanupMsg}</div>}
+
+    {/* 요약 카드 */}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10,marginBottom:14}}>
+      <div style={{padding:"14px 16px",background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:8}}>
+        <div style={{fontSize:11,color:"var(--muted)",marginBottom:4}}>완료 계획 ({RANGE_LABEL[range]})</div>
+        <div style={{fontSize:22,fontWeight:700}}>{totalCompletedCount}<span style={{fontSize:12,color:"var(--muted)",fontWeight:400,marginLeft:4}}>건</span></div>
+      </div>
+      <div style={{padding:"14px 16px",background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:8}}>
+        <div style={{fontSize:11,color:"var(--muted)",marginBottom:4}}>총 생산 시간</div>
+        <div style={{fontSize:22,fontWeight:700}}>{fmtHours(totalHours)}</div>
+      </div>
+      <div style={{padding:"14px 16px",background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:8}}>
+        <div style={{fontSize:11,color:"var(--muted)",marginBottom:4}}>실적 보유 품목</div>
+        <div style={{fontSize:22,fontWeight:700}}>{withData.length}<span style={{fontSize:12,color:"var(--muted)",fontWeight:400,marginLeft:4}}>/ {stats.length}</span></div>
+      </div>
+    </div>
+
+    {loading?<Loader/>:withData.length===0?
+      <Empty emoji="📈" text={stats.length===0?"등록된 품목이 없습니다":`${RANGE_LABEL[range]} 동안 완료된 생산 실적이 없습니다`}/>:
+      <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8}}>
+        <table className="aps-table">
+          <thead><tr>
+            <th>품목</th>
+            <th className="center" style={{width:70}}>구분</th>
+            <th className="right" style={{width:80}}>완료</th>
+            <th className="right hide-mobile" style={{width:100}}>총 수량</th>
+            <th className="right" style={{width:110}}>총 시간</th>
+            <th className="right hide-mobile" style={{width:110}}>평균 시간</th>
+            <th className="right hide-mobile" style={{width:130}}>계획↔실제</th>
+            <th className="right" style={{width:120}}>시간당 생산</th>
+            <th className="center hide-mobile" style={{width:110}}>최근 완료</th>
+          </tr></thead>
+          <tbody>
+            {withData.map(s=>{
+              const variance=Number(s.avg_actual_hours)-Number(s.avg_planned_hours);
+              const variancePct=Number(s.avg_planned_hours)>0?(variance/Number(s.avg_planned_hours)*100):0;
+              const vColor=variance>0.05?"#ef4444":variance<-0.05?"#22c55e":"var(--muted)";
+              return <tr key={s.item_id}>
+                <td>
+                  <div style={{fontWeight:600}}>{s.item_name}</div>
+                  <div style={{fontSize:11,color:"var(--muted)",fontFamily:"monospace"}}>{s.item_code}</div>
+                </td>
+                <td className="center"><Pill map={TYPE_PILL} k={s.item_type} label={TYPE_LABEL[s.item_type]}/></td>
+                <td className="right" style={{fontWeight:600}}>{s.plan_count}건</td>
+                <td className="right hide-mobile">{fmtNum(s.total_qty)} <span style={{fontSize:11,color:"var(--muted)"}}>{s.item_unit}</span></td>
+                <td className="right" style={{fontWeight:600,color:"#22c55e"}}>{fmtHours(s.total_actual_hours)}</td>
+                <td className="right hide-mobile">{fmtHours(s.avg_actual_hours)}</td>
+                <td className="right hide-mobile" style={{fontSize:12,color:vColor}}>
+                  <div>{fmtHours(s.avg_planned_hours)} → {fmtHours(s.avg_actual_hours)}</div>
+                  {Math.abs(variancePct)>=1&&<div style={{fontSize:10,marginTop:2}}>{variance>=0?"+":""}{variancePct.toFixed(0)}%</div>}
+                </td>
+                <td className="right" style={{fontWeight:600,color:"#06b6d4"}}>{fmtNum(s.qty_per_hour)} <span style={{fontSize:11,color:"var(--muted)",fontWeight:400}}>{s.item_unit}/h</span></td>
+                <td className="center hide-mobile" style={{fontSize:11,color:"var(--muted)"}}>{s.last_completed_at?fmtKstDateTime(s.last_completed_at):"-"}</td>
+              </tr>;
+            })}
+            {withoutData.length>0&&<tr><td colSpan={9} style={{padding:"14px 12px",fontSize:11,color:"var(--dimmer)",background:"var(--card-bg)"}}>아직 실적 없음: {withoutData.map(s=>s.item_name).join(", ")}</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    }
+    <div style={{fontSize:11,color:"var(--dimmer)",marginTop:8,lineHeight:1.5}}>
+      ※ 실제 시각은 "▶ 시작" / "✓ 완료" 버튼 클릭 순간에 자동 기록됩니다 (KST) · 365일 초과 완료/취소 계획은 매일 1회 자동 정리됩니다 · 계획↔실제 차이는 평균 시간 기준 {">5%"} 초과 시 색상 표시
+    </div>
+  </div>;
+}
+
+// ═══════════════════════════════════════════
 // App (탭 네비게이션 + 로그인 게이트)
 // ═══════════════════════════════════════════
-const VALID_TABS=["items","lines","plans","inventory"];
+const VALID_TABS=["items","lines","plans","inventory","stats"];
 function getTabFromHash(){
   const h=(window.location.hash||"").replace(/^#/,"");
   return VALID_TABS.includes(h)?h:"items";
@@ -1417,11 +1580,13 @@ function App(){
           <button className={"aps-tab"+(tab==="lines"?" active":"")} onClick={()=>setTab("lines")}>🏭 라인</button>
           <button className={"aps-tab"+(tab==="plans"?" active":"")} onClick={()=>setTab("plans")}>📅 생산계획</button>
           <button className={"aps-tab"+(tab==="inventory"?" active":"")} onClick={()=>setTab("inventory")}>📊 재고</button>
+          <button className={"aps-tab"+(tab==="stats"?" active":"")} onClick={()=>setTab("stats")}>📈 통계</button>
         </div>
         {tab==="items"&&<ItemsTab adminHash={adminHash}/>}
         {tab==="lines"&&<LinesTab adminHash={adminHash}/>}
         {tab==="plans"&&<PlansTab adminHash={adminHash}/>}
         {tab==="inventory"&&<InventoryTab adminHash={adminHash}/>}
+        {tab==="stats"&&<StatsTab adminHash={adminHash}/>}
       </>}
     </div>
 

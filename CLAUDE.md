@@ -533,6 +533,37 @@
     - ⚙ 버튼 → SettingsModal
 - **운영 순서**: Supabase에서 `setup_aps_v2.sql` 실행 1회 → 🏭 라인 탭에서 라인 등록 → 생산계획 추가 시 라인/시간 선택 → 간트 자동 표시
 
+### APS v3 — 실제 생산 시간 기록 + 품목별 통계 (2026-06-11)
+- 사용자 요청: "시작/완료 버튼 클릭 시각을 자동 기록 → 품목별 실제 생산 시간 1년치 축적"
+- **`setup_aps_v3.sql`** (신규, v2 위에 추가):
+  - `aps_plans.actual_start_at`/`actual_end_at` TIMESTAMPTZ 컬럼 추가 (idempotent)
+  - 부분 인덱스 `idx_aps_plans_actual` (status='done' 조건)
+  - **`aps_set_plan_status(p_admin_hash, p_id, p_status)`** RPC: 서버에서 `now()` 자동 기록
+    - planned/canceled → in_progress: `actual_start_at=now()`, `actual_end_at=NULL` 리셋
+    - ? → done: `actual_end_at=now()`. 시작 시각 없으면 같이 채움
+    - 반환: `{id, status, actual_start_at, actual_end_at}`
+  - **`aps_list_plans` 재정의**: 응답에 `actual_start_at`/`actual_end_at` 포함
+  - **`aps_cleanup_old_plans(p_admin_hash, p_days=365)`** RPC: 완료/취소 + updated_at > p_days 일 경과 행 삭제, 삭제 개수 반환
+  - **`aps_get_item_stats(p_admin_hash, p_days_back)`** RPC: 품목별 누적 통계 집계
+    - 완료(done) + 실제 시각 둘 다 있는 행만 집계
+    - 출력: `plan_count`, `total_qty`, `avg_qty`, `total_actual_hours`, `avg_actual_hours`, `avg_planned_hours`, `qty_per_hour`, `last_completed_at`
+    - 제품/반제품만 (원자재 제외)
+- **`aps.html` 변경**:
+  - `changeStatus`: `aps_upsert_plan` → `aps_set_plan_status` (서버 시각 기록 보장, 시각 추측 방지)
+  - 리스트 뷰: 시작/종료 컬럼에 "계획: ..." + "실제: ..." 2단 표시 (실제는 초록색)
+  - 간트 막대 툴팁: `\n` 줄바꿈으로 "계획 / 실제" 비교 (실제 종료 없으면 "진행중" 표시)
+  - **신규 📈 통계 탭**:
+    - 5번째 탭, `VALID_TABS`에 "stats" 추가
+    - 요약 카드 3개: 완료 계획 / 총 생산 시간 / 실적 보유 품목
+    - 기간 필터: 7일/30일/90일/1년/전체 (`aps_get_item_stats(p_days_back)`)
+    - 정렬: 건수순/총시간순/평균순/생산률순
+    - 품목별 표: 완료 건수, 총 수량, 총/평균 시간, 계획↔실제 차이(±5% 초과 시 빨강/초록), 시간당 생산률, 최근 완료
+    - 실적 없는 품목은 하단 회색 줄로 나열
+    - `fmtHours()` 헬퍼: 시/분 단위 한국어 표시 ("2시간 54분")
+    - **자동 retention**: 탭 마운트 시 `localStorage["aps-cleanup-last"]` 확인 → 오늘 안 했으면 `aps_cleanup_old_plans(365)` 1회 호출
+    - 🗑 365일 정리 수동 버튼도 제공
+- **운영 순서**: Supabase에서 `setup_aps_v3.sql` 실행 1회 → 기존 시작/완료 버튼 그대로 사용 → 통계 탭에서 누적 데이터 확인
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
