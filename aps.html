@@ -1012,11 +1012,64 @@ const GANTT_LABEL_W=220;       // 좌측 라인 라벨 폭 (한글 6~9자 + 코�
 const GANTT_HEADER_H=52;
 const GANTT_LANE_GAP=3;        // 레인 간 간격
 
-function GanttView({plans,lines,settings,dayStr,onPlanClick,onOpenSettings}){
+function GanttView({plans,lines,settings,dayStr,onPlanClick,onPlanTimeChange,onOpenSettings}){
   const workStart=parseInt(settings?.work_start_hour||"8");
   const workEnd=parseInt(settings?.work_end_hour||"17");
   const hourCount=Math.max(1,workEnd-workStart);
   const hours=useMemo(()=>{const a=[];for(let i=0;i<hourCount;i++)a.push(workStart+i);return a},[workStart,hourCount]);
+
+  // ─── 드래그(시간 변경) 상태 ───
+  // drag = {planId, mode: 'move'|'resize-l'|'resize-r', startX, origStartMs, origEndMs, deltaMs, moved}
+  const [drag,setDrag]=useState(null);
+  const SNAP_MS=15*60*1000;            // 15분 단위 스냅
+  const MIN_DUR_MS=15*60*1000;         // 최소 길이 15분
+  const MS_PER_PX=3600000/GANTT_HOUR_W;
+  const dragRef=useRef(null);
+  const plansRef=useRef(plans);
+  const clickRef=useRef(onPlanClick);
+  const timeChgRef=useRef(onPlanTimeChange);
+  useEffect(()=>{dragRef.current=drag},[drag]);
+  useEffect(()=>{plansRef.current=plans},[plans]);
+  useEffect(()=>{clickRef.current=onPlanClick},[onPlanClick]);
+  useEffect(()=>{timeChgRef.current=onPlanTimeChange},[onPlanTimeChange]);
+
+  // drag.planId이 바뀔 때만(시작/종료) 핸들러 재바인딩 — delta 갱신마다 재바인딩 방지
+  const dragId=drag?.planId??null;
+  useEffect(()=>{
+    if(dragId==null)return;
+    const onMove=(e)=>{
+      const d=dragRef.current;if(!d)return;
+      const dx=e.clientX-d.startX;
+      const dms=Math.round((dx*MS_PER_PX)/SNAP_MS)*SNAP_MS;
+      const moved=d.moved||Math.abs(dx)>=4;
+      if(d.deltaMs===dms&&d.moved===moved)return;
+      setDrag({...d,deltaMs:dms,moved});
+    };
+    const onUp=(e)=>{
+      const d=dragRef.current;
+      setDrag(null);
+      if(!d)return;
+      if(!d.moved||Math.abs(e.clientX-d.startX)<4){
+        const plan=plansRef.current.find(p=>p.id===d.planId);
+        if(plan)clickRef.current?.(plan);
+        return;
+      }
+      if(Math.abs(d.deltaMs)<SNAP_MS)return;
+      const plan=plansRef.current.find(p=>p.id===d.planId);
+      if(!plan||!timeChgRef.current)return;
+      let s=d.origStartMs,en=d.origEndMs;
+      if(d.mode==="move"){s+=d.deltaMs;en+=d.deltaMs;}
+      else if(d.mode==="resize-l"){s+=d.deltaMs;if(s>en-MIN_DUR_MS)s=en-MIN_DUR_MS;}
+      else if(d.mode==="resize-r"){en+=d.deltaMs;if(en<s+MIN_DUR_MS)en=s+MIN_DUR_MS;}
+      timeChgRef.current(plan,s,en);
+    };
+    window.addEventListener("mousemove",onMove);
+    window.addEventListener("mouseup",onUp);
+    return()=>{
+      window.removeEventListener("mousemove",onMove);
+      window.removeEventListener("mouseup",onUp);
+    };
+  },[dragId]);
 
   // 선택 일자의 KST 00:00 / 24:00 UTC 시각 계산
   const dayBounds=useMemo(()=>{
@@ -1158,27 +1211,82 @@ function GanttView({plans,lines,settings,dayStr,onPlanClick,onOpenSettings}){
                 {/* 막대 (레인별 스택) */}
                 {info.plans.map(lp=>{
                   const sp=STATUS_PILL[lp.plan.status]||{};
-                  const tipPlan=`계획: ${fmtKstDateTime(lp.plan.start_at)} ~ ${fmtKstDateTime(lp.plan.end_at)}`;
+                  const isDraggable=lp.plan.status==="planned"||lp.plan.status==="in_progress";
+                  const isDragging=drag?.planId===lp.plan.id;
+
+                  // 드래그 중이면 effective 시간 재계산
+                  let effStartMs=lp.startMs,effEndMs=lp.endMs;
+                  if(isDragging){
+                    if(drag.mode==="move"){effStartMs+=drag.deltaMs;effEndMs+=drag.deltaMs;}
+                    else if(drag.mode==="resize-l"){effStartMs+=drag.deltaMs;if(effStartMs>effEndMs-MIN_DUR_MS)effStartMs=effEndMs-MIN_DUR_MS;}
+                    else if(drag.mode==="resize-r"){effEndMs+=drag.deltaMs;if(effEndMs<effStartMs+MIN_DUR_MS)effEndMs=effStartMs+MIN_DUR_MS;}
+                  }
+                  const {workStartMs,workEndMs}=dayBounds;
+                  const evs=Math.max(effStartMs,workStartMs);
+                  const eve=Math.min(effEndMs,workEndMs);
+                  const effLeftHour=(evs-workStartMs)/3600000;
+                  const effWidthHour=Math.max(0,eve-evs)/3600000;
+                  const effLeftEdge=effStartMs<workStartMs;
+                  const effRightEdge=effEndMs>workEndMs;
+
+                  const tipPlan=isDragging
+                    ?`드래그 중: ${fmtKstDateTime(new Date(effStartMs).toISOString())} ~ ${fmtKstDateTime(new Date(effEndMs).toISOString())}`
+                    :`계획: ${fmtKstDateTime(lp.plan.start_at)} ~ ${fmtKstDateTime(lp.plan.end_at)}`;
                   const tipActual=lp.plan.actual_start_at||lp.plan.actual_end_at
                     ?`\n실제: ${fmtKstDateTime(lp.plan.actual_start_at)||"-"} ~ ${fmtKstDateTime(lp.plan.actual_end_at)||"진행중"}`
                     :"";
-                  return <div key={lp.plan.id} className="aps-gantt-bar" onClick={()=>onPlanClick(lp.plan)}
-                    title={`${lp.plan.item_name} · ${STATUS_LABEL[lp.plan.status]} · ${fmtNum(lp.plan.qty)}${lp.plan.item_unit}\n${tipPlan}${tipActual}`}
+                  const tipHint=isDraggable?"\n💡 드래그=이동, 좌우 끝 드래그=시간 조정":"";
+
+                  const onBarDown=(e)=>{
+                    if(e.button!==0)return;            // 좌클릭만
+                    if(!isDraggable){onPlanClick(lp.plan);return;}
+                    const rect=e.currentTarget.getBoundingClientRect();
+                    const offX=e.clientX-rect.left;
+                    const w=rect.width;
+                    const edge=Math.min(12,Math.max(6,w*0.2));
+                    let mode="move";
+                    if(offX<edge)mode="resize-l";
+                    else if(offX>w-edge)mode="resize-r";
+                    setDrag({
+                      planId:lp.plan.id,mode,
+                      startX:e.clientX,
+                      origStartMs:lp.startMs,origEndMs:lp.endMs,
+                      deltaMs:0,moved:false
+                    });
+                    e.preventDefault();
+                    e.stopPropagation();
+                  };
+                  const onBarHover=(e)=>{
+                    if(drag||!isDraggable)return;
+                    const rect=e.currentTarget.getBoundingClientRect();
+                    const offX=e.clientX-rect.left;
+                    const w=rect.width;
+                    const edge=Math.min(12,Math.max(6,w*0.2));
+                    e.currentTarget.style.cursor=(offX<edge||offX>w-edge)?"ew-resize":"move";
+                  };
+
+                  return <div key={lp.plan.id} className="aps-gantt-bar" onMouseDown={onBarDown} onMouseMove={onBarHover}
+                    title={`${lp.plan.item_name} · ${STATUS_LABEL[lp.plan.status]} · ${fmtNum(lp.plan.qty)}${lp.plan.item_unit}\n${tipPlan}${tipActual}${tipHint}`}
                     style={{
                       position:"absolute",
-                      left:lp.leftHour*GANTT_HOUR_W+2,
-                      width:Math.max(lp.widthHour*GANTT_HOUR_W-4,12),
+                      left:effLeftHour*GANTT_HOUR_W+2,
+                      width:Math.max(effWidthHour*GANTT_HOUR_W-4,12),
                       top:4+lp.lane*(laneH+GANTT_LANE_GAP),
                       height:laneH,
                       background:sp.bg||"var(--card-bg)",
                       border:`1px solid ${sp.fg||"var(--card-bd)"}`,
-                      borderLeftWidth:lp.leftEdge?4:1,
-                      borderRightWidth:lp.rightEdge?4:1,
+                      borderLeftWidth:effLeftEdge?4:1,
+                      borderRightWidth:effRightEdge?4:1,
                       padding:"0 8px",
                       fontSize:12,fontWeight:600,
                       color:sp.fg||"var(--text)",
                       whiteSpace:"nowrap",
-                      display:"flex",alignItems:"center"
+                      display:"flex",alignItems:"center",
+                      cursor:isDraggable?"move":"pointer",
+                      userSelect:"none",
+                      opacity:isDragging?0.85:1,
+                      boxShadow:isDragging?"0 4px 14px rgba(0,0,0,0.35)":undefined,
+                      zIndex:isDragging?4:undefined
                     }}>
                     {lp.plan.item_name} · {fmtNum(lp.plan.qty)}{lp.plan.item_unit}
                   </div>;
@@ -1206,7 +1314,7 @@ function GanttView({plans,lines,settings,dayStr,onPlanClick,onOpenSettings}){
       </div>
     }
     <div style={{fontSize:13,color:"var(--dimmer)",marginTop:10,lineHeight:1.55}}>
-      ※ 막대 클릭 → 수정 · 좌우 두꺼운 테두리 = 근무 외 시간으로 연장 · 빨강 세로선 = 현재 시각 · 같은 라인 시간 겹침은 레인 자동 분할
+      ※ 막대 클릭 → 수정 · <b style={{color:"var(--muted)"}}>막대 가운데 드래그</b> = 통째로 이동 · <b style={{color:"var(--muted)"}}>좌우 끝 드래그</b> = 시작·종료 시각 조정 (15분 단위) · 좌우 두꺼운 테두리 = 근무 외 시간으로 연장 · 빨강 세로선 = 현재 시각 · 완료·취소된 계획은 드래그 불가
     </div>
   </div>;
 }
@@ -1294,6 +1402,29 @@ function PlansTab({adminHash}){
     }catch(e){alert("삭제 실패: "+e.message)}
   };
 
+  // 간트 드래그로 시간 변경 (move/resize-l/resize-r 공통)
+  const updatePlanTime=async(p,newStartMs,newEndMs)=>{
+    // 낙관적 업데이트 — 서버 응답 전에 화면 즉시 반영
+    setPlans(prev=>prev.map(x=>x.id===p.id?{...x,start_at:new Date(newStartMs).toISOString(),end_at:new Date(newEndMs).toISOString()}:x));
+    try{
+      await rpc("aps_upsert_plan",{
+        p_admin_hash:adminHash,
+        p_id:p.id,
+        p_item_id:p.item_id,
+        p_line_id:p.line_id,
+        p_qty:p.qty,
+        p_start_at:new Date(newStartMs).toISOString(),
+        p_end_at:new Date(newEndMs).toISOString(),
+        p_status:p.status,
+        p_memo:p.memo||""
+      });
+      load();
+    }catch(e){
+      alert("시간 변경 실패: "+errMsg(e,{invalid_times:"종료 시각이 시작 시각 이전입니다"}));
+      load();
+    }
+  };
+
   const nowMs=Date.now();
 
   return <div>
@@ -1333,6 +1464,7 @@ function PlansTab({adminHash}){
     {loading?<Loader/>:viewMode==="gantt"?
       <GanttView plans={statusFiltered} lines={lines} settings={settings} dayStr={dayStr}
         onPlanClick={p=>{setEditing(p);setShowForm(true)}}
+        onPlanTimeChange={updatePlanTime}
         onOpenSettings={()=>setShowSettings(true)}/>:
       listFiltered.length===0?
       <Empty emoji="📅" text={plans.length===0?"생산계획이 없습니다. 우측 상단에서 추가하세요.":(allDates?"해당 상태의 계획이 없습니다":`${dayStr}에 해당 상태의 계획이 없습니다`)}/>:
