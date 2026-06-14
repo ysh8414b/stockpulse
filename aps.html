@@ -1452,9 +1452,9 @@ function ExportWeekView({week}){
     done:{bg:"#dcfce7",fg:"#16a34a"},
     canceled:{bg:"#fee2e2",fg:"#b91c1c"}
   };
-  // 주말은 계획 있을 때만 표시 (평일 월~금은 항상 표시)
-  const visibleDays=week.days.filter(d=>d.dow<5||d.plans.length>0);
-  const colCount=visibleDays.length;
+  // 계획이 잡힌 날만 표시 (주중/주말 무관)
+  const visibleDays=week.days.filter(d=>d.plans.length>0);
+  const colCount=Math.max(visibleDays.length,1);
   // 컬럼 수에 따라 폭 동적 (좁아지지 않게 최소 폭 유지)
   const width=Math.max(800,140*colCount+60);
   const wkRange=`${week.mondayStr.replace(/-/g,".")} ~ ${week.sundayStr.replace(/-/g,".")}`;
@@ -1469,6 +1469,8 @@ function ExportWeekView({week}){
         <div style={{fontSize:24,fontWeight:800,color:C.text}}>{week.planCount}건</div>
       </div>
     </div>
+    {visibleDays.length===0?
+      <div style={{padding:"60px 20px",textAlign:"center",color:C.muted,fontSize:14,border:`1px dashed ${C.border}`,borderRadius:8}}>이 주에 등록된 생산계획이 없습니다</div>:
     <div style={{display:"grid",gridTemplateColumns:`repeat(${colCount}, 1fr)`,gap:6}}>
       {visibleDays.map(d=>{
         const dowColor=d.dow===5?C.sat:d.dow===6?C.sun:C.text;
@@ -1497,6 +1499,7 @@ function ExportWeekView({week}){
         </div>;
       })}
     </div>
+    }
     <div style={{marginTop:14,display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:10,color:C.muted}}>
       <span style={{fontWeight:700,letterSpacing:".08em"}}>STOCKPULSE · APS</span>
       <span>Generated {new Date().toLocaleString("ko-KR")}</span>
