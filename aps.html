@@ -59,19 +59,30 @@
     .aps-list-main{flex:1;min-width:0}
     .aps-week-panel{width:270px;flex-shrink:0;background:var(--card-bg);border:1px solid var(--card-bd);border-radius:8px;padding:12px;max-height:78vh;overflow-y:auto;position:sticky;top:14px}
     .aps-week-panel-title{font-size:13px;font-weight:700;color:var(--text);padding:2px 4px 10px;border-bottom:1px solid var(--div2);margin-bottom:8px;display:flex;align-items:center;gap:6px}
-    .aps-week-card{padding:8px 8px 9px;border-radius:7px;margin-bottom:7px;border:1px solid transparent;background:var(--bg);transition:background .15s,border-color .15s}
-    .aps-week-card.active{background:rgba(6,182,212,0.07);border-color:rgba(6,182,212,0.3)}
-    .aps-week-card-header{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--text);cursor:pointer;padding:2px 2px;border-radius:4px}
-    .aps-week-card-header:hover{background:var(--hover)}
+    .aps-week-card{padding:8px 6px 9px;border-radius:7px;margin-bottom:10px;border:1px solid var(--div);background:var(--bg)}
+    .aps-week-card-header{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--text);padding:2px 4px 6px;border-bottom:1px solid var(--div);margin-bottom:6px}
     .aps-week-badge{font-size:10px;font-weight:600;color:#06b6d4;background:rgba(6,182,212,0.14);padding:1px 6px;border-radius:8px;letter-spacing:.02em}
     .aps-week-badge.future{color:#8b5cf6;background:rgba(139,92,246,0.14)}
     .aps-week-count{margin-left:auto;font-size:11px;color:var(--muted);font-weight:500}
     .aps-week-empty{font-size:11px;color:var(--dimmer);padding:6px 2px 2px;font-style:italic}
-    .aps-week-items{margin-top:6px;display:flex;flex-direction:column;gap:5px}
-    .aps-week-item{padding:6px 8px;background:var(--card-bg);border:1px solid var(--div);border-radius:5px;font-size:11px}
-    .aps-week-item-name{font-weight:600;color:var(--text);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .aps-week-item-qty{color:var(--muted);margin-top:2px;font-size:11px}
-    .aps-week-item-status{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;font-size:10px;font-weight:600}
+    .aps-week-days{display:flex;flex-direction:column;gap:6px}
+    .aps-week-day{padding:5px 6px 6px;border-radius:6px;border:1px solid transparent;transition:background .12s,border-color .12s}
+    .aps-week-day.today{background:rgba(245,158,11,0.05);border-color:rgba(245,158,11,0.25)}
+    .aps-week-day.selected{background:rgba(6,182,212,0.06);border-color:rgba(6,182,212,0.32)}
+    .aps-week-day-header{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;cursor:pointer;padding:2px 2px;border-radius:4px}
+    .aps-week-day-header:hover{background:var(--hover)}
+    .aps-week-dow{font-size:11px;font-weight:700;letter-spacing:.04em;width:14px;text-align:center}
+    .aps-week-dow-date{font-size:11px;color:var(--text);font-weight:600}
+    .aps-week-today-badge{font-size:9px;font-weight:700;color:#f59e0b;background:rgba(245,158,11,0.15);padding:1px 5px;border-radius:8px}
+    .aps-week-day-count{margin-left:auto;font-size:10px;color:var(--muted);font-weight:500}
+    .aps-week-day-empty{font-size:11px;color:var(--dimmer);padding:1px 4px 1px 22px;font-family:monospace}
+    .aps-week-day-plans{display:flex;flex-direction:column;gap:3px;margin-top:4px;padding-left:4px}
+    .aps-week-day-plan{display:grid;grid-template-columns:38px 1fr auto;gap:4px;align-items:center;padding:4px 6px;background:var(--card-bg);border:1px solid var(--div);border-radius:5px;font-size:11px;cursor:pointer;transition:background .12s,border-color .12s}
+    .aps-week-day-plan:hover{background:var(--hover);border-color:var(--card-hbd)}
+    .aps-week-day-plan-time{font-family:monospace;font-size:10px;color:var(--muted)}
+    .aps-week-day-plan-name{font-weight:600;color:var(--text);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .aps-week-day-plan-qty{font-size:10px;color:var(--muted);text-align:right;white-space:nowrap}
+    .aps-week-day-plan-status{grid-column:1/-1;display:inline-block;width:fit-content;padding:1px 6px;border-radius:8px;font-size:9px;font-weight:600;letter-spacing:.02em}
     @media(max-width:780px){
       .aps-list-layout{flex-direction:column}
       .aps-week-panel{width:100%;max-height:none;position:static;order:-1}
@@ -1412,36 +1423,49 @@ function GanttView({plans,lines,settings,dayStr,onPlanClick,onPlanTimeChange,onO
   </div>;
 }
 
-// 주간 요약 사이드 패널 — 리스트 뷰에서만 표시
-function WeekSummaryPanel({weeks,selectedMon,onWeekClick}){
+// 주간 요약 사이드 패널 — 리스트 뷰에서만 표시. 한 주 안에서 요일별로 계획 나열
+const DOW_LABEL=["월","화","수","목","금","토","일"];
+function WeekSummaryPanel({weeks,selectedDay,onDayClick,onPlanClick}){
   return <aside className="aps-week-panel">
     <div className="aps-week-panel-title">📅 주간 생산 요약</div>
     {weeks.length===0?
       <div className="aps-week-empty">표시할 주가 없습니다</div>:
       weeks.map(w=>{
-        const isActive=w.mondayStr===selectedMon;
-        return <div key={w.mondayStr} className={"aps-week-card"+(isActive?" active":"")}>
-          <div className="aps-week-card-header" onClick={()=>onWeekClick&&onWeekClick(w.mondayStr)} title="해당 주 월요일로 점프">
+        return <div key={w.mondayStr} className="aps-week-card">
+          <div className="aps-week-card-header" title="이 주">
             <span>{fmtMD(w.mondayStr)} ~ {fmtMD(w.sundayStr)}</span>
             {w.isCurrentWeek&&<span className="aps-week-badge">이번 주</span>}
             {w.isFuture&&!w.isCurrentWeek&&<span className="aps-week-badge future">예정</span>}
             <span className="aps-week-count">{w.planCount}건</span>
           </div>
-          {w.items.length===0?
-            <div className="aps-week-empty">계획 없음</div>:
-            <div className="aps-week-items">
-              {w.items.map((it,i)=><div key={i} className="aps-week-item">
-                <div className="aps-week-item-name" title={it.name}>{it.name}</div>
-                <div className="aps-week-item-qty">{fmtNum(it.qty)} {it.unit||""}</div>
-                <div className="aps-week-item-status">
-                  {it.planned>0&&<span style={{color:"#94a3b8"}}>계획 {it.planned}</span>}
-                  {it.in_progress>0&&<span style={{color:"#06b6d4"}}>진행 {it.in_progress}</span>}
-                  {it.done>0&&<span style={{color:"#22c55e"}}>완료 {it.done}</span>}
-                  {it.canceled>0&&<span style={{color:"#ef4444"}}>취소 {it.canceled}</span>}
+          <div className="aps-week-days">
+            {w.days.map(d=>{
+              const isSelected=d.dateStr===selectedDay;
+              const dowColor=d.dow===5?"#3b82f6":d.dow===6?"#ef4444":"var(--muted)";
+              return <div key={d.dateStr} className={"aps-week-day"+(isSelected?" selected":"")+(d.isToday?" today":"")}>
+                <div className="aps-week-day-header" onClick={()=>onDayClick&&onDayClick(d.dateStr)} title={`${d.dateStr}로 점프`}>
+                  <span className="aps-week-dow" style={{color:dowColor}}>{DOW_LABEL[d.dow]}</span>
+                  <span className="aps-week-dow-date">{fmtMD(d.dateStr)}</span>
+                  {d.isToday&&<span className="aps-week-today-badge">오늘</span>}
+                  {d.plans.length>0&&<span className="aps-week-day-count">{d.plans.length}건</span>}
                 </div>
-              </div>)}
-            </div>
-          }
+                {d.plans.length===0?
+                  <div className="aps-week-day-empty">—</div>:
+                  <div className="aps-week-day-plans">
+                    {d.plans.map(p=>{
+                      const pill=STATUS_PILL[p.status]||{bg:"var(--card-bg)",fg:"var(--muted)"};
+                      return <div key={p.id} className="aps-week-day-plan" onClick={()=>onPlanClick&&onPlanClick(p)} title="클릭하여 수정">
+                        <span className="aps-week-day-plan-time">{fmtKstTime(p.start_at)}</span>
+                        <span className="aps-week-day-plan-name" title={p.item_name}>{p.item_name}</span>
+                        <span className="aps-week-day-plan-qty">{fmtNum(p.qty)} {p.item_unit||""}</span>
+                        <span className="aps-week-day-plan-status" style={{background:pill.bg,color:pill.fg}}>{STATUS_LABEL[p.status]}</span>
+                      </div>;
+                    })}
+                  </div>
+                }
+              </div>;
+            })}
+          </div>
         </div>;
       })
     }
@@ -1514,44 +1538,54 @@ function PlansTab({adminHash}){
     };
   },[plans,allDates,overlapsDay]);
 
-  // 주간 요약: start_at 의 KST 월요일 기준으로 묶고 품목별 집계
+  // 주간 요약: start_at 의 KST 날짜로 묶고 → 주(월요일) 단위로 그룹핑
   const weekSummary=useMemo(()=>{
     const thisMon=kstMonday(todayStr());
     const nextMon=addDays(thisMon,7);
-    const byWeek={};
+    const todayKst=todayStr();
+    // 1단계: 날짜별로 plan 모으기
+    const byDate={};
     plans.forEach(p=>{
       if(!p.start_at)return;
-      const monStr=kstMonday(isoToKstDateStr(p.start_at));
-      if(!byWeek[monStr])byWeek[monStr]=[];
-      byWeek[monStr].push(p);
+      const dStr=isoToKstDateStr(p.start_at);
+      if(!byDate[dStr])byDate[dStr]=[];
+      byDate[dStr].push(p);
     });
-    // 빈 주여도 이번 주/다음 주는 표시
-    if(!byWeek[thisMon])byWeek[thisMon]=[];
-    if(!byWeek[nextMon])byWeek[nextMon]=[];
-    return Object.keys(byWeek).sort((a,b)=>b.localeCompare(a)).map(monStr=>{
-      const weekPlans=byWeek[monStr];
-      const byItem={};
-      weekPlans.forEach(p=>{
-        const k=p.item_id;
-        if(!byItem[k])byItem[k]={name:p.item_name,unit:p.item_unit,qty:0,planned:0,in_progress:0,done:0,canceled:0};
-        byItem[k].qty+=Number(p.qty)||0;
-        byItem[k][p.status]=(byItem[k][p.status]||0)+1;
-      });
-      const items=Object.values(byItem).sort((a,b)=>b.qty-a.qty);
+    // 2단계: 어떤 주를 표시할지 결정 — 계획이 있는 주 + 이번 주/다음 주
+    const weekSet=new Set([thisMon,nextMon]);
+    Object.keys(byDate).forEach(dStr=>weekSet.add(kstMonday(dStr)));
+    // 3단계: 각 주에 대해 7일치 요일 채우기
+    return Array.from(weekSet).sort((a,b)=>b.localeCompare(a)).map(monStr=>{
+      const days=[];
+      let planCount=0;
+      for(let i=0;i<7;i++){
+        const dStr=addDays(monStr,i);
+        const dayPlans=(byDate[dStr]||[]).slice().sort((a,b)=>{
+          const sa=a.start_at?new Date(a.start_at).getTime():0;
+          const sb=b.start_at?new Date(b.start_at).getTime():0;
+          return sa-sb;
+        });
+        planCount+=dayPlans.length;
+        days.push({
+          dateStr:dStr,
+          dow:i, // 0=월,1=화,...,6=일
+          isToday:dStr===todayKst,
+          plans:dayPlans
+        });
+      }
       return{
         mondayStr:monStr,
         sundayStr:addDays(monStr,6),
-        planCount:weekPlans.length,
-        items,
+        planCount,
+        days,
         isCurrentWeek:monStr===thisMon,
         isFuture:monStr>thisMon
       };
     });
   },[plans]);
 
-  const selectedWeekMon=useMemo(()=>kstMonday(dayStr),[dayStr]);
-  const jumpToWeek=(monStr)=>{
-    setDayStr(monStr);
+  const jumpToDay=(dStr)=>{
+    setDayStr(dStr);
     setAllDates(false);
   };
 
@@ -1644,7 +1678,7 @@ function PlansTab({adminHash}){
         onPlanTimeChange={updatePlanTime}
         onOpenSettings={()=>setShowSettings(true)}/>:
       <div className="aps-list-layout">
-        {weekPanelOpen&&<WeekSummaryPanel weeks={weekSummary} selectedMon={selectedWeekMon} onWeekClick={jumpToWeek}/>}
+        {weekPanelOpen&&<WeekSummaryPanel weeks={weekSummary} selectedDay={dayStr} onDayClick={jumpToDay} onPlanClick={p=>{setEditing(p);setShowForm(true)}}/>}
         <div className="aps-list-main">
         {listFiltered.length===0?
         <Empty emoji="📅" text={plans.length===0?"생산계획이 없습니다. 우측 상단에서 추가하세요.":(allDates?"해당 상태의 계획이 없습니다":`${dayStr}에 해당 상태의 계획이 없습니다`)}/>:
