@@ -1179,7 +1179,7 @@ function GanttView({plans,lines,settings,dayStr,onPlanClick,onPlanTimeChange,onO
 
     {plans.length===0?
       <Empty emoji="📅" text="표시할 생산계획이 없습니다"/>:
-      <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8,background:"var(--bg)"}}>
+      <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8,background:"var(--bg)",width:"max-content",maxWidth:"100%"}}>
         <div style={{display:"flex",minWidth:labelW+gridW}}>
 
           {/* ─── 좌측 라인 라벨 컬럼 ─── */}
