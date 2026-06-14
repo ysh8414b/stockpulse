@@ -1006,7 +1006,8 @@ function PlanForm({adminHash,items,lines,settings,initial,onSaved,onCancel}){
 }
 
 // ═══ 간트차트 뷰 (시간 단위, 라인 행) ═══
-const GANTT_HOUR_W=84;        // 1시간 컬럼 폭
+const GANTT_HOUR_W_PREF=84;   // 1시간 컬럼 기준 폭 (초기/참고용)
+const GANTT_HOUR_W_MIN=56;    // 1시간 컬럼 최소 폭 (이보다 좁으면 가로 스크롤)
 const GANTT_ROW_H=60;          // 라인 행 높이
 const GANTT_LABEL_W_MIN=110;   // 좌측 라벨 폭 최소
 const GANTT_LABEL_W_MAX=280;   // 좌측 라벨 폭 최대
@@ -1024,7 +1025,6 @@ function GanttView({plans,lines,settings,dayStr,onPlanClick,onPlanTimeChange,onO
   const [drag,setDrag]=useState(null);
   const SNAP_MS=15*60*1000;            // 15분 단위 스냅
   const MIN_DUR_MS=15*60*1000;         // 최소 길이 15분
-  const MS_PER_PX=3600000/GANTT_HOUR_W;
   const dragRef=useRef(null);
   const plansRef=useRef(plans);
   const clickRef=useRef(onPlanClick);
@@ -1041,7 +1041,8 @@ function GanttView({plans,lines,settings,dayStr,onPlanClick,onPlanTimeChange,onO
     const onMove=(e)=>{
       const d=dragRef.current;if(!d)return;
       const dx=e.clientX-d.startX;
-      const dms=Math.round((dx*MS_PER_PX)/SNAP_MS)*SNAP_MS;
+      const msPerPx=3600000/(hourPxRef.current||GANTT_HOUR_W_PREF);
+      const dms=Math.round((dx*msPerPx)/SNAP_MS)*SNAP_MS;
       const moved=d.moved||Math.abs(dx)>=4;
       if(d.deltaMs===dms&&d.moved===moved)return;
       setDrag({...d,deltaMs:dms,moved});
@@ -1137,8 +1138,27 @@ function GanttView({plans,lines,settings,dayStr,onPlanClick,onPlanTimeChange,onO
   const nowLeftHour=nowKst-workStart;
   const showNowLine=isViewingToday&&nowLeftHour>=0&&nowLeftHour<=hourCount;
 
-  const gridW=hourCount*GANTT_HOUR_W;
+  const gridMinW=hourCount*GANTT_HOUR_W_MIN;
   const totalVisible=Array.from(layoutByLine.values()).reduce((a,v)=>a+v.plans.length,0);
+
+  // 우측 시간 그리드 실제 폭 측정 → 시간 컬럼이 유동적으로 늘어났다 줄었다
+  const gridRef=useRef(null);
+  const hourPxRef=useRef(GANTT_HOUR_W_PREF);
+  const [gridPx,setGridPx]=useState(hourCount*GANTT_HOUR_W_PREF);
+  useEffect(()=>{
+    const el=gridRef.current;
+    if(!el)return;
+    const update=()=>{
+      const w=el.clientWidth||hourCount*GANTT_HOUR_W_PREF;
+      hourPxRef.current=w/hourCount;
+      setGridPx(w);
+    };
+    update();
+    const ro=new ResizeObserver(update);
+    ro.observe(el);
+    return()=>ro.disconnect();
+  },[hourCount]);
+  const hourPx=gridPx/hourCount;
 
   // 좌측 라벨 폭: 가장 긴 라인 이름/메모에 맞춰 동적 계산
   const labelW=useMemo(()=>{
@@ -1179,8 +1199,8 @@ function GanttView({plans,lines,settings,dayStr,onPlanClick,onPlanTimeChange,onO
 
     {plans.length===0?
       <Empty emoji="📅" text="표시할 생산계획이 없습니다"/>:
-      <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8,background:"var(--bg)",width:"max-content",maxWidth:"100%"}}>
-        <div style={{display:"flex",minWidth:labelW+gridW}}>
+      <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8,background:"var(--bg)"}}>
+        <div style={{display:"flex",minWidth:labelW+gridMinW}}>
 
           {/* ─── 좌측 라인 라벨 컬럼 ─── */}
           <div style={{width:labelW,flexShrink:0,position:"sticky",left:0,zIndex:2,background:"var(--bg)",borderRight:"1px solid var(--div2)"}}>
@@ -1197,12 +1217,12 @@ function GanttView({plans,lines,settings,dayStr,onPlanClick,onPlanTimeChange,onO
           </div>
 
           {/* ─── 우측 시간 그리드 ─── */}
-          <div style={{position:"relative"}}>
+          <div ref={gridRef} style={{position:"relative",flex:1,minWidth:gridMinW}}>
             {/* 헤더 (시간) — 라벨이 컬럼 경계선에 위치 (N+1개, 시작 + 매시 + 종료) */}
             <div style={{display:"flex",height:GANTT_HEADER_H,borderBottom:"1px solid var(--div2)",background:"var(--card-bg)",position:"relative"}}>
               {/* 배경 셀 (시간 경계선용) */}
               {hours.map((h,i)=><div key={i} style={{
-                width:GANTT_HOUR_W,flexShrink:0,
+                flex:1,minWidth:GANTT_HOUR_W_MIN,
                 borderRight:i===hourCount-1?"none":"1px solid var(--div)",
                 boxSizing:"border-box"
               }}/>)}
@@ -1213,7 +1233,7 @@ function GanttView({plans,lines,settings,dayStr,onPlanClick,onPlanTimeChange,onO
                 return <div key={"t"+i} style={{
                   position:"absolute",
                   top:0,height:GANTT_HEADER_H,
-                  left:i*GANTT_HOUR_W,
+                  left:i*hourPx,
                   transform:isFirst?"none":isLast?"translateX(-100%)":"translateX(-50%)",
                   fontSize:13,color:"var(--muted)",fontWeight:500,
                   display:"flex",alignItems:"center",padding:"0 6px",
@@ -1233,7 +1253,7 @@ function GanttView({plans,lines,settings,dayStr,onPlanClick,onPlanTimeChange,onO
               return <div key={key} style={{height:rowH,position:"relative",borderBottom:"1px solid var(--div)",display:"flex"}}>
                 {/* 배경 셀 (시간 그리드) */}
                 {hours.map((h,i)=><div key={i} style={{
-                  width:GANTT_HOUR_W,flexShrink:0,
+                  flex:1,minWidth:GANTT_HOUR_W_MIN,
                   borderRight:i===hourCount-1?"none":"1px solid var(--div)",
                   boxSizing:"border-box"
                 }}/>)}
@@ -1298,8 +1318,8 @@ function GanttView({plans,lines,settings,dayStr,onPlanClick,onPlanTimeChange,onO
                     title={`${lp.plan.item_name} · ${STATUS_LABEL[lp.plan.status]} · ${fmtNum(lp.plan.qty)}${lp.plan.item_unit}\n${tipPlan}${tipActual}${tipHint}`}
                     style={{
                       position:"absolute",
-                      left:effLeftHour*GANTT_HOUR_W+2,
-                      width:Math.max(effWidthHour*GANTT_HOUR_W-4,12),
+                      left:effLeftHour*hourPx+2,
+                      width:Math.max(effWidthHour*hourPx-4,12),
                       top:4+lp.lane*(laneH+GANTT_LANE_GAP),
                       height:laneH,
                       background:sp.bg||"var(--card-bg)",
@@ -1326,7 +1346,7 @@ function GanttView({plans,lines,settings,dayStr,onPlanClick,onPlanTimeChange,onO
             {/* 현재 시각 세로 선 */}
             {showNowLine&&<div style={{
               position:"absolute",
-              left:nowLeftHour*GANTT_HOUR_W-1,
+              left:nowLeftHour*hourPx-1,
               top:0,
               width:2,
               height:GANTT_HEADER_H+displayLines.reduce((a,line)=>{
