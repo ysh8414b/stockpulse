@@ -1008,11 +1008,13 @@ function PlanForm({adminHash,items,lines,settings,initial,onSaved,onCancel}){
 // ═══ 간트차트 뷰 (시간 단위, 라인 행) ═══
 const GANTT_HOUR_W_PREF=84;   // 1시간 컬럼 기준 폭 (초기/참고용)
 const GANTT_HOUR_W_MIN=56;    // 1시간 컬럼 최소 폭 (이보다 좁으면 가로 스크롤)
-const GANTT_ROW_H=60;          // 라인 행 높이
+const GANTT_ROW_H=60;          // 라인 행 높이 (1레인 기준)
+const GANTT_LANE_EXTRA=30;     // 레인 추가 시 늘어나는 높이 (2번째 이후)
 const GANTT_LABEL_W_MIN=110;   // 좌측 라벨 폭 최소
 const GANTT_LABEL_W_MAX=280;   // 좌측 라벨 폭 최대
 const GANTT_HEADER_H=52;
 const GANTT_LANE_GAP=3;        // 레인 간 간격
+const rowHeightFor=(laneCount)=>GANTT_ROW_H+GANTT_LANE_EXTRA*Math.max(0,laneCount-1);
 
 function GanttView({plans,lines,settings,dayStr,onPlanClick,onPlanTimeChange,onOpenSettings}){
   const workStart=parseInt(settings?.work_start_hour||"8");
@@ -1208,7 +1210,7 @@ function GanttView({plans,lines,settings,dayStr,onPlanClick,onPlanTimeChange,onO
             {displayLines.map(line=>{
               const key=line.id===null?"null":line.id;
               const info=layoutByLine.get(key)||{laneCount:1,plans:[]};
-              const rowH=GANTT_ROW_H*info.laneCount;
+              const rowH=rowHeightFor(info.laneCount);
               return <div key={key} style={{height:rowH,padding:"8px 12px",borderBottom:"1px solid var(--div)",boxSizing:"border-box",overflow:"hidden",display:"flex",flexDirection:"column",justifyContent:"center"}}>
                 <div style={{fontWeight:600,fontSize:15,color:line.virtual?"var(--muted)":"var(--text)",lineHeight:1.3,wordBreak:"keep-all",overflowWrap:"break-word"}}>{line.name}</div>
                 <div style={{fontSize:12,color:"var(--muted)",marginTop:2,lineHeight:1.35,wordBreak:"keep-all",overflowWrap:"break-word"}}>{line.memo||line.code}{info.plans.length>0&&<span style={{marginLeft:6,color:"var(--dimmer)"}}>· {info.plans.length}건</span>}</div>
@@ -1248,8 +1250,8 @@ function GanttView({plans,lines,settings,dayStr,onPlanClick,onPlanTimeChange,onO
             {displayLines.map(line=>{
               const key=line.id===null?"null":line.id;
               const info=layoutByLine.get(key)||{laneCount:1,plans:[]};
-              const rowH=GANTT_ROW_H*info.laneCount;
-              const laneH=(GANTT_ROW_H-8)/Math.max(1,info.laneCount);
+              const rowH=rowHeightFor(info.laneCount);
+              const laneH=(rowH-8-GANTT_LANE_GAP*Math.max(0,info.laneCount-1))/Math.max(1,info.laneCount);
               return <div key={key} style={{height:rowH,position:"relative",borderBottom:"1px solid var(--div)",display:"flex"}}>
                 {/* 배경 셀 (시간 그리드) */}
                 {hours.map((h,i)=><div key={i} style={{
@@ -1351,7 +1353,7 @@ function GanttView({plans,lines,settings,dayStr,onPlanClick,onPlanTimeChange,onO
               width:2,
               height:GANTT_HEADER_H+displayLines.reduce((a,line)=>{
                 const k=line.id===null?"null":line.id;
-                return a+GANTT_ROW_H*((layoutByLine.get(k)?.laneCount)||1);
+                return a+rowHeightFor((layoutByLine.get(k)?.laneCount)||1);
               },0),
               background:"#ef4444",
               pointerEvents:"none",
