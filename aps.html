@@ -10,6 +10,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <script src="shared.js"></script>
   <style>
     .aps-shell{max-width:1100px;margin:0 auto;padding:20px 32px 60px;box-sizing:border-box}
@@ -64,6 +65,9 @@
     .aps-week-badge{font-size:10px;font-weight:600;color:#06b6d4;background:rgba(6,182,212,0.14);padding:1px 6px;border-radius:8px;letter-spacing:.02em}
     .aps-week-badge.future{color:#8b5cf6;background:rgba(139,92,246,0.14)}
     .aps-week-count{margin-left:auto;font-size:11px;color:var(--muted);font-weight:500}
+    .aps-week-export-btn{background:none;border:1px solid var(--card-bd);border-radius:5px;padding:2px 6px;font-size:12px;cursor:pointer;color:var(--muted);transition:background .12s,border-color .12s,color .12s;font-family:inherit;line-height:1}
+    .aps-week-export-btn:hover:not(:disabled){background:rgba(6,182,212,0.12);border-color:rgba(6,182,212,0.4);color:#06b6d4}
+    .aps-week-export-btn:disabled{opacity:.6;cursor:wait}
     .aps-week-empty{font-size:11px;color:var(--dimmer);padding:6px 2px 2px;font-style:italic}
     .aps-week-days{display:flex;flex-direction:column;gap:6px}
     .aps-week-day{padding:5px 6px 6px;border-radius:6px;border:1px solid transparent;transition:background .12s,border-color .12s}
@@ -1425,7 +1429,67 @@ function GanttView({plans,lines,settings,dayStr,onPlanClick,onPlanTimeChange,onO
 
 // 주간 요약 사이드 패널 — 리스트 뷰에서만 표시. 한 주 안에서 요일별로 계획 나열
 const DOW_LABEL=["월","화","수","목","금","토","일"];
-function WeekSummaryPanel({weeks,selectedDay,onDayClick,onPlanClick}){
+
+// 이미지 저장용 가로 7컬럼 캘린더 (오프스크린 렌더 → html2canvas 캡처)
+function ExportWeekView({week}){
+  const C={bg:"#ffffff",text:"#0f172a",muted:"#64748b",border:"#e2e8f0",cardBg:"#f8fafc",todayBg:"#fef3c7",sat:"#2563eb",sun:"#dc2626"};
+  const S={
+    planned:{bg:"#f1f5f9",fg:"#475569"},
+    in_progress:{bg:"#cffafe",fg:"#0891b2"},
+    done:{bg:"#dcfce7",fg:"#16a34a"},
+    canceled:{bg:"#fee2e2",fg:"#b91c1c"}
+  };
+  const wkRange=`${week.mondayStr.replace(/-/g,".")} ~ ${week.sundayStr.replace(/-/g,".")}`;
+  return <div style={{background:C.bg,color:C.text,fontFamily:"Pretendard, -apple-system, system-ui, sans-serif",padding:"22px 24px 18px",width:1120,boxSizing:"border-box"}}>
+    <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",marginBottom:16,borderBottom:`2px solid ${C.text}`,paddingBottom:10}}>
+      <div>
+        <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:".15em"}}>WEEKLY PRODUCTION PLAN</div>
+        <div style={{fontSize:22,fontWeight:800,marginTop:4,letterSpacing:"-.01em"}}>{wkRange}</div>
+      </div>
+      <div style={{textAlign:"right"}}>
+        <div style={{fontSize:11,color:C.muted,fontWeight:600}}>총 계획</div>
+        <div style={{fontSize:24,fontWeight:800,color:C.text}}>{week.planCount}건</div>
+      </div>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(7, 1fr)",gap:6}}>
+      {week.days.map(d=>{
+        const dowColor=d.dow===5?C.sat:d.dow===6?C.sun:C.text;
+        return <div key={d.dateStr} style={{border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 9px 10px",minHeight:300,background:d.isToday?C.todayBg:C.bg,boxSizing:"border-box"}}>
+          <div style={{borderBottom:`1px solid ${C.border}`,paddingBottom:6,marginBottom:7,display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontSize:14,fontWeight:800,color:dowColor}}>{DOW_LABEL[d.dow]}</span>
+            <span style={{fontSize:12,color:C.muted,fontWeight:600}}>{fmtMD(d.dateStr)}</span>
+            {d.isToday&&<span style={{fontSize:9,fontWeight:700,color:"#b45309",background:"#fde68a",padding:"1px 6px",borderRadius:8,marginLeft:"auto"}}>오늘</span>}
+            {!d.isToday&&d.plans.length>0&&<span style={{fontSize:10,color:C.muted,marginLeft:"auto",fontWeight:600}}>{d.plans.length}건</span>}
+          </div>
+          {d.plans.length===0?
+            <div style={{textAlign:"center",color:C.muted,fontSize:18,padding:"50px 0",fontWeight:300}}>—</div>:
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {d.plans.map(p=>{
+                const s=S[p.status]||S.planned;
+                return <div key={p.id} style={{padding:"6px 7px",background:C.cardBg,borderRadius:6,border:`1px solid ${C.border}`}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:3}}>
+                    <span style={{fontSize:10,color:C.muted,fontFamily:"monospace",fontWeight:600}}>{fmtKstTime(p.start_at)}~{fmtKstTime(p.end_at)}</span>
+                    <span style={{fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:8,background:s.bg,color:s.fg,letterSpacing:".02em"}}>{STATUS_LABEL[p.status]}</span>
+                  </div>
+                  <div style={{fontSize:12,fontWeight:700,color:C.text,lineHeight:1.25,wordBreak:"break-all"}}>{p.item_name}</div>
+                  <div style={{fontSize:11,color:C.muted,marginTop:2,fontWeight:600}}>{fmtNum(p.qty)} {p.item_unit||""}</div>
+                  {p.line_name&&<div style={{fontSize:10,color:C.muted,marginTop:2}}>🏭 {p.line_name}</div>}
+                  {p.memo&&<div style={{fontSize:10,color:C.muted,marginTop:2,fontStyle:"italic"}}>{p.memo}</div>}
+                </div>;
+              })}
+            </div>
+          }
+        </div>;
+      })}
+    </div>
+    <div style={{marginTop:14,display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:10,color:C.muted}}>
+      <span style={{fontWeight:700,letterSpacing:".08em"}}>STOCKPULSE · APS</span>
+      <span>Generated {new Date().toLocaleString("ko-KR")}</span>
+    </div>
+  </div>;
+}
+
+function WeekSummaryPanel({weeks,selectedDay,onDayClick,onPlanClick,onExportWeek,exportingMonStr}){
   return <aside className="aps-week-panel">
     <div className="aps-week-panel-title">📅 주간 생산 요약</div>
     {weeks.length===0?
@@ -1437,6 +1501,13 @@ function WeekSummaryPanel({weeks,selectedDay,onDayClick,onPlanClick}){
             {w.isCurrentWeek&&<span className="aps-week-badge">이번 주</span>}
             {w.isFuture&&!w.isCurrentWeek&&<span className="aps-week-badge future">예정</span>}
             <span className="aps-week-count">{w.planCount}건</span>
+            <button
+              className="aps-week-export-btn"
+              onClick={(e)=>{e.stopPropagation();onExportWeek&&onExportWeek(w)}}
+              disabled={exportingMonStr===w.mondayStr}
+              title="이 주의 계획을 이미지로 저장">
+              {exportingMonStr===w.mondayStr?"⏳":"📷"}
+            </button>
           </div>
           <div className="aps-week-days">
             {w.days.map(d=>{
@@ -1589,6 +1660,41 @@ function PlansTab({adminHash}){
     setAllDates(false);
   };
 
+  // 이미지 저장: 오프스크린 ExportWeekView 렌더 → html2canvas 캡처 → PNG 다운로드
+  const[exportingWeek,setExportingWeek]=useState(null);
+  const exportRef=useRef(null);
+  const exportWeek=async(week)=>{
+    if(typeof window.html2canvas!=="function"){
+      alert("이미지 저장 라이브러리(html2canvas)가 로드되지 않았습니다. 새로고침 후 다시 시도해주세요.");
+      return;
+    }
+    setExportingWeek(week);
+    // 렌더 대기 (다음 paint 사이클)
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const target=exportRef.current;
+    if(!target){setExportingWeek(null);return}
+    try{
+      const canvas=await window.html2canvas(target,{
+        backgroundColor:"#ffffff",
+        scale:2,
+        logging:false,
+        useCORS:true,
+        width:1120,
+        windowWidth:1120
+      });
+      const link=document.createElement("a");
+      link.download=`생산계획_${week.mondayStr}_${week.sundayStr}.png`;
+      link.href=canvas.toDataURL("image/png");
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }catch(e){
+      console.error(e);
+      alert("이미지 저장 실패: "+(e.message||e));
+    }
+    setExportingWeek(null);
+  };
+
   const changeStatus=async(p,newStatus)=>{
     try{
       // aps_set_plan_status는 서버에서 actual_start_at/actual_end_at에 now() 자동 기록
@@ -1678,7 +1784,7 @@ function PlansTab({adminHash}){
         onPlanTimeChange={updatePlanTime}
         onOpenSettings={()=>setShowSettings(true)}/>:
       <div className="aps-list-layout">
-        {weekPanelOpen&&<WeekSummaryPanel weeks={weekSummary} selectedDay={dayStr} onDayClick={jumpToDay} onPlanClick={p=>{setEditing(p);setShowForm(true)}}/>}
+        {weekPanelOpen&&<WeekSummaryPanel weeks={weekSummary} selectedDay={dayStr} onDayClick={jumpToDay} onPlanClick={p=>{setEditing(p);setShowForm(true)}} onExportWeek={exportWeek} exportingMonStr={exportingWeek?.mondayStr}/>}
         <div className="aps-list-main">
         {listFiltered.length===0?
         <Empty emoji="📅" text={plans.length===0?"생산계획이 없습니다. 우측 상단에서 추가하세요.":(allDates?"해당 상태의 계획이 없습니다":`${dayStr}에 해당 상태의 계획이 없습니다`)}/>:
@@ -1739,6 +1845,9 @@ function PlansTab({adminHash}){
 
     {showForm&&<PlanForm adminHash={adminHash} items={items} lines={lines} settings={settings} initial={editing} onCancel={()=>setShowForm(false)} onSaved={()=>{setShowForm(false);load()}}/>}
     {showSettings&&<SettingsModal adminHash={adminHash} settings={settings} onCancel={()=>setShowSettings(false)} onSaved={(s)=>{setSettings(prev=>({...prev,...s}));setShowSettings(false)}}/>}
+    {exportingWeek&&<div style={{position:"fixed",left:-99999,top:0,zIndex:-1,pointerEvents:"none"}} aria-hidden="true">
+      <div ref={exportRef}><ExportWeekView week={exportingWeek}/></div>
+    </div>}
   </div>;
 }
 
