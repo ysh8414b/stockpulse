@@ -1008,7 +1008,8 @@ function PlanForm({adminHash,items,lines,settings,initial,onSaved,onCancel}){
 // ═══ 간트차트 뷰 (시간 단위, 라인 행) ═══
 const GANTT_HOUR_W=84;        // 1시간 컬럼 폭
 const GANTT_ROW_H=60;          // 라인 행 높이
-const GANTT_LABEL_W=220;       // 좌측 라인 라벨 폭 (한글 6~9자 + 코드)
+const GANTT_LABEL_W_MIN=110;   // 좌측 라벨 폭 최소
+const GANTT_LABEL_W_MAX=280;   // 좌측 라벨 폭 최대
 const GANTT_HEADER_H=52;
 const GANTT_LANE_GAP=3;        // 레인 간 간격
 
@@ -1139,6 +1140,34 @@ function GanttView({plans,lines,settings,dayStr,onPlanClick,onPlanTimeChange,onO
   const gridW=hourCount*GANTT_HOUR_W;
   const totalVisible=Array.from(layoutByLine.values()).reduce((a,v)=>a+v.plans.length,0);
 
+  // 좌측 라벨 폭: 가장 긴 라인 이름/메모에 맞춰 동적 계산
+  const labelW=useMemo(()=>{
+    const measure=(text,sizePx,bold)=>{
+      if(!text)return 0;
+      const koreanW=sizePx*(bold?1.05:1.0);
+      const latinW=sizePx*(bold?0.62:0.56);
+      let w=0;
+      for(const c of text){
+        if(/[가-힯ㄱ-ㆎ]/.test(c))w+=koreanW;
+        else if(c===" ")w+=sizePx*0.35;
+        else w+=latinW;
+      }
+      return w;
+    };
+    let max=measure("라인",14,true);  // 헤더 텍스트 보장
+    for(const line of displayLines){
+      const key=line.id===null?"null":line.id;
+      const info=layoutByLine.get(key)||{plans:[]};
+      const top=measure(line.name||"",15,true);
+      const bottomText=(line.memo||line.code||"")+(info.plans.length>0?` · ${info.plans.length}건`:"");
+      const bottom=measure(bottomText,12,false);
+      if(top>max)max=top;
+      if(bottom>max)max=bottom;
+    }
+    // padding 12+12 + 여유 16
+    return Math.min(GANTT_LABEL_W_MAX,Math.max(GANTT_LABEL_W_MIN,Math.ceil(max)+40));
+  },[displayLines,layoutByLine]);
+
   return <div>
     <div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center",flexWrap:"wrap"}}>
       <span style={{fontSize:14,color:"var(--muted)"}}>
@@ -1151,10 +1180,10 @@ function GanttView({plans,lines,settings,dayStr,onPlanClick,onPlanTimeChange,onO
     {plans.length===0?
       <Empty emoji="📅" text="표시할 생산계획이 없습니다"/>:
       <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8,background:"var(--bg)"}}>
-        <div style={{display:"flex",minWidth:GANTT_LABEL_W+gridW}}>
+        <div style={{display:"flex",minWidth:labelW+gridW}}>
 
           {/* ─── 좌측 라인 라벨 컬럼 ─── */}
-          <div style={{width:GANTT_LABEL_W,flexShrink:0,position:"sticky",left:0,zIndex:2,background:"var(--bg)",borderRight:"1px solid var(--div2)"}}>
+          <div style={{width:labelW,flexShrink:0,position:"sticky",left:0,zIndex:2,background:"var(--bg)",borderRight:"1px solid var(--div2)"}}>
             <div style={{height:GANTT_HEADER_H,padding:"12px 14px",fontSize:14,fontWeight:600,color:"var(--muted)",borderBottom:"1px solid var(--div2)",background:"var(--card-bg)",boxSizing:"border-box"}}>라인</div>
             {displayLines.map(line=>{
               const key=line.id===null?"null":line.id;
