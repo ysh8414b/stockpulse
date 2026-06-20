@@ -2474,7 +2474,7 @@ function InventorySheetTab(){
       </div>
       <div className="inv-sheet-body">
         {(()=>{
-          const half=Math.ceil(rows.length/2);
+          const half=Math.floor(rows.length/2);
           const cols=rows.length===0?[[],[]]:[rows.slice(0,half),rows.slice(half)];
           return cols.map((part,idx)=>(
             <div className="inv-sheet-col" key={"p"+idx}>
