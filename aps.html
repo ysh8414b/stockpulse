@@ -103,11 +103,22 @@
     .inv-tbl{width:100%;border-collapse:collapse;font-size:12px;color:#111}
     .inv-tbl thead th{background:#cfd8dc;color:#111;padding:7px 8px;text-align:left;font-weight:700;border:1px solid #b0bec5;font-size:12px}
     .inv-tbl tbody td{padding:6px 8px;border-bottom:1px solid #eceff1;background:#fff;line-height:1.3}
-    .inv-tbl tbody tr:nth-child(even) td{background:#fafafa}
+    .inv-tbl.stripe tbody tr:nth-child(even) td{background:#fafafa}
     .inv-tbl .right{text-align:right}
     .inv-tbl .code{font-family:"Consolas","Menlo","Courier New",monospace;font-size:11px;color:#455a64;letter-spacing:.01em}
     .inv-tbl .zero{color:#dc2626;font-weight:700}
     .inv-tbl .qty{font-variant-numeric:tabular-nums;font-weight:600}
+    /* 제품 그룹 배경색 (사진과 동일) */
+    .inv-row-y td{background:#fff2b3 !important}
+    .inv-row-o td{background:#fcd5b4 !important}
+    .inv-row-b td{background:#dbe5f1 !important}
+    .inv-row-g td{background:#d8e4bc !important}
+    .inv-row-p td{background:#f2dcdb !important}
+    .inv-row-w td{background:#ffffff !important}
+    /* 편집 모달 */
+    .inv-edit-textarea{width:100%;min-height:420px;padding:10px;border:1px solid var(--inp-bd);border-radius:7px;background:var(--inp-bg);color:var(--text);font-family:"Consolas","Menlo","Courier New",monospace;font-size:12px;line-height:1.5;resize:vertical;box-sizing:border-box}
+    .inv-edit-legend{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 10px}
+    .inv-edit-legend span{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;color:#333}
     .inv-upload-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
     .inv-upload-card{border:1px dashed var(--card-bd);border-radius:8px;padding:14px;background:var(--card-bg);position:relative}
     .inv-upload-card.has{border-style:solid;border-color:rgba(6,182,212,0.5);background:rgba(6,182,212,0.05)}
@@ -2250,6 +2261,76 @@ function parseInventoryWorkbook(buf){
   return Object.values(grouped).sort((a,b)=>a.code.localeCompare(b.code));
 }
 
+// 사진 기준 기본 제품 마스터 목록 (37개) — 그룹: y(노랑)/o(주황)/b(파랑)/w(흰색)/g(초록)/p(핑크)
+const DEFAULT_PRODUCT_TEMPLATE=[
+  // 그룹 1: [S] 500g/300g
+  {code:"F0000069",name:"[S]돌돌말이 대패 삼겹살 500g*8",color:"y"},
+  {code:"E0000068",name:"[S]돌돌말이 우삼겹 500g*8",color:"y"},
+  {code:"E0000066",name:"[S]돌돌말이 우차돌박이 500g*8",color:"y"},
+  {code:"E0000067",name:"[S]돌돌말이 샤브샤브용 300g*12",color:"y"},
+  {code:"F0000070",name:"[S]냉동 옛날 삼겹살 500g*12",color:"y"},
+  // 그룹 2: [S] 2kg/3kg
+  {code:"F0000073",name:"[S]돌돌말이 대패 삼겹살 2kg*3",color:"o"},
+  {code:"E0000069",name:"[S]돌돌말이 우삼겹 2kg*3",color:"o"},
+  {code:"E0000070",name:"[S]불고기&샤브용 돌돌 2kg*3",color:"o"},
+  {code:"F0000074",name:"[S]냉동 옛날 삼겹살 3kg*4",color:"o"},
+  {code:"F0000071",name:"[S]앞다리 제육 2.5kg*4",color:"o"},
+  {code:"F0000072",name:"[S]목전지 구이 3kg*3",color:"o"},
+  // 그룹 3: 일반 돌돌말이/샤브
+  {code:"F0000077",name:"돌돌말이 대패 삼겹살 500g*8",color:"b"},
+  {code:"E0000062",name:"돌돌말이 우삼겹 500g*8",color:"b"},
+  {code:"E0000064",name:"돌돌말이 우차돌박이 500g*8",color:"b"},
+  {code:"E0000061",name:"돌돌말이쇠고기샤브샤브 300g*12",color:"b"},
+  {code:"H0000003",name:"양샤브샤브 300g*12",color:"b"},
+  {code:"F0000065",name:"돌돌 대패삼겹(외국산) 500g*8",color:"b"},
+  {code:"F0000064",name:"옛날 삼겹살 500g*12",color:"b"},
+  // 그룹 4: 일반 작업/처리
+  {code:"E0000026",name:"소삼겹양지 1kg*10",color:"w"},
+  {code:"E0000072",name:"육회(설도)",color:"w"},
+  {code:"E0000073",name:"육회(우둔)",color:"w"},
+  {code:"E0000011",name:"전처리 갈비살 1kg*10",color:"w"},
+  {code:"E0000041",name:"전처리황제갈비살 1kg*10",color:"w"},
+  {code:"E0000016",name:"소늑간(체인점용) 2kg*10",color:"w"},
+  {code:"E0000017",name:"소늑간(마트용) 600g*30",color:"w"},
+  // 그룹 5: 쿠팡 돼지목전지
+  {code:"F0000047",name:"쿠팡_돼지목전지(13mm) 3kg*5",color:"g"},
+  {code:"F0000048",name:"쿠팡_돼지목전지(3mm) 3kg*5",color:"g"},
+  {code:"F0000050",name:"쿠팡_돼지목전지(제육) 3kg*5",color:"g"},
+  {code:"F0000078",name:"쿠팡_돼지목전지(돌돌) 3kg*2",color:"g"},
+  // 그룹 6: 쿠팡 돌돌말이 우삼겹
+  {code:"E0000045",name:"쿠팡_돌돌말이 우삼겹 500g*8",color:"p"},
+  {code:"E0000046",name:"쿠팡_돌돌말이 우삼겹 800g*4",color:"p"},
+  {code:"E0000043",name:"쿠팡_돌돌말이 우삼겹 1kg*4",color:"p"},
+  // 그룹 7: 기타 쿠팡
+  {code:"F0000063",name:"쿠팡_돌돌말이 삼겹살 1kg*4",color:"w"},
+  {code:"F0000080",name:"쿠팡_돌돌말이 삼겹살 1.5kg*6",color:"w"},
+  {code:"E0000060",name:"쿠팡_소사태(수육/찜용) 1kg*10",color:"w"},
+  {code:"F0000062",name:"쿠팡_돼지앞다리(제육용) 1kg*10",color:"w"},
+  {code:"F0000082",name:"쿠팡_돼지목전지(만능) 2kg*5",color:"w"}
+];
+const COLOR_LABEL={y:"노랑",o:"주황",b:"파랑",g:"초록",p:"핑크",w:"흰색"};
+const COLOR_PREVIEW={y:"#fff2b3",o:"#fcd5b4",b:"#dbe5f1",g:"#d8e4bc",p:"#f2dcdb",w:"#ffffff"};
+const TEMPLATE_KEY="aps-inv-template";
+
+function templateToText(tpl){
+  return tpl.map(t=>`${t.code} | ${t.name||""} | ${t.color||"w"}`).join("\n");
+}
+function parseTemplateText(text){
+  const out=[];
+  for(const line of (text||"").split("\n")){
+    const trimmed=line.trim();
+    if(!trimmed||trimmed.startsWith("#"))continue;
+    const parts=trimmed.split("|").map(s=>s.trim());
+    const code=parts[0];
+    if(!code)continue;
+    const name=parts[1]||"";
+    let color=(parts[2]||"w").toLowerCase();
+    if(!COLOR_LABEL[color])color="w";
+    out.push({code,name,color});
+  }
+  return out;
+}
+
 function InventorySheetTab(){
   const[products,setProducts]=useState([]);
   const[raws,setRaws]=useState([]);
@@ -2259,7 +2340,20 @@ function InventorySheetTab(){
   const[dateLabel,setDateLabel]=useState(todayKoreanLabel());
   const[busy,setBusy]=useState(false);
   const[err,setErr]=useState("");
+  const[template,setTemplate]=useState(()=>{
+    try{
+      const stored=localStorage.getItem(TEMPLATE_KEY);
+      if(stored){const parsed=JSON.parse(stored);if(Array.isArray(parsed)&&parsed.length)return parsed}
+    }catch(e){}
+    return DEFAULT_PRODUCT_TEMPLATE;
+  });
+  const[editing,setEditing]=useState(false);
+  const[editText,setEditText]=useState("");
   const sheetRef=useRef(null);
+
+  useEffect(()=>{
+    try{localStorage.setItem(TEMPLATE_KEY,JSON.stringify(template))}catch(e){}
+  },[template]);
 
   async function handleFile(e,kind){
     const f=e.target.files&&e.target.files[0];
@@ -2296,7 +2390,31 @@ function InventorySheetTab(){
     setProducts([]);setRaws([]);setProdName("");setRawName("");setErr("");
   }
 
-  const hasAny=products.length>0||raws.length>0;
+  function openEdit(){setEditText(templateToText(template));setEditing(true)}
+  function saveTemplate(){
+    const parsed=parseTemplateText(editText);
+    if(parsed.length===0){
+      if(!confirm("목록이 비어 있습니다. 비운 채로 저장하시겠습니까? (제품 표가 빈 칸으로 표시됩니다)"))return;
+    }
+    setTemplate(parsed);
+    setEditing(false);
+  }
+  function resetTemplate(){
+    if(!confirm("기본 마스터 목록(사진 기준 37개)으로 되돌릴까요?"))return;
+    setEditText(templateToText(DEFAULT_PRODUCT_TEMPLATE));
+  }
+
+  const productMap=useMemo(()=>{
+    const m={};for(const p of products)m[p.code]=p;return m;
+  },[products]);
+  const rows=template.map(t=>{
+    const p=productMap[t.code];
+    return {code:t.code,name:t.name||(p?p.name:""),color:t.color||"w",box:p?Math.round(p.box):0,hasData:!!p};
+  });
+  const extras=products.filter(p=>!template.some(t=>t.code===p.code));
+
+  const useTemplate=template.length>0;
+  const hasAny=products.length>0||raws.length>0||useTemplate;
   const totalProdBox=products.reduce((s,p)=>s+(p.box||0),0);
   const totalRawBox=raws.reduce((s,r)=>s+(r.box||0),0);
   const totalRawKg=raws.reduce((s,r)=>s+(r.kg||0),0);
@@ -2331,8 +2449,9 @@ function InventorySheetTab(){
         <input className="aps-input" style={{width:140}} value={dateLabel} onChange={e=>setDateLabel(e.target.value)} placeholder="06/19 (금)"/>
       </div>
       <div style={{flex:1}}></div>
+      <button className="aps-btn aps-btn-secondary" onClick={openEdit} disabled={busy}>📝 제품 목록 편집 ({template.length}개)</button>
       <button className="aps-btn aps-btn-primary" onClick={downloadImage} disabled={!hasAny||busy}>📷 이미지 다운로드</button>
-      {hasAny&&<button className="aps-btn aps-btn-secondary" onClick={clearAll} disabled={busy}>초기화</button>}
+      {(products.length>0||raws.length>0)&&<button className="aps-btn aps-btn-secondary" onClick={clearAll} disabled={busy}>업로드 초기화</button>}
     </div>
 
     {err&&<div className="aps-err" style={{marginBottom:10}}>{err}</div>}
@@ -2361,21 +2480,29 @@ function InventorySheetTab(){
               <th className="right" style={{width:54}}>현 재고</th>
             </tr></thead>
             <tbody>
-              {products.length===0?<tr><td colSpan="3" style={{textAlign:"center",color:"#999",padding:"18px 8px"}}>제품 파일을 업로드하세요</td></tr>:
-                products.map(p=>{
+              {rows.length===0?<tr><td colSpan="3" style={{textAlign:"center",color:"#999",padding:"18px 8px"}}>제품 목록이 비어있습니다. "제품 목록 편집"에서 추가하세요.</td></tr>:
+                rows.map(r=><tr key={r.code} className={"inv-row-"+(r.color||"w")}>
+                  <td className="code">{r.code}</td>
+                  <td>{r.name}</td>
+                  <td className={"right qty"+(r.box===0?" zero":"")}>{r.box}</td>
+                </tr>)
+              }
+              {extras.length>0&&<>
+                <tr><td colSpan="3" style={{padding:"8px 8px 4px",fontSize:11,color:"#999",fontWeight:600,borderTop:"2px solid #ccc",background:"#fff"}}>※ 마스터 목록에 없는 업로드 제품 ({extras.length}개)</td></tr>
+                {extras.map(p=>{
                   const box=Math.round(p.box);
-                  return <tr key={p.code}>
+                  return <tr key={"x_"+p.code} className="inv-row-w">
                     <td className="code">{p.code}</td>
-                    <td>{p.name}</td>
+                    <td style={{color:"#666"}}>{p.name}</td>
                     <td className={"right qty"+(box===0?" zero":"")}>{box}</td>
                   </tr>;
-                })
-              }
+                })}
+              </>}
             </tbody>
           </table>
         </div>
         <div className="inv-sheet-col">
-          <table className="inv-tbl">
+          <table className="inv-tbl stripe">
             <thead><tr>
               <th style={{width:78}}>원육코드</th>
               <th>원육명</th>
@@ -2399,6 +2526,33 @@ function InventorySheetTab(){
               }
             </tbody>
           </table>
+        </div>
+      </div>
+    </div>}
+
+    {editing&&<div className="aps-modal-bg" onClick={()=>setEditing(false)}>
+      <div className="aps-modal aps-modal-lg" onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+          <h3 style={{margin:0,fontSize:15,fontWeight:700}}>📝 제품 마스터 목록 편집</h3>
+          <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>setEditing(false)}>닫기</button>
+        </div>
+        <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.6,marginBottom:6}}>
+          한 줄에 하나씩 입력: <code style={{background:"var(--card-bg)",padding:"1px 6px",borderRadius:3}}>코드 | 제품명 | 색상</code>.<br/>
+          색상을 생략하면 흰색이 적용됩니다. 빈 줄과 <code>#</code>으로 시작하는 줄은 무시됩니다.<br/>
+          업로드한 엑셀에서 잔량 Box를 자동으로 가져오며, 목록에 있지만 엑셀에 없는 제품은 <b style={{color:"#dc2626"}}>0</b>으로 표시됩니다.
+        </div>
+        <div className="inv-edit-legend">
+          {Object.entries(COLOR_LABEL).map(([k,v])=>
+            <span key={k} style={{background:COLOR_PREVIEW[k],border:"1px solid #ccc"}}>{k} = {v}</span>
+          )}
+        </div>
+        <textarea className="inv-edit-textarea" value={editText} onChange={e=>setEditText(e.target.value)} spellCheck={false}/>
+        <div style={{display:"flex",justifyContent:"space-between",gap:8,marginTop:12}}>
+          <button className="aps-btn aps-btn-secondary" onClick={resetTemplate}>🔄 사진 기준으로 복원</button>
+          <div style={{display:"flex",gap:8}}>
+            <button className="aps-btn aps-btn-secondary" onClick={()=>setEditing(false)}>취소</button>
+            <button className="aps-btn aps-btn-primary" onClick={saveTemplate}>저장</button>
+          </div>
         </div>
       </div>
     </div>}
