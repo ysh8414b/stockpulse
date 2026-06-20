@@ -108,6 +108,7 @@
     .inv-tbl .code{font-family:"Consolas","Menlo","Courier New",monospace;font-size:11px;color:#455a64;letter-spacing:.01em}
     .inv-tbl .zero{color:#dc2626;font-weight:700}
     .inv-tbl .qty{font-variant-numeric:tabular-nums;font-weight:600}
+    .inv-tbl .name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:0}
     /* 제품 그룹 배경색 (사진과 동일) */
     .inv-row-y td{background:#fff2b3 !important}
     .inv-row-o td{background:#fcd5b4 !important}
@@ -2473,27 +2474,24 @@ function InventorySheetTab(){
       </div>
       <div className="inv-sheet-body">
         <div className="inv-sheet-col">
-          <table className="inv-tbl">
+          <table className="inv-tbl" style={{tableLayout:"fixed",width:"100%"}}>
             <thead><tr>
-              <th style={{width:78}}>제품코드</th>
               <th>제품명</th>
-              <th className="right" style={{width:54}}>현 재고</th>
+              <th className="right" style={{width:60}}>현 재고</th>
             </tr></thead>
             <tbody>
-              {rows.length===0?<tr><td colSpan="3" style={{textAlign:"center",color:"#999",padding:"18px 8px"}}>제품 목록이 비어있습니다. "제품 목록 편집"에서 추가하세요.</td></tr>:
+              {rows.length===0?<tr><td colSpan="2" style={{textAlign:"center",color:"#999",padding:"18px 8px"}}>제품 목록이 비어있습니다. "제품 목록 편집"에서 추가하세요.</td></tr>:
                 rows.map(r=><tr key={r.code} className={"inv-row-"+(r.color||"w")}>
-                  <td className="code">{r.code}</td>
-                  <td>{r.name}</td>
+                  <td className="name" title={r.name}>{r.name}</td>
                   <td className={"right qty"+(r.box===0?" zero":"")}>{r.box}</td>
                 </tr>)
               }
               {extras.length>0&&<>
-                <tr><td colSpan="3" style={{padding:"8px 8px 4px",fontSize:11,color:"#999",fontWeight:600,borderTop:"2px solid #ccc",background:"#fff"}}>※ 마스터 목록에 없는 업로드 제품 ({extras.length}개)</td></tr>
+                <tr><td colSpan="2" style={{padding:"8px 8px 4px",fontSize:11,color:"#999",fontWeight:600,borderTop:"2px solid #ccc",background:"#fff"}}>※ 마스터 목록에 없는 업로드 제품 ({extras.length}개)</td></tr>
                 {extras.map(p=>{
                   const box=Math.round(p.box);
                   return <tr key={"x_"+p.code} className="inv-row-w">
-                    <td className="code">{p.code}</td>
-                    <td style={{color:"#666"}}>{p.name}</td>
+                    <td className="name" style={{color:"#666"}} title={p.name}>{p.name}</td>
                     <td className={"right qty"+(box===0?" zero":"")}>{box}</td>
                   </tr>;
                 })}
@@ -2502,23 +2500,21 @@ function InventorySheetTab(){
           </table>
         </div>
         <div className="inv-sheet-col">
-          <table className="inv-tbl stripe">
+          <table className="inv-tbl stripe" style={{tableLayout:"fixed",width:"100%"}}>
             <thead><tr>
-              <th style={{width:78}}>원육코드</th>
               <th>원육명</th>
-              <th style={{width:54}}>원산지</th>
-              <th className="right" style={{width:58}}>kg</th>
-              <th className="right" style={{width:42}}>박스</th>
+              <th style={{width:56}}>원산지</th>
+              <th className="right" style={{width:62}}>kg</th>
+              <th className="right" style={{width:46}}>박스</th>
             </tr></thead>
             <tbody>
-              {raws.length===0?<tr><td colSpan="5" style={{textAlign:"center",color:"#999",padding:"18px 8px"}}>원육 파일을 업로드하세요</td></tr>:
+              {raws.length===0?<tr><td colSpan="4" style={{textAlign:"center",color:"#999",padding:"18px 8px"}}>원육 파일을 업로드하세요</td></tr>:
                 raws.map(r=>{
                   const box=Math.round(r.box);
                   const kgZero=Math.abs(r.kg)<0.05;
                   return <tr key={r.code}>
-                    <td className="code">{r.code}</td>
-                    <td>{r.name}</td>
-                    <td>{r.origin}</td>
+                    <td className="name" title={r.name}>{r.name}</td>
+                    <td className="name" title={r.origin}>{r.origin}</td>
                     <td className={"right qty"+(kgZero?" zero":"")}>{r.kg.toFixed(1)}</td>
                     <td className={"right qty"+(box===0?" zero":"")}>{box}</td>
                   </tr>;
