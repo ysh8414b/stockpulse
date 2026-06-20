@@ -2495,26 +2495,28 @@ function InventorySheetTab(){
           ));
         })()}
         <div className="inv-sheet-col">
-          <table className="inv-tbl stripe" style={{tableLayout:"fixed",width:"100%"}}>
+          <table className="inv-tbl stripe">
             <thead><tr>
               <th>원육명</th>
-              <th style={{width:56}}>원산지</th>
-              <th className="right" style={{width:62}}>kg</th>
-              <th className="right" style={{width:46}}>박스</th>
+              <th>원산지</th>
+              <th className="right">kg</th>
+              <th className="right">박스</th>
             </tr></thead>
             <tbody>
-              {raws.length===0?<tr><td colSpan="4" style={{textAlign:"center",color:"#999",padding:"18px 8px"}}>원육 파일을 업로드하세요</td></tr>:
-                raws.map(r=>{
+              {(()=>{
+                const visible=raws.filter(r=>Math.abs(r.kg)>=0.05);
+                if(raws.length===0)return <tr><td colSpan="4" style={{textAlign:"center",color:"#999",padding:"18px 8px"}}>원육 파일을 업로드하세요</td></tr>;
+                if(visible.length===0)return <tr><td colSpan="4" style={{textAlign:"center",color:"#999",padding:"18px 8px"}}>표시할 원육이 없습니다 (전부 0kg)</td></tr>;
+                return visible.map(r=>{
                   const box=Math.round(r.box);
-                  const kgZero=Math.abs(r.kg)<0.05;
                   return <tr key={r.code}>
                     <td className="name" title={r.name}>{r.name}</td>
                     <td className="name" title={r.origin}>{r.origin}</td>
-                    <td className={"right qty"+(kgZero?" zero":"")}>{r.kg.toFixed(1)}</td>
+                    <td className="right qty">{r.kg.toFixed(1)}</td>
                     <td className={"right qty"+(box===0?" zero":"")}>{box}</td>
                   </tr>;
-                })
-              }
+                });
+              })()}
             </tbody>
           </table>
         </div>
