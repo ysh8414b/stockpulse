@@ -93,22 +93,22 @@
       .aps-week-panel{width:100%;max-height:none;position:static;order:-1}
     }
     /* === 재고 시트 (사진 형식 출력용) === */
-    .inv-sheet{background:#fff;color:#111;padding:24px 28px;border-radius:8px;font-family:"Pretendard","Apple SD Gothic Neo","Malgun Gothic",sans-serif}
-    .inv-sheet-header{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:18px;gap:16px}
-    .inv-sheet-title{font-size:24px;font-weight:700;color:#111;text-align:center;flex:1}
-    .inv-sheet-date{font-size:16px;color:#333;font-weight:500;min-width:120px;text-align:right}
-    .inv-sheet-spacer{min-width:120px}
-    .inv-sheet-body{display:flex;gap:18px;align-items:flex-start}
-    .inv-sheet-col{flex:1;min-width:0}
-    .inv-tbl{width:100%;border-collapse:collapse;font-size:12px;color:#111}
-    .inv-tbl thead th{background:#cfd8dc;color:#111;padding:7px 8px;text-align:left;font-weight:700;border:1px solid #b0bec5;font-size:12px}
-    .inv-tbl tbody td{padding:6px 8px;border-bottom:1px solid #eceff1;background:#fff;line-height:1.3}
+    .inv-sheet{background:#fff;color:#111;padding:20px 24px;border-radius:8px;font-family:"Pretendard","Apple SD Gothic Neo","Malgun Gothic",sans-serif}
+    .inv-sheet-header{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:14px;gap:16px}
+    .inv-sheet-title{font-size:22px;font-weight:700;color:#111;text-align:center;flex:1}
+    .inv-sheet-date{font-size:15px;color:#333;font-weight:500;min-width:110px;text-align:right}
+    .inv-sheet-spacer{min-width:110px}
+    .inv-sheet-body{display:grid;grid-template-columns:max-content max-content minmax(0,1fr);gap:14px;align-items:flex-start}
+    .inv-sheet-col{min-width:0}
+    .inv-tbl{border-collapse:collapse;font-size:11.5px;color:#111}
+    .inv-tbl thead th{background:#cfd8dc;color:#111;padding:5px 7px;text-align:left;font-weight:700;border:1px solid #b0bec5;font-size:11.5px;white-space:nowrap}
+    .inv-tbl tbody td{padding:3px 7px;border-bottom:1px solid #eceff1;background:#fff;line-height:1.25}
     .inv-tbl.stripe tbody tr:nth-child(even) td{background:#fafafa}
     .inv-tbl .right{text-align:right}
     .inv-tbl .code{font-family:"Consolas","Menlo","Courier New",monospace;font-size:11px;color:#455a64;letter-spacing:.01em}
     .inv-tbl .zero{color:#dc2626;font-weight:700}
-    .inv-tbl .qty{font-variant-numeric:tabular-nums;font-weight:600}
-    .inv-tbl .name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:0}
+    .inv-tbl .qty{font-variant-numeric:tabular-nums;font-weight:600;padding-left:14px}
+    .inv-tbl .name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px}
     /* 제품 그룹 배경색 (사진과 동일) */
     .inv-row-y td{background:#fff2b3 !important}
     .inv-row-o td{background:#fcd5b4 !important}
@@ -129,7 +129,7 @@
     .inv-upload-card .filename{font-size:11px;color:var(--muted);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     @media(max-width:700px){
       .inv-upload-grid{grid-template-columns:1fr}
-      .inv-sheet-body{flex-direction:column}
+      .inv-sheet-body{grid-template-columns:1fr}
       .inv-sheet{padding:14px 12px}
     }
     @media(max-width:700px){
@@ -2473,32 +2473,37 @@ function InventorySheetTab(){
         <div className="inv-sheet-date">{dateLabel||" "}</div>
       </div>
       <div className="inv-sheet-body">
-        <div className="inv-sheet-col">
-          <table className="inv-tbl" style={{tableLayout:"fixed",width:"100%"}}>
-            <thead><tr>
-              <th>제품명</th>
-              <th className="right" style={{width:60}}>현 재고</th>
-            </tr></thead>
-            <tbody>
-              {rows.length===0?<tr><td colSpan="2" style={{textAlign:"center",color:"#999",padding:"18px 8px"}}>제품 목록이 비어있습니다. "제품 목록 편집"에서 추가하세요.</td></tr>:
-                rows.map(r=><tr key={r.code} className={"inv-row-"+(r.color||"w")}>
-                  <td className="name" title={r.name}>{r.name}</td>
-                  <td className={"right qty"+(r.box===0?" zero":"")}>{r.box}</td>
-                </tr>)
-              }
-              {extras.length>0&&<>
-                <tr><td colSpan="2" style={{padding:"8px 8px 4px",fontSize:11,color:"#999",fontWeight:600,borderTop:"2px solid #ccc",background:"#fff"}}>※ 마스터 목록에 없는 업로드 제품 ({extras.length}개)</td></tr>
-                {extras.map(p=>{
-                  const box=Math.round(p.box);
-                  return <tr key={"x_"+p.code} className="inv-row-w">
-                    <td className="name" style={{color:"#666"}} title={p.name}>{p.name}</td>
-                    <td className={"right qty"+(box===0?" zero":"")}>{box}</td>
-                  </tr>;
-                })}
-              </>}
-            </tbody>
-          </table>
-        </div>
+        {(()=>{
+          const half=Math.ceil(rows.length/2);
+          const cols=rows.length===0?[[],[]]:[rows.slice(0,half),rows.slice(half)];
+          return cols.map((part,idx)=>(
+            <div className="inv-sheet-col" key={"p"+idx}>
+              <table className="inv-tbl">
+                <thead><tr>
+                  <th>제품명</th>
+                  <th className="right">현 재고</th>
+                </tr></thead>
+                <tbody>
+                  {rows.length===0&&idx===0?<tr><td colSpan="2" style={{textAlign:"center",color:"#999",padding:"18px 8px"}}>제품 목록이 비어있습니다. "제품 목록 편집"에서 추가하세요.</td></tr>:null}
+                  {part.map(r=><tr key={r.code} className={"inv-row-"+(r.color||"w")}>
+                    <td className="name" title={r.name}>{r.name}</td>
+                    <td className={"right qty"+(r.box===0?" zero":"")}>{r.box}</td>
+                  </tr>)}
+                  {idx===1&&extras.length>0&&<>
+                    <tr><td colSpan="2" style={{padding:"6px 7px 3px",fontSize:10,color:"#999",fontWeight:600,borderTop:"2px solid #ccc",background:"#fff"}}>※ 목록 외 ({extras.length}개)</td></tr>
+                    {extras.map(p=>{
+                      const box=Math.round(p.box);
+                      return <tr key={"x_"+p.code} className="inv-row-w">
+                        <td className="name" style={{color:"#666"}} title={p.name}>{p.name}</td>
+                        <td className={"right qty"+(box===0?" zero":"")}>{box}</td>
+                      </tr>;
+                    })}
+                  </>}
+                </tbody>
+              </table>
+            </div>
+          ));
+        })()}
         <div className="inv-sheet-col">
           <table className="inv-tbl stripe" style={{tableLayout:"fixed",width:"100%"}}>
             <thead><tr>
