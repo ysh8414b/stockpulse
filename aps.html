@@ -1052,7 +1052,7 @@ function fmtSavedAt(iso){
   }catch(e){return ""}
 }
 
-function InventoryQuickPanel({onClose,onJumpToSheet}){
+function InventoryQuickPanel({onClose,onJumpToSheet,adminHash}){
   const[data,setData]=useState(()=>loadStoredInventory());
   const[showRaws,setShowRaws]=useState(false);
   const[query,setQuery]=useState("");
@@ -1081,6 +1081,24 @@ function InventoryQuickPanel({onClose,onJumpToSheet}){
       window.removeEventListener("aps-inv-data-change",reload);
     };
   },[]);
+
+  // 마운트 시 원격에서 최신 재고 fetch → 로컬보다 새로우면 교체 (모바일에서 PC 업로드 데이터 보기 위해)
+  useEffect(()=>{
+    if(!adminHash)return;
+    let cancelled=false;
+    (async()=>{
+      const remote=await loadRemoteInventory(adminHash);
+      if(cancelled||!remote)return;
+      const local=loadStoredInventory();
+      const localSaved=local?.savedAt||"";
+      const remoteSaved=remote.savedAt||"";
+      if(!localSaved||(remoteSaved&&remoteSaved>localSaved)){
+        applyRemoteInventoryToLocal(remote);
+        setData(remote);
+      }
+    })();
+    return()=>{cancelled=true};
+  },[adminHash]);
 
   const productMap=useMemo(()=>{
     const m={};(data?.products||[]).forEach(p=>{m[p.code]=p});return m;
@@ -2153,6 +2171,7 @@ function PlansTab({adminHash}){
         {invPanelOpen&&<InventoryQuickPanel
           onClose={()=>setInvPanelOpen(false)}
           onJumpToSheet={()=>{window.location.hash="#sheet"}}
+          adminHash={adminHash}
         />}
         <div className={invPanelOpen?"aps-plans-main":""}>
         {viewMode==="gantt"?
@@ -2529,10 +2548,63 @@ function loadStoredInventory(){
 function saveStoredInventory(patch){
   try{
     const prev=loadStoredInventory()||{products:[],raws:[],prodName:"",rawName:"",dateLabel:"",title:"",savedAt:""};
-    const next={...prev,...patch,savedAt:new Date().toISOString()};
+    const next={...prev,...patch,savedAt:patch&&patch.savedAt?patch.savedAt:new Date().toISOString()};
     localStorage.setItem(INVENTORY_DATA_KEY,JSON.stringify(next));
     // 같은 탭 내 다른 컴포넌트에 알림 (storage 이벤트는 다른 탭에서만 발생)
     try{window.dispatchEvent(new CustomEvent("aps-inv-data-change"));}catch(e){}
+  }catch(e){}
+}
+
+// ───── Supabase 원격 동기화 (2026-06-21) ─────
+// PC에서 업로드한 재고 시트를 모바일에서도 보기 위해 Supabase 싱글톤 테이블에 저장
+function _normalizeRemoteInv(r){
+  if(!r||typeof r!=="object")return null;
+  return {
+    products:Array.isArray(r.products)?r.products:[],
+    raws:Array.isArray(r.raws)?r.raws:[],
+    prodName:r.prodName||"",
+    rawName:r.rawName||"",
+    dateLabel:r.dateLabel||"",
+    title:r.title||"",
+    savedAt:r.updated_at||r.savedAt||""
+  };
+}
+async function loadRemoteInventory(adminHash){
+  if(!adminHash)return null;
+  try{
+    const r=await rpc("aps_get_inventory_sheet",{p_admin_hash:adminHash});
+    return _normalizeRemoteInv(r);
+  }catch(e){return null}
+}
+async function saveRemoteInventory(adminHash,patch){
+  if(!adminHash)return null;
+  try{
+    const cur=loadStoredInventory()||{products:[],raws:[],prodName:"",rawName:"",dateLabel:"",title:""};
+    const merged={...cur,...(patch||{})};
+    const payload={
+      products:merged.products||[],
+      raws:merged.raws||[],
+      prodName:merged.prodName||"",
+      rawName:merged.rawName||"",
+      dateLabel:merged.dateLabel||"",
+      title:merged.title||""
+    };
+    const updatedAt=await rpc("aps_save_inventory_sheet",{p_admin_hash:adminHash,p_payload:payload});
+    // 서버 timestamp 를 로컬 캐시에도 반영 → 다음 비교 시 일관성 유지
+    if(typeof updatedAt==="string"&&updatedAt)saveStoredInventory({savedAt:updatedAt});
+    return updatedAt||null;
+  }catch(e){return null}
+}
+async function clearRemoteInventory(adminHash){
+  if(!adminHash)return;
+  try{await rpc("aps_clear_inventory_sheet",{p_admin_hash:adminHash})}catch(e){}
+}
+// 원격에서 가져온 데이터로 로컬 캐시 교체 + 이벤트 발행
+function applyRemoteInventoryToLocal(remote){
+  if(!remote)return;
+  try{
+    localStorage.setItem(INVENTORY_DATA_KEY,JSON.stringify(remote));
+    window.dispatchEvent(new CustomEvent("aps-inv-data-change"));
   }catch(e){}
 }
 
@@ -2555,7 +2627,7 @@ function parseTemplateText(text){
   return out;
 }
 
-function InventorySheetTab(){
+function InventorySheetTab({adminHash}){
   const stored=loadStoredInventory();
   const[products,setProducts]=useState(stored?.products||[]);
   const[raws,setRaws]=useState(stored?.raws||[]);
@@ -2565,6 +2637,45 @@ function InventorySheetTab(){
   const[dateLabel,setDateLabel]=useState(stored?.dateLabel||todayKoreanLabel());
   const[busy,setBusy]=useState(false);
   const[err,setErr]=useState("");
+  const[syncStatus,setSyncStatus]=useState(""); // "syncing" | "synced" | "error" | ""
+
+  // 마운트 시 원격에서 최신 재고 시트 fetch → 로컬보다 새로우면 교체
+  useEffect(()=>{
+    if(!adminHash)return;
+    let cancelled=false;
+    (async()=>{
+      setSyncStatus("syncing");
+      const remote=await loadRemoteInventory(adminHash);
+      if(cancelled)return;
+      if(remote){
+        const localSaved=stored?.savedAt||"";
+        const remoteSaved=remote.savedAt||"";
+        // 원격이 더 새롭거나 로컬이 없으면 원격으로 교체
+        if(!localSaved||(remoteSaved&&remoteSaved>localSaved)){
+          setProducts(remote.products);
+          setRaws(remote.raws);
+          setProdName(remote.prodName);
+          setRawName(remote.rawName);
+          if(remote.title)setTitle(remote.title);
+          if(remote.dateLabel)setDateLabel(remote.dateLabel);
+          applyRemoteInventoryToLocal(remote);
+        }else if(localSaved>remoteSaved){
+          // 로컬이 더 새로우면 원격에 push (오프라인 업로드 후 첫 접속 시 등)
+          await saveRemoteInventory(adminHash,stored);
+        }
+        setSyncStatus("synced");
+      }else{
+        // 원격이 비어있는데 로컬에 데이터 있으면 push
+        if(stored&&(stored.products?.length||stored.raws?.length)){
+          const ok=await saveRemoteInventory(adminHash,stored);
+          setSyncStatus(ok?"synced":"error");
+        }else{
+          setSyncStatus("synced");
+        }
+      }
+    })();
+    return()=>{cancelled=true};
+  },[adminHash]);
   const[template,setTemplate]=useState(()=>{
     try{
       const stored=localStorage.getItem(TEMPLATE_KEY);
@@ -2589,8 +2700,16 @@ function InventorySheetTab(){
       if(typeof XLSX==="undefined")throw new Error("XLSX 라이브러리 로드 실패 — 새로고침 후 다시 시도하세요");
       const buf=await f.arrayBuffer();
       const items=parseInventoryWorkbook(buf);
-      if(kind==="product"){setProducts(items);setProdName(f.name);saveStoredInventory({products:items,prodName:f.name,title,dateLabel})}
-      else{setRaws(items);setRawName(f.name);saveStoredInventory({raws:items,rawName:f.name,title,dateLabel})}
+      let patch;
+      if(kind==="product"){setProducts(items);setProdName(f.name);patch={products:items,prodName:f.name,title,dateLabel}}
+      else{setRaws(items);setRawName(f.name);patch={raws:items,rawName:f.name,title,dateLabel}}
+      saveStoredInventory(patch);
+      // 원격 동기화 (비동기 fire-and-forget 아닌 대기 — 실패 시 사용자에게 알려줌)
+      if(adminHash){
+        setSyncStatus("syncing");
+        const ok=await saveRemoteInventory(adminHash,patch);
+        setSyncStatus(ok?"synced":"error");
+      }
     }catch(ex){
       setErr((kind==="product"?"제품":"원육")+" 파일 처리 오류: "+(ex.message||ex));
     }finally{setBusy(false)}
@@ -2611,19 +2730,29 @@ function InventorySheetTab(){
     }finally{setBusy(false)}
   }
 
-  function clearAll(){
+  async function clearAll(){
     setProducts([]);setRaws([]);setProdName("");setRawName("");setErr("");
     try{
       localStorage.removeItem(INVENTORY_DATA_KEY);
       window.dispatchEvent(new CustomEvent("aps-inv-data-change"));
     }catch(e){}
+    if(adminHash){
+      setSyncStatus("syncing");
+      await clearRemoteInventory(adminHash);
+      setSyncStatus("synced");
+    }
   }
 
-  // 제목/날짜 변경 시 저장 (업로드한 데이터가 있을 때만)
+  // 제목/날짜 변경 시 저장 (업로드한 데이터가 있을 때만) — 원격은 디바운스
   useEffect(()=>{
     if(products.length===0&&raws.length===0)return;
     saveStoredInventory({title,dateLabel});
-  },[title,dateLabel]);
+    if(!adminHash)return;
+    const t=setTimeout(()=>{
+      saveRemoteInventory(adminHash,{title,dateLabel});
+    },600);
+    return()=>clearTimeout(t);
+  },[title,dateLabel,adminHash,products.length,raws.length]);
 
   function openEdit(){setEditText(templateToText(template));setEditing(true)}
   function saveTemplate(){
@@ -2684,6 +2813,13 @@ function InventorySheetTab(){
         <input className="aps-input" style={{width:140}} value={dateLabel} onChange={e=>setDateLabel(e.target.value)} placeholder="06/19 (금)"/>
       </div>
       <div style={{flex:1}}></div>
+      {adminHash&&<span style={{
+        fontSize:11,padding:"4px 8px",borderRadius:6,fontWeight:600,
+        background:syncStatus==="synced"?"rgba(34,197,94,0.12)":syncStatus==="syncing"?"rgba(148,163,184,0.16)":syncStatus==="error"?"rgba(239,68,68,0.12)":"transparent",
+        color:syncStatus==="synced"?"#16a34a":syncStatus==="syncing"?"var(--muted)":syncStatus==="error"?"#dc2626":"var(--muted)"
+      }}>
+        {syncStatus==="synced"?"☁ 동기화됨":syncStatus==="syncing"?"☁ 동기화 중…":syncStatus==="error"?"⚠ 동기화 실패":""}
+      </span>}
       <button className="aps-btn aps-btn-secondary" onClick={openEdit} disabled={busy}>📝 제품 목록 편집 ({template.length}개)</button>
       <button className="aps-btn aps-btn-primary" onClick={downloadImage} disabled={!hasAny||busy}>📷 이미지 다운로드</button>
       {(products.length>0||raws.length>0)&&<button className="aps-btn aps-btn-secondary" onClick={clearAll} disabled={busy}>업로드 초기화</button>}
@@ -2872,7 +3008,7 @@ function App(){
         {tab==="plans"&&<PlansTab adminHash={adminHash}/>}
         {tab==="inventory"&&<InventoryTab adminHash={adminHash}/>}
         {tab==="stats"&&<StatsTab adminHash={adminHash}/>}
-        {tab==="sheet"&&<InventorySheetTab/>}
+        {tab==="sheet"&&<InventorySheetTab adminHash={adminHash}/>}
       </>}
     </div>
 

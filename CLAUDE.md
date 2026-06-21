@@ -640,7 +640,29 @@
   - 뷰 영역을 `<div className={invPanelOpen?"aps-plans-layout":""}>`로 감싸 패널이 열렸을 때만 flex 레이아웃 활성
   - 닫혔을 때는 빈 className → 기존 레이아웃 그대로 유지 (영향 없음)
 - **CSS**: `.aps-plans-layout` (flex/gap:14), `.aps-plans-main` (flex:1, min-width:0), `.aps-inv-panel` (240px 폭, sticky top:14, max-height:82vh), `.aps-inv-panel-tbl` (11px 폰트, 색상 행 배경, zero 빨강), 980px 이하 반응형(세로 스택 + max-height:280px)
-- 별도 SQL/DB 변경 없음. 데이터는 사용자 브라우저 localStorage에만 존재 (기기·브라우저 간 동기화 없음)
+- 별도 SQL/DB 변경 없음. 데이터는 사용자 브라우저 localStorage에만 존재 (기기·브라우저 간 동기화 없음 — 2026-06-21 Supabase 동기화로 해소)
+
+### APS — 재고 시트 Supabase 동기화 (PC ↔ 모바일) (2026-06-21)
+- 사용자 보고: "컴퓨터에서는 재고 시트 저장돼 있는데 모바일로 보니까 저장 안 되어 있음" — 기존 localStorage 단일 저장은 기기·브라우저 간 동기화 불가
+- 변경: 재고 시트 데이터(`{products, raws, prodName, rawName, title, dateLabel}`)를 Supabase 싱글톤 테이블에 함께 저장 → 모든 기기에서 동일한 재고 자동 표시
+- **`setup_aps_inv_sheet.sql`** (신규, 1회 실행):
+  - `aps_inventory_sheet` 테이블 (id=1 CHECK 싱글톤, payload JSONB, updated_at TIMESTAMPTZ)
+  - RLS ENABLE + 정책 없음 → REST 직접 접근 차단, SECURITY DEFINER RPC로만 접근
+  - RPC 3종: `aps_get_inventory_sheet`(payload+updated_at 반환), `aps_save_inventory_sheet`(upsert, updated_at 반환), `aps_clear_inventory_sheet`(delete)
+  - 모든 RPC 첫 줄에서 `aps_assert_admin(p_admin_hash)` 검증
+- **`aps.html` 변경**:
+  - 헬퍼 추가: `loadRemoteInventory(adminHash)`, `saveRemoteInventory(adminHash,patch)`, `clearRemoteInventory(adminHash)`, `applyRemoteInventoryToLocal(remote)`
+  - `saveStoredInventory(patch)`에 `patch.savedAt` 우선 적용 (서버 timestamp 반영 가능)
+  - **InventorySheetTab(adminHash) 변경**:
+    - 마운트 시 원격 fetch → `local.savedAt` vs `remote.savedAt` ISO 문자열 비교 → 새로운 쪽이 이김 (원격 새로움 → 로컬 교체, 로컬 새로움 → 원격 push)
+    - handleFile 업로드 시 로컬 저장 + 원격 await push (실패 시 ⚠ 동기화 실패 뱃지)
+    - clearAll() async 변경 → 로컬 + 원격 동시 삭제
+    - title/dateLabel 변경 시 600ms 디바운스 후 원격 push
+    - toolbar 우측에 동기화 상태 뱃지: ☁ 동기화 중… / ☁ 동기화됨 / ⚠ 동기화 실패
+  - **InventoryQuickPanel(adminHash) 변경**: 마운트 시 원격 fetch → 로컬보다 새로우면 교체 + 이벤트 발행 → 다른 인스턴스도 자동 갱신
+  - App에서 `<InventorySheetTab adminHash={adminHash}/>`, PlansTab에서 `<InventoryQuickPanel adminHash={adminHash}/>` prop 전달
+- **충돌 해결**: payload는 항상 전체 교체(upload-as-whole-snapshot)이므로 partial merge 충돌 없음. last-write-wins (server `updated_at` 기준)
+- **운영 순서**: Supabase에서 `setup_aps_inv_sheet.sql` 실행 1회 → PC에서 재고 업로드 → 모바일에서 APS 페이지 접속 시 자동으로 PC 업로드 데이터 fetch
 
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
