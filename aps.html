@@ -1181,11 +1181,12 @@ function InventoryQuickPanel({onClose,onJumpToSheet}){
 // ═══════════════════════════════════════════
 // 생산계획 탭
 // ═══════════════════════════════════════════
-function PlanForm({adminHash,items,lines,settings,initial,onSaved,onCancel}){
+function PlanForm({adminHash,items,lines,settings,initial,defaultDate,onSaved,onCancel}){
   const isEdit=!!initial;
   const wsh=parseInt(settings?.work_start_hour||"8");
-  const defaultStartInput=`${todayStr()}T${String(wsh).padStart(2,"0")}:00`;
-  const defaultEndInput=`${todayStr()}T${String(Math.min(wsh+1,23)).padStart(2,"0")}:00`;
+  const baseDate=defaultDate||todayStr();
+  const defaultStartInput=`${baseDate}T${String(wsh).padStart(2,"0")}:00`;
+  const defaultEndInput=`${baseDate}T${String(Math.min(wsh+1,23)).padStart(2,"0")}:00`;
   const[itemId,setItemId]=useState(initial?.item_id||"");
   const[lineId,setLineId]=useState(initial?.line_id||"");
   const[qty,setQty]=useState(initial?.qty||"");
@@ -2226,7 +2227,7 @@ function PlansTab({adminHash}){
       </div>
     }
 
-    {showForm&&<PlanForm adminHash={adminHash} items={items} lines={lines} settings={settings} initial={editing} onCancel={()=>setShowForm(false)} onSaved={()=>{setShowForm(false);load()}}/>}
+    {showForm&&<PlanForm adminHash={adminHash} items={items} lines={lines} settings={settings} initial={editing} defaultDate={allDates?todayStr():dayStr} onCancel={()=>setShowForm(false)} onSaved={()=>{setShowForm(false);load()}}/>}
     {showSettings&&<SettingsModal adminHash={adminHash} settings={settings} onCancel={()=>setShowSettings(false)} onSaved={(s)=>{setSettings(prev=>({...prev,...s}));setShowSettings(false)}}/>}
     {exportingWeek&&<div style={{position:"fixed",left:-99999,top:0,zIndex:-1,pointerEvents:"none"}} aria-hidden="true">
       <div ref={exportRef}><ExportWeekView week={exportingWeek}/></div>
