@@ -664,6 +664,15 @@
 - **충돌 해결**: payload는 항상 전체 교체(upload-as-whole-snapshot)이므로 partial merge 충돌 없음. last-write-wins (server `updated_at` 기준)
 - **운영 순서**: Supabase에서 `setup_aps_inv_sheet.sql` 실행 1회 → PC에서 재고 업로드 → 모바일에서 APS 페이지 접속 시 자동으로 PC 업로드 데이터 fetch
 
+### APS — 재고 시트 헤더 간격 + 날짜 자동 갱신 (2026-06-22)
+- 사용자 보고: "PC에서 제목과 날짜 사이 공백이 너무 멀다 (모바일은 괜찮음). 그리고 날짜는 오늘 날짜로 자동 표시되게 해달라"
+- 원인 1(공백): `.inv-sheet-header`가 `justify-content:space-between` + 좌측 `.inv-sheet-spacer(min-width:110px)` + `.inv-sheet-title{flex:1}` + 우측 `.inv-sheet-date(min-width:110px, text-align:right)` 구조 → PC 폭에서 제목은 중앙, 날짜는 우측 끝으로 밀려 시각적으로 멀어 보임. 모바일은 `min-width:60px`로 줄여놔서 가까웠음
+- 원인 2(날짜): `useState(stored?.dateLabel||todayKoreanLabel())` + 원격 fetch 시 `if(remote.dateLabel)setDateLabel(remote.dateLabel)`로 저장된 라벨을 우선 복원 → 처음 자동 입력된 날짜가 영속화되어 다음날에도 어제 날짜 그대로 표시
+- **변경 1(CSS)** ([aps.html:126-129](aps.html:126)): `.inv-sheet-header{justify-content:center}` + `.inv-sheet-title`의 `flex:1` 제거 + `.inv-sheet-date`의 `min-width:110px,text-align:right` 제거 + `.inv-sheet-spacer{display:none}` → 제목과 날짜가 헤더 가운데에서 `gap:16px`로 자연스럽게 붙음. 모바일 미디어쿼리는 그대로 둠(spacer는 display:none 우선되어 무영향)
+- **변경 2(JS)** ([aps.html:2656](aps.html:2656), [aps.html:2679](aps.html:2679)): 초기 state를 `useState(todayKoreanLabel())`로 변경 → 로컬 stored.dateLabel 무시. 원격 fetch에서 dateLabel 복원 라인 제거 → 페이지 진입할 때마다 오늘 날짜로 자동 표시
+- 보존: 사용자가 input에서 수동 편집은 가능. title/dateLabel 변경 시 600ms 디바운스로 원격 push되는 자동 저장 로직은 그대로 → 수동 편집한 날짜는 그 세션 동안만 유지되고, 다음 마운트 시 다시 오늘 날짜로 리셋됨
+- 한계: 페이지를 띄워둔 채 자정 넘어가도 자동 갱신은 없음(새로고침 필요). 사용자 요구 범위에서 벗어나는 시간 기반 useEffect는 추가하지 않음
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)

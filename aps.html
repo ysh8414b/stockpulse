@@ -123,10 +123,10 @@
     }
     /* === 재고 시트 (사진 형식 출력용) === */
     .inv-sheet{background:#fff;color:#111;padding:20px 24px;border-radius:8px;font-family:"Pretendard","Apple SD Gothic Neo","Malgun Gothic",sans-serif}
-    .inv-sheet-header{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:14px;gap:16px}
-    .inv-sheet-title{font-size:22px;font-weight:700;color:#111;text-align:center;flex:1}
-    .inv-sheet-date{font-size:15px;color:#333;font-weight:500;min-width:110px;text-align:right}
-    .inv-sheet-spacer{min-width:110px}
+    .inv-sheet-header{display:flex;align-items:flex-end;justify-content:center;margin-bottom:14px;gap:16px}
+    .inv-sheet-title{font-size:22px;font-weight:700;color:#111;text-align:center}
+    .inv-sheet-date{font-size:15px;color:#333;font-weight:500;text-align:left}
+    .inv-sheet-spacer{display:none}
     .inv-sheet-body{display:grid;grid-template-columns:max-content minmax(0,1fr);column-gap:14px;row-gap:0;align-items:flex-start}
     .inv-sheet-col{min-width:0}
     /* 제품 2분할(JSX)을 왼쪽 한 열로 stack, 원육은 오른쪽 한 열 full-height */
@@ -2653,7 +2653,7 @@ function InventorySheetTab({adminHash}){
   const[prodName,setProdName]=useState(stored?.prodName||"");
   const[rawName,setRawName]=useState(stored?.rawName||"");
   const[title,setTitle]=useState(stored?.title||"4층 제품 & 원육 재고");
-  const[dateLabel,setDateLabel]=useState(stored?.dateLabel||todayKoreanLabel());
+  const[dateLabel,setDateLabel]=useState(todayKoreanLabel());
   const[busy,setBusy]=useState(false);
   const[err,setErr]=useState("");
   const[syncStatus,setSyncStatus]=useState(""); // "syncing" | "synced" | "error" | ""
@@ -2676,7 +2676,6 @@ function InventorySheetTab({adminHash}){
           setProdName(remote.prodName);
           setRawName(remote.rawName);
           if(remote.title)setTitle(remote.title);
-          if(remote.dateLabel)setDateLabel(remote.dateLabel);
           applyRemoteInventoryToLocal(remote);
         }else if(localSaved>remoteSaved){
           // 로컬이 더 새로우면 원격에 push (오프라인 업로드 후 첫 접속 시 등)
