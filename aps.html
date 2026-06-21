@@ -92,6 +92,35 @@
       .aps-list-layout{flex-direction:column}
       .aps-week-panel{width:100%;max-height:none;position:static;order:-1}
     }
+    /* === 생산계획 좌측 재고 패널 === */
+    .aps-plans-layout{display:flex;gap:14px;align-items:flex-start}
+    .aps-plans-main{flex:1;min-width:0}
+    .aps-inv-panel{width:240px;flex-shrink:0;background:var(--card-bg);border:1px solid var(--card-bd);border-radius:8px;padding:10px 10px 12px;max-height:82vh;overflow-y:auto;position:sticky;top:14px;box-sizing:border-box}
+    .aps-inv-panel-title{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:var(--text);padding:2px 2px 8px;border-bottom:1px solid var(--div2);margin-bottom:6px}
+    .aps-inv-panel-date{margin-left:auto;font-size:10px;font-weight:600;color:#06b6d4;background:rgba(6,182,212,0.14);padding:2px 6px;border-radius:8px}
+    .aps-inv-panel-x{background:none;border:none;font-size:13px;color:var(--muted);cursor:pointer;padding:0 2px;line-height:1;font-family:inherit}
+    .aps-inv-panel-x:hover{color:var(--text)}
+    .aps-inv-panel-meta{font-size:10px;color:var(--dimmer);padding:0 2px 8px}
+    .aps-inv-panel-search{padding:5px 8px;font-size:11px;margin-bottom:8px}
+    .aps-inv-panel-section-title{display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:var(--muted);padding:8px 2px 4px;border-top:1px solid var(--div);margin-top:6px;letter-spacing:.02em;text-transform:uppercase}
+    .aps-inv-panel-section-title:first-of-type{border-top:none;margin-top:0;padding-top:2px}
+    .aps-inv-panel-empty{text-align:center;padding:30px 10px;color:var(--muted);font-size:11px}
+    .aps-inv-panel-row-empty{font-size:11px;color:var(--dimmer);padding:6px 4px;font-style:italic;text-align:center}
+    .aps-inv-panel-tbl{width:100%;border-collapse:collapse;font-size:11px}
+    .aps-inv-panel-tbl tr{transition:background .12s}
+    .aps-inv-panel-tbl tr:hover{background:var(--hover)!important}
+    .aps-inv-panel-tbl td{padding:3px 4px;border-bottom:1px solid var(--div);line-height:1.3;vertical-align:middle}
+    .aps-inv-panel-tbl td.dot{width:10px;padding-right:0}
+    .aps-inv-panel-tbl td.dot span{display:inline-block;width:6px;height:6px;border-radius:50%;vertical-align:middle}
+    .aps-inv-panel-tbl td.nm{color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:155px}
+    .aps-inv-panel-tbl td.qty{text-align:right;font-variant-numeric:tabular-nums;font-weight:700;color:var(--text);width:38px;white-space:nowrap}
+    .aps-inv-panel-tbl td.qty.zero{color:#ef4444}
+    .aps-inv-panel-subhead{font-size:10px;color:var(--muted);font-weight:600;padding:8px 2px 4px!important;background:none!important;text-transform:uppercase;letter-spacing:.04em}
+    @media(max-width:980px){
+      .aps-plans-layout{flex-direction:column}
+      .aps-inv-panel{width:100%;max-height:280px;position:static;order:-1}
+      .aps-inv-panel-tbl td.nm{max-width:none}
+    }
     /* === 재고 시트 (사진 형식 출력용) === */
     .inv-sheet{background:#fff;color:#111;padding:20px 24px;border-radius:8px;font-family:"Pretendard","Apple SD Gothic Neo","Malgun Gothic",sans-serif}
     .inv-sheet-header{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:14px;gap:16px}
@@ -1005,6 +1034,151 @@ function InventoryTab({adminHash}){
 }
 
 // ═══════════════════════════════════════════
+// 재고 빠른 보기 패널 (생산계획 탭 좌측에 표시)
+// 재고 시트 탭에서 업로드한 데이터를 localStorage에서 읽어와 표시
+// ═══════════════════════════════════════════
+const INV_COLOR_BG={y:"rgba(255,242,179,0.22)",o:"rgba(252,213,180,0.22)",b:"rgba(219,229,241,0.22)",g:"rgba(216,228,188,0.22)",p:"rgba(242,220,219,0.22)",w:"transparent"};
+const INV_COLOR_DOT={y:"#facc15",o:"#fb923c",b:"#60a5fa",g:"#84cc16",p:"#f472b6",w:"#94a3b8"};
+
+function fmtSavedAt(iso){
+  if(!iso)return "";
+  try{
+    const d=new Date(iso);
+    const mm=String(d.getMonth()+1).padStart(2,"0");
+    const dd=String(d.getDate()).padStart(2,"0");
+    const hh=String(d.getHours()).padStart(2,"0");
+    const mn=String(d.getMinutes()).padStart(2,"0");
+    return `${mm}/${dd} ${hh}:${mn}`;
+  }catch(e){return ""}
+}
+
+function InventoryQuickPanel({onClose,onJumpToSheet}){
+  const[data,setData]=useState(()=>loadStoredInventory());
+  const[showRaws,setShowRaws]=useState(false);
+  const[query,setQuery]=useState("");
+  const[template,setTemplate]=useState(()=>{
+    try{
+      const t=localStorage.getItem(TEMPLATE_KEY);
+      if(t){const p=JSON.parse(t);if(Array.isArray(p))return p}
+    }catch(e){}
+    return DEFAULT_PRODUCT_TEMPLATE;
+  });
+
+  // 같은 탭(InventorySheetTab의 업로드) + 다른 탭(storage 이벤트) 양쪽 구독
+  useEffect(()=>{
+    const reload=()=>{
+      setData(loadStoredInventory());
+      try{
+        const t=localStorage.getItem(TEMPLATE_KEY);
+        if(t){const p=JSON.parse(t);if(Array.isArray(p))setTemplate(p)}
+      }catch(e){}
+    };
+    const onStorage=(e)=>{if(!e.key||e.key===INVENTORY_DATA_KEY||e.key===TEMPLATE_KEY)reload()};
+    window.addEventListener("storage",onStorage);
+    window.addEventListener("aps-inv-data-change",reload);
+    return()=>{
+      window.removeEventListener("storage",onStorage);
+      window.removeEventListener("aps-inv-data-change",reload);
+    };
+  },[]);
+
+  const productMap=useMemo(()=>{
+    const m={};(data?.products||[]).forEach(p=>{m[p.code]=p});return m;
+  },[data]);
+
+  // 템플릿 순서대로 + 박스 0 포함, 검색 적용
+  const rows=useMemo(()=>{
+    const q=query.trim().toLowerCase();
+    return template.map(t=>{
+      const p=productMap[t.code];
+      return {
+        code:t.code,
+        name:t.name||(p?p.name:""),
+        color:t.color||"w",
+        box:p?Math.round(p.box):0,
+        hasData:!!p
+      };
+    }).filter(r=>{
+      if(!q)return true;
+      return r.code.toLowerCase().includes(q)||(r.name||"").toLowerCase().includes(q);
+    });
+  },[template,productMap,query]);
+
+  // 템플릿 밖 추가 품목 (업로드에는 있는데 마스터에 없음)
+  const extras=useMemo(()=>{
+    const q=query.trim().toLowerCase();
+    return (data?.products||[])
+      .filter(p=>!template.some(t=>t.code===p.code))
+      .filter(p=>!q||p.code.toLowerCase().includes(q)||(p.name||"").toLowerCase().includes(q));
+  },[data,template,query]);
+
+  const sortedRaws=useMemo(()=>{
+    const q=query.trim().toLowerCase();
+    const arr=(data?.raws||[]).filter(r=>Math.abs(r.kg||0)>=0.05);
+    const filtered=q?arr.filter(r=>(r.name||"").toLowerCase().includes(q)||(r.code||"").toLowerCase().includes(q)):arr;
+    return filtered.slice().sort((a,b)=>(b.kg||0)-(a.kg||0));
+  },[data,query]);
+
+  const hasData=(data?.products||[]).length>0||(data?.raws||[]).length>0;
+
+  return <div className="aps-inv-panel">
+    <div className="aps-inv-panel-title">
+      <span>📦 재고</span>
+      {data?.dateLabel&&<span className="aps-inv-panel-date">{data.dateLabel}</span>}
+      <button className="aps-inv-panel-x" onClick={onClose} title="패널 닫기">✕</button>
+    </div>
+    {data?.savedAt&&<div className="aps-inv-panel-meta">최근 업데이트 {fmtSavedAt(data.savedAt)}</div>}
+
+    {!hasData?<div className="aps-inv-panel-empty">
+      <div style={{fontSize:24,marginBottom:6,opacity:.7}}>📋</div>
+      <div style={{marginBottom:8}}>저장된 재고가 없습니다.</div>
+      <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={onJumpToSheet}>재고 시트 탭으로 이동</button>
+    </div>:<>
+      <input className="aps-input aps-inv-panel-search" placeholder="코드/제품명 검색" value={query} onChange={e=>setQuery(e.target.value)}/>
+
+      <div className="aps-inv-panel-section-title">제품 ({(data?.products||[]).length})</div>
+      {rows.length===0?<div className="aps-inv-panel-row-empty">검색 결과 없음</div>:
+        <table className="aps-inv-panel-tbl">
+          <tbody>
+            {rows.map(r=>
+              <tr key={r.code} style={{background:INV_COLOR_BG[r.color]||"transparent"}} title={`${r.code} — ${r.name}`}>
+                <td className="dot"><span style={{background:INV_COLOR_DOT[r.color]||"#94a3b8"}}/></td>
+                <td className="nm">{r.name||r.code}</td>
+                <td className={"qty"+(r.box===0?" zero":"")}>{r.box}</td>
+              </tr>
+            )}
+            {extras.length>0&&<tr><td colSpan="3" className="aps-inv-panel-subhead">+ 마스터 외 ({extras.length})</td></tr>}
+            {extras.map(p=>
+              <tr key={"x"+p.code} title={`${p.code} — ${p.name}`}>
+                <td className="dot"><span style={{background:"#94a3b8",opacity:.4}}/></td>
+                <td className="nm" style={{color:"var(--muted)"}}>{p.name||p.code}</td>
+                <td className={"qty"+(Math.round(p.box)===0?" zero":"")}>{Math.round(p.box)}</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      }
+
+      {sortedRaws.length>0&&<>
+        <div className="aps-inv-panel-section-title" style={{cursor:"pointer",userSelect:"none"}} onClick={()=>setShowRaws(v=>!v)}>
+          🥩 원육 ({sortedRaws.length}) <span style={{marginLeft:"auto",fontSize:10,color:"var(--muted)"}}>{showRaws?"▾":"▸"}</span>
+        </div>
+        {showRaws&&<table className="aps-inv-panel-tbl">
+          <tbody>
+            {sortedRaws.map(r=>
+              <tr key={"r"+r.code} title={`${r.name} (${r.origin||"-"})`}>
+                <td className="nm" colSpan="2">{r.name||r.code}</td>
+                <td className="qty">{(r.kg||0).toFixed(1)}<span style={{fontSize:9,color:"var(--muted)",marginLeft:2}}>kg</span></td>
+              </tr>
+            )}
+          </tbody>
+        </table>}
+      </>}
+    </>}
+  </div>;
+}
+
+// ═══════════════════════════════════════════
 // 생산계획 탭
 // ═══════════════════════════════════════════
 function PlanForm({adminHash,items,lines,settings,initial,onSaved,onCancel}){
@@ -1743,6 +1917,10 @@ function PlansTab({adminHash}){
   const[dayStr,setDayStr]=useState(()=>todayStr());
   const[allDates,setAllDates]=useState(false);
   const[weekPanelOpen,setWeekPanelOpen]=useState(false);
+  const[invPanelOpen,setInvPanelOpen]=useState(()=>{
+    try{return localStorage.getItem("aps-inv-panel-open")==="1"}catch(e){return false}
+  });
+  useEffect(()=>{try{localStorage.setItem("aps-inv-panel-open",invPanelOpen?"1":"0")}catch(e){}},[invPanelOpen]);
 
   const shiftDay=(n)=>{
     const[y,m,d]=dayStr.split("-").map(Number);
@@ -1932,6 +2110,12 @@ function PlansTab({adminHash}){
         <button className={filter==="canceled"?"on":""} onClick={()=>setFilter("canceled")}>취소 {counts.canceled}</button>
       </div>
       <div style={{flex:1}}></div>
+      <button
+        className={"aps-btn aps-btn-sm "+(invPanelOpen?"aps-btn-primary":"aps-btn-secondary")}
+        onClick={()=>setInvPanelOpen(v=>!v)}
+        title="재고 시트 탭에서 업로드한 재고를 왼쪽에 표시/숨김">
+        📦 재고 {invPanelOpen?"ON":"OFF"}
+      </button>
       {viewMode==="list"&&<button
         className={"aps-btn aps-btn-sm "+(weekPanelOpen?"aps-btn-primary":"aps-btn-secondary")}
         onClick={()=>setWeekPanelOpen(v=>!v)}
@@ -1963,7 +2147,14 @@ function PlansTab({adminHash}){
       </span>
     </div>
 
-    {loading?<Loader/>:viewMode==="gantt"?
+    {loading?<Loader/>:
+      <div className={invPanelOpen?"aps-plans-layout":""}>
+        {invPanelOpen&&<InventoryQuickPanel
+          onClose={()=>setInvPanelOpen(false)}
+          onJumpToSheet={()=>{window.location.hash="#sheet"}}
+        />}
+        <div className={invPanelOpen?"aps-plans-main":""}>
+        {viewMode==="gantt"?
       <GanttView plans={statusFiltered} lines={lines} settings={settings} dayStr={dayStr}
         onPlanClick={p=>{setEditing(p);setShowForm(true)}}
         onPlanTimeChange={updatePlanTime}
@@ -2026,6 +2217,9 @@ function PlansTab({adminHash}){
             })}
           </tbody>
         </table>
+      </div>
+        }
+        </div>
       </div>
         }
         </div>
@@ -2312,6 +2506,34 @@ const DEFAULT_PRODUCT_TEMPLATE=[
 const COLOR_LABEL={y:"노랑",o:"주황",b:"파랑",g:"초록",p:"핑크",w:"흰색"};
 const COLOR_PREVIEW={y:"#fff2b3",o:"#fcd5b4",b:"#dbe5f1",g:"#d8e4bc",p:"#f2dcdb",w:"#ffffff"};
 const TEMPLATE_KEY="aps-inv-template";
+const INVENTORY_DATA_KEY="aps-inv-data";  // 업로드한 재고 데이터 자동 저장 (생산계획 탭에서 공유)
+
+function loadStoredInventory(){
+  try{
+    const raw=localStorage.getItem(INVENTORY_DATA_KEY);
+    if(!raw)return null;
+    const obj=JSON.parse(raw);
+    if(!obj||typeof obj!=="object")return null;
+    return {
+      products:Array.isArray(obj.products)?obj.products:[],
+      raws:Array.isArray(obj.raws)?obj.raws:[],
+      prodName:obj.prodName||"",
+      rawName:obj.rawName||"",
+      dateLabel:obj.dateLabel||"",
+      title:obj.title||"",
+      savedAt:obj.savedAt||""
+    };
+  }catch(e){return null}
+}
+function saveStoredInventory(patch){
+  try{
+    const prev=loadStoredInventory()||{products:[],raws:[],prodName:"",rawName:"",dateLabel:"",title:"",savedAt:""};
+    const next={...prev,...patch,savedAt:new Date().toISOString()};
+    localStorage.setItem(INVENTORY_DATA_KEY,JSON.stringify(next));
+    // 같은 탭 내 다른 컴포넌트에 알림 (storage 이벤트는 다른 탭에서만 발생)
+    try{window.dispatchEvent(new CustomEvent("aps-inv-data-change"));}catch(e){}
+  }catch(e){}
+}
 
 function templateToText(tpl){
   return tpl.map(t=>`${t.code} | ${t.name||""} | ${t.color||"w"}`).join("\n");
@@ -2333,12 +2555,13 @@ function parseTemplateText(text){
 }
 
 function InventorySheetTab(){
-  const[products,setProducts]=useState([]);
-  const[raws,setRaws]=useState([]);
-  const[prodName,setProdName]=useState("");
-  const[rawName,setRawName]=useState("");
-  const[title,setTitle]=useState("4층 제품 & 원육 재고");
-  const[dateLabel,setDateLabel]=useState(todayKoreanLabel());
+  const stored=loadStoredInventory();
+  const[products,setProducts]=useState(stored?.products||[]);
+  const[raws,setRaws]=useState(stored?.raws||[]);
+  const[prodName,setProdName]=useState(stored?.prodName||"");
+  const[rawName,setRawName]=useState(stored?.rawName||"");
+  const[title,setTitle]=useState(stored?.title||"4층 제품 & 원육 재고");
+  const[dateLabel,setDateLabel]=useState(stored?.dateLabel||todayKoreanLabel());
   const[busy,setBusy]=useState(false);
   const[err,setErr]=useState("");
   const[template,setTemplate]=useState(()=>{
@@ -2365,8 +2588,8 @@ function InventorySheetTab(){
       if(typeof XLSX==="undefined")throw new Error("XLSX 라이브러리 로드 실패 — 새로고침 후 다시 시도하세요");
       const buf=await f.arrayBuffer();
       const items=parseInventoryWorkbook(buf);
-      if(kind==="product"){setProducts(items);setProdName(f.name)}
-      else{setRaws(items);setRawName(f.name)}
+      if(kind==="product"){setProducts(items);setProdName(f.name);saveStoredInventory({products:items,prodName:f.name,title,dateLabel})}
+      else{setRaws(items);setRawName(f.name);saveStoredInventory({raws:items,rawName:f.name,title,dateLabel})}
     }catch(ex){
       setErr((kind==="product"?"제품":"원육")+" 파일 처리 오류: "+(ex.message||ex));
     }finally{setBusy(false)}
@@ -2389,7 +2612,17 @@ function InventorySheetTab(){
 
   function clearAll(){
     setProducts([]);setRaws([]);setProdName("");setRawName("");setErr("");
+    try{
+      localStorage.removeItem(INVENTORY_DATA_KEY);
+      window.dispatchEvent(new CustomEvent("aps-inv-data-change"));
+    }catch(e){}
   }
+
+  // 제목/날짜 변경 시 저장 (업로드한 데이터가 있을 때만)
+  useEffect(()=>{
+    if(products.length===0&&raws.length===0)return;
+    saveStoredInventory({title,dateLabel});
+  },[title,dateLabel]);
 
   function openEdit(){setEditText(templateToText(template));setEditing(true)}
   function saveTemplate(){

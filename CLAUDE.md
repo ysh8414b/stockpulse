@@ -615,6 +615,33 @@
   - 윈도우 이벤트(`mousemove`/`mouseup`) 핸들러는 `drag.planId` 변경 시에만 재바인딩(useRef로 최신 콜백/plans 참조) → mousemove마다 effect 재실행 회피
 - 별도 SQL 변경 없음 (`aps_upsert_plan` 기존 사용)
 
+### APS — 생산계획 탭 좌측 재고 패널 (2026-06-21)
+- 사용자 요청: 재고 시트(엑셀 업로드)에 담긴 재고를 생산계획 짤 때 왼쪽에 보고 싶음
+- 기존: 재고 시트 탭에서 업로드한 데이터는 React state에만 존재 → 탭을 떠나면 사라지고 다른 탭에서 볼 수 없음
+- 변경: 업로드 데이터를 localStorage에 자동 저장 + 생산계획 탭에 토글로 좌측 사이드 패널 추가
+- **localStorage 키 `aps-inv-data`**: `{products, raws, prodName, rawName, dateLabel, title, savedAt}` 한 객체로 저장
+  - `loadStoredInventory()`/`saveStoredInventory(patch)` 헬퍼 (aps.html 내부)
+  - 저장 시 `aps-inv-data-change` CustomEvent 발행 → 같은 탭 내 패널이 즉시 갱신 (storage 이벤트는 다른 탭에만 발생)
+- **InventorySheetTab 변경**:
+  - 마운트 시 `loadStoredInventory()`로 초기 state 복원 → 새로고침/탭 전환 후에도 마지막 업로드 유지
+  - `handleFile` 성공 시 즉시 `saveStoredInventory({products|raws, ...})` 호출
+  - `clearAll()`이 `localStorage.removeItem` + 이벤트 발행
+  - `title`/`dateLabel` 변경 시(업로드 데이터 있을 때만) useEffect로 저장 → 패널 헤더 동기화
+- **신규 `InventoryQuickPanel` 컴포넌트**: 생산계획 탭 좌측에 표시
+  - localStorage + TEMPLATE_KEY를 읽어 템플릿 순서대로 제품 표시 (코드/이름/박스, 색상별 dot 인디케이터)
+  - 검색 입력 → 코드·제품명 필터
+  - 템플릿 외 추가 품목은 "+ 마스터 외" 섹션으로 분리
+  - 원육은 접기/펼치기 가능한 별도 섹션 (기본 접힘), kg 내림차순
+  - `storage` 이벤트 + `aps-inv-data-change` 이벤트 양쪽 구독으로 실시간 동기화
+  - 데이터 없으면 "재고 시트 탭으로 이동" 버튼 (`window.location.hash="#sheet"`)
+- **PlansTab 변경**:
+  - `invPanelOpen` state, localStorage `aps-inv-panel-open`로 영속화
+  - toolbar에 `📦 재고 ON/OFF` 토글 버튼 추가 (모든 view mode에서 표시 — list/gantt/timetable 공통)
+  - 뷰 영역을 `<div className={invPanelOpen?"aps-plans-layout":""}>`로 감싸 패널이 열렸을 때만 flex 레이아웃 활성
+  - 닫혔을 때는 빈 className → 기존 레이아웃 그대로 유지 (영향 없음)
+- **CSS**: `.aps-plans-layout` (flex/gap:14), `.aps-plans-main` (flex:1, min-width:0), `.aps-inv-panel` (240px 폭, sticky top:14, max-height:82vh), `.aps-inv-panel-tbl` (11px 폰트, 색상 행 배경, zero 빨강), 980px 이하 반응형(세로 스택 + max-height:280px)
+- 별도 SQL/DB 변경 없음. 데이터는 사용자 브라우저 localStorage에만 존재 (기기·브라우저 간 동기화 없음)
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
