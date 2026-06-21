@@ -158,8 +158,23 @@
     .inv-upload-card .filename{font-size:11px;color:var(--muted);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     @media(max-width:700px){
       .inv-upload-grid{grid-template-columns:1fr}
-      .inv-sheet-body{grid-template-columns:1fr}
-      .inv-sheet{padding:14px 12px}
+      /* 재고 시트: 모바일에서도 좌(제품) - 우(원육) 2열 유지. 제품은 한 열로 길게 이어지게 (2번째 thead 숨김 + 행 간격 0) */
+      .inv-sheet-body{grid-template-columns:1fr 1fr;column-gap:8px;row-gap:0}
+      .inv-sheet-body > .inv-sheet-col:nth-child(1),
+      .inv-sheet-body > .inv-sheet-col:nth-child(2){grid-column:1}
+      .inv-sheet-body > .inv-sheet-col:nth-child(3){grid-column:2;grid-row:1 / span 2}
+      /* 2번째 제품 테이블의 헤더 제거 → 1번 테이블과 자연스럽게 연결 */
+      .inv-sheet-body > .inv-sheet-col:nth-child(2) .inv-tbl thead{display:none}
+      .inv-sheet{padding:14px 10px}
+      .inv-sheet-header{margin-bottom:10px;gap:6px}
+      .inv-sheet-title{font-size:16px}
+      .inv-sheet-date,.inv-sheet-spacer{min-width:60px;font-size:11px}
+      .inv-tbl{font-size:10px}
+      .inv-tbl thead th{padding:3px 4px;font-size:10px}
+      .inv-tbl tbody td{padding:2px 4px}
+      .inv-tbl .name{max-width:none;white-space:normal;word-break:break-all;line-height:1.2}
+      .inv-tbl .qty{padding-left:6px}
+      .inv-tbl .code{font-size:9.5px}
     }
     @media(max-width:700px){
       .aps-shell{padding:12px 14px 50px}
