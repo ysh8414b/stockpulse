@@ -1955,7 +1955,10 @@ function PlansTab({adminHash}){
   const[editing,setEditing]=useState(null);
   const[showForm,setShowForm]=useState(false);
   const[showSettings,setShowSettings]=useState(false);
-  const[viewMode,setViewMode]=useState("gantt");
+  const[viewMode,setViewMode]=useState(()=>{
+    try{const v=localStorage.getItem("aps-plan-view-mode");return (v==="list"||v==="gantt"||v==="timetable")?v:"gantt"}catch(e){return "gantt"}
+  });
+  useEffect(()=>{try{localStorage.setItem("aps-plan-view-mode",viewMode)}catch(e){}},[viewMode]);
   const[dayStr,setDayStr]=useState(()=>todayStr());
   const[allDates,setAllDates]=useState(false);
   const[weekPanelOpen,setWeekPanelOpen]=useState(false);
