@@ -673,6 +673,20 @@
 - 보존: 사용자가 input에서 수동 편집은 가능. title/dateLabel 변경 시 600ms 디바운스로 원격 push되는 자동 저장 로직은 그대로 → 수동 편집한 날짜는 그 세션 동안만 유지되고, 다음 마운트 시 다시 오늘 날짜로 리셋됨
 - 한계: 페이지를 띄워둔 채 자정 넘어가도 자동 갱신은 없음(새로고침 필요). 사용자 요구 범위에서 벗어나는 시간 기반 useEffect는 추가하지 않음
 
+### APS — 생산계획 추가 모달 우측 슬라이드 + 리스트 라인별 그룹 + 수동 정렬 (2026-06-24)
+- 사용자 요청 1: "생산계획 추가할 때 가운데 창 뜨는 게 불편 — 오른쪽에 뜨게"
+- 사용자 요청 2: "계획 리스트는 라인별로 구분되면 좋겠어"
+- 사용자 요청 3: "제품명은 추가한 순서대로 나열 + 순서변경되게"
+- **변경 1 — PlanForm 우측 슬라이드 패널**: CSS에 `.aps-modal-bg.aps-side`(우측 정렬, padding 0) + `.aps-modal.aps-modal-side`(폭 480px, 100vh, `aps-slide-in` 0.22s 애니메이션) 추가. `PlanForm`에만 `aps-side`/`aps-modal-side` 클래스 적용 → 다른 모달(품목/BOM/라인/근무시간 등)은 가운데 정렬 그대로 유지. 모바일(<600px)은 전체 폭. 바깥 클릭 닫기 동작은 동일
+- **변경 2 — 리스트 라인별 그룹화**: `PlansTab` 리스트 뷰의 tbody에서 `listFiltered`를 `line_id` 기준으로 Map 그룹핑 → 각 그룹마다 colSpan=7 헤더 행(`🏭 라인명·코드·N건`, 청록색 배경 + 상단 굵은 테두리) + 그룹 행들 렌더. 라인 코드 오름차순 정렬, 라인 미지정 그룹은 맨 아래. 기존 `라인` 컬럼은 헤더로 정보가 옮겨졌으므로 thead에서 제거 → 가로 폭 절약. 간트/시간표는 그대로(이미 라인별 행 구조)
+- **변경 3 — 수동 정렬(sort_order) + ↑/↓ swap RPC**:
+  - **`setup_aps_v4.sql`** 신규: `aps_plans.sort_order INT` 컬럼 + 기존 데이터 `UPDATE sort_order = id` 1회 초기화 + `idx_aps_plans_line_sort (line_id, sort_order)` 인덱스 + BEFORE INSERT 트리거 `aps_plans_assign_sort_order` (신규 INSERT 시 `MAX(sort_order)+1` 자동 부여 → upsert RPC 안 건드림)
+  - `aps_list_plans` 재정의: 응답에 `sort_order` 포함, `ORDER BY sort_order ASC NULLS LAST, id ASC`로 변경 (기존 `start_at DESC`에서 변경) → 추가 순서가 자연스럽게 위→아래
+  - 신규 RPC `aps_move_plan_order(p_admin_hash, p_id, p_direction)`: 같은 `line_id`(또는 둘 다 NULL) 그룹 내에서 인접 행과 `sort_order` swap. 인접 행 없으면 `{moved:false}` 반환. `p_direction`은 'up'|'down'
+  - **`aps.html`**: `PlansTab`에 `movePlan(p, direction)` 핸들러 추가 → RPC 호출 후 `load()`. 리스트 thead의 `#` 컬럼(50px) → `순서` 컬럼(70px)으로 변경. tbody 행 첫 셀에 ▲ / `#id` / ▼ 세로 배치 (`flex-direction:column`, 그룹 내 첫 행은 ▲ disabled+opacity 0.3, 마지막 행은 ▼ disabled). 그룹 내 순서는 서버에서 이미 sort_order로 정렬되어 오므로 `g.plans.map((p,idx)=>...)`의 idx로 첫/끝 판정
+- **운영 순서**: Supabase에서 `setup_aps_v4.sql` 실행 1회 → 기존 계획은 id 순서로 자동 정렬 → 이후 추가되는 계획은 트리거로 자동 부여 → ▲▼로 라인별 그룹 안에서 순서 조정
+- **한계**: ↑/↓는 인접 행 한 칸씩 swap만 지원 (drag-and-drop 미구현). 그룹 간 이동은 라인 자체를 변경(수정 모달에서 라인 picker) 후 그룹 내에서 다시 정렬해야 함
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
