@@ -687,6 +687,18 @@
 - **운영 순서**: Supabase에서 `setup_aps_v4.sql` 실행 1회 → 기존 계획은 id 순서로 자동 정렬 → 이후 추가되는 계획은 트리거로 자동 부여 → ▲▼로 라인별 그룹 안에서 순서 조정
 - **한계**: ↑/↓는 인접 행 한 칸씩 swap만 지원 (drag-and-drop 미구현). 그룹 간 이동은 라인 자체를 변경(수정 모달에서 라인 picker) 후 그룹 내에서 다시 정렬해야 함
 
+### APS — 생산계획 탭 viewMode 영속화 + 현재 뷰 PNG 저장 (2026-06-24)
+- 사용자 요청 1: "계획에서 새로고침하면 자꾸 간트차트로 넘어가는데" — viewMode가 `useState("gantt")`로 매번 초기화되던 문제
+- 사용자 요청 2: "계획을 사진파일로 저장할수있을까?"
+- **viewMode 영속화** ([aps.html PlansTab](aps.html)): `useState(()=>localStorage.getItem("aps-plan-view-mode")` whitelist(`list`|`gantt`|`timetable`) + 폴백 `"gantt"`. 변경 시 `useEffect`로 자동 저장 → 다음 새로고침에도 마지막으로 보던 뷰 유지. `invPanelOpen`/`aps-plan-view-mode` 동일 패턴
+- **현재 뷰 PNG 저장**: 기존 주간 요약 export 패턴(`html2canvas` CDN 이미 로드, ExportWeekView)을 재활용
+  - `captureRef`(viewMode 분기 div에 부착) + `capturing` state + `exportCurrentView()` async 함수 추가
+  - `html2canvas(target, {scale:2, backgroundColor:"#ffffff", width:scrollWidth, height:scrollHeight, windowWidth:scrollWidth})` → 가로 스크롤(간트/시간표)과 내부 overflow(리스트 테이블)까지 전부 포함하여 캡처
+  - 파일명: `생산계획_{간트|리스트|시간표}_{날짜|전체}.png` (allDates + list 모드면 "전체")
+  - 툴바 우측 "+ 생산계획 추가" 옆에 `📷 이미지 저장` 버튼 (캡처 중에는 "저장 중..."로 표시, `plans.length===0`이면 disabled)
+  - 캡처 대상은 side panel(재고/주간 요약) 제외한 main column만 (`<div className={invPanelOpen?"aps-plans-main":""} ref={captureRef}>`) → 패널이 켜져 있어도 깔끔한 결과
+- **한계**: side panel은 캡처에 포함 안 됨. 다크 모드에서도 흰색 배경으로 강제 저장(공유 시 가독성). 간트는 현재 보고 있는 1일치만, 리스트는 allDates 토글에 따라 전체 or 선택일
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)

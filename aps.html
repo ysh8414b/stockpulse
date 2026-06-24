@@ -2127,6 +2127,44 @@ function PlansTab({adminHash}){
     }catch(e){alert("순서 변경 실패: "+e.message)}
   };
 
+  // 현재 뷰(리스트/간트/시간표) → PNG 저장
+  const captureRef=useRef(null);
+  const[capturing,setCapturing]=useState(false);
+  const exportCurrentView=async()=>{
+    if(typeof window.html2canvas!=="function"){
+      alert("이미지 저장 라이브러리(html2canvas)가 로드되지 않았습니다. 새로고침 후 다시 시도해주세요.");
+      return;
+    }
+    const target=captureRef.current;
+    if(!target){alert("캡처할 영역이 없습니다");return}
+    setCapturing(true);
+    // 다음 paint 사이클 대기 (스타일/레이아웃 안정화)
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    try{
+      const canvas=await window.html2canvas(target,{
+        backgroundColor:"#ffffff",
+        scale:2,
+        logging:false,
+        useCORS:true,
+        width:target.scrollWidth,
+        height:target.scrollHeight,
+        windowWidth:target.scrollWidth
+      });
+      const viewLabel=viewMode==="gantt"?"간트":viewMode==="timetable"?"시간표":"리스트";
+      const dateLabel=(viewMode==="list"&&allDates)?"전체":dayStr;
+      const link=document.createElement("a");
+      link.download=`생산계획_${viewLabel}_${dateLabel}.png`;
+      link.href=canvas.toDataURL("image/png");
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }catch(e){
+      console.error(e);
+      alert("이미지 저장 실패: "+(e.message||e));
+    }
+    setCapturing(false);
+  };
+
   // 간트 드래그로 시간 변경 (move/resize-l/resize-r 공통)
   const updatePlanTime=async(p,newStartMs,newEndMs)=>{
     // 낙관적 업데이트 — 서버 응답 전에 화면 즉시 반영
@@ -2179,6 +2217,13 @@ function PlansTab({adminHash}){
         <button className={viewMode==="gantt"?"on":""} onClick={()=>setViewMode("gantt")}>📊 간트</button>
         <button className={viewMode==="timetable"?"on":""} onClick={()=>setViewMode("timetable")}>🕐 시간표</button>
       </div>
+      <button
+        className="aps-btn aps-btn-secondary"
+        onClick={exportCurrentView}
+        disabled={capturing||loading||plans.length===0}
+        title="현재 뷰(리스트/간트/시간표)를 PNG 이미지로 저장">
+        📷 {capturing?"저장 중...":"이미지 저장"}
+      </button>
       <button className="aps-btn aps-btn-primary" onClick={()=>{setEditing(null);setShowForm(true)}} disabled={items.filter(i=>i.type!=="material").length===0}>+ 생산계획 추가</button>
     </div>
 
@@ -2206,7 +2251,7 @@ function PlansTab({adminHash}){
           onJumpToSheet={()=>{window.location.hash="#sheet"}}
           adminHash={adminHash}
         />}
-        <div className={invPanelOpen?"aps-plans-main":""}>
+        <div className={invPanelOpen?"aps-plans-main":""} ref={captureRef} style={{background:"var(--bg)"}}>
         {viewMode==="gantt"?
       <GanttView plans={statusFiltered} lines={lines} settings={settings} dayStr={dayStr}
         onPlanClick={p=>{setEditing(p);setShowForm(true)}}
@@ -2249,7 +2294,7 @@ function PlansTab({adminHash}){
               return arr.flatMap(g=>[
                 <tr key={"hdr-"+(g.line_id||"none")} style={{background:"rgba(6,182,212,0.08)"}}>
                   <td colSpan={7} style={{padding:"8px 12px",fontWeight:700,fontSize:13,borderTop:"2px solid rgba(6,182,212,0.25)"}}>
-                    🏭 {g.line_id?<>{g.line_name} <span style={{color:"var(--muted)",fontWeight:500,fontSize:11,fontFamily:"monospace",marginLeft:4}}>{g.line_code}</span></>:<span style={{color:"var(--muted)"}}>라인 미지정</span>}
+                    🏭 {g.line_id?<>{g.line_name}{(()=>{const ln=lines.find(l=>l.id===g.line_id);const m=ln?.memo?.trim();return m?<span style={{color:"var(--muted)",fontWeight:500,fontSize:12,marginLeft:6}}>{m}</span>:null})()}</>:<span style={{color:"var(--muted)"}}>라인 미지정</span>}
                     <span style={{marginLeft:10,color:"var(--muted)",fontWeight:500,fontSize:11}}>{g.plans.length}건</span>
                   </td>
                 </tr>,
