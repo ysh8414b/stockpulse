@@ -691,13 +691,18 @@
 - 사용자 요청 1: "계획에서 새로고침하면 자꾸 간트차트로 넘어가는데" — viewMode가 `useState("gantt")`로 매번 초기화되던 문제
 - 사용자 요청 2: "계획을 사진파일로 저장할수있을까?"
 - **viewMode 영속화** ([aps.html PlansTab](aps.html)): `useState(()=>localStorage.getItem("aps-plan-view-mode")` whitelist(`list`|`gantt`|`timetable`) + 폴백 `"gantt"`. 변경 시 `useEffect`로 자동 저장 → 다음 새로고침에도 마지막으로 보던 뷰 유지. `invPanelOpen`/`aps-plan-view-mode` 동일 패턴
-- **현재 뷰 PNG 저장**: 기존 주간 요약 export 패턴(`html2canvas` CDN 이미 로드, ExportWeekView)을 재활용
-  - `captureRef`(viewMode 분기 div에 부착) + `capturing` state + `exportCurrentView()` async 함수 추가
-  - `html2canvas(target, {scale:2, backgroundColor:"#ffffff", width:scrollWidth, height:scrollHeight, windowWidth:scrollWidth})` → 가로 스크롤(간트/시간표)과 내부 overflow(리스트 테이블)까지 전부 포함하여 캡처
-  - 파일명: `생산계획_{간트|리스트|시간표}_{날짜|전체}.png` (allDates + list 모드면 "전체")
-  - 툴바 우측 "+ 생산계획 추가" 옆에 `📷 이미지 저장` 버튼 (캡처 중에는 "저장 중..."로 표시, `plans.length===0`이면 disabled)
-  - 캡처 대상은 side panel(재고/주간 요약) 제외한 main column만 (`<div className={invPanelOpen?"aps-plans-main":""} ref={captureRef}>`) → 패널이 켜져 있어도 깔끔한 결과
-- **한계**: side panel은 캡처에 포함 안 됨. 다크 모드에서도 흰색 배경으로 강제 저장(공유 시 가독성). 간트는 현재 보고 있는 1일치만, 리스트는 allDates 토글에 따라 전체 or 선택일
+- **생산계획 PNG 저장 (전용 ExportPlansView 컴포넌트, 2026-06-24 v2)**:
+  - 초기 시도(2026-06-24 v1)는 현재 화면(`viewMode` 분기 div)을 그대로 캡처했으나 사용자 피드백: "캡처보단 깔끔하게 다듬어서 해줘"
+  - **변경**: 기존 주간 요약 export(`ExportWeekView` + 오프스크린 마운트) 패턴을 그대로 따라 `ExportPlansView` 신규 컴포넌트 작성
+  - `ExportPlansView({plans, lines, dayStr, allDates})`: 820px 고정 폭, 라이트 테마(흰색 배경 + 진한 텍스트), Pretendard 폰트, 라인별 그룹 카드(라인명 + 메모) → 각 그룹 안에 `<table>`로 품목/수량/시작·종료/상태 컬럼 정리. `colgroup`으로 컬럼 폭 36%/16%/33%/15% 고정. 짝수 행 살짝 어두운 배경(zebra)
+  - 헤더: "PRODUCTION PLAN · DAILY PLAN" 또는 "ALL PERIODS" + 날짜(또는 "전체 기간") + 총 N건 카운트
+  - 푸터: STOCKPULSE · APS 브랜드 + 생성 시각(`new Date().toLocaleString("ko-KR")`)
+  - 상태 뱃지 색상은 라이트 테마 전용 팔레트(`#f1f5f9`/`#cffafe`/`#dcfce7`/`#fee2e2`) — STATUS_PILL의 다크 변종이 아닌 인쇄 친화 색
+  - **렌더 흐름**: `capturing=true` → 다음 paint 사이클 대기 → 오프스크린 div(`position:fixed; left:-99999`) 안의 `ExportPlansView` 마운트 → `html2canvas(exportPlansRef.current, {scale:2, backgroundColor:"#ffffff"})` → PNG 다운로드 → `capturing=false` → 오프스크린 div 언마운트
+  - 표시 데이터는 `listFiltered`(상태 필터 + allDates 토글에 따라 단일일 또는 전체) 그대로 전달 → 화면에 보이는 그대로 저장
+  - 파일명: `생산계획_{날짜|전체}.png`. viewMode와 무관(어느 뷰에서 저장해도 동일한 깔끔한 리포트)
+  - 툴바 우측 "+ 생산계획 추가" 옆 `📷 이미지 저장` 버튼 (캡처 중 "저장 중...", `plans.length===0`이면 disabled)
+- **한계**: viewMode가 간트/시간표여도 결과 PNG는 항상 라인별 리스트 형태(시각적인 시간축 차트로 저장하고 싶으면 후속 작업 필요). side panel(재고/주간 요약) 미포함. 라인 메모가 비어 있으면 라인명만 표시
 
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
