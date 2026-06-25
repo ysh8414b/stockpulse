@@ -309,15 +309,16 @@ function fmtKstTime(iso){
   const kst=new Date(d.getTime()+KST_OFFSET_MS);
   return `${String(kst.getUTCHours()).padStart(2,"0")}:${String(kst.getUTCMinutes()).padStart(2,"0")}`;
 }
-// "500g" / "1kg" / "2.5kg" / "1,500g" 등 박스당 중량 spec을 kg(number)로 파싱. 실패 시 null
+// 박스당 중량 spec을 kg(number)로 파싱. "500"(단위 생략=kg), "500g", "1kg", "2.5kg", "1,500g" 모두 허용. 실패 시 null
 function parseSpecKg(spec){
-  if(!spec)return null;
+  if(spec==null||spec==="")return null;
   const s=String(spec).trim().toLowerCase().replace(/\s+/g,"");
-  const m=s.match(/^([\d.,]+)(kg|g)$/);
+  if(!s)return null;
+  const m=s.match(/^([\d.,]+)(kg|g)?$/);
   if(!m)return null;
   const num=parseFloat(m[1].replace(/,/g,""));
   if(isNaN(num))return null;
-  return m[2]==="kg"?num:num/1000;
+  return m[2]==="g"?num/1000:num;
 }
 // kg(number) → 사람이 읽기 좋은 문자열. 1kg 이상은 kg, 미만은 g. 불필요한 0 제거
 function fmtKg(kg){
