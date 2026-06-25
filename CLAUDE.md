@@ -704,6 +704,23 @@
   - 툴바 우측 "+ 생산계획 추가" 옆 `📷 이미지 저장` 버튼 (캡처 중 "저장 중...", `plans.length===0`이면 disabled)
 - **한계**: viewMode가 간트/시간표여도 결과 PNG는 항상 라인별 리스트 형태(시각적인 시간축 차트로 저장하고 싶으면 후속 작업 필요). side panel(재고/주간 요약) 미포함. 라인 메모가 비어 있으면 라인명만 표시
 
+### APS — 생산계획 PNG에 품목 규격 × 수량 표시 (2026-06-25)
+- 사용자 요청: "생산계획 이미지에 개수만 뜨는데 개수도 뜨고 옆에 품목에서 규격/사양 × 개수도 뜨면 좋겠어"
+- 기존: `ExportPlansView` 품목 셀에는 품목명 + 코드만, 우측 수량 셀에 `qty 단위` 표시 → 규격 정보 누락
+- 원인: `aps_list_plans` RPC가 `i.spec`을 응답에 포함하지 않아 클라이언트에 `item_spec` 필드 자체가 없었음
+- **`setup_aps_v5.sql`** (신규, 1회 실행): `aps_list_plans` DROP+CREATE로 응답 JSON에 `'item_spec', i.spec` 한 필드만 추가. 다른 필드/정렬/시그니처는 v4와 동일 (idempotent, 기존 데이터 영향 없음)
+- **`aps.html` `ExportPlansView`**: 품목 셀(좌측) 안 품목명과 코드 사이에 `박스당 {p.item_spec} × {fmtNum(p.qty)}{p.item_unit||"박스"}` 라인 추가. 의미: spec은 박스당 중량(예: 500g/1kg), qty는 박스 수량. `(p.item_spec||"").trim()` 가드로 규격 없는 품목은 줄 자체를 숨김 → 후방 호환. unit 비어 있으면 "박스"로 fallback. 우측 수량 셀(개수 + 단위)은 그대로 유지 → 사용자 요청대로 "개수도 뜨고 옆에 규격×개수도" 동시 표시
+- 적용 위치: PNG export 전용 컴포넌트만 (리스트/간트/시간표 화면 표시는 기존 그대로). 화면 표시까지 일관시키고 싶으면 후속 단계에서 `PlansTab` 리스트 행도 동일 패턴으로 확장 가능
+
+### APS — 생산계획 PNG 헤더·행에 요일 표시 (2026-06-25)
+- 사용자 요청: "이미지에 요일도 뜨면 좋겠어"
+- 기존: 헤더는 `2026.06.25`, 행은 `06/25 09:00` 형식 → 요일 없음. allDates 모드에서 여러 날짜가 섞일 때 특히 불편
+- 변경: `ExportPlansView` 안에 로컬 헬퍼만 추가 (전역 `fmtKstDateTime`은 다른 화면에서 쓰여 영향 회피)
+  - `dowOfDayStr`: `dayStr`("YYYY-MM-DD") → `Date.UTC(y,m-1,d).getUTCDay()` → DOW_LABEL 인덱스 변환 `(uDay+6)%7` (DOW_LABEL은 월=0 시작)
+  - dateLabel: `"2026.06.25"` → `"2026.06.25 (목)"`. allDates 모드는 "전체 기간" 그대로 (날짜 단일이 아니므로 요일 의미 없음)
+  - `fmtDtDow(iso)`: KST 변환 후 `MM/DD(요일) HH:MM` 형식으로 출력 → 각 행의 시작/종료 시각에 요일 인라인 표시
+- 적용 위치: `ExportPlansView` 헤더 dateLabel + 행의 시작/종료 시각 (`fmtKstDateTime` → `fmtDtDow`)
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
