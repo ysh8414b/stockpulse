@@ -3574,7 +3574,7 @@ function SalesTab({adminHash}){
               }else if(x.currentStock<=0){
                 statusEl=<span style={{fontSize:11,fontWeight:700,color:"#ef4444",background:"rgba(239,68,68,0.12)",padding:"3px 7px",borderRadius:4}}>품절</span>;
               }else if(x.currentStock<avg){
-                statusEl=<span style={{fontSize:11,fontWeight:700,color:"#f59e0b",background:"rgba(245,158,11,0.12)",padding:"3px 7px",borderRadius:4}}>부족 {fmtSalesNum(avg-x.currentStock,1)}</span>;
+                statusEl=<span style={{fontSize:11,fontWeight:700,color:"#f59e0b",background:"rgba(245,158,11,0.12)",padding:"3px 7px",borderRadius:4}}>부족 {fmtSalesNum(Math.round(avg-x.currentStock))}</span>;
               }else{
                 statusEl=<span style={{fontSize:11,fontWeight:700,color:"#22c55e",background:"rgba(34,197,94,0.12)",padding:"3px 7px",borderRadius:4}}>정상</span>;
               }
@@ -3585,10 +3585,10 @@ function SalesTab({adminHash}){
                   <div style={{fontWeight:600}}>{x.displayName||<span style={{color:"var(--muted)"}}>(이름 없음)</span>}</div>
                   {x.inInv && <span style={{fontSize:10,color:"#06b6d4",fontWeight:600}}>📋 재고시트</span>}
                 </td>
-                <td className="right hide-mobile" style={{fontSize:12}}>{fmtSalesNum(x.total_qty,1)}</td>
-                <td className="right hide-mobile" style={{fontSize:12,color:"var(--muted)"}}>{fmtSalesNum(x.avg_daily,2)}</td>
-                <td className="right" style={{fontWeight:700,fontSize:13,color:"#06b6d4"}}>{fmtSalesNum(avg,1)}</td>
-                <td className="right" style={{fontSize:12}}>{hasStock?fmtSalesNum(x.currentStock):<span style={{color:"var(--muted)"}}>—</span>}</td>
+                <td className="right hide-mobile" style={{fontSize:12}}>{fmtSalesNum(Math.round(x.total_qty))}</td>
+                <td className="right hide-mobile" style={{fontSize:12,color:"var(--muted)"}}>{fmtSalesNum(Math.round(x.avg_daily))}</td>
+                <td className="right" style={{fontWeight:700,fontSize:13,color:"#06b6d4"}}>{fmtSalesNum(Math.round(avg))}</td>
+                <td className="right" style={{fontSize:12}}>{hasStock?fmtSalesNum(Math.round(x.currentStock)):<span style={{color:"var(--muted)"}}>—</span>}</td>
                 <td className="center">{statusEl}</td>
               </tr>;
             })}

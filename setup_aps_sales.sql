@@ -93,9 +93,9 @@ BEGIN
       'name',           name,
       'total_qty',      total_qty,
       'days_with_sales',days_with_sales,
-      'avg_daily',      ROUND((total_qty / p_days)::NUMERIC, 2),
-      'avg_weekly',     ROUND((total_qty / p_days * 7)::NUMERIC, 1),
-      'avg_monthly',    ROUND((total_qty / p_days * 30)::NUMERIC, 1),
+      'avg_daily',      ROUND((total_qty / p_days)::NUMERIC, 0),
+      'avg_weekly',     ROUND((total_qty / p_days * 7)::NUMERIC, 0),
+      'avg_monthly',    ROUND((total_qty / p_days * 30)::NUMERIC, 0),
       'first_date',     first_date,
       'last_date',      last_date,
       'period_days',    p_days
@@ -170,7 +170,7 @@ BEGIN
 
   -- 실제 update (값이 다를 때만 — 불필요한 updated_at 갱신 회피)
   WITH stats AS (
-    SELECT code, ROUND((SUM(qty) / p_days * 7)::NUMERIC, 1) AS avg_weekly
+    SELECT code, ROUND((SUM(qty) / p_days * 7)::NUMERIC, 0) AS avg_weekly
       FROM aps_sales_daily
      WHERE date >= v_cutoff
      GROUP BY code
