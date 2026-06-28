@@ -3224,10 +3224,10 @@ function InventorySheetTab({adminHash}){
 }
 
 // ═══════════════════════════════════════════
-// 💰 매출 탭 — 매출일보(.xlsx) 업로드 + 월평균 안전재고
+// 💰 매출 탭 — 매출일보(.xlsx) 업로드 + 주평균 안전재고
 // ─ Excel 컬럼: A=매출일자, D=상품코드, E=상품명, H=수량(Box)
 // ─ Supabase aps_sales_daily (1년 보유) 에 누적
-// ─ 재고시트 제품코드와 매칭하여 한달평균 안전재고/현재재고 비교
+// ─ 재고시트 제품코드와 매칭하여 주평균 안전재고/현재재고 비교
 // ═══════════════════════════════════════════
 
 // Excel 날짜 다양한 형태 → "YYYY-MM-DD" 정규화
@@ -3309,7 +3309,7 @@ function SalesTab({adminHash}){
   const[err,setErr]=useState("");
   const[ok,setOk]=useState("");
   const[meta,setMeta]=useState(null);     // {total_rows, distinct_codes, min_date, max_date}
-  const[stats,setStats]=useState([]);     // [{code,name,total_qty,avg_daily,avg_monthly,...}]
+  const[stats,setStats]=useState([]);     // [{code,name,total_qty,avg_daily,avg_weekly,avg_monthly,...}]
   const[range,setRange]=useState(30);     // days
   const[query,setQuery]=useState("");
   const[matchedOnly,setMatchedOnly]=useState(false); // 재고시트 매칭만
@@ -3380,9 +3380,26 @@ function SalesTab({adminHash}){
         if(res?.min_date && (!minD||res.min_date<minD))minD=res.min_date;
         if(res?.max_date && (!maxD||res.max_date>maxD))maxD=res.max_date;
       }
-      setOk(`✓ ${parsed.rows.length}건 업로드 (${minD||"?"} ~ ${maxD||"?"})`);
+      // 업로드 직후 매출 평균 → 안전재고 자동 동기화 (선택 기간 기준)
+      let syncMsg="";
+      try{
+        const syncRes=await rpc("aps_sync_safety_from_sales",{p_admin_hash:adminHash,p_days:range});
+        const u=syncRes?.updated||0, m=syncRes?.matched||0;
+        if(m>0)syncMsg=` · 안전재고 ${u}/${m}건 자동 갱신`;
+      }catch(syncErr){syncMsg=` · ⚠ 안전재고 동기화 실패(${syncErr.message||syncErr})`}
+      setOk(`✓ ${parsed.rows.length}건 업로드 (${minD||"?"} ~ ${maxD||"?"})${syncMsg}`);
       await loadAll();
     }catch(ex){setErr("업로드 실패: "+(ex.message||ex))}
+    finally{setBusy(false)}
+  }
+
+  async function handleSyncSafety(){
+    if(!confirm(`매출 데이터가 있는 모든 품목의 안전재고를 주평균값(${range}일 기준 × 7일)으로 갱신합니다.\n\n사용자가 수동 설정한 안전재고 값은 덮어써집니다. 계속하시겠어요?`))return;
+    setBusy(true);setErr("");setOk("");
+    try{
+      const res=await rpc("aps_sync_safety_from_sales",{p_admin_hash:adminHash,p_days:range});
+      setOk(`✓ 안전재고 ${res?.updated||0}건 갱신 (매칭 ${res?.matched||0}건)`);
+    }catch(e){setErr("동기화 실패: "+(e.message||e))}
     finally{setBusy(false)}
   }
 
@@ -3423,10 +3440,11 @@ function SalesTab({adminHash}){
       const p=invMap[s.code];
       const displayName=(p && p.name) ? p.name : (s.name || "");
       const currentStock = p ? Number(p.box||0) : null;
-      const avgMonthly = Number(s.avg_monthly||0);
-      const shortage = (currentStock!=null) ? (avgMonthly - currentStock) : null;
+      // 서버 RPC가 옛 정의(avg_weekly 미반환)일 때 일평균×7로 클라이언트 폴백
+      const avgWeekly = Number(s.avg_weekly) || Number(s.avg_daily||0)*7;
+      const shortage = (currentStock!=null) ? (avgWeekly - currentStock) : null;
       const inInv = !!p;
-      return {...s, displayName, currentStock, shortage, inInv};
+      return {...s, avg_weekly: avgWeekly, displayName, currentStock, shortage, inInv};
     });
     let filtered=list;
     if(matchedOnly)filtered=filtered.filter(x=>x.inInv);
@@ -3441,7 +3459,7 @@ function SalesTab({adminHash}){
         const sa=a.shortage??-Infinity, sb=b.shortage??-Infinity;
         return sb-sa;
       }
-      return (b.avg_monthly||0)-(a.avg_monthly||0);
+      return (b.avg_weekly||0)-(a.avg_weekly||0);
     });
     return filtered;
   },[stats,invMap,matchedOnly,query,sortKey]);
@@ -3460,7 +3478,7 @@ function SalesTab({adminHash}){
       <div>
         <div style={{fontSize:18,fontWeight:700}}>💰 매출일보 분석</div>
         <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>
-          매출.xlsx 업로드 → 1년 누적 → 월평균 안전재고 자동 계산 (재고시트 연동)
+          매출.xlsx 업로드 → 1년 누적 → 주평균 안전재고 자동 계산 (재고시트 연동)
         </div>
       </div>
       <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
@@ -3514,7 +3532,7 @@ function SalesTab({adminHash}){
       <div style={{display:"flex",gap:4,alignItems:"center"}}>
         <span style={{fontSize:12,color:"var(--muted)",fontWeight:600,marginRight:4}}>정렬</span>
         <select className="aps-input" value={sortKey} onChange={e=>setSortKey(e.target.value)} style={{width:140}}>
-          <option value="avg">한달평균 ↓</option>
+          <option value="avg">주평균 ↓</option>
           <option value="shortage">부족량 ↓</option>
           <option value="stock">현재재고 ↓</option>
           <option value="code">코드순</option>
@@ -3525,6 +3543,7 @@ function SalesTab({adminHash}){
         재고시트 매칭만
       </label>
       <div style={{flex:1}}/>
+      <button className="aps-btn aps-btn-sm" style={{background:"rgba(6,182,212,0.15)",color:"#06b6d4",border:"1px solid rgba(6,182,212,0.4)",fontWeight:700}} onClick={handleSyncSafety} disabled={busy} title="매출 주평균값(1주일에 평균적으로 나가는 양)을 품목 마스터의 안전재고로 일괄 갱신">💰 안전재고 동기화</button>
       <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={handleCleanup} disabled={busy}>🗑 365일 정리</button>
       <button className="aps-btn aps-btn-sm" style={{background:"rgba(239,68,68,0.15)",color:"#ef4444",border:"1px solid rgba(239,68,68,0.3)"}} onClick={handleClearAll} disabled={busy}>⚠ 전체 초기화</button>
     </div>
@@ -3539,14 +3558,14 @@ function SalesTab({adminHash}){
             <th>상품명</th>
             <th className="right hide-mobile" style={{width:90}}>{range}일 판매</th>
             <th className="right hide-mobile" style={{width:90}}>일평균</th>
-            <th className="right" style={{width:130}}>한달평균<br/><span style={{fontSize:10,fontWeight:500,color:"var(--muted)"}}>(안전재고 추천)</span></th>
+            <th className="right" style={{width:130}}>주평균<br/><span style={{fontSize:10,fontWeight:500,color:"var(--muted)"}}>(안전재고 추천)</span></th>
             <th className="right" style={{width:100}}>현재재고<br/><span style={{fontSize:10,fontWeight:500,color:"var(--muted)"}}>(재고시트)</span></th>
             <th className="center" style={{width:90}}>상태</th>
           </tr></thead>
           <tbody>
             {merged.map((x,i)=>{
               const hasStock = x.currentStock != null;
-              const avg = Number(x.avg_monthly||0);
+              const avg = Number(x.avg_weekly||0);
               let statusEl;
               if(!hasStock){
                 statusEl=<span style={{fontSize:11,color:"var(--muted)"}}>—</span>;
@@ -3582,9 +3601,10 @@ function SalesTab({adminHash}){
       <div><strong>💡 사용법</strong></div>
       <div>1. 매출.xlsx 업로드 → A(매출일자) / D(상품코드) / E(상품명) / H(수량Box) 컬럼 자동 인식</div>
       <div>2. 같은 (날짜+상품)이 여러 행이면 자동 합산. 같은 날짜 재업로드 시 덮어쓰기 (idempotent)</div>
-      <div>3. <b>한달평균</b> = 선택 기간 일평균 × 30일 = 권장 안전재고</div>
+      <div>3. <b>주평균</b> = 선택 기간 일평균 × 7일 = 1주일에 평균적으로 나가는 박스 수 (권장 안전재고)</div>
       <div>4. <b>현재재고</b>는 📋 재고 시트 탭에서 업로드한 박스 수와 자동 연동</div>
-      <div>5. 1년 초과 데이터는 🗑 365일 정리 버튼으로 일괄 삭제</div>
+      <div>5. 매출 업로드 시 <b>📦 품목/BOM 탭의 안전재고</b>도 주평균값으로 자동 갱신 (수동 트리거: 💰 안전재고 동기화 버튼)</div>
+      <div>6. 1년 초과 데이터는 🗑 365일 정리 버튼으로 일괄 삭제</div>
     </div>
   </div>;
 }

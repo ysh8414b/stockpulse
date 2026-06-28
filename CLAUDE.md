@@ -778,6 +778,40 @@
   - 단위 표시도 동적: 시트 매칭이면 "박스", 거래내역이면 기존 `unit`
 - **검증**: 매출 Excel 업로드 후 재고시트에 113개, aps_items 41개 등록 상태에서 32개 매칭 → 필터 카운트 "정상 32 / 품절 9 / 부족 0"으로 정확히 분류됨. 매칭 품목은 "3 박스" + 📋 + 정상, 미매칭은 "0 EA" + 품절 fallback 유지
 
+### APS — 품목 안전재고에 매출 한달평균 자동 동기화 (2026-06-28)
+- 사용자 요청: "제품탭에 안전재고에는 매출 1달 평균값이 적히도록"
+- 기존: `aps_items.safety_stock`은 수동 입력 전용 → 매출 변동 반영 안 됨
+- 변경: 매출 한달평균(avg_monthly = 기간 총량/일수×30) 값을 `aps_items.safety_stock`으로 일괄 동기화 (코드 매칭 기준)
+- **`setup_aps_sales.sql` 신규 RPC `aps_sync_safety_from_sales(hash, days=30)`**:
+  - 최근 N일 매출 stats CTE → `UPDATE aps_items i SET safety_stock = s.avg_monthly FROM stats s WHERE i.code = s.code`
+  - 매출 데이터 없는 품목은 건드리지 않음 (JOIN 절로 자연스럽게 제외)
+  - `safety_stock IS DISTINCT FROM s.avg_monthly` 조건으로 변경 없는 행은 skip (updated_at 불필요한 갱신 회피)
+  - 반환: `{updated, matched, period_days}` — matched는 매출 있는 매칭 행 수, updated는 실제 값이 바뀐 수
+- **`aps.html` `SalesTab` 변경**:
+  - `handleFile` 끝에 자동 호출: 업로드 성공 직후 `aps_sync_safety_from_sales(range)` → 토스트 메시지에 "안전재고 N/M건 자동 갱신" 추가. 동기화 실패는 ⚠ 경고만 표시(업로드 자체는 성공 처리)
+  - 신규 `handleSyncSafety()`: 수동 트리거 (재실행/재계산용). 사용자 수동 안전재고 덮어쓰기 경고 confirm
+  - 툴바에 "💰 안전재고 동기화" 버튼 추가 (시안 강조 색, 365일 정리 옆)
+  - 사용법 안내에 "5. 매출 업로드 시 📦 품목/BOM 탭의 안전재고도 한달평균값으로 자동 갱신" 추가
+- **의도된 부수효과**: `safety_stock` 변경으로 📊 재고 탭 stock_status(out/low/ok) 계산도 자동으로 매출 평균 기준으로 업데이트됨 → 매출 1달 평균보다 현재재고 적으면 "부족" 표시
+- **한계**: 사용자가 수동 설정한 safety_stock 값이 덮어써짐. 수동 트리거에는 confirm 경고 있지만 자동 동기화(업로드 시)는 그냥 갱신. 수동값 보존이 필요하면 후속 단계에서 `aps_items`에 `safety_stock_manual` 플래그 추가 필요
+- **운영 순서**: Supabase에서 신규 RPC만 추가 실행 (`setup_aps_sales.sql` 의 `aps_sync_safety_from_sales` 함수 블록) → 다음 매출 업로드부터 자동 동기화. 이미 업로드된 데이터에는 💰 안전재고 동기화 버튼 1회 클릭
+
+### APS — 매출 안전재고 기준을 한달평균 → 주평균(7일)으로 변경 (2026-06-28)
+- 사용자 요청: "한달평균을 주단위로 합산해서 가능할까? 하루에 나가는 평균말고 주마다 얼마나 나가는지"
+- 기존: avg_monthly = 일평균 × 30 (월 단위) — 발주 주기 짧은 비즈니스에 과한 안전재고
+- 변경: avg_weekly = 일평균 × 7 (주 단위) — 1주일에 평균적으로 나가는 박스 수 기준
+- **`setup_aps_sales.sql` 변경**:
+  - `aps_get_sales_stats` 응답에 `avg_weekly` 필드 추가 (`avg_monthly`도 유지 — 참고용 호환성)
+  - `aps_sync_safety_from_sales`: `avg_monthly` → `avg_weekly`로 변경하여 `aps_items.safety_stock` 갱신
+- **`aps.html` SalesTab 변경**:
+  - 컬럼 헤더 "한달평균" → "주평균" (서브 라벨 "(안전재고 추천)" 유지)
+  - 정렬 옵션 라벨 "한달평균 ↓" → "주평균 ↓" (sortKey 'avg' 그대로지만 비교 기준은 avg_weekly)
+  - `merged` useMemo: `avgMonthly` → `avgWeekly`, shortage 계산 기준도 주평균
+  - **클라이언트 폴백**: `Number(s.avg_weekly) || Number(s.avg_daily||0)*7` — Supabase RPC가 옛 정의(avg_weekly 미반환)여도 클라이언트가 일평균×7로 자동 계산 → SQL 재실행 전에도 UI 정상 표시. 단 `aps_sync_safety_from_sales` 실제 갱신은 서버측이라 SQL 재실행 필수
+  - 헤더 부제목/사용법 안내/handleSyncSafety confirm 메시지 모두 "주평균"으로 통일
+- **검증**: F0000045 (729박스/30일 가정) → 일평균 24.3 × 7 = **주평균 170.1박스**, 현재재고 146 → 부족 24.1 정확히 계산. 5개 행 모두 산식 일치
+- **운영 순서**: 이미 SQL 적용한 사용자는 `setup_aps_sales.sql`의 `aps_get_sales_stats`/`aps_sync_safety_from_sales` 두 함수 블록만 다시 실행 → 서버측 통계 응답에도 avg_weekly가 포함되고 안전재고 갱신도 주평균 기준으로 동작
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)

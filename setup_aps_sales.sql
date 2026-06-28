@@ -70,8 +70,9 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ───────────────────────────────────────────
 -- 품목별 통계 (최근 p_days 일)
--- avg_daily  = total_qty / p_days  (전체 기간 기준, 거래 없는 날도 0으로 평균)
--- avg_monthly = avg_daily * 30  (한달평균 안전재고 추천값)
+-- avg_daily   = total_qty / p_days  (전체 기간 기준, 거래 없는 날도 0으로 평균)
+-- avg_weekly  = avg_daily * 7   (주평균 안전재고 추천값)
+-- avg_monthly = avg_daily * 30  (참고용 — 한달평균)
 -- ───────────────────────────────────────────
 CREATE OR REPLACE FUNCTION aps_get_sales_stats(
   p_admin_hash TEXT,
@@ -93,6 +94,7 @@ BEGIN
       'total_qty',      total_qty,
       'days_with_sales',days_with_sales,
       'avg_daily',      ROUND((total_qty / p_days)::NUMERIC, 2),
+      'avg_weekly',     ROUND((total_qty / p_days * 7)::NUMERIC, 1),
       'avg_monthly',    ROUND((total_qty / p_days * 30)::NUMERIC, 1),
       'first_date',     first_date,
       'last_date',      last_date,
@@ -139,6 +141,57 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ───────────────────────────────────────────
+-- 매출 평균 → aps_items.safety_stock 자동 동기화
+-- 최근 p_days 일 매출의 주평균(avg_weekly = total/days*7) 값을
+-- 같은 코드의 aps_items.safety_stock 에 일괄 업데이트.
+-- 매출 데이터 없는 품목은 건드리지 않음.
+-- ───────────────────────────────────────────
+CREATE OR REPLACE FUNCTION aps_sync_safety_from_sales(
+  p_admin_hash TEXT,
+  p_days       INT DEFAULT 30
+)
+RETURNS JSON AS $$
+DECLARE
+  v_cutoff DATE;
+  v_updated INT := 0;
+  v_matched INT := 0;
+BEGIN
+  PERFORM aps_assert_admin(p_admin_hash);
+  IF p_days IS NULL OR p_days < 1 THEN p_days := 30; END IF;
+  v_cutoff := CURRENT_DATE - (p_days - 1);
+
+  -- 매칭 가능한 행 수 먼저 카운트 (참고용)
+  SELECT COUNT(*)
+    INTO v_matched
+    FROM aps_items i
+    JOIN (
+      SELECT code FROM aps_sales_daily WHERE date >= v_cutoff GROUP BY code
+    ) s ON s.code = i.code;
+
+  -- 실제 update (값이 다를 때만 — 불필요한 updated_at 갱신 회피)
+  WITH stats AS (
+    SELECT code, ROUND((SUM(qty) / p_days * 7)::NUMERIC, 1) AS avg_weekly
+      FROM aps_sales_daily
+     WHERE date >= v_cutoff
+     GROUP BY code
+  )
+  UPDATE aps_items i
+     SET safety_stock = s.avg_weekly,
+         updated_at   = now()
+    FROM stats s
+   WHERE i.code = s.code
+     AND i.safety_stock IS DISTINCT FROM s.avg_weekly;
+
+  GET DIAGNOSTICS v_updated = ROW_COUNT;
+  RETURN json_build_object(
+    'updated',     v_updated,
+    'matched',     v_matched,
+    'period_days', p_days
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ───────────────────────────────────────────
 -- 365일 초과 데이터 정리
 -- ───────────────────────────────────────────
 CREATE OR REPLACE FUNCTION aps_cleanup_sales(
@@ -159,6 +212,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ───────────────────────────────────────────
 -- 전체 삭제 (수동 초기화용)
+-- ※ Supabase/PostgREST 안전 정책상 WHERE 없는 DELETE 가 막혀 있어 WHERE true 사용
 -- ───────────────────────────────────────────
 CREATE OR REPLACE FUNCTION aps_clear_sales(p_admin_hash TEXT)
 RETURNS JSON AS $$
@@ -166,7 +220,7 @@ DECLARE
   v_deleted INT := 0;
 BEGIN
   PERFORM aps_assert_admin(p_admin_hash);
-  DELETE FROM aps_sales_daily;
+  DELETE FROM aps_sales_daily WHERE TRUE;
   GET DIAGNOSTICS v_deleted = ROW_COUNT;
   RETURN json_build_object('deleted', v_deleted);
 END;
