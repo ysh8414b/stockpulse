@@ -736,6 +736,30 @@
   - `fmtDtDow(iso)`: KST 변환 후 `MM/DD(요일) HH:MM` 형식으로 출력 → 각 행의 시작/종료 시각에 요일 인라인 표시
 - 적용 위치: `ExportPlansView` 헤더 dateLabel + 행의 시작/종료 시각 (`fmtKstDateTime` → `fmtDtDow`)
 
+### APS — 매출 일보 업로드 + 월평균 안전재고 (2026-06-28)
+- 사용자 요청: "매출일보(매출.xlsx) 업로드하면 1년치 저장하면서 월평균 통계. A/D/E/H 셀 사용. 상품코드가 재고시트 제품코드와 일치하는 항목에 한달평균 안전재고 자동 입력. 현재재고는 재고시트에서 연동"
+- **`setup_aps_sales.sql`** (신규, 1회 실행):
+  - `aps_sales_daily(date DATE, code TEXT, name TEXT, qty NUMERIC, PRIMARY KEY(date,code))` + RLS ENABLE
+  - 인덱스: `idx_aps_sales_code(code)`, `idx_aps_sales_date(date DESC)`
+  - RPC 5종 (모두 `aps_assert_admin` 첫 줄 검증):
+    - `aps_upsert_sales_batch(hash, rows JSONB)`: 업로드 범위 `[min, max]` DELETE 후 INSERT — 재업로드 idempotent. 같은 (date,code) 충돌 시 qty 누산
+    - `aps_get_sales_stats(hash, days)`: 최근 N일 품목별 집계 — `total_qty`, `days_with_sales`, `avg_daily`(=total/days), `avg_monthly`(=avg_daily×30), first/last_date
+    - `aps_get_sales_meta(hash)`: `total_rows`, `distinct_codes`, `min_date`, `max_date`
+    - `aps_cleanup_sales(hash, days=365)`: 1년 초과 데이터 삭제
+    - `aps_clear_sales(hash)`: 전체 초기화
+- **`aps.html` 변경**:
+  - `VALID_TABS`에 `"sales"` 추가, 6번째 탭 **💰 매출** 추가 (📋 재고 시트 오른쪽)
+  - 헬퍼 추가: `normalizeSalesDate(v)` — Date 객체/Excel serial/`YYYY/MM/DD` 모두 → `YYYY-MM-DD` 정규화. `parseSalesWorkbook(buf)` — A/D/E/H 컬럼 추출 + (date,code)로 그룹 합산 + 합계행("합 계" 같은 한글-only 셀) 자동 스킵. `fmtSalesNum(n,digits)` — 천단위 한국어 포맷
+  - **`SalesTab({adminHash})`** 신규 컴포넌트:
+    - 상단 4개 요약 카드: 저장 행 / 등록 상품 / 보유 기간 / 재고시트 매칭 수
+    - 기간 필터(7/14/30/60/90/180/365일), 코드·상품명 검색, 정렬(한달평균↓/부족량↓/현재재고↓/코드순), "재고시트 매칭만" 토글, 🗑365일 정리, ⚠전체 초기화
+    - 메인 테이블: # / 상품코드 / 상품명(재고시트 매칭 시 📋 뱃지) / N일 판매 / 일평균 / **한달평균(안전재고 추천)** / **현재재고(재고시트)** / 상태(품절/부족 X/정상/판매없음/—)
+    - 데이터 가공: `invMap`(재고시트 products by code) → stats와 merge → `displayName` 우선순위(재고시트 name > 매출 name) + `currentStock`(재고시트 box) + `shortage`(avg_monthly - currentStock)
+    - 재고시트 변경 실시간 구독: `storage` 이벤트 + `aps-inv-data-change` CustomEvent + 마운트 시 `loadRemoteInventory(adminHash)` (다른 기기 업로드 동기화)
+  - 업로드 흐름: 파일 선택 → SheetJS(`cellDates:true`)로 파싱 → (date,code) 그룹 합산 → 500행씩 배치로 `aps_upsert_sales_batch` 호출 → 성공 시 메타+stats 자동 새로고침
+- **Excel 인코딩 노트**: 매출.xlsx는 ERP에서 깨진 UTF-8/CP949 혼합 인코딩 — 그러나 SheetJS는 정상 디코딩 가능(openpyxl과 달리). 노드 테스트: 604행 → 592행 유효 매출, 203개 (date,code) 그룹, 82개 상품, 한글명 정상
+- **운영 순서**: Supabase에서 `setup_aps_sales.sql` 실행 1회 → 💰 매출 탭에서 매출.xlsx 업로드 → 재고시트 탭에 제품코드 등록되어 있으면 자동 매칭
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)

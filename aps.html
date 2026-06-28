@@ -3160,9 +3160,375 @@ function InventorySheetTab({adminHash}){
 }
 
 // ═══════════════════════════════════════════
+// 💰 매출 탭 — 매출일보(.xlsx) 업로드 + 월평균 안전재고
+// ─ Excel 컬럼: A=매출일자, D=상품코드, E=상품명, H=수량(Box)
+// ─ Supabase aps_sales_daily (1년 보유) 에 누적
+// ─ 재고시트 제품코드와 매칭하여 한달평균 안전재고/현재재고 비교
+// ═══════════════════════════════════════════
+
+// Excel 날짜 다양한 형태 → "YYYY-MM-DD" 정규화
+function normalizeSalesDate(v){
+  if(v==null||v==="")return null;
+  // SheetJS cellDates:true → Date 객체
+  if(v instanceof Date && !isNaN(v)){
+    const y=v.getFullYear(), m=String(v.getMonth()+1).padStart(2,"0"), d=String(v.getDate()).padStart(2,"0");
+    return `${y}-${m}-${d}`;
+  }
+  if(typeof v==="number"){
+    // Excel serial date
+    const d=new Date(Math.round((v-25569)*86400*1000));
+    if(isNaN(d))return null;
+    const y=d.getUTCFullYear(), mm=String(d.getUTCMonth()+1).padStart(2,"0"), dd=String(d.getUTCDate()).padStart(2,"0");
+    return `${y}-${mm}-${dd}`;
+  }
+  const s=String(v).trim();
+  // YYYY/MM/DD or YYYY-MM-DD or YYYY.MM.DD
+  const m=s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/);
+  if(m){
+    const y=m[1], mm=m[2].padStart(2,"0"), dd=m[3].padStart(2,"0");
+    return `${y}-${mm}-${dd}`;
+  }
+  return null;
+}
+
+// 매출일보 워크북 → {rows:[{date,code,name,qty}], headerRow, totalRows}
+// A/D/E/H 컬럼만 추출, 합계행/머리글행 자동 스킵
+function parseSalesWorkbook(buf){
+  const wb=XLSX.read(buf,{type:"array",cellDates:true});
+  const ws=wb.Sheets[wb.SheetNames[0]];
+  if(!ws)throw new Error("시트를 찾을 수 없습니다");
+  const arr=XLSX.utils.sheet_to_json(ws,{header:1,defval:null,raw:true});
+  const grouped={}; // key = `${date}|${code}` → {date,code,name,qty}
+  let scanned=0, picked=0;
+  for(let i=0;i<arr.length;i++){
+    const r=arr[i]||[];
+    const dateRaw=r[0];      // A
+    const code=r[3];          // D
+    const name=r[4];          // E
+    const qtyRaw=r[7];        // H
+    if(dateRaw==null||code==null||code==="")continue;
+    const date=normalizeSalesDate(dateRaw);
+    if(!date)continue;
+    const codeStr=String(code).trim();
+    if(!codeStr||/^[가-힣\s]+$/.test(codeStr))continue; // "합 계" 같은 한글-only 셀 제외
+    const qty=Number(qtyRaw);
+    if(isNaN(qty))continue;
+    scanned++;
+    const key=`${date}|${codeStr}`;
+    if(!grouped[key]){
+      grouped[key]={date,code:codeStr,name:String(name||"").trim(),qty:0};
+      picked++;
+    }
+    grouped[key].qty+=qty;
+  }
+  return {rows:Object.values(grouped), scanned, picked};
+}
+
+const SALES_RANGE_OPTIONS=[
+  {key:7,   label:"7일"},
+  {key:14,  label:"14일"},
+  {key:30,  label:"30일 (한달)"},
+  {key:60,  label:"60일"},
+  {key:90,  label:"90일"},
+  {key:180, label:"180일"},
+  {key:365, label:"1년"}
+];
+
+function fmtSalesNum(n,digits){
+  if(n==null||isNaN(n))return "-";
+  const d=digits==null?0:digits;
+  return Number(n).toLocaleString("ko-KR",{minimumFractionDigits:d,maximumFractionDigits:d});
+}
+
+function SalesTab({adminHash}){
+  const[busy,setBusy]=useState(false);
+  const[err,setErr]=useState("");
+  const[ok,setOk]=useState("");
+  const[meta,setMeta]=useState(null);     // {total_rows, distinct_codes, min_date, max_date}
+  const[stats,setStats]=useState([]);     // [{code,name,total_qty,avg_daily,avg_monthly,...}]
+  const[range,setRange]=useState(30);     // days
+  const[query,setQuery]=useState("");
+  const[matchedOnly,setMatchedOnly]=useState(false); // 재고시트 매칭만
+  const[sortKey,setSortKey]=useState("avg");         // avg | code | shortage | stock
+  const[inv,setInv]=useState(()=>loadStoredInventory());
+
+  // 재고시트(localStorage) 변경 구독
+  useEffect(()=>{
+    const reload=()=>setInv(loadStoredInventory());
+    const onStorage=(e)=>{if(!e.key||e.key===INVENTORY_DATA_KEY)reload()};
+    window.addEventListener("storage",onStorage);
+    window.addEventListener("aps-inv-data-change",reload);
+    return()=>{
+      window.removeEventListener("storage",onStorage);
+      window.removeEventListener("aps-inv-data-change",reload);
+    };
+  },[]);
+
+  // 재고시트 원격 fetch (다른 기기에서 업로드한 데이터)
+  useEffect(()=>{
+    if(!adminHash)return;
+    let cancelled=false;
+    (async()=>{
+      const remote=await loadRemoteInventory(adminHash);
+      if(cancelled||!remote)return;
+      const local=loadStoredInventory();
+      if(!local||!local.savedAt||(remote.savedAt && remote.savedAt>local.savedAt)){
+        applyRemoteInventoryToLocal(remote);
+        setInv(loadStoredInventory());
+      }
+    })();
+    return()=>{cancelled=true};
+  },[adminHash]);
+
+  async function loadAll(){
+    if(!adminHash)return;
+    setBusy(true);setErr("");
+    try{
+      const [m, s] = await Promise.all([
+        rpc("aps_get_sales_meta",{p_admin_hash:adminHash}),
+        rpc("aps_get_sales_stats",{p_admin_hash:adminHash,p_days:range}),
+      ]);
+      setMeta(m||null);
+      setStats(Array.isArray(s)?s:[]);
+    }catch(e){setErr("로딩 실패: "+(e.message||e))}
+    finally{setBusy(false)}
+  }
+
+  useEffect(()=>{loadAll()},[adminHash,range]);
+
+  async function handleFile(e){
+    const f=e.target.files&&e.target.files[0];
+    e.target.value="";
+    if(!f)return;
+    setErr("");setOk("");setBusy(true);
+    try{
+      if(typeof XLSX==="undefined")throw new Error("XLSX 라이브러리 로드 실패 — 새로고침 후 재시도");
+      const buf=await f.arrayBuffer();
+      const parsed=parseSalesWorkbook(buf);
+      if(!parsed.rows.length)throw new Error("유효한 매출 데이터가 없습니다 (A=일자, D=코드, H=수량 컬럼 확인)");
+      // 500행씩 배치 업로드
+      const BATCH=500;
+      let inserted=0, minD=null, maxD=null;
+      for(let i=0;i<parsed.rows.length;i+=BATCH){
+        const chunk=parsed.rows.slice(i,i+BATCH);
+        const res=await rpc("aps_upsert_sales_batch",{p_admin_hash:adminHash,p_rows:chunk});
+        inserted+=(res?.inserted||0);
+        if(res?.min_date && (!minD||res.min_date<minD))minD=res.min_date;
+        if(res?.max_date && (!maxD||res.max_date>maxD))maxD=res.max_date;
+      }
+      setOk(`✓ ${parsed.rows.length}건 업로드 (${minD||"?"} ~ ${maxD||"?"})`);
+      await loadAll();
+    }catch(ex){setErr("업로드 실패: "+(ex.message||ex))}
+    finally{setBusy(false)}
+  }
+
+  async function handleCleanup(){
+    if(!confirm("365일 초과 데이터를 삭제합니다. 계속하시겠어요?"))return;
+    setBusy(true);setErr("");setOk("");
+    try{
+      const res=await rpc("aps_cleanup_sales",{p_admin_hash:adminHash,p_days:365});
+      setOk(`✓ ${res?.deleted||0}건 정리`);
+      await loadAll();
+    }catch(e){setErr("정리 실패: "+(e.message||e))}
+    finally{setBusy(false)}
+  }
+
+  async function handleClearAll(){
+    if(!confirm("⚠ 모든 매출 데이터를 삭제합니다. 정말로 초기화할까요?"))return;
+    if(!confirm("⚠⚠ 이 작업은 되돌릴 수 없습니다. 한 번 더 확인합니다."))return;
+    setBusy(true);setErr("");setOk("");
+    try{
+      const res=await rpc("aps_clear_sales",{p_admin_hash:adminHash});
+      setOk(`✓ 전체 ${res?.deleted||0}건 삭제`);
+      await loadAll();
+    }catch(e){setErr("삭제 실패: "+(e.message||e))}
+    finally{setBusy(false)}
+  }
+
+  // 재고시트 코드 → product 매핑 (current stock + 정식 한글명)
+  const invMap=useMemo(()=>{
+    const m={};
+    (inv?.products||[]).forEach(p=>{m[p.code]=p});
+    return m;
+  },[inv]);
+
+  // 표시용 데이터 가공
+  const merged=useMemo(()=>{
+    const q=query.trim().toLowerCase();
+    const list=stats.map(s=>{
+      const p=invMap[s.code];
+      const displayName=(p && p.name) ? p.name : (s.name || "");
+      const currentStock = p ? Number(p.box||0) : null;
+      const avgMonthly = Number(s.avg_monthly||0);
+      const shortage = (currentStock!=null) ? (avgMonthly - currentStock) : null;
+      const inInv = !!p;
+      return {...s, displayName, currentStock, shortage, inInv};
+    });
+    let filtered=list;
+    if(matchedOnly)filtered=filtered.filter(x=>x.inInv);
+    if(q)filtered=filtered.filter(x=>
+      (x.code||"").toLowerCase().includes(q)||
+      (x.displayName||"").toLowerCase().includes(q)
+    );
+    filtered.sort((a,b)=>{
+      if(sortKey==="code")return (a.code||"").localeCompare(b.code||"");
+      if(sortKey==="stock")return (b.currentStock??-1)-(a.currentStock??-1);
+      if(sortKey==="shortage"){
+        const sa=a.shortage??-Infinity, sb=b.shortage??-Infinity;
+        return sb-sa;
+      }
+      return (b.avg_monthly||0)-(a.avg_monthly||0);
+    });
+    return filtered;
+  },[stats,invMap,matchedOnly,query,sortKey]);
+
+  const summaryCounts=useMemo(()=>{
+    let matched=0, shortageCount=0;
+    merged.forEach(x=>{
+      if(x.inInv)matched++;
+      if(x.shortage!=null && x.shortage>0)shortageCount++;
+    });
+    return {matched, shortageCount, total:merged.length};
+  },[merged]);
+
+  return <div>
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,flexWrap:"wrap",gap:10}}>
+      <div>
+        <div style={{fontSize:18,fontWeight:700}}>💰 매출일보 분석</div>
+        <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>
+          매출.xlsx 업로드 → 1년 누적 → 월평균 안전재고 자동 계산 (재고시트 연동)
+        </div>
+      </div>
+      <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+        <label className="aps-btn aps-btn-primary" style={{cursor:"pointer"}}>
+          📂 매출 Excel 업로드
+          <input type="file" accept=".xlsx,.xls" onChange={handleFile} style={{display:"none"}} disabled={busy}/>
+        </label>
+        <button className="aps-btn aps-btn-secondary" onClick={loadAll} disabled={busy}>새로고침</button>
+      </div>
+    </div>
+
+    {/* 상태 메시지 */}
+    {err&&<div style={{padding:"10px 14px",background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:6,color:"#ef4444",fontSize:13,marginBottom:10}}>{err}</div>}
+    {ok&&<div style={{padding:"10px 14px",background:"rgba(34,197,94,0.1)",border:"1px solid rgba(34,197,94,0.3)",borderRadius:6,color:"#22c55e",fontSize:13,marginBottom:10}}>{ok}</div>}
+
+    {/* DB 메타 카드 */}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10,marginBottom:14}}>
+      <div style={{padding:14,background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:8}}>
+        <div style={{fontSize:11,color:"var(--muted)",fontWeight:600}}>저장된 매출 행</div>
+        <div style={{fontSize:22,fontWeight:800,marginTop:4}}>{fmtSalesNum(meta?.total_rows)}</div>
+      </div>
+      <div style={{padding:14,background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:8}}>
+        <div style={{fontSize:11,color:"var(--muted)",fontWeight:600}}>등록 상품 수</div>
+        <div style={{fontSize:22,fontWeight:800,marginTop:4}}>{fmtSalesNum(meta?.distinct_codes)}</div>
+      </div>
+      <div style={{padding:14,background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:8}}>
+        <div style={{fontSize:11,color:"var(--muted)",fontWeight:600}}>보유 기간</div>
+        <div style={{fontSize:14,fontWeight:700,marginTop:6}}>
+          {meta?.min_date?`${meta.min_date} ~ ${meta.max_date}`:"-"}
+        </div>
+      </div>
+      <div style={{padding:14,background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:8}}>
+        <div style={{fontSize:11,color:"var(--muted)",fontWeight:600}}>재고시트 매칭</div>
+        <div style={{fontSize:22,fontWeight:800,marginTop:4,color:"#06b6d4"}}>{summaryCounts.matched}<span style={{fontSize:12,color:"var(--muted)",marginLeft:6,fontWeight:600}}>/ {summaryCounts.total}</span></div>
+      </div>
+    </div>
+
+    {/* 필터 / 정렬 툴바 */}
+    <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:10}}>
+      <div style={{display:"flex",gap:4,alignItems:"center"}}>
+        <span style={{fontSize:12,color:"var(--muted)",fontWeight:600,marginRight:4}}>기간</span>
+        {SALES_RANGE_OPTIONS.map(o=>
+          <button key={o.key}
+            className={"aps-btn aps-btn-sm "+(range===o.key?"aps-btn-primary":"aps-btn-secondary")}
+            onClick={()=>setRange(o.key)} disabled={busy}>{o.label}</button>
+        )}
+      </div>
+      <div style={{flex:1,minWidth:160,maxWidth:280}}>
+        <input className="aps-input" placeholder="🔎 코드 또는 상품명" value={query} onChange={e=>setQuery(e.target.value)}/>
+      </div>
+      <div style={{display:"flex",gap:4,alignItems:"center"}}>
+        <span style={{fontSize:12,color:"var(--muted)",fontWeight:600,marginRight:4}}>정렬</span>
+        <select className="aps-input" value={sortKey} onChange={e=>setSortKey(e.target.value)} style={{width:140}}>
+          <option value="avg">한달평균 ↓</option>
+          <option value="shortage">부족량 ↓</option>
+          <option value="stock">현재재고 ↓</option>
+          <option value="code">코드순</option>
+        </select>
+      </div>
+      <label style={{display:"flex",gap:6,alignItems:"center",fontSize:13,cursor:"pointer",color:"var(--text)"}}>
+        <input type="checkbox" checked={matchedOnly} onChange={e=>setMatchedOnly(e.target.checked)}/>
+        재고시트 매칭만
+      </label>
+      <div style={{flex:1}}/>
+      <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={handleCleanup} disabled={busy}>🗑 365일 정리</button>
+      <button className="aps-btn aps-btn-sm" style={{background:"rgba(239,68,68,0.15)",color:"#ef4444",border:"1px solid rgba(239,68,68,0.3)"}} onClick={handleClearAll} disabled={busy}>⚠ 전체 초기화</button>
+    </div>
+
+    {/* 메인 테이블 */}
+    {merged.length===0 ? <Empty emoji="💰" text={meta?.total_rows ? "조회 결과가 없습니다 (기간/필터 확인)" : "매출 데이터가 없습니다. 우측 상단에서 매출.xlsx 를 업로드하세요."}/> :
+      <div style={{overflow:"auto"}}>
+        <table className="aps-table">
+          <thead><tr>
+            <th style={{width:46}} className="center">#</th>
+            <th style={{width:110}}>상품코드</th>
+            <th>상품명</th>
+            <th className="right hide-mobile" style={{width:90}}>{range}일 판매</th>
+            <th className="right hide-mobile" style={{width:90}}>일평균</th>
+            <th className="right" style={{width:130}}>한달평균<br/><span style={{fontSize:10,fontWeight:500,color:"var(--muted)"}}>(안전재고 추천)</span></th>
+            <th className="right" style={{width:100}}>현재재고<br/><span style={{fontSize:10,fontWeight:500,color:"var(--muted)"}}>(재고시트)</span></th>
+            <th className="center" style={{width:90}}>상태</th>
+          </tr></thead>
+          <tbody>
+            {merged.map((x,i)=>{
+              const hasStock = x.currentStock != null;
+              const avg = Number(x.avg_monthly||0);
+              let statusEl;
+              if(!hasStock){
+                statusEl=<span style={{fontSize:11,color:"var(--muted)"}}>—</span>;
+              }else if(avg<=0){
+                statusEl=<span style={{fontSize:11,color:"var(--muted)"}}>판매없음</span>;
+              }else if(x.currentStock<=0){
+                statusEl=<span style={{fontSize:11,fontWeight:700,color:"#ef4444",background:"rgba(239,68,68,0.12)",padding:"3px 7px",borderRadius:4}}>품절</span>;
+              }else if(x.currentStock<avg){
+                statusEl=<span style={{fontSize:11,fontWeight:700,color:"#f59e0b",background:"rgba(245,158,11,0.12)",padding:"3px 7px",borderRadius:4}}>부족 {fmtSalesNum(avg-x.currentStock,1)}</span>;
+              }else{
+                statusEl=<span style={{fontSize:11,fontWeight:700,color:"#22c55e",background:"rgba(34,197,94,0.12)",padding:"3px 7px",borderRadius:4}}>정상</span>;
+              }
+              return <tr key={x.code}>
+                <td className="center" style={{color:"var(--muted)",fontSize:11}}>{i+1}</td>
+                <td style={{fontFamily:"monospace",fontSize:12}}>{x.code}</td>
+                <td>
+                  <div style={{fontWeight:600}}>{x.displayName||<span style={{color:"var(--muted)"}}>(이름 없음)</span>}</div>
+                  {x.inInv && <span style={{fontSize:10,color:"#06b6d4",fontWeight:600}}>📋 재고시트</span>}
+                </td>
+                <td className="right hide-mobile" style={{fontSize:12}}>{fmtSalesNum(x.total_qty,1)}</td>
+                <td className="right hide-mobile" style={{fontSize:12,color:"var(--muted)"}}>{fmtSalesNum(x.avg_daily,2)}</td>
+                <td className="right" style={{fontWeight:700,fontSize:13,color:"#06b6d4"}}>{fmtSalesNum(avg,1)}</td>
+                <td className="right" style={{fontSize:12}}>{hasStock?fmtSalesNum(x.currentStock):<span style={{color:"var(--muted)"}}>—</span>}</td>
+                <td className="center">{statusEl}</td>
+              </tr>;
+            })}
+          </tbody>
+        </table>
+      </div>
+    }
+
+    <div style={{marginTop:14,padding:"10px 14px",background:"var(--card-bg)",borderRadius:6,fontSize:11,color:"var(--muted)",lineHeight:1.6}}>
+      <div><strong>💡 사용법</strong></div>
+      <div>1. 매출.xlsx 업로드 → A(매출일자) / D(상품코드) / E(상품명) / H(수량Box) 컬럼 자동 인식</div>
+      <div>2. 같은 (날짜+상품)이 여러 행이면 자동 합산. 같은 날짜 재업로드 시 덮어쓰기 (idempotent)</div>
+      <div>3. <b>한달평균</b> = 선택 기간 일평균 × 30일 = 권장 안전재고</div>
+      <div>4. <b>현재재고</b>는 📋 재고 시트 탭에서 업로드한 박스 수와 자동 연동</div>
+      <div>5. 1년 초과 데이터는 🗑 365일 정리 버튼으로 일괄 삭제</div>
+    </div>
+  </div>;
+}
+
+// ═══════════════════════════════════════════
 // App (탭 네비게이션 + 로그인 게이트)
 // ═══════════════════════════════════════════
-const VALID_TABS=["items","lines","plans","inventory","stats","sheet"];
+const VALID_TABS=["items","lines","plans","inventory","stats","sheet","sales"];
 function getTabFromHash(){
   const h=(window.location.hash||"").replace(/^#/,"");
   return VALID_TABS.includes(h)?h:"items";
@@ -3239,6 +3605,7 @@ function App(){
           <button className={"aps-tab"+(tab==="inventory"?" active":"")} onClick={()=>setTab("inventory")}>📊 재고</button>
           <button className={"aps-tab"+(tab==="stats"?" active":"")} onClick={()=>setTab("stats")}>📈 통계</button>
           <button className={"aps-tab"+(tab==="sheet"?" active":"")} onClick={()=>setTab("sheet")}>📋 재고 시트</button>
+          <button className={"aps-tab"+(tab==="sales"?" active":"")} onClick={()=>setTab("sales")}>💰 매출</button>
         </div>
         {tab==="items"&&<ItemsTab adminHash={adminHash}/>}
         {tab==="lines"&&<LinesTab adminHash={adminHash}/>}
@@ -3246,6 +3613,7 @@ function App(){
         {tab==="inventory"&&<InventoryTab adminHash={adminHash}/>}
         {tab==="stats"&&<StatsTab adminHash={adminHash}/>}
         {tab==="sheet"&&<InventorySheetTab adminHash={adminHash}/>}
+        {tab==="sales"&&<SalesTab adminHash={adminHash}/>}
       </>}
     </div>
 
