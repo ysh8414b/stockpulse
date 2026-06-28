@@ -70,9 +70,11 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ───────────────────────────────────────────
 -- 품목별 통계 (최근 p_days 일)
--- avg_daily   = total_qty / p_days  (전체 기간 기준, 거래 없는 날도 0으로 평균)
--- avg_weekly  = avg_daily * 7   (주평균 안전재고 추천값)
--- avg_monthly = avg_daily * 30  (참고용 — 한달평균)
+-- ISO 주(월~일) 단위로 그룹핑 후 평균 — 요일별 발주 편향 흡수.
+-- week_count  = COUNT(DISTINCT DATE_TRUNC('week', date)) — 데이터가 등장한 주 수
+-- avg_weekly  = total_qty / week_count    (한 주에 평균 몇 박스 나갔는지 — 안전재고 추천값)
+-- avg_daily   = avg_weekly / 7            (참고용)
+-- avg_monthly = avg_weekly * 30 / 7       (참고용)
 -- ───────────────────────────────────────────
 CREATE OR REPLACE FUNCTION aps_get_sales_stats(
   p_admin_hash TEXT,
@@ -93,9 +95,10 @@ BEGIN
       'name',           name,
       'total_qty',      total_qty,
       'days_with_sales',days_with_sales,
-      'avg_daily',      ROUND((total_qty / p_days)::NUMERIC, 0),
-      'avg_weekly',     ROUND((total_qty / p_days * 7)::NUMERIC, 0),
-      'avg_monthly',    ROUND((total_qty / p_days * 30)::NUMERIC, 0),
+      'week_count',     week_count,
+      'avg_weekly',     ROUND(avg_weekly, 0),
+      'avg_daily',      ROUND(avg_weekly / 7.0, 1),
+      'avg_monthly',    ROUND(avg_weekly * 30.0 / 7.0, 0),
       'first_date',     first_date,
       'last_date',      last_date,
       'period_days',    p_days
@@ -106,6 +109,8 @@ BEGIN
         MAX(s.name) AS name,
         SUM(s.qty)  AS total_qty,
         COUNT(DISTINCT s.date) AS days_with_sales,
+        COUNT(DISTINCT DATE_TRUNC('week', s.date)) AS week_count,
+        (SUM(s.qty) / NULLIF(COUNT(DISTINCT DATE_TRUNC('week', s.date)), 0))::NUMERIC AS avg_weekly,
         MIN(s.date) AS first_date,
         MAX(s.date) AS last_date
       FROM aps_sales_daily s
@@ -142,8 +147,10 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ───────────────────────────────────────────
 -- 매출 평균 → aps_items.safety_stock 자동 동기화
--- 최근 p_days 일 매출의 주평균(avg_weekly = total/days*7) 값을
+-- 최근 p_days 일 매출의 ISO 주(월~일) 평균을
 -- 같은 코드의 aps_items.safety_stock 에 일괄 업데이트.
+-- avg_weekly = SUM(qty) / COUNT(DISTINCT DATE_TRUNC('week', date))
+--   — 한 주에 평균 몇 박스가 나갔는지 (요일 편향·휴무일 영향 안 받음)
 -- 매출 데이터 없는 품목은 건드리지 않음.
 -- ───────────────────────────────────────────
 CREATE OR REPLACE FUNCTION aps_sync_safety_from_sales(
@@ -170,7 +177,8 @@ BEGIN
 
   -- 실제 update (값이 다를 때만 — 불필요한 updated_at 갱신 회피)
   WITH stats AS (
-    SELECT code, ROUND((SUM(qty) / p_days * 7)::NUMERIC, 0) AS avg_weekly
+    SELECT code,
+           ROUND((SUM(qty)::NUMERIC / NULLIF(COUNT(DISTINCT DATE_TRUNC('week', date)), 0))::NUMERIC, 0) AS avg_weekly
       FROM aps_sales_daily
      WHERE date >= v_cutoff
      GROUP BY code

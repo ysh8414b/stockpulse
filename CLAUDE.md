@@ -812,6 +812,27 @@
 - **검증**: F0000045 (729박스/30일 가정) → 일평균 24.3 × 7 = **주평균 170.1박스**, 현재재고 146 → 부족 24.1 정확히 계산. 5개 행 모두 산식 일치
 - **운영 순서**: 이미 SQL 적용한 사용자는 `setup_aps_sales.sql`의 `aps_get_sales_stats`/`aps_sync_safety_from_sales` 두 함수 블록만 다시 실행 → 서버측 통계 응답에도 avg_weekly가 포함되고 안전재고 갱신도 주평균 기준으로 동작
 
+### APS — 매출 주평균 산식을 ISO 주(월~일) 단위 그룹 평균으로 변경 (2026-06-29)
+- 사용자 보고: "매출 1주일치 120개만 올렸는데 7일평균이 28로 됨"
+- 원인: 기존 산식 `avg_weekly = total / p_days * 7`은 분모가 "선택 기간 일수"(예: 30일) 고정 → 1주일치(120개)를 30일로 나눠서 4 × 7 = 28. 데이터 누적 전에는 무조건 과소평가
+- 추가 컨텍스트: "특정 요일에 발주 몰림" → 단순 일평균 산식은 의미 없음. 한 주에 평균 몇 박스 나가는지가 필요
+- 새 산식: `avg_weekly = SUM(qty) / COUNT(DISTINCT DATE_TRUNC('week', date))` — ISO 주(월~일) 단위로 그룹핑 후 주별 합계의 평균
+  - 1주차에 120박스(한 주만 데이터) → 120 / 1주 = 120
+  - 1주차 120 + 2주차 130 → 250 / 2주 = 125
+  - 한 주 안에 휴무·결근으로 5일치만 있어도 그 주는 한 주로 카운트 (다음 주 데이터로 8일 채우지 않음)
+  - 요일별 발주 편향은 주 단위로 묶이며 자연스럽게 흡수됨
+- **`setup_aps_sales.sql` 두 함수 수정**:
+  - `aps_get_sales_stats`: 응답에 `week_count` 추가, `avg_weekly = total / week_count`로 계산. `avg_daily`/`avg_monthly`는 `avg_weekly`에서 파생(/7, ×30/7) — 참고용
+  - `aps_sync_safety_from_sales`: stats CTE의 산식을 동일하게 ISO 주 평균으로 변경
+- **`aps.html` SalesTab 변경**:
+  - 클라이언트 폴백 산식 3단계 분기: (1) `week_count` 있으면 server의 `avg_weekly` 그대로 (2) 옛 RPC(week_count 없음)이면 `first_date~last_date` 범위로 `ceil(spanDays/7)` 주 수 추정해서 `total / weeks` 재계산 → SQL 재실행 전에도 UI에 정확한 주평균 표시 (3) 둘 다 없으면 최후 `avg_daily × 7`
+  - 사용법 텍스트 갱신: "ISO 주(월~일) 단위로 묶고 주별 합계의 평균" 명시 + 예시(120 → 120, 120+130 → 125) + 한 주에 일부 날짜만 있어도 한 주로 카운트 안내
+  - `handleSyncSafety` confirm + 동기화 버튼 title 메시지도 새 산식 설명으로 갱신
+- **검증**:
+  - 1주차 120박스만 업로드, 기간 30일 → 옛 산식 `120/30*7 = 28`, 새 산식 `120/1 = 120` ✅
+  - 2주차 130 추가, 기간 30일 → 새 산식 `250/2 = 125` ✅
+- **운영 순서**: Supabase에서 `setup_aps_sales.sql`의 `aps_get_sales_stats`/`aps_sync_safety_from_sales` 두 함수 블록 재실행 → 다음 매출 업로드부터 새 산식. SQL 재실행 전에도 클라이언트 폴백으로 정확한 주평균 표시되나, 서버측 안전재고 동기화는 SQL 재실행 후에야 새 값으로 갱신됨
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
