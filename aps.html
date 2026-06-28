@@ -3394,7 +3394,7 @@ function SalesTab({adminHash}){
   }
 
   async function handleSyncSafety(){
-    if(!confirm(`매출 데이터가 있는 모든 품목의 안전재고를 주평균값(${range}일 기준, ISO 주 월~일 단위 평균)으로 갱신합니다.\n\n사용자가 수동 설정한 안전재고 값은 덮어써집니다. 계속하시겠어요?`))return;
+    if(!confirm(`매출 데이터가 있는 모든 품목의 안전재고를 주평균값(가장 최근 4 ISO 주 평균)으로 갱신합니다.\n\n사용자가 수동 설정한 안전재고 값은 덮어써집니다. 계속하시겠어요?`))return;
     setBusy(true);setErr("");setOk("");
     try{
       const res=await rpc("aps_sync_safety_from_sales",{p_admin_hash:adminHash,p_days:range});
@@ -3440,12 +3440,13 @@ function SalesTab({adminHash}){
       const p=invMap[s.code];
       const displayName=(p && p.name) ? p.name : (s.name || "");
       const currentStock = p ? Number(p.box||0) : null;
-      // 주평균 산출 (ISO 주 월~일 단위 그룹핑)
-      //  · 새 RPC: week_count 반환 → server의 avg_weekly 그대로 신뢰
-      //  · 옛 RPC: first_date~last_date 범위로 주 수 추정 → total / weeks 재계산
-      //  · 둘 다 없으면 최후: 일평균×7
+      // 주평균 산출 — 최근 4 ISO 주(월~일) 단순 평균
+      //  · 새 RPC: recent_week_count 반환 → server avg_weekly 그대로 신뢰
+      //  · 옛 RPC: 폴백 — week_count 있으면 전체 평균, 없으면 first/last 범위 추정
       let avgWeekly;
-      if (s.week_count != null && Number(s.week_count) > 0) {
+      if (s.recent_week_count != null) {
+        avgWeekly = Number(s.avg_weekly || 0);
+      } else if (s.week_count != null && Number(s.week_count) > 0) {
         avgWeekly = Number(s.avg_weekly || 0);
       } else if (s.first_date && s.last_date && s.total_qty != null) {
         const spanDays = Math.max(1, Math.round((new Date(s.last_date) - new Date(s.first_date))/86400000) + 1);
@@ -3490,7 +3491,7 @@ function SalesTab({adminHash}){
       <div>
         <div style={{fontSize:18,fontWeight:700}}>💰 매출일보 분석</div>
         <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>
-          매출.xlsx 업로드 → 1년 누적 → 주평균 안전재고 자동 계산 (재고시트 연동)
+          매출.xlsx 업로드 → 1년 누적 → <b>최근 4주 평균</b>을 안전재고로 자동 계산 (재고시트 연동)
         </div>
       </div>
       <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
@@ -3555,7 +3556,7 @@ function SalesTab({adminHash}){
         재고시트 매칭만
       </label>
       <div style={{flex:1}}/>
-      <button className="aps-btn aps-btn-sm" style={{background:"rgba(6,182,212,0.15)",color:"#06b6d4",border:"1px solid rgba(6,182,212,0.4)",fontWeight:700}} onClick={handleSyncSafety} disabled={busy} title="매출 주평균값(ISO 주 단위 평균 — 한 주에 평균 몇 박스 나갔는지)을 품목 마스터의 안전재고로 일괄 갱신">💰 안전재고 동기화</button>
+      <button className="aps-btn aps-btn-sm" style={{background:"rgba(6,182,212,0.15)",color:"#06b6d4",border:"1px solid rgba(6,182,212,0.4)",fontWeight:700}} onClick={handleSyncSafety} disabled={busy} title="가장 최근 4 ISO 주(월~일)의 평균을 품목 마스터의 안전재고로 일괄 갱신 — 시즌·추세 변동 빠르게 반영">💰 안전재고 동기화</button>
       <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={handleCleanup} disabled={busy}>🗑 365일 정리</button>
       <button className="aps-btn aps-btn-sm" style={{background:"rgba(239,68,68,0.15)",color:"#ef4444",border:"1px solid rgba(239,68,68,0.3)"}} onClick={handleClearAll} disabled={busy}>⚠ 전체 초기화</button>
     </div>
@@ -3570,7 +3571,7 @@ function SalesTab({adminHash}){
             <th>상품명</th>
             <th className="right hide-mobile" style={{width:90}}>{range}일 판매</th>
             <th className="right hide-mobile" style={{width:90}}>일평균</th>
-            <th className="right" style={{width:130}}>주평균<br/><span style={{fontSize:10,fontWeight:500,color:"var(--muted)"}}>(안전재고 추천)</span></th>
+            <th className="right" style={{width:130}}>주평균<br/><span style={{fontSize:10,fontWeight:500,color:"var(--muted)"}}>(최근 4주 · 안전재고 추천)</span></th>
             <th className="right" style={{width:100}}>현재재고<br/><span style={{fontSize:10,fontWeight:500,color:"var(--muted)"}}>(재고시트)</span></th>
             <th className="center" style={{width:90}}>상태</th>
           </tr></thead>
@@ -3613,11 +3614,13 @@ function SalesTab({adminHash}){
       <div><strong>💡 사용법</strong></div>
       <div>1. 매출.xlsx 업로드 → A(매출일자) / D(상품코드) / E(상품명) / H(수량Box) 컬럼 자동 인식</div>
       <div>2. 같은 (날짜+상품)이 여러 행이면 자동 합산. 같은 날짜 재업로드 시 덮어쓰기 (idempotent)</div>
-      <div>3. <b>주평균</b> = 선택 기간을 <b>ISO 주(월~일) 단위</b>로 묶고 주별 합계의 평균 = 한 주에 평균 몇 박스 나갔는지 (권장 안전재고)</div>
-      <div style={{paddingLeft:14,color:"var(--muted)"}}>· 예: 1주차 120박스 → 주평균 120. 다음 주 130박스 추가 → (120+130)/2 = 125</div>
-      <div style={{paddingLeft:14,color:"var(--muted)"}}>· 한 주 안에 휴무·결근으로 일부 날짜만 있어도 그 주는 한 주로 카운트 (다음 주 데이터 끌어오지 않음)</div>
+      <div>3. <b>주평균</b> = <b>가장 최근 4 ISO 주(월~일)의 단순 평균</b> = 한 주에 평균 몇 박스 나갔는지 (권장 안전재고)</div>
+      <div style={{paddingLeft:14,color:"var(--muted)"}}>· 기간 필터(7/14/30...)는 합계·일수 표시용. 평균은 항상 <b>최근 4주 고정</b> — 시즌·추세 변동을 빠르게 반영</div>
+      <div style={{paddingLeft:14,color:"var(--muted)"}}>· 예: 최근 4주 [100, 120, 110, 130] → 주평균 (100+120+110+130)/4 = 115</div>
+      <div style={{paddingLeft:14,color:"var(--muted)"}}>· 데이터가 4주 미만이면 있는 만큼만 평균 (예: 2주만 있으면 2주 평균)</div>
+      <div style={{paddingLeft:14,color:"var(--muted)"}}>· 한 주 안에 휴무·결근으로 일부 날짜만 있어도 그 주는 한 주로 카운트</div>
       <div>4. <b>현재재고</b>는 📋 재고 시트 탭에서 업로드한 박스 수와 자동 연동</div>
-      <div>5. 매출 업로드 시 <b>📦 품목/BOM 탭의 안전재고</b>도 주평균값으로 자동 갱신 (수동 트리거: 💰 안전재고 동기화 버튼)</div>
+      <div>5. 매출 업로드 시 <b>📦 품목/BOM 탭의 안전재고</b>도 최근 4주 평균값으로 자동 갱신 (수동 트리거: 💰 안전재고 동기화 버튼)</div>
       <div>6. 1년 초과 데이터는 🗑 365일 정리 버튼으로 일괄 삭제</div>
     </div>
   </div>;

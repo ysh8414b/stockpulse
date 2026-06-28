@@ -69,12 +69,14 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ───────────────────────────────────────────
--- 품목별 통계 (최근 p_days 일)
--- ISO 주(월~일) 단위로 그룹핑 후 평균 — 요일별 발주 편향 흡수.
--- week_count  = COUNT(DISTINCT DATE_TRUNC('week', date)) — 데이터가 등장한 주 수
--- avg_weekly  = total_qty / week_count    (한 주에 평균 몇 박스 나갔는지 — 안전재고 추천값)
--- avg_daily   = avg_weekly / 7            (참고용)
--- avg_monthly = avg_weekly * 30 / 7       (참고용)
+-- 품목별 통계
+-- 평균: **데이터 전체에서 가장 최근 4 ISO 주의 단순 평균** (기간 필터 무관)
+--   → 시즌·추세 변동을 빨리 반영. 오래된 데이터는 평균에 영향 X.
+-- 기간 필터(p_days): total_qty / days_with_sales / first_date / last_date 표시용
+-- recent_week_count: 평균에 실제로 들어간 주 수 (데이터 부족 시 1~3)
+-- avg_weekly  = AVG(week_qty) over last 4 ISO weeks
+-- avg_daily   = avg_weekly / 7      (참고)
+-- avg_monthly = avg_weekly * 30 / 7 (참고)
 -- ───────────────────────────────────────────
 CREATE OR REPLACE FUNCTION aps_get_sales_stats(
   p_admin_hash TEXT,
@@ -90,33 +92,57 @@ BEGIN
   v_cutoff := v_today - (p_days - 1);
 
   RETURN (
+    WITH all_weekly AS (
+      -- 전체 데이터의 코드별 ISO 주 합계 (기간 필터 무관)
+      SELECT s.code,
+             DATE_TRUNC('week', s.date) AS week_start,
+             SUM(s.qty) AS week_qty
+        FROM aps_sales_daily s
+       GROUP BY s.code, DATE_TRUNC('week', s.date)
+    ),
+    ranked AS (
+      SELECT code, week_start, week_qty,
+             ROW_NUMBER() OVER (PARTITION BY code ORDER BY week_start DESC) AS rn
+        FROM all_weekly
+    ),
+    recent4 AS (
+      -- 가장 최근 4 ISO 주의 단순 평균
+      SELECT code,
+             AVG(week_qty)::NUMERIC AS avg_weekly,
+             COUNT(*)::INT          AS recent_week_count
+        FROM ranked
+       WHERE rn <= 4
+       GROUP BY code
+    ),
+    period_stat AS (
+      -- 선택 기간 집계 (표시용)
+      SELECT s.code,
+             MAX(s.name) AS name,
+             SUM(s.qty)  AS total_qty,
+             COUNT(DISTINCT s.date) AS days_with_sales,
+             COUNT(DISTINCT DATE_TRUNC('week', s.date)) AS week_count,
+             MIN(s.date) AS first_date,
+             MAX(s.date) AS last_date
+        FROM aps_sales_daily s
+       WHERE s.date >= v_cutoff
+       GROUP BY s.code
+    )
     SELECT COALESCE(json_agg(json_build_object(
-      'code',           code,
-      'name',           name,
-      'total_qty',      total_qty,
-      'days_with_sales',days_with_sales,
-      'week_count',     week_count,
-      'avg_weekly',     ROUND(avg_weekly, 0),
-      'avg_daily',      ROUND(avg_weekly / 7.0, 1),
-      'avg_monthly',    ROUND(avg_weekly * 30.0 / 7.0, 0),
-      'first_date',     first_date,
-      'last_date',      last_date,
-      'period_days',    p_days
-    ) ORDER BY total_qty DESC), '[]'::json)
-    FROM (
-      SELECT
-        s.code,
-        MAX(s.name) AS name,
-        SUM(s.qty)  AS total_qty,
-        COUNT(DISTINCT s.date) AS days_with_sales,
-        COUNT(DISTINCT DATE_TRUNC('week', s.date)) AS week_count,
-        (SUM(s.qty) / NULLIF(COUNT(DISTINCT DATE_TRUNC('week', s.date)), 0))::NUMERIC AS avg_weekly,
-        MIN(s.date) AS first_date,
-        MAX(s.date) AS last_date
-      FROM aps_sales_daily s
-      WHERE s.date >= v_cutoff
-      GROUP BY s.code
-    ) sub
+      'code',              p.code,
+      'name',              p.name,
+      'total_qty',         p.total_qty,
+      'days_with_sales',   p.days_with_sales,
+      'week_count',        p.week_count,
+      'recent_week_count', COALESCE(r.recent_week_count, 0),
+      'avg_weekly',        ROUND(COALESCE(r.avg_weekly, 0), 0),
+      'avg_daily',         ROUND(COALESCE(r.avg_weekly, 0) / 7.0, 1),
+      'avg_monthly',       ROUND(COALESCE(r.avg_weekly, 0) * 30.0 / 7.0, 0),
+      'first_date',        p.first_date,
+      'last_date',         p.last_date,
+      'period_days',       p_days
+    ) ORDER BY p.total_qty DESC), '[]'::json)
+    FROM period_stat p
+    LEFT JOIN recent4 r USING (code)
   );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -147,10 +173,9 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ───────────────────────────────────────────
 -- 매출 평균 → aps_items.safety_stock 자동 동기화
--- 최근 p_days 일 매출의 ISO 주(월~일) 평균을
--- 같은 코드의 aps_items.safety_stock 에 일괄 업데이트.
--- avg_weekly = SUM(qty) / COUNT(DISTINCT DATE_TRUNC('week', date))
---   — 한 주에 평균 몇 박스가 나갔는지 (요일 편향·휴무일 영향 안 받음)
+-- 데이터 전체에서 가장 최근 4 ISO 주(월~일)의 평균을 안전재고로 갱신.
+--   → 시즌·추세 변동을 빠르게 반영 (오래된 데이터는 평균에 반영 X)
+-- p_days 파라미터는 호환성 위해 시그니처에 남겨두나 평균 산식에 영향 없음.
 -- 매출 데이터 없는 품목은 건드리지 않음.
 -- ───────────────────────────────────────────
 CREATE OR REPLACE FUNCTION aps_sync_safety_from_sales(
@@ -159,28 +184,36 @@ CREATE OR REPLACE FUNCTION aps_sync_safety_from_sales(
 )
 RETURNS JSON AS $$
 DECLARE
-  v_cutoff DATE;
   v_updated INT := 0;
   v_matched INT := 0;
 BEGIN
   PERFORM aps_assert_admin(p_admin_hash);
   IF p_days IS NULL OR p_days < 1 THEN p_days := 30; END IF;
-  v_cutoff := CURRENT_DATE - (p_days - 1);
 
-  -- 매칭 가능한 행 수 먼저 카운트 (참고용)
+  -- 매칭 가능한 품목 수 (매출 데이터 있는 코드 ∩ aps_items)
   SELECT COUNT(*)
     INTO v_matched
     FROM aps_items i
-    JOIN (
-      SELECT code FROM aps_sales_daily WHERE date >= v_cutoff GROUP BY code
-    ) s ON s.code = i.code;
+    JOIN (SELECT DISTINCT code FROM aps_sales_daily) s ON s.code = i.code;
 
-  -- 실제 update (값이 다를 때만 — 불필요한 updated_at 갱신 회피)
-  WITH stats AS (
+  -- 최근 4 ISO 주 평균 → safety_stock
+  WITH all_weekly AS (
     SELECT code,
-           ROUND((SUM(qty)::NUMERIC / NULLIF(COUNT(DISTINCT DATE_TRUNC('week', date)), 0))::NUMERIC, 0) AS avg_weekly
+           DATE_TRUNC('week', date) AS week_start,
+           SUM(qty) AS week_qty
       FROM aps_sales_daily
-     WHERE date >= v_cutoff
+     GROUP BY code, DATE_TRUNC('week', date)
+  ),
+  ranked AS (
+    SELECT code, week_start, week_qty,
+           ROW_NUMBER() OVER (PARTITION BY code ORDER BY week_start DESC) AS rn
+      FROM all_weekly
+  ),
+  stats AS (
+    SELECT code,
+           ROUND(AVG(week_qty)::NUMERIC, 0) AS avg_weekly
+      FROM ranked
+     WHERE rn <= 4
      GROUP BY code
   )
   UPDATE aps_items i
