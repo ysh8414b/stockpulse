@@ -760,6 +760,24 @@
 - **Excel 인코딩 노트**: 매출.xlsx는 ERP에서 깨진 UTF-8/CP949 혼합 인코딩 — 그러나 SheetJS는 정상 디코딩 가능(openpyxl과 달리). 노드 테스트: 604행 → 592행 유효 매출, 203개 (date,code) 그룹, 82개 상품, 한글명 정상
 - **운영 순서**: Supabase에서 `setup_aps_sales.sql` 실행 1회 → 💰 매출 탭에서 매출.xlsx 업로드 → 재고시트 탭에 제품코드 등록되어 있으면 자동 매칭
 
+### APS — 📊 재고 탭에 재고시트 박스 수 연동 (2026-06-28)
+- 사용자 요청: "재고탭에 재고수량이 재고시트랑 연동되게 해달라"
+- 기존: 📊 재고 탭의 `current_stock`은 `aps_inventory_view`(= `aps_stock_txns` 누적값)만 사용 → 재고시트 업로드 데이터와 완전히 분리됨
+- 변경: 재고시트(`aps_inventory_sheet` Supabase + localStorage `aps-inv-data`)의 박스 수를 우선 표시, 매칭 없는 품목만 거래내역 fallback
+- **`InventoryTab` 변경** ([aps.html:956](aps.html:956)):
+  - `sheetInv` state 추가 (`loadStoredInventory()` 초기화)
+  - 마운트 시 원격 fetch (`loadRemoteInventory(adminHash)`) → 로컬보다 새로우면 교체 (PC/모바일 동기화)
+  - `storage` + `aps-inv-data-change` 이벤트 구독 → 재고시트 탭에서 업로드/삭제 시 실시간 갱신
+  - `sheetMap` useMemo: products + raws의 code → product 객체 매핑
+  - `linked` useMemo: `inv`를 순회하며 sheetMap에 매칭되는 코드는 `current_stock=sheet.box`로 덮어쓰기 + `stock_status` 재계산(0=품절, <safety_stock=부족, 이상=정상) + `_source:"sheet"` 마킹
+  - 매칭 없는 품목은 `_source:"txn"` (기존 거래내역 그대로)
+  - `filtered`/`counts`/`sheetLinkedCount` 모두 `linked` 기준으로 계산 (정확한 필터/통계)
+- **UI 변경**:
+  - 상단에 안내 박스: "📋 재고시트와 N개 품목 연동 중 — 시트의 박스 수가 우선 표시됩니다. 매칭되지 않는 품목은 입출고 누적값을 사용합니다." (sheetLinkedCount>0일 때만)
+  - 품목명 뒤에 📋 뱃지(`_source==="sheet"`만, `title="재고시트 연동"`)
+  - 단위 표시도 동적: 시트 매칭이면 "박스", 거래내역이면 기존 `unit`
+- **검증**: 매출 Excel 업로드 후 재고시트에 113개, aps_items 41개 등록 상태에서 32개 매칭 → 필터 카운트 "정상 32 / 품절 9 / 부족 0"으로 정확히 분류됨. 매칭 품목은 "3 박스" + 📋 + 정상, 미매칭은 "0 EA" + 품절 fallback 유지
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)

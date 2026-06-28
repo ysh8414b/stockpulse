@@ -961,6 +961,7 @@ function InventoryTab({adminHash}){
   const[filter,setFilter]=useState("all"); // all/out/low/ok
   const[query,setQuery]=useState("");
   const[showForm,setShowForm]=useState(false);
+  const[sheetInv,setSheetInv]=useState(()=>loadStoredInventory()); // 재고시트(localStorage)
 
   const load=useCallback(async()=>{
     try{
@@ -975,20 +976,76 @@ function InventoryTab({adminHash}){
   },[adminHash]);
   useEffect(()=>{load()},[load]);
 
+  // 재고시트 원격 fetch (다른 기기 업로드 동기화) + localStorage 변경 구독
+  useEffect(()=>{
+    if(!adminHash)return;
+    let cancelled=false;
+    (async()=>{
+      const remote=await loadRemoteInventory(adminHash);
+      if(cancelled||!remote)return;
+      const local=loadStoredInventory();
+      if(!local||!local.savedAt||(remote.savedAt && remote.savedAt>local.savedAt)){
+        applyRemoteInventoryToLocal(remote);
+        setSheetInv(loadStoredInventory());
+      }
+    })();
+    return()=>{cancelled=true};
+  },[adminHash]);
+  useEffect(()=>{
+    const reload=()=>setSheetInv(loadStoredInventory());
+    const onStorage=(e)=>{if(!e.key||e.key===INVENTORY_DATA_KEY)reload()};
+    window.addEventListener("storage",onStorage);
+    window.addEventListener("aps-inv-data-change",reload);
+    return()=>{
+      window.removeEventListener("storage",onStorage);
+      window.removeEventListener("aps-inv-data-change",reload);
+    };
+  },[]);
+
+  // 재고시트 코드 → box 매핑
+  const sheetMap=useMemo(()=>{
+    const m={};
+    (sheetInv?.products||[]).forEach(p=>{if(p.code)m[p.code]=p});
+    (sheetInv?.raws||[]).forEach(p=>{if(p.code)m[p.code]=p});
+    return m;
+  },[sheetInv]);
+
+  // inv를 재고시트 박스 수로 덮어쓰기 (매칭되는 코드만) + stock_status 재계산
+  const linked=useMemo(()=>{
+    return inv.map(i=>{
+      const sp=sheetMap[i.code];
+      if(!sp)return {...i, _source:"txn"};
+      const sheetStock=Number(sp.box||0);
+      const safety=Number(i.safety_stock||0);
+      let status="ok";
+      if(sheetStock<=0)status="out";
+      else if(safety>0 && sheetStock<safety)status="low";
+      const diff=sheetStock-safety;
+      return {...i,
+        current_stock:sheetStock,
+        stock_diff:diff,
+        stock_status:status,
+        _source:"sheet"
+      };
+    });
+  },[inv,sheetMap]);
+
   const filtered=useMemo(()=>{
-    let arr=inv;
+    let arr=linked;
     if(filter!=="all")arr=arr.filter(i=>i.stock_status===filter);
     const q=query.trim().toLowerCase();
     if(q)arr=arr.filter(i=>i.code.toLowerCase().includes(q)||i.name.toLowerCase().includes(q));
     return arr;
-  },[inv,filter,query]);
+  },[linked,filter,query]);
 
   const counts=useMemo(()=>({
-    all:inv.length,
-    out:inv.filter(i=>i.stock_status==="out").length,
-    low:inv.filter(i=>i.stock_status==="low").length,
-    ok:inv.filter(i=>i.stock_status==="ok").length
-  }),[inv]);
+    all:linked.length,
+    out:linked.filter(i=>i.stock_status==="out").length,
+    low:linked.filter(i=>i.stock_status==="low").length,
+    ok:linked.filter(i=>i.stock_status==="ok").length
+  }),[linked]);
+
+  const sheetLinkedCount=useMemo(()=>linked.filter(i=>i._source==="sheet").length,[linked]);
 
   const delTxn=async(id)=>{
     if(!confirm("이 입출고 기록을 삭제하시겠습니까?\n재고는 자동으로 재계산됩니다."))return;
@@ -1010,6 +1067,10 @@ function InventoryTab({adminHash}){
       <button className="aps-btn aps-btn-primary" onClick={()=>setShowForm(true)} disabled={items.length===0}>+ 입출고 기록</button>
     </div>
 
+    {sheetLinkedCount>0 && <div style={{padding:"8px 12px",background:"rgba(6,182,212,0.08)",border:"1px solid rgba(6,182,212,0.25)",borderRadius:6,fontSize:12,color:"var(--muted)",marginBottom:10}}>
+      📋 재고시트와 <b style={{color:"#06b6d4"}}>{sheetLinkedCount}개</b> 품목 연동 중 — 시트의 박스 수가 우선 표시됩니다. 매칭되지 않는 품목은 입출고 누적값을 사용합니다.
+    </div>}
+
     {loading?<Loader/>:filtered.length===0?
       <Empty emoji="📊" text={inv.length===0?"품목을 먼저 등록하세요":"검색 결과가 없습니다"}/>:
       <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8}}>
@@ -1026,10 +1087,13 @@ function InventoryTab({adminHash}){
           <tbody>
             {filtered.map(i=><tr key={i.item_id}>
               <td style={{fontFamily:"monospace",color:"var(--text-sub)"}}>{i.code}</td>
-              <td style={{fontWeight:600}}>{i.name}</td>
+              <td style={{fontWeight:600}}>
+                {i.name}
+                {i._source==="sheet" && <span title="재고시트 연동" style={{marginLeft:6,fontSize:10,color:"#06b6d4",fontWeight:700}}>📋</span>}
+              </td>
               <td className="center"><Pill map={TYPE_PILL} k={i.type} label={TYPE_LABEL[i.type]}/></td>
               <td className="right" style={{fontWeight:600,color:i.stock_status==="out"?"#ef4444":i.stock_status==="low"?"#f59e0b":"var(--text)"}}>
-                {fmtNum(i.current_stock)} <span style={{fontSize:"11px",color:"var(--muted)",fontWeight:400}}>{i.unit}</span>
+                {fmtNum(i.current_stock)} <span style={{fontSize:"11px",color:"var(--muted)",fontWeight:400}}>{i._source==="sheet"?"박스":i.unit}</span>
               </td>
               <td className="right hide-mobile" style={{color:"var(--muted)"}}>{fmtNum(i.safety_stock)}</td>
               <td className="right hide-mobile" style={{color:Number(i.stock_diff)<0?"#ef4444":"var(--muted)"}}>{Number(i.stock_diff)>=0?"+":""}{fmtNum(i.stock_diff)}</td>
