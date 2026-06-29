@@ -856,6 +856,21 @@
   - 2주차 130 추가, 기간 30일 → 새 산식 `250/2 = 125` ✅
 - **운영 순서**: Supabase에서 `setup_aps_sales.sql`의 `aps_get_sales_stats`/`aps_sync_safety_from_sales` 두 함수 블록 재실행 → 다음 매출 업로드부터 새 산식. SQL 재실행 전에도 클라이언트 폴백으로 정확한 주평균 표시되나, 서버측 안전재고 동기화는 SQL 재실행 후에야 새 값으로 갱신됨
 
+### APS — 생산계획 탭 재고 패널에 안전재고 동시 표시 (2026-06-29)
+- 사용자 요청: "생산계획탭에 재고on하면 재고랑 같이 안전재고도 뜨도록"
+- 기존: `InventoryQuickPanel`이 재고시트(`aps-inv-data`) 박스 수(current)만 표시 → 발주 우선순위 판단 어려움
+- 변경: `aps_items.safety_stock`(매출 주평균 자동 동기화 값)을 코드 매칭으로 함께 표시
+- **`InventoryQuickPanel` 변경** ([aps.html:1165](aps.html:1165)):
+  - props에 `items` 추가 (PlansTab의 `aps_list_items` 결과 그대로 전달)
+  - `safetyMap` useMemo: `items[].code → safety_stock` 매핑
+  - 제품 테이블에 헤더 행 추가(품목/현재/안전) + 4번째 컬럼 `td.safety` 추가
+  - 안전재고 미설정 품목은 "–" 회색 표시 (`td.safety.none`)
+  - **시각 강조**: 현재 < 안전이면 박스 수가 주황(`#f59e0b`, `td.qty.low`), 0이면 빨강 그대로
+  - "+ 마스터 외" 섹션 행에도 동일 매칭 적용
+  - 품목명 셀 max-width 155→110px로 축소해 안전 컬럼 자리 확보
+- **CSS 추가** ([aps.html:113-122](aps.html:113)): `td.qty.low`(주황), `td.safety`(11px→10px 작게, muted), `td.safety.none`(dimmer), `tr.head td`(9px 회색 헤더)
+- 별도 SQL 변경 없음 (기존 `aps_list_items`/`aps_get_settings` 그대로 사용)
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
