@@ -982,9 +982,12 @@ function InventoryTab({adminHash}){
     let cancelled=false;
     (async()=>{
       const remote=await loadRemoteInventory(adminHash);
-      if(cancelled||!remote)return;
+      if(cancelled)return;
       const local=loadStoredInventory();
-      if(!local||!local.savedAt||(remote.savedAt && remote.savedAt>local.savedAt)){
+      const action=!remote?"no-remote":_invRemoteIsNewer(local,remote)?"apply-remote":"keep-local";
+      console.info("[aps-inv-sync] InventoryTab mount:",{localSaved:local?.savedAt||"",remoteSaved:remote?.savedAt||"",action});
+      if(!remote)return;
+      if(_invRemoteIsNewer(local,remote)){
         applyRemoteInventoryToLocal(remote);
         setSheetInv(loadStoredInventory());
       }
@@ -1195,11 +1198,12 @@ function InventoryQuickPanel({onClose,onJumpToSheet,adminHash}){
     let cancelled=false;
     (async()=>{
       const remote=await loadRemoteInventory(adminHash);
-      if(cancelled||!remote)return;
+      if(cancelled)return;
       const local=loadStoredInventory();
-      const localSaved=local?.savedAt||"";
-      const remoteSaved=remote.savedAt||"";
-      if(!localSaved||(remoteSaved&&remoteSaved>localSaved)){
+      const action=!remote?"no-remote":_invRemoteIsNewer(local,remote)?"apply-remote":"keep-local";
+      console.info("[aps-inv-sync] InventoryQuickPanel mount:",{localSaved:local?.savedAt||"",remoteSaved:remote?.savedAt||"",action});
+      if(!remote)return;
+      if(_invRemoteIsNewer(local,remote)){
         applyRemoteInventoryToLocal(remote);
         setData(remote);
       }
@@ -2871,15 +2875,25 @@ function _normalizeRemoteInv(r){
     savedAt:r.updated_at||r.savedAt||""
   };
 }
+// savedAt 문자열을 ms timestamp로 정규화 (timezone format 차이 흡수)
+//  - 클라이언트 toISOString()  : "2026-06-29T05:30:00.000Z"
+//  - Postgres timestamptz      : "2026-06-29T14:30:05.123456+00:00"
+//  두 형식은 문자열 비교 시 부정확 → 항상 Date 기반 비교
+function _toTs(s){if(!s)return 0;const t=new Date(s).getTime();return isNaN(t)?0:t}
+function _invRemoteIsNewer(local,remote){
+  const l=_toTs(local?.savedAt);
+  const r=_toTs(remote?.savedAt);
+  return r>l;
+}
 async function loadRemoteInventory(adminHash){
-  if(!adminHash)return null;
+  if(!adminHash){console.warn("[aps-inv-sync] load skipped: no adminHash");return null}
   try{
     const r=await rpc("aps_get_inventory_sheet",{p_admin_hash:adminHash});
     return _normalizeRemoteInv(r);
-  }catch(e){return null}
+  }catch(e){console.warn("[aps-inv-sync] load failed:",e?.message||e);return null}
 }
 async function saveRemoteInventory(adminHash,patch){
-  if(!adminHash)return null;
+  if(!adminHash){console.warn("[aps-inv-sync] save skipped: no adminHash");return null}
   try{
     const cur=loadStoredInventory()||{products:[],raws:[],prodName:"",rawName:"",dateLabel:"",title:""};
     const merged={...cur,...(patch||{})};
@@ -2895,11 +2909,12 @@ async function saveRemoteInventory(adminHash,patch){
     // 서버 timestamp 를 로컬 캐시에도 반영 → 다음 비교 시 일관성 유지
     if(typeof updatedAt==="string"&&updatedAt)saveStoredInventory({savedAt:updatedAt});
     return updatedAt||null;
-  }catch(e){return null}
+  }catch(e){console.warn("[aps-inv-sync] save failed:",e?.message||e);return null}
 }
 async function clearRemoteInventory(adminHash){
-  if(!adminHash)return;
-  try{await rpc("aps_clear_inventory_sheet",{p_admin_hash:adminHash})}catch(e){}
+  if(!adminHash){console.warn("[aps-inv-sync] clear skipped: no adminHash");return}
+  try{await rpc("aps_clear_inventory_sheet",{p_admin_hash:adminHash})}
+  catch(e){console.warn("[aps-inv-sync] clear failed:",e?.message||e)}
 }
 // 원격에서 가져온 데이터로 로컬 캐시 교체 + 이벤트 발행
 function applyRemoteInventoryToLocal(remote){
@@ -2949,18 +2964,22 @@ function InventorySheetTab({adminHash}){
       setSyncStatus("syncing");
       const remote=await loadRemoteInventory(adminHash);
       if(cancelled)return;
+      const localTs=_toTs(stored?.savedAt);
+      const remoteTs=_toTs(remote?.savedAt);
+      const action=!remote
+        ?(stored&&(stored.products?.length||stored.raws?.length)?"push-local":"empty")
+        :(remoteTs>localTs?"apply-remote":(localTs>remoteTs?"push-local":"same"));
+      console.info("[aps-inv-sync] InventorySheetTab mount:",{localSaved:stored?.savedAt||"",remoteSaved:remote?.savedAt||"",action});
       if(remote){
-        const localSaved=stored?.savedAt||"";
-        const remoteSaved=remote.savedAt||"";
         // 원격이 더 새롭거나 로컬이 없으면 원격으로 교체
-        if(!localSaved||(remoteSaved&&remoteSaved>localSaved)){
+        if(remoteTs>localTs){
           setProducts(remote.products);
           setRaws(remote.raws);
           setProdName(remote.prodName);
           setRawName(remote.rawName);
           if(remote.title)setTitle(remote.title);
           applyRemoteInventoryToLocal(remote);
-        }else if(localSaved>remoteSaved){
+        }else if(localTs>remoteTs){
           // 로컬이 더 새로우면 원격에 push (오프라인 업로드 후 첫 접속 시 등)
           await saveRemoteInventory(adminHash,stored);
         }
