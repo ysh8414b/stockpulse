@@ -871,6 +871,32 @@
 - **CSS 추가** ([aps.html:113-122](aps.html:113)): `td.qty.low`(주황), `td.safety`(11px→10px 작게, muted), `td.safety.none`(dimmer), `tr.head td`(9px 회색 헤더)
 - 별도 SQL 변경 없음 (기존 `aps_list_items`/`aps_get_settings` 그대로 사용)
 
+### APS — 인원 관리 탭 + 일일 가용 인원 PNG 저장 (2026-06-29)
+- 사용자 요청: "엑셀로 4층 생산 가용 인원표(부서별 체크박스 + N명) 관리하던 걸 시스템에 도입. 스케줄 이미지 저장할 때 같은 양식으로 가용 인원 PNG도 저장하고 싶다"
+- 결정 사항: 직원 마스터(부서/이름/역할/메모) + 날짜별 휴무 기록(default=출근, 휴무자만 row) + 사진과 동일 양식 PNG export
+- **`setup_aps_staff.sql`** (신규, 1회 실행):
+  - `aps_staff(id, department, name, role, memo, active, sort_order, created_at, updated_at)` — 직원 마스터
+  - `aps_attendance(date, staff_id, status, memo)` PK(date, staff_id), FK ON DELETE CASCADE — **휴무자만 row 저장** (출근 = row 없음 = default)
+  - 트리거 `aps_staff_assign_sort_order`: INSERT 시 같은 부서 내 MAX(sort_order)+1 자동 부여
+  - RLS ENABLE + 정책 없음 → REST 직접 접근 차단, SECURITY DEFINER RPC로만 접근
+  - RPC 7종 (모두 `aps_assert_admin` 첫 줄 검증): `aps_list_staff(only_active)`, `aps_upsert_staff`, `aps_delete_staff`, `aps_move_staff_order(up/down)`, `aps_get_attendance(date)`, `aps_set_attendance(date, staff_id, status, memo)` — status='work'/null이면 row 삭제·그 외는 upsert, `aps_get_attendance_range(start, end)` — 캘린더 뷰용 (현재 미사용, 추후 확장)
+- **`aps.html` 변경**:
+  - 신규 4번째 탭 **👥 인원** (VALID_TABS에 "staff" 추가, 📅 생산계획 ↔ 📊 재고 사이에 배치)
+  - `loadStaffTitle()`/`saveStaffTitle()`: PNG 헤더 제목을 localStorage(`aps-staff-title`)에 저장 (기본값 "생산 가용 인원 및 생산 계획")
+  - **`StaffForm`**: 직원 추가/수정 모달 — 부서 input + datalist 자동완성(기존 부서 추출), 이름(필수), 역할, 메모, 활성 체크박스
+  - **`ExportStaffView`** (오프스크린 PNG 전용): 사진과 동일 레이아웃 — 880px 폭, 라이트 톤 고정(흰 배경 + 진한 검정 테두리·헤더), 부서별 박스 그리드(최대 7열) + 검은 헤더(부서명) + 명단(✓ 체크박스 + 이름, 휴무자 취소선) + 회색 푸터(N 명), 우측 하단 "총 인원: N명" 시안색 강조
+  - **`StaffTab`** 메인 컴포넌트: 2가지 mode(daily/master)
+    - state: `staff`, `offIds(Set<staff_id>)`, `dateStr`, `title`, `editing`, `showForm`, `capturing`
+    - `loadStaff()` + `loadAttendance(date)` 자동 호출
+    - `toggleAtt(s)`: 체크박스 클릭 → 낙관적 업데이트 후 `aps_set_attendance` RPC, 실패 시 롤백
+    - `exportPng()`: 오프스크린 div 마운트 → html2canvas(scale:2, bg:#fff) → PNG 다운로드(`가용인원_YYYY-MM-DD.png`)
+    - daily 뷰: 제목 input + 날짜 navigator(이전/오늘/다음 + date picker) + 📷 이미지 저장 + 부서별 그리드 + 하단 summary
+    - master 뷰: 부서별 그룹화된 직원 테이블(▲▼ 정렬, 수정·삭제) + + 직원 추가
+    - 체크박스 default checked(=출근), 클릭 시 휴무 토글. PNG에는 출근자만 체크 표시(휴무자는 회색 취소선)
+  - **CSS** `aps.html` 내부 `<style>`에 추가: `.aps-staff-grid`(auto-fit minmax(160px,1fr)), `.aps-staff-card`(2px solid var(--text) 테두리), `.aps-staff-card-hdr`(var(--text) 배경·var(--bg) 글자로 명도 반전 → 다크/라이트 모드 자동 대응), `.aps-staff-row.off .nm`(취소선), 모바일(<700px) 그리드·폰트 축소
+- **운영 순서**: (1) Supabase SQL Editor에서 `setup_aps_staff.sql` 실행 → (2) 👥 인원 탭 → 직원 마스터 모드 → 명단 등록 → (3) 일일 가용 모드에서 휴무자 체크박스 클릭 → (4) 📷 이미지 저장 → 사진 양식 PNG 다운로드
+- **한계**: 캘린더 월간 뷰는 미구현(`aps_get_attendance_range` RPC는 만들어 둠 — 향후 확장). 휴무 상태는 단일 'off'만 사용(연차/병가/출장 분리 미사용 — RPC는 지원)
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)

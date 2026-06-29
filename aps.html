@@ -188,12 +188,36 @@
       /* 제품명이 남는 폭 전부 차지 (qty width:1%로 최소화) → 이름과 수량 사이 빈 공간 제거 */
       .inv-tbl tbody td.name{width:auto}
     }
+    /* ─ 인원 관리 (Staff) ─ */
+    .aps-staff-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;padding:10px 14px;background:var(--card-bg);border:1px solid var(--card-bd);border-radius:8px}
+    .aps-staff-head .title{font-size:16px;font-weight:800;color:var(--text);letter-spacing:-.01em}
+    .aps-staff-head .date{font-size:13px;font-weight:700;color:#06b6d4;background:rgba(6,182,212,0.14);padding:4px 10px;border-radius:6px}
+    .aps-staff-head input[type="date"]{padding:5px 8px;font-size:12px;border-radius:6px;border:1px solid var(--inp-bd);background:var(--inp-bg);color:var(--text);font-family:inherit}
+    .aps-staff-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px}
+    .aps-staff-card{background:var(--card-bg);border:2px solid var(--text);border-radius:6px;display:flex;flex-direction:column;overflow:hidden;min-height:140px}
+    .aps-staff-card-hdr{background:var(--text);color:var(--bg);font-size:13px;font-weight:700;text-align:center;padding:7px 8px;letter-spacing:.02em}
+    .aps-staff-card-body{padding:8px 6px;flex:1;display:flex;flex-direction:column;gap:2px}
+    .aps-staff-card-ftr{border-top:2px solid var(--text);text-align:center;font-size:12px;font-weight:700;padding:5px 8px;color:var(--text);background:var(--card-bg)}
+    .aps-staff-row{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:4px;cursor:pointer;transition:background .12s;user-select:none}
+    .aps-staff-row:hover{background:var(--hover,rgba(148,163,184,0.08))}
+    .aps-staff-row input{cursor:pointer;width:14px;height:14px;flex-shrink:0;accent-color:#22c55e}
+    .aps-staff-row.off .nm{color:var(--muted);text-decoration:line-through;text-decoration-thickness:1.5px}
+    .aps-staff-row .nm{font-size:13px;font-weight:500;color:var(--text);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .aps-staff-row .role-mini{font-size:10px;color:var(--dimmer);margin-left:auto;flex-shrink:0}
+    .aps-staff-empty{padding:16px 6px;text-align:center;color:var(--dimmer);font-size:11px;font-style:italic}
+    .aps-staff-summary{display:flex;justify-content:flex-end;align-items:center;gap:12px;padding:10px 14px;margin-top:10px;background:var(--card-bg);border:1px solid var(--card-bd);border-radius:8px;flex-wrap:wrap}
+    .aps-staff-summary .lbl{font-size:13px;font-weight:600;color:var(--muted)}
+    .aps-staff-summary .num{font-size:20px;font-weight:800;color:#06b6d4}
+    .aps-staff-summary .small{font-size:12px;color:var(--dimmer)}
     @media(max-width:700px){
       .aps-shell{padding:12px 14px 50px}
       .aps-header{padding:14px 14px}
       .aps-table{font-size:12px}
       .aps-table th,.aps-table td{padding:7px 6px}
       .aps-table .hide-mobile{display:none}
+      .aps-staff-grid{grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:6px}
+      .aps-staff-card-hdr{font-size:12px;padding:6px}
+      .aps-staff-row .nm{font-size:12px}
     }
   </style>
 </head>
@@ -3672,9 +3696,409 @@ function SalesTab({adminHash}){
 }
 
 // ═══════════════════════════════════════════
+// 인원 관리 탭 (Staff)
+// ─ 직원 마스터 + 일일 가용 그리드 + PNG 저장
+// ═══════════════════════════════════════════
+const STAFF_TITLE_KEY="aps-staff-title";
+function loadStaffTitle(){
+  try{return localStorage.getItem(STAFF_TITLE_KEY)||"생산 가용 인원 및 생산 계획"}catch(e){return"생산 가용 인원 및 생산 계획"}
+}
+function saveStaffTitle(v){
+  try{localStorage.setItem(STAFF_TITLE_KEY,v||"")}catch(e){}
+}
+
+function StaffForm({adminHash,initial,deptOptions,onSaved,onCancel}){
+  const isEdit=!!initial;
+  const[department,setDepartment]=useState(initial?.department||"");
+  const[name,setName]=useState(initial?.name||"");
+  const[role,setRole]=useState(initial?.role||"");
+  const[memo,setMemo]=useState(initial?.memo||"");
+  const[active,setActive]=useState(initial?initial.active!==false:true);
+  const[err,setErr]=useState("");
+  const[loading,setLoading]=useState(false);
+
+  const submit=async()=>{
+    if(!name.trim()){setErr("이름을 입력하세요");return}
+    setLoading(true);setErr("");
+    try{
+      await rpc("aps_upsert_staff",{
+        p_admin_hash:adminHash,
+        p_id:isEdit?initial.id:null,
+        p_department:department.trim(),
+        p_name:name.trim(),
+        p_role:role.trim(),
+        p_memo:memo.trim(),
+        p_active:active
+      });
+      onSaved();
+    }catch(e){
+      setErr(errMsg(e,{name_required:"이름은 필수입니다",unauthorized:"인증 실패"}));
+    }
+    setLoading(false);
+  };
+
+  return <div className="aps-modal-bg" onClick={onCancel}>
+    <div className="aps-modal" onClick={e=>e.stopPropagation()}>
+      <div style={{fontWeight:700,fontSize:"16px",marginBottom:"14px"}}>{isEdit?"👥 직원 수정":"👥 직원 추가"}</div>
+      <div className="aps-form-grid">
+        <div>
+          <div className="aps-form-label">부서</div>
+          <input className="aps-input" list="staff-dept-list" value={department} onChange={e=>setDepartment(e.target.value)} maxLength={30} placeholder="예: 톱, 외포장, 생산실"/>
+          <datalist id="staff-dept-list">
+            {(deptOptions||[]).map(d=><option key={d} value={d}/>)}
+          </datalist>
+        </div>
+        <div>
+          <div className="aps-form-label">이름 *</div>
+          <input className="aps-input" value={name} onChange={e=>setName(e.target.value)} maxLength={30} placeholder="홍길동" autoFocus/>
+        </div>
+        <div>
+          <div className="aps-form-label">역할</div>
+          <input className="aps-input" value={role} onChange={e=>setRole(e.target.value)} maxLength={30} placeholder="예: 조장, 라인장"/>
+        </div>
+        <div>
+          <div className="aps-form-label">활성</div>
+          <label style={{display:"flex",alignItems:"center",gap:8,padding:"9px 0"}}>
+            <input type="checkbox" checked={active} onChange={e=>setActive(e.target.checked)} style={{width:16,height:16,cursor:"pointer"}}/>
+            <span style={{fontSize:13,color:"var(--text)"}}>재직 중 (체크 해제 시 명단에서 숨김)</span>
+          </label>
+        </div>
+        <div style={{gridColumn:"1 / -1"}}>
+          <div className="aps-form-label">메모</div>
+          <textarea className="aps-input" value={memo} onChange={e=>setMemo(e.target.value)} maxLength={300} rows={2} style={{resize:"vertical"}}/>
+        </div>
+      </div>
+      {err&&<div className="aps-err">{err}</div>}
+      <div style={{display:"flex",gap:"8px",justifyContent:"flex-end",marginTop:"14px"}}>
+        <button className="aps-btn aps-btn-secondary" onClick={onCancel} disabled={loading}>취소</button>
+        <button className="aps-btn aps-btn-primary" onClick={submit} disabled={loading}>{loading?"저장 중...":(isEdit?"수정":"추가")}</button>
+      </div>
+    </div>
+  </div>;
+}
+
+// PNG 저장용 오프스크린 뷰 (사진과 동일 레이아웃, 라이트 톤 고정)
+function ExportStaffView({title,dateStr,deptGroups,offIds,totalAvail}){
+  const C={bg:"#ffffff",text:"#111827",hdr:"#111827",hdrFg:"#ffffff",border:"#111827",mutedBg:"#f8fafc",muted:"#6b7280"};
+  const fmtDate=(s)=>{
+    if(!s)return"";
+    const[y,m,d]=s.split("-").map(Number);
+    if(!y||!m||!d)return s;
+    const dt=new Date(Date.UTC(y,m-1,d));
+    const dow=DOW_LABEL[(dt.getUTCDay()+6)%7];
+    return `${String(m).padStart(2,"0")}/${String(d).padStart(2,"0")} (${dow})`;
+  };
+  return <div style={{background:C.bg,color:C.text,fontFamily:"Pretendard, -apple-system, system-ui, sans-serif",padding:"20px 22px 16px",width:880,boxSizing:"border-box"}}>
+    <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",marginBottom:14}}>
+      <div style={{fontSize:22,fontWeight:800,letterSpacing:"-.01em"}}>{title||"생산 가용 인원 및 생산 계획"}</div>
+      <div style={{fontSize:16,fontWeight:700,color:C.text}}>{fmtDate(dateStr)}</div>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(deptGroups.length||1,7)}, 1fr)`,gap:0,border:`1.5px solid ${C.border}`,borderRadius:0,overflow:"hidden"}}>
+      {deptGroups.map((g,gi)=>{
+        const availCnt=g.staff.filter(s=>!offIds.has(s.id)).length;
+        return <div key={g.dept||gi} style={{borderRight:gi<deptGroups.length-1?`1.5px solid ${C.border}`:"none",display:"flex",flexDirection:"column",background:C.bg}}>
+          <div style={{background:C.hdr,color:C.hdrFg,fontSize:13,fontWeight:800,textAlign:"center",padding:"7px 6px",letterSpacing:".02em",borderBottom:`1.5px solid ${C.border}`}}>{g.dept||"미지정"}</div>
+          <div style={{flex:1,padding:"8px 8px",display:"flex",flexDirection:"column",gap:3,minHeight:140}}>
+            {g.staff.length===0?
+              <div style={{textAlign:"center",color:C.muted,fontSize:11,padding:"10px 0"}}>—</div>:
+              g.staff.map(s=>{
+                const off=offIds.has(s.id);
+                return <div key={s.id} style={{display:"flex",alignItems:"center",gap:6,fontSize:13,color:off?C.muted:C.text,textDecoration:off?"line-through":"none"}}>
+                  <span style={{display:"inline-block",width:13,height:13,border:`1.5px solid ${off?C.muted:C.border}`,background:off?C.bg:C.hdr,boxSizing:"border-box",flexShrink:0,position:"relative"}}>
+                    {!off&&<span style={{position:"absolute",left:1,top:-3,color:"#ffffff",fontSize:14,fontWeight:900,lineHeight:1}}>✓</span>}
+                  </span>
+                  <span style={{fontWeight:600}}>{s.name}</span>
+                </div>;
+              })
+            }
+          </div>
+          <div style={{borderTop:`1.5px solid ${C.border}`,textAlign:"center",fontSize:12,fontWeight:700,padding:"5px 6px",color:C.text,background:C.mutedBg}}>{availCnt} 명</div>
+        </div>;
+      })}
+    </div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8,fontSize:11,color:C.muted}}>
+      <span style={{fontWeight:700,letterSpacing:".06em"}}>STOCKPULSE · APS</span>
+      <span style={{fontSize:14,fontWeight:800,color:C.text}}>총 인원: <span style={{color:"#06b6d4"}}>{totalAvail}</span> 명</span>
+    </div>
+  </div>;
+}
+
+function StaffTab({adminHash}){
+  const[staff,setStaff]=useState([]);
+  const[offIds,setOffIds]=useState(new Set()); // 휴무자 staff_id Set
+  const[dateStr,setDateStr]=useState(todayStr());
+  const[mode,setMode]=useState("daily");        // daily | master
+  const[loading,setLoading]=useState(true);
+  const[editing,setEditing]=useState(null);
+  const[showForm,setShowForm]=useState(false);
+  const[title,setTitle]=useState(loadStaffTitle());
+  const[capturing,setCapturing]=useState(false);
+  const exportRef=useRef(null);
+
+  const loadStaff=useCallback(async()=>{
+    try{
+      const data=await rpc("aps_list_staff",{p_admin_hash:adminHash,p_only_active:false});
+      setStaff(data||[]);
+    }catch(e){console.error(e)}
+  },[adminHash]);
+
+  const loadAttendance=useCallback(async(d)=>{
+    try{
+      const data=await rpc("aps_get_attendance",{p_admin_hash:adminHash,p_date:d});
+      setOffIds(new Set((data||[]).map(r=>r.staff_id)));
+    }catch(e){console.error(e);setOffIds(new Set())}
+  },[adminHash]);
+
+  useEffect(()=>{
+    (async()=>{setLoading(true);await Promise.all([loadStaff(),loadAttendance(dateStr)]);setLoading(false)})();
+  },[loadStaff]);
+
+  useEffect(()=>{loadAttendance(dateStr)},[dateStr,loadAttendance]);
+
+  useEffect(()=>{saveStaffTitle(title)},[title]);
+
+  const toggleAtt=async(s)=>{
+    const wasOff=offIds.has(s.id);
+    const next=new Set(offIds);
+    if(wasOff)next.delete(s.id); else next.add(s.id);
+    setOffIds(next); // 낙관적
+    try{
+      await rpc("aps_set_attendance",{
+        p_admin_hash:adminHash,
+        p_date:dateStr,
+        p_staff_id:s.id,
+        p_status:wasOff?"work":"off",
+        p_memo:""
+      });
+    }catch(e){
+      setOffIds(offIds); // 롤백
+      alert("저장 실패: "+e.message);
+    }
+  };
+
+  const delStaff=async(s)=>{
+    if(!confirm(`직원 "${s.name}" 을(를) 삭제하시겠습니까?\n관련 휴무 기록도 함께 삭제됩니다.`))return;
+    try{
+      await rpc("aps_delete_staff",{p_admin_hash:adminHash,p_id:s.id});
+      await loadStaff();
+      await loadAttendance(dateStr);
+    }catch(e){alert("삭제 실패: "+errMsg(e,{unauthorized:"인증 실패"}))}
+  };
+
+  const moveStaff=async(s,direction)=>{
+    try{
+      await rpc("aps_move_staff_order",{p_admin_hash:adminHash,p_id:s.id,p_direction:direction});
+      await loadStaff();
+    }catch(e){alert("순서 변경 실패: "+e.message)}
+  };
+
+  // 부서별 그룹핑 (활성 직원만 + 부서 첫 등장 순)
+  const deptGroups=useMemo(()=>{
+    const order=[];
+    const map=new Map();
+    staff.forEach(s=>{
+      if(!s.active)return;
+      const k=s.department||"";
+      if(!map.has(k)){map.set(k,[]);order.push(k)}
+      map.get(k).push(s);
+    });
+    return order.map(d=>({dept:d,staff:map.get(d)||[]}));
+  },[staff]);
+
+  // 마스터 모드용 — 비활성 포함 전체
+  const allDeptGroups=useMemo(()=>{
+    const order=[];
+    const map=new Map();
+    staff.forEach(s=>{
+      const k=s.department||"";
+      if(!map.has(k)){map.set(k,[]);order.push(k)}
+      map.get(k).push(s);
+    });
+    return order.map(d=>({dept:d,staff:map.get(d)||[]}));
+  },[staff]);
+
+  const deptOptions=useMemo(()=>Array.from(new Set(staff.map(s=>s.department).filter(Boolean))),[staff]);
+
+  const totalActive=deptGroups.reduce((sum,g)=>sum+g.staff.length,0);
+  const totalAvail=deptGroups.reduce((sum,g)=>sum+g.staff.filter(s=>!offIds.has(s.id)).length,0);
+  const totalOff=totalActive-totalAvail;
+
+  const shiftDay=(n)=>{
+    const[y,m,d]=dateStr.split("-").map(Number);
+    const dt=new Date(Date.UTC(y,m-1,d));
+    dt.setUTCDate(dt.getUTCDate()+n);
+    setDateStr(dt.toISOString().slice(0,10));
+  };
+
+  const exportPng=async()=>{
+    if(typeof window.html2canvas!=="function"){
+      alert("이미지 저장 라이브러리(html2canvas)가 로드되지 않았습니다.");return;
+    }
+    setCapturing(true);
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const target=exportRef.current;
+    if(!target){setCapturing(false);alert("캡처할 영역이 없습니다");return}
+    try{
+      const canvas=await window.html2canvas(target,{backgroundColor:"#ffffff",scale:2,logging:false,useCORS:true});
+      const link=document.createElement("a");
+      link.download=`가용인원_${dateStr}.png`;
+      link.href=canvas.toDataURL("image/png");
+      document.body.appendChild(link);link.click();document.body.removeChild(link);
+    }catch(e){console.error(e);alert("이미지 저장 실패: "+(e.message||e))}
+    setCapturing(false);
+  };
+
+  if(loading)return <Loader/>;
+
+  return <div>
+    <div className="aps-toolbar">
+      <div className="aps-view-toggle">
+        <button className={mode==="daily"?"on":""} onClick={()=>setMode("daily")}>📋 일일 가용</button>
+        <button className={mode==="master"?"on":""} onClick={()=>setMode("master")}>👥 직원 마스터</button>
+      </div>
+      <div style={{flex:1}}></div>
+      {mode==="master"&&<button className="aps-btn aps-btn-primary" onClick={()=>{setEditing(null);setShowForm(true)}}>+ 직원 추가</button>}
+    </div>
+
+    {mode==="daily"?
+      <>
+        <div className="aps-staff-head">
+          <input
+            className="aps-input"
+            value={title}
+            onChange={e=>setTitle(e.target.value)}
+            maxLength={50}
+            placeholder="제목 (예: 4층 생산 가용 인원 및 생산 계획)"
+            style={{flex:"1 1 220px",minWidth:200,maxWidth:420,fontSize:15,fontWeight:700}}/>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>shiftDay(-1)}>← 이전</button>
+            <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>setDateStr(todayStr())}>오늘</button>
+            <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>shiftDay(1)}>다음 →</button>
+            <input type="date" value={dateStr} onChange={e=>setDateStr(e.target.value)}/>
+          </div>
+          <div className="date">{dateStr}</div>
+          <button
+            className="aps-btn aps-btn-primary aps-btn-sm"
+            onClick={exportPng}
+            disabled={capturing||totalActive===0}
+            title="현재 가용 인원을 이미지로 저장">
+            {capturing?"저장 중...":"📷 이미지 저장"}
+          </button>
+        </div>
+
+        {deptGroups.length===0?
+          <Empty emoji="👥" text='등록된 직원이 없습니다. "직원 마스터" 탭에서 추가하세요.'/>:
+          <>
+            <div className="aps-staff-grid">
+              {deptGroups.map(g=>{
+                const availCnt=g.staff.filter(s=>!offIds.has(s.id)).length;
+                return <div key={g.dept||"none"} className="aps-staff-card">
+                  <div className="aps-staff-card-hdr">{g.dept||"미지정"}</div>
+                  <div className="aps-staff-card-body">
+                    {g.staff.length===0?
+                      <div className="aps-staff-empty">—</div>:
+                      g.staff.map(s=>{
+                        const off=offIds.has(s.id);
+                        return <label key={s.id} className={"aps-staff-row"+(off?" off":"")}>
+                          <input type="checkbox" checked={!off} onChange={()=>toggleAtt(s)} title={off?"출근으로 변경":"휴무로 변경"}/>
+                          <span className="nm" title={s.role?s.name+" ("+s.role+")":s.name}>{s.name}</span>
+                          {s.role&&<span className="role-mini">{s.role}</span>}
+                        </label>;
+                      })
+                    }
+                  </div>
+                  <div className="aps-staff-card-ftr">{availCnt} 명</div>
+                </div>;
+              })}
+            </div>
+            <div className="aps-staff-summary">
+              <span className="small">📋 체크: 출근 / 미체크: 휴무 — 클릭하여 토글</span>
+              <div style={{flex:1}}></div>
+              {totalOff>0&&<span className="small" style={{color:"#f59e0b"}}>휴무 {totalOff}명</span>}
+              <span className="lbl">총 인원</span>
+              <span className="num">{totalAvail}</span>
+              <span className="small">/ {totalActive}명</span>
+            </div>
+          </>
+        }
+
+        {/* 오프스크린 PNG 캡처 영역 */}
+        {capturing&&<div style={{position:"fixed",left:-99999,top:0,zIndex:-1,pointerEvents:"none"}}>
+          <div ref={exportRef}>
+            <ExportStaffView title={title} dateStr={dateStr} deptGroups={deptGroups} offIds={offIds} totalAvail={totalAvail}/>
+          </div>
+        </div>}
+      </>
+      :
+      <>
+        {allDeptGroups.length===0?
+          <Empty emoji="👥" text="등록된 직원이 없습니다. 우측 상단에서 추가하세요."/>:
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            {allDeptGroups.map(g=>(
+              <div key={g.dept||"none"} style={{border:"1px solid var(--div2)",borderRadius:8,overflow:"hidden"}}>
+                <div style={{padding:"8px 14px",background:"var(--card-bg)",borderBottom:"1px solid var(--div2)",fontSize:13,fontWeight:700,display:"flex",alignItems:"center",gap:8}}>
+                  🏷 {g.dept||"미지정"}
+                  <span style={{fontSize:11,color:"var(--muted)",fontWeight:500}}>{g.staff.length}명</span>
+                </div>
+                <table className="aps-table">
+                  <thead><tr>
+                    <th style={{width:70}}>순서</th>
+                    <th>이름</th>
+                    <th className="hide-mobile">역할</th>
+                    <th className="hide-mobile">메모</th>
+                    <th style={{width:60}}>활성</th>
+                    <th className="center" style={{width:140}}>작업</th>
+                  </tr></thead>
+                  <tbody>
+                    {g.staff.map((s,idx)=>{
+                      const isFirst=idx===0;
+                      const isLast=idx===g.staff.length-1;
+                      return <tr key={s.id}>
+                        <td>
+                          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1}}>
+                            <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>moveStaff(s,"up")} disabled={isFirst} style={{padding:"1px 6px",opacity:isFirst?0.3:1,minWidth:0}}>▲</button>
+                            <span style={{fontSize:10,color:"var(--dimmer)"}}>#{s.id}</span>
+                            <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>moveStaff(s,"down")} disabled={isLast} style={{padding:"1px 6px",opacity:isLast?0.3:1,minWidth:0}}>▼</button>
+                          </div>
+                        </td>
+                        <td style={{fontWeight:600}}>{s.name}</td>
+                        <td className="hide-mobile" style={{color:"var(--text-sub)",fontSize:12}}>{s.role||"-"}</td>
+                        <td className="hide-mobile" style={{color:"var(--muted)",fontSize:12}}>{s.memo||"-"}</td>
+                        <td>
+                          {s.active?
+                            <span className="aps-pill" style={{background:"rgba(34,197,94,0.14)",color:"#22c55e"}}>활성</span>:
+                            <span className="aps-pill" style={{background:"rgba(148,163,184,0.18)",color:"#94a3b8"}}>비활성</span>}
+                        </td>
+                        <td className="center">
+                          <div style={{display:"flex",gap:4,justifyContent:"center"}}>
+                            <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>{setEditing(s);setShowForm(true)}}>수정</button>
+                            <button className="aps-btn aps-btn-danger aps-btn-sm" onClick={()=>delStaff(s)}>삭제</button>
+                          </div>
+                        </td>
+                      </tr>;
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+        }
+      </>
+    }
+
+    {showForm&&<StaffForm
+      adminHash={adminHash}
+      initial={editing}
+      deptOptions={deptOptions}
+      onCancel={()=>setShowForm(false)}
+      onSaved={async()=>{setShowForm(false);await loadStaff();await loadAttendance(dateStr)}}/>}
+  </div>;
+}
+
+// ═══════════════════════════════════════════
 // App (탭 네비게이션 + 로그인 게이트)
 // ═══════════════════════════════════════════
-const VALID_TABS=["items","lines","plans","inventory","stats","sheet","sales"];
+const VALID_TABS=["items","lines","plans","staff","inventory","stats","sheet","sales"];
 function getTabFromHash(){
   const h=(window.location.hash||"").replace(/^#/,"");
   return VALID_TABS.includes(h)?h:"items";
@@ -3748,6 +4172,7 @@ function App(){
           <button className={"aps-tab"+(tab==="items"?" active":"")} onClick={()=>setTab("items")}>📦 품목 / BOM</button>
           <button className={"aps-tab"+(tab==="lines"?" active":"")} onClick={()=>setTab("lines")}>🏭 라인</button>
           <button className={"aps-tab"+(tab==="plans"?" active":"")} onClick={()=>setTab("plans")}>📅 생산계획</button>
+          <button className={"aps-tab"+(tab==="staff"?" active":"")} onClick={()=>setTab("staff")}>👥 인원</button>
           <button className={"aps-tab"+(tab==="inventory"?" active":"")} onClick={()=>setTab("inventory")}>📊 재고</button>
           <button className={"aps-tab"+(tab==="stats"?" active":"")} onClick={()=>setTab("stats")}>📈 통계</button>
           <button className={"aps-tab"+(tab==="sheet"?" active":"")} onClick={()=>setTab("sheet")}>📋 재고 시트</button>
@@ -3756,6 +4181,7 @@ function App(){
         {tab==="items"&&<ItemsTab adminHash={adminHash}/>}
         {tab==="lines"&&<LinesTab adminHash={adminHash}/>}
         {tab==="plans"&&<PlansTab adminHash={adminHash}/>}
+        {tab==="staff"&&<StaffTab adminHash={adminHash}/>}
         {tab==="inventory"&&<InventoryTab adminHash={adminHash}/>}
         {tab==="stats"&&<StatsTab adminHash={adminHash}/>}
         {tab==="sheet"&&<InventorySheetTab adminHash={adminHash}/>}
