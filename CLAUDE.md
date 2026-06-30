@@ -897,6 +897,27 @@
 - **운영 순서**: (1) Supabase SQL Editor에서 `setup_aps_staff.sql` 실행 → (2) 👥 인원 탭 → 직원 마스터 모드 → 명단 등록 → (3) 일일 가용 모드에서 휴무자 체크박스 클릭 → (4) 📷 이미지 저장 → 사진 양식 PNG 다운로드
 - **한계**: 캘린더 월간 뷰는 미구현(`aps_get_attendance_range` RPC는 만들어 둠 — 향후 확장). 휴무 상태는 단일 'off'만 사용(연차/병가/출장 분리 미사용 — RPC는 지원)
 
+### APS — 통계 탭 인라인 수정 (실제 시각 + 실제 수량) (2026-06-30)
+- 사용자 요청: "통계탭은 시간하고 중량을 수정할수있도록 가능할까?" — 잘못 기록된 실제 시작/종료 시각을 통계 탭에서 바로 고치고, "40박스 계획 → 실제 35박스 생산" 같은 케이스를 위해 실제 생산 수량을 따로 입력
+- 기존 한계: 통계 탭은 `aps_get_item_stats` 집계만 읽는 read-only 뷰. 실제 시각 보정은 ▶/✓ 버튼 재클릭으로만 가능했고, 실제 수량 개념 자체가 없었음(계획 qty만)
+- **`setup_aps_v6.sql`** (신규, 1회 실행):
+  - `aps_plans.actual_qty NUMERIC NULL` 컬럼 추가 — NULL=계획 qty 그대로 사용, 숫자=실제 생산량
+  - `aps_list_plans` v5+actual_qty로 재정의 (응답에 `actual_qty` 추가)
+  - `aps_get_item_stats` 재정의: total_qty/avg_qty/qty_per_hour 모두 `COALESCE(actual_qty, qty)` 사용 → 실제 수량이 있으면 그것을, 없으면 계획 qty를 집계 (구버전 데이터 호환)
+  - **`aps_get_done_plans_for_item(p_admin_hash, p_item_id, p_days_back)`** 신규 RPC: 통계 탭 드릴다운용 — 특정 품목의 완료 plan 목록을 통계와 같은 기간 필터로 반환
+  - **`aps_update_plan_actuals(p_admin_hash, p_id, p_actual_start_at, p_actual_end_at, p_actual_qty)`** 신규 RPC: status='done' 행에만 적용, end>start 검증, actual_qty 음수 거부. NULL 보내면 actual_qty 리셋(계획값 사용)
+- **`aps.html` 변경**:
+  - 신규 컴포넌트 **`StatsDrilldownTable`**: 미니 테이블로 #id / 라인 / 실제 시작 / 실제 종료 / 실제 시간 / 계획 수량 / 실제 수량 / 동작(✏ 수정) 표시. 편집 모드는 datetime-local + number input으로 인라인 교체. 실제 수량이 계획 수량과 다르면 계획 수량에 취소선 + 실제 수량을 시안색으로 강조
+  - **`StatsTab`** 확장:
+    - state 추가: `expanded`(현재 펼친 item_id, 단일), `itemPlans`({item_id:[plans]} 캐시), `editingId`, `editForm`, `saving`
+    - 품목 행 클릭 → `toggleExpand(item)`: 펼침/접기. 최초 펼침 시 `loadItemPlans` lazy fetch. ▶ 회전 애니메이션으로 펼침 상태 표시
+    - `range` 변경 시 `itemPlans` 캐시 invalidate + 펼침/편집 상태 리셋 (기간 필터가 드릴다운에도 반영되도록)
+    - `startEdit`/`cancelEdit`/`saveEdit`: 인라인 편집 흐름. saveEdit 성공 시 드릴다운 + 상위 통계 둘 다 재로드
+    - 빈 string으로 비우면 actual_qty=NULL로 RPC 전달 → 계획 qty 사용 의미로 복귀
+  - 안내 텍스트 갱신: "잘못 기록된 시각·실제 수량은 품목 행을 클릭해 펼친 뒤 ✏ 버튼으로 직접 수정 가능 · 실제 수량을 비워두면 계획 수량 그대로 통계 반영"
+- **운영 순서**: Supabase에서 `setup_aps_v6.sql` 실행 1회 → 📈 통계 탭에서 품목 행 클릭 → 펼친 plan 목록에서 ✏ 수정 → 저장 시 통계 즉시 갱신
+- **한계**: 진행중(`in_progress`) plan은 수정 불가 (▶/✓ 버튼 흐름으로만 처리, RPC가 `only_done_editable` 거부). 일괄 편집·취소된 plan 복구 미지원
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
