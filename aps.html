@@ -2355,52 +2355,38 @@ function ExportPlansView({plans,lines,dayStr,allDates,matsByPlan}){
                   const st=S[p.status]||S.planned;
                   const mats=(matsByPlan&&matsByPlan[p.id])||[];
                   const rowBg=idx%2===1?C.rowAlt:"transparent";
-                  return [
-                    <tr key={p.id} style={{borderTop:idx===0?"none":`1px solid ${C.border}`,background:rowBg}}>
-                      <td style={{padding:"9px 14px",verticalAlign:"middle"}}>
-                        <div style={{fontWeight:700,fontSize:13,color:C.text,lineHeight:1.3}}>{p.item_name}</div>
-                        {p.memo&&p.memo.trim()&&<div style={{marginTop:4,padding:"4px 8px",background:"#fef3c7",border:"1px solid #fde68a",borderLeft:"3px solid #f59e0b",borderRadius:4,fontSize:12,color:"#92400e",fontWeight:700,lineHeight:1.35,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>📝 {p.memo}</div>}
-                      </td>
-                      <td style={{padding:"9px 6px",verticalAlign:"middle",textAlign:"right"}}>
-                        <div>
-                          <span style={{fontWeight:700,fontSize:13}}>{fmtNum(p.qty)}</span>
-                          <span style={{color:C.muted,fontWeight:500,fontSize:11,marginLeft:3}}>{p.item_unit||""}</span>
-                        </div>
-                        {(()=>{const kg=parseSpecKg(p.item_spec);if(kg==null)return null;return <div style={{fontSize:12,color:C.text,marginTop:2,fontWeight:700,whiteSpace:"nowrap"}}>{fmtKg(kg*(p.qty||0))}</div>;})()}
-                      </td>
-                      <td style={{padding:"9px 10px",verticalAlign:"middle",color:C.muted,fontSize:11,lineHeight:1.5}}>
-                        <div>{fmtDtDow(p.start_at)}</div>
-                        <div>~ {fmtDtDow(p.end_at)}</div>
-                      </td>
-                      <td style={{padding:"9px 14px 9px 6px",verticalAlign:"middle",textAlign:"right"}}>
-                        <span style={{background:st.bg,color:st.fg,padding:"3px 10px",borderRadius:10,fontSize:11,fontWeight:700,display:"inline-block"}}>{STATUS_LABEL[p.status]}</span>
-                      </td>
-                    </tr>,
-                    mats.length>0?<tr key={p.id+"-mat"} style={{background:rowBg}}>
-                      <td colSpan={4} style={{padding:"0 14px 10px"}}>
-                        <div style={{background:C.matBg,border:`1px solid ${C.matBd}`,borderRadius:6,padding:"6px 10px"}}>
-                          <div style={{fontSize:10,fontWeight:800,color:C.matName,letterSpacing:".08em",marginBottom:4}}>🥩 사용 원육</div>
-                          {mats.map((m,mi)=>{
-                            const short=m.needKg-m.stockKg;
-                            return <div key={mi} style={{marginBottom:mi===mats.length-1?0:6,paddingBottom:mi===mats.length-1?0:6,borderBottom:mi===mats.length-1?"none":`1px dashed ${C.matBd}`}}>
-                              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,marginBottom:m.matches.length>0?2:0}}>
-                                <span style={{fontSize:12,fontWeight:800,color:C.matName}}>{m.name}</span>
-                                <span style={{fontSize:11,color:C.muted,fontWeight:600}}>
-                                  필요 <b style={{color:C.text}}>{fmtKg(m.needKg)}</b>
-                                  {m.hasKeywords&&<span> · 재고 <b style={{color:m.ok?C.matStock:C.matShort}}>{fmtKg(m.stockKg)}</b>{m.ok?<span style={{color:C.matStock}}> ✓</span>:<span style={{color:C.matShort,fontWeight:700}}> ⚠ 부족 {fmtKg(short)}</span>}</span>}
-                                  {!m.hasKeywords&&<span style={{color:C.muted,fontStyle:"italic"}}> · 매칭 키워드 미설정</span>}
-                                </span>
-                              </div>
-                              {m.matches.length>0&&<div style={{paddingLeft:8,fontSize:11,color:C.muted,lineHeight:1.5}}>
-                                {m.matches.map((mm,mmi)=><div key={mmi}>· {mm.rawName} <b style={{color:C.text}}>{fmtKg(mm.kg)}</b></div>)}
-                              </div>}
-                              {m.hasKeywords&&m.matches.length===0&&<div style={{paddingLeft:8,fontSize:11,color:C.matShort,fontStyle:"italic"}}>재고시트에서 매칭되는 원육 없음</div>}
-                            </div>;
-                          })}
-                        </div>
-                      </td>
-                    </tr>:null
-                  ];
+                  return <tr key={p.id} style={{borderTop:idx===0?"none":`1px solid ${C.border}`,background:rowBg}}>
+                    <td style={{padding:"9px 14px",verticalAlign:"middle"}}>
+                      <div style={{fontWeight:700,fontSize:13,color:C.text,lineHeight:1.3}}>{p.item_name}</div>
+                      {mats.length>0&&<div style={{marginTop:3,fontSize:11,color:C.matName,lineHeight:1.45}}>
+                        {mats.map((m,mi)=>{
+                          const rawText=m.matches.length>0
+                            ? m.matches.map(mm=>`${mm.rawName} ${fmtKg(mm.kg)}`).join(" · ")
+                            : (m.hasKeywords?"매칭 원육 없음":"키워드 미설정");
+                          return <div key={mi}>
+                            <span style={{fontWeight:700}}>🥩 {m.name}</span>
+                            <span style={{color:C.muted}}> — {rawText}</span>
+                            {m.hasKeywords&&!m.ok&&m.matches.length>0&&<span style={{color:C.matShort,fontWeight:700}}> ⚠ 부족</span>}
+                          </div>;
+                        })}
+                      </div>}
+                      {p.memo&&p.memo.trim()&&<div style={{marginTop:4,padding:"4px 8px",background:"#fef3c7",border:"1px solid #fde68a",borderLeft:"3px solid #f59e0b",borderRadius:4,fontSize:12,color:"#92400e",fontWeight:700,lineHeight:1.35,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>📝 {p.memo}</div>}
+                    </td>
+                    <td style={{padding:"9px 6px",verticalAlign:"middle",textAlign:"right"}}>
+                      <div>
+                        <span style={{fontWeight:700,fontSize:13}}>{fmtNum(p.qty)}</span>
+                        <span style={{color:C.muted,fontWeight:500,fontSize:11,marginLeft:3}}>{p.item_unit||""}</span>
+                      </div>
+                      {(()=>{const kg=parseSpecKg(p.item_spec);if(kg==null)return null;return <div style={{fontSize:12,color:C.text,marginTop:2,fontWeight:700,whiteSpace:"nowrap"}}>{fmtKg(kg*(p.qty||0))}</div>;})()}
+                    </td>
+                    <td style={{padding:"9px 10px",verticalAlign:"middle",color:C.muted,fontSize:11,lineHeight:1.5}}>
+                      <div>{fmtDtDow(p.start_at)}</div>
+                      <div>~ {fmtDtDow(p.end_at)}</div>
+                    </td>
+                    <td style={{padding:"9px 14px 9px 6px",verticalAlign:"middle",textAlign:"right"}}>
+                      <span style={{background:st.bg,color:st.fg,padding:"3px 10px",borderRadius:10,fontSize:11,fontWeight:700,display:"inline-block"}}>{STATUS_LABEL[p.status]}</span>
+                    </td>
+                  </tr>;
                 })}
               </tbody>
             </table>
