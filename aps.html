@@ -130,7 +130,7 @@
       .aps-inv-panel-tbl td.nm{max-width:none}
     }
     /* === 재고 시트 (사진 형식 출력용) === */
-    .inv-sheet{background:#fff;color:#111;padding:20px 24px;border-radius:8px;font-family:"Pretendard","Apple SD Gothic Neo","Malgun Gothic",sans-serif;width:fit-content;max-width:100%;margin:0 auto;box-sizing:border-box}
+    .inv-sheet{background:#fff;color:#111;padding:20px 24px;border-radius:8px;font-family:"Pretendard","Apple SD Gothic Neo","Malgun Gothic",sans-serif;width:fit-content;max-width:100%;margin:0 auto;box-sizing:content-box}
     .inv-sheet-header{display:grid;grid-template-columns:1fr auto 1fr;align-items:flex-end;margin-bottom:14px;column-gap:16px}
     .inv-sheet-title{font-size:22px;font-weight:700;color:#111;text-align:center;grid-column:2}
     .inv-sheet-date{font-size:15px;color:#333;font-weight:500;text-align:right;grid-column:3;justify-self:end;white-space:nowrap}
@@ -147,10 +147,10 @@
     .inv-tbl thead th{background:#cfd8dc;color:#111;padding:5px 7px;text-align:left;font-weight:700;border:1px solid #b0bec5;font-size:11.5px;white-space:nowrap}
     .inv-tbl tbody td{padding:3px 7px;border-bottom:1px solid #eceff1;background:#fff;line-height:1.25}
     .inv-tbl.stripe tbody tr:nth-child(even) td{background:#fafafa}
-    .inv-tbl .right{text-align:right}
+    .inv-tbl .right{text-align:right;padding-right:4px}
     .inv-tbl .code{font-family:"Consolas","Menlo","Courier New",monospace;font-size:11px;color:#455a64;letter-spacing:.01em}
     .inv-tbl .zero{color:#dc2626;font-weight:700}
-    .inv-tbl .qty{font-variant-numeric:tabular-nums;font-weight:600;padding-left:14px}
+    .inv-tbl .qty{font-variant-numeric:tabular-nums;font-weight:600;padding-left:14px;padding-right:4px}
     .inv-tbl .name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px}
     /* 제품 그룹 배경색 (사진과 동일) */
     .inv-row-y td{background:#fff2b3 !important}
