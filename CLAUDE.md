@@ -934,6 +934,27 @@
 - **운영 순서**: (1) Supabase에서 `setup_aps_v7.sql` 실행 → (2) 📦 품목/BOM 탭에서 원자재 편집 → 매칭 키워드 등록 → (3) 제품 BOM에 원자재 연결 → (4) 📅 생산계획 추가 시 자동 표시
 - **한계**: 원자재끼리 키워드가 겹치면 원자재 등록 순서(id 오름차순)로 우선. 원산지가 다른 원자재는 이름 + 키워드로 명확히 분리하도록 유도(예: SWIFT는 미국, TEYS는 호주 등 브랜드 코드가 원산지 판별의 핵심)
 
+### APS — 생산계획 PNG 저장에 사용 원육 정보 추가 (2026-07-01)
+- 사용자 요청: "계획을 이미지로 저장했을 때 어떤 원육을 사용하는지도 나오면 좋겠어"
+- 기존: `ExportPlansView` PNG는 라인별 리스트만 표시(품목/수량/시간/상태). BOM에 연결된 원자재나 매칭된 재고시트 원육 정보는 누락
+- 변경: 각 plan 행 아래에 별도 카드 형태로 사용 원자재 + 매칭 원육 상세 표시
+- **`PlansTab` 변경**:
+  - `invData` state 추가 (재고시트 데이터, 마운트 시 remote fetch + `aps-inv-data-change`/`storage` 이벤트 구독)
+  - `exportMats` state 추가: `{planId: [{name, code, needKg, stockKg, matches, ok, hasKeywords}]}` — PNG 저장 직전 계산되는 원자재 요약
+  - `buildExportMaterials(planList)` 헬퍼: listFiltered의 unique item_id를 순회하며 `aps_list_bom` 재귀 fetch → `calcMaterialRequirements` + `matchRawsToMaterials`로 plan별 원자재 리스트 계산
+  - `exportCurrentView` 흐름 변경: (1) `buildExportMaterials` 호출 → `setExportMats` (2) 오프스크린 렌더 대기 (3) html2canvas 캡처 (4) 다운로드 완료 후 `setExportMats({})` 초기화
+  - 캡처 실패 시에도 `setExportMats({})` 정리 (stale state 방지)
+- **`ExportPlansView` 변경**:
+  - props에 `matsByPlan` 추가
+  - 각 plan `<tr>` 다음에 조건부 원육 상세 `<tr>` 삽입 (`mats.length>0`일 때만 — BOM 원자재 없으면 아무것도 안 뜸)
+  - 원육 카드: 옅은 주황 배경(`#fff7ed`) + `🥩 사용 원육` 라벨 + 원자재별로:
+    - 원자재명(예: `차돌박이(미국)`) + 필요 kg + 재고 kg + ✓/⚠ 뱃지
+    - 매칭 원육 상세(글머리 기호 리스트): `· 냉동우육 차돌백이 EXCEL 86E 190g`, `· 냉동우육 차돌백이 EXCEL 86M 179.95kg`
+    - 매칭 키워드 없으면 "매칭 키워드 미설정" (회색 이탤릭), 키워드는 있는데 매칭 원육이 없으면 "재고시트에서 매칭되는 원육 없음" (빨강 이탤릭)
+  - 여러 원자재는 대시 라인(`1px dashed`)으로 구분
+- **동작 예시**: `(마벨리에)돌돌차돌 1kg*4` 10박스 계획 → BOM에 `차돌박이(미국)` 원자재(0.4kg/박스, loss 0%) 연결 시 PNG에 "🥩 사용 원육 · 차돌박이(미국) 필요 4kg · 재고 180.14kg ✓ · 냉동우육 차돌백이 EXCEL 86E 190g / EXCEL 86M 179.95kg" 표시
+- **한계**: 오프스크린 렌더 시점에 BOM RPC를 계획 수만큼 fetch → 계획 20~50건 규모에서는 즉시 완료. 100건 이상이면 저장 버튼 클릭 후 2~3초 지연 가능
+
 ### APS — 통계 탭 인라인 수정 (실제 시각 + 실제 수량) (2026-06-30)
 - 사용자 요청: "통계탭은 시간하고 중량을 수정할수있도록 가능할까?" — 잘못 기록된 실제 시작/종료 시각을 통계 탭에서 바로 고치고, "40박스 계획 → 실제 35박스 생산" 같은 케이스를 위해 실제 생산 수량을 따로 입력
 - 기존 한계: 통계 탭은 `aps_get_item_stats` 집계만 읽는 read-only 뷰. 실제 시각 보정은 ▶/✓ 버튼 재클릭으로만 가능했고, 실제 수량 개념 자체가 없었음(계획 qty만)

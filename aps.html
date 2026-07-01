@@ -2276,8 +2276,8 @@ function ExportWeekView({week}){
 
 // 이미지 저장용 생산계획 리포트 (오프스크린 렌더 → html2canvas 캡처)
 // 라인별 그룹 + 인쇄 친화 라이트 테마. viewMode 무관하게 항상 동일 레이아웃
-function ExportPlansView({plans,lines,dayStr,allDates}){
-  const C={bg:"#ffffff",text:"#0f172a",muted:"#64748b",border:"#e2e8f0",cardBg:"#f8fafc",lineHdr:"#ecfeff",lineHdrBd:"#a5f3fc",rowAlt:"#fafbfc"};
+function ExportPlansView({plans,lines,dayStr,allDates,matsByPlan}){
+  const C={bg:"#ffffff",text:"#0f172a",muted:"#64748b",border:"#e2e8f0",cardBg:"#f8fafc",lineHdr:"#ecfeff",lineHdrBd:"#a5f3fc",rowAlt:"#fafbfc",matBg:"#fff7ed",matBd:"#fed7aa",matName:"#9a3412",matStock:"#166534",matShort:"#b91c1c"};
   const S={
     planned:{bg:"#f1f5f9",fg:"#475569"},
     in_progress:{bg:"#cffafe",fg:"#0891b2"},
@@ -2353,26 +2353,54 @@ function ExportPlansView({plans,lines,dayStr,allDates}){
               <tbody>
                 {g.plans.map((p,idx)=>{
                   const st=S[p.status]||S.planned;
-                  return <tr key={p.id} style={{borderTop:idx===0?"none":`1px solid ${C.border}`,background:idx%2===1?C.rowAlt:"transparent"}}>
-                    <td style={{padding:"9px 14px",verticalAlign:"middle"}}>
-                      <div style={{fontWeight:700,fontSize:13,color:C.text,lineHeight:1.3}}>{p.item_name}</div>
-                      {p.memo&&p.memo.trim()&&<div style={{marginTop:4,padding:"4px 8px",background:"#fef3c7",border:"1px solid #fde68a",borderLeft:"3px solid #f59e0b",borderRadius:4,fontSize:12,color:"#92400e",fontWeight:700,lineHeight:1.35,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>📝 {p.memo}</div>}
-                    </td>
-                    <td style={{padding:"9px 6px",verticalAlign:"middle",textAlign:"right"}}>
-                      <div>
-                        <span style={{fontWeight:700,fontSize:13}}>{fmtNum(p.qty)}</span>
-                        <span style={{color:C.muted,fontWeight:500,fontSize:11,marginLeft:3}}>{p.item_unit||""}</span>
-                      </div>
-                      {(()=>{const kg=parseSpecKg(p.item_spec);if(kg==null)return null;return <div style={{fontSize:12,color:C.text,marginTop:2,fontWeight:700,whiteSpace:"nowrap"}}>{fmtKg(kg*(p.qty||0))}</div>;})()}
-                    </td>
-                    <td style={{padding:"9px 10px",verticalAlign:"middle",color:C.muted,fontSize:11,lineHeight:1.5}}>
-                      <div>{fmtDtDow(p.start_at)}</div>
-                      <div>~ {fmtDtDow(p.end_at)}</div>
-                    </td>
-                    <td style={{padding:"9px 14px 9px 6px",verticalAlign:"middle",textAlign:"right"}}>
-                      <span style={{background:st.bg,color:st.fg,padding:"3px 10px",borderRadius:10,fontSize:11,fontWeight:700,display:"inline-block"}}>{STATUS_LABEL[p.status]}</span>
-                    </td>
-                  </tr>;
+                  const mats=(matsByPlan&&matsByPlan[p.id])||[];
+                  const rowBg=idx%2===1?C.rowAlt:"transparent";
+                  return [
+                    <tr key={p.id} style={{borderTop:idx===0?"none":`1px solid ${C.border}`,background:rowBg}}>
+                      <td style={{padding:"9px 14px",verticalAlign:"middle"}}>
+                        <div style={{fontWeight:700,fontSize:13,color:C.text,lineHeight:1.3}}>{p.item_name}</div>
+                        {p.memo&&p.memo.trim()&&<div style={{marginTop:4,padding:"4px 8px",background:"#fef3c7",border:"1px solid #fde68a",borderLeft:"3px solid #f59e0b",borderRadius:4,fontSize:12,color:"#92400e",fontWeight:700,lineHeight:1.35,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>📝 {p.memo}</div>}
+                      </td>
+                      <td style={{padding:"9px 6px",verticalAlign:"middle",textAlign:"right"}}>
+                        <div>
+                          <span style={{fontWeight:700,fontSize:13}}>{fmtNum(p.qty)}</span>
+                          <span style={{color:C.muted,fontWeight:500,fontSize:11,marginLeft:3}}>{p.item_unit||""}</span>
+                        </div>
+                        {(()=>{const kg=parseSpecKg(p.item_spec);if(kg==null)return null;return <div style={{fontSize:12,color:C.text,marginTop:2,fontWeight:700,whiteSpace:"nowrap"}}>{fmtKg(kg*(p.qty||0))}</div>;})()}
+                      </td>
+                      <td style={{padding:"9px 10px",verticalAlign:"middle",color:C.muted,fontSize:11,lineHeight:1.5}}>
+                        <div>{fmtDtDow(p.start_at)}</div>
+                        <div>~ {fmtDtDow(p.end_at)}</div>
+                      </td>
+                      <td style={{padding:"9px 14px 9px 6px",verticalAlign:"middle",textAlign:"right"}}>
+                        <span style={{background:st.bg,color:st.fg,padding:"3px 10px",borderRadius:10,fontSize:11,fontWeight:700,display:"inline-block"}}>{STATUS_LABEL[p.status]}</span>
+                      </td>
+                    </tr>,
+                    mats.length>0?<tr key={p.id+"-mat"} style={{background:rowBg}}>
+                      <td colSpan={4} style={{padding:"0 14px 10px"}}>
+                        <div style={{background:C.matBg,border:`1px solid ${C.matBd}`,borderRadius:6,padding:"6px 10px"}}>
+                          <div style={{fontSize:10,fontWeight:800,color:C.matName,letterSpacing:".08em",marginBottom:4}}>🥩 사용 원육</div>
+                          {mats.map((m,mi)=>{
+                            const short=m.needKg-m.stockKg;
+                            return <div key={mi} style={{marginBottom:mi===mats.length-1?0:6,paddingBottom:mi===mats.length-1?0:6,borderBottom:mi===mats.length-1?"none":`1px dashed ${C.matBd}`}}>
+                              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,marginBottom:m.matches.length>0?2:0}}>
+                                <span style={{fontSize:12,fontWeight:800,color:C.matName}}>{m.name}</span>
+                                <span style={{fontSize:11,color:C.muted,fontWeight:600}}>
+                                  필요 <b style={{color:C.text}}>{fmtKg(m.needKg)}</b>
+                                  {m.hasKeywords&&<span> · 재고 <b style={{color:m.ok?C.matStock:C.matShort}}>{fmtKg(m.stockKg)}</b>{m.ok?<span style={{color:C.matStock}}> ✓</span>:<span style={{color:C.matShort,fontWeight:700}}> ⚠ 부족 {fmtKg(short)}</span>}</span>}
+                                  {!m.hasKeywords&&<span style={{color:C.muted,fontStyle:"italic"}}> · 매칭 키워드 미설정</span>}
+                                </span>
+                              </div>
+                              {m.matches.length>0&&<div style={{paddingLeft:8,fontSize:11,color:C.muted,lineHeight:1.5}}>
+                                {m.matches.map((mm,mmi)=><div key={mmi}>· {mm.rawName} <b style={{color:C.text}}>{fmtKg(mm.kg)}</b></div>)}
+                              </div>}
+                              {m.hasKeywords&&m.matches.length===0&&<div style={{paddingLeft:8,fontSize:11,color:C.matShort,fontStyle:"italic"}}>재고시트에서 매칭되는 원육 없음</div>}
+                            </div>;
+                          })}
+                        </div>
+                      </td>
+                    </tr>:null
+                  ];
                 })}
               </tbody>
             </table>
@@ -2451,6 +2479,30 @@ function PlansTab({adminHash}){
   const[editing,setEditing]=useState(null);
   const[showForm,setShowForm]=useState(false);
   const[showSettings,setShowSettings]=useState(false);
+  // 재고시트 데이터 (PNG export 시 원육 표시용) — PC/모바일 동기화
+  const[invData,setInvData]=useState(()=>loadStoredInventory());
+  useEffect(()=>{
+    let cancelled=false;
+    (async()=>{
+      const remote=await loadRemoteInventory(adminHash);
+      if(cancelled||!remote)return;
+      const local=loadStoredInventory();
+      if(!local||!local.savedAt||(remote.savedAt||"")>(local.savedAt||"")){
+        applyRemoteInventoryToLocal(remote);
+        setInvData(loadStoredInventory());
+      }
+    })();
+    const reload=()=>setInvData(loadStoredInventory());
+    window.addEventListener("aps-inv-data-change",reload);
+    window.addEventListener("storage",reload);
+    return()=>{
+      cancelled=true;
+      window.removeEventListener("aps-inv-data-change",reload);
+      window.removeEventListener("storage",reload);
+    };
+  },[adminHash]);
+  // PNG export 직전에 계산되는 원자재 요약 (planId → [{name, needKg, matches:[{rawName,kg}]}])
+  const[exportMats,setExportMats]=useState({});
   const[viewMode,setViewMode]=useState(()=>{
     try{const v=localStorage.getItem("aps-plan-view-mode");return (v==="list"||v==="gantt"||v==="timetable")?v:"gantt"}catch(e){return "gantt"}
   });
@@ -2626,13 +2678,68 @@ function PlansTab({adminHash}){
   // 생산계획 PNG 저장 (전용 오프스크린 ExportPlansView 렌더 → html2canvas 캡처)
   const exportPlansRef=useRef(null);
   const[capturing,setCapturing]=useState(false);
+  // 계획들의 원자재 소요/재고 미리 계산 (PNG 저장 직전)
+  // 반환: {planId: [{name, code, needKg, matches:[{rawName,kg}], stockKg, ok, hasKeywords}]}
+  const buildExportMaterials=async(planList)=>{
+    if(!planList||planList.length===0)return{};
+    const itemById={};for(const it of items)itemById[it.id]=it;
+    // 필요한 부모 BOM 목록: 각 plan의 item_id (반제품이 자식이면 재귀 fetch)
+    const bomByParent={};
+    const visited=new Set();
+    const walk=async(pid)=>{
+      if(visited.has(pid))return;
+      visited.add(pid);
+      let rows;
+      try{rows=await rpc("aps_list_bom",{p_admin_hash:adminHash,p_parent_id:pid})}
+      catch(e){console.warn("[export mat] BOM fetch fail",pid,e);return}
+      bomByParent[pid]=rows||[];
+      for(const r of (rows||[])){
+        if(r.child_type==="semi"||r.child_type==="product")await walk(r.child_id);
+      }
+    };
+    const uniqIds=Array.from(new Set(planList.map(p=>p.item_id).filter(Boolean)));
+    for(const id of uniqIds)await walk(id);
+    const mats=items.filter(i=>i.type==="material");
+    const stockByMat=matchRawsToMaterials(invData?.raws||[],mats);
+    const out={};
+    for(const p of planList){
+      const need=calcMaterialRequirements(p.item_id,Number(p.qty)||0,bomByParent,itemById);
+      const rows=[];
+      for(const mid of Object.keys(need)){
+        const mat=need[mid].item;
+        const kws=parseMatchKeywords(mat.match_keywords);
+        const stock=stockByMat[mid];
+        rows.push({
+          id:mid,
+          name:mat.name,
+          code:mat.code,
+          needKg:need[mid].kg,
+          stockKg:stock?.totalKg||0,
+          matches:stock?.matches||[],
+          hasKeywords:kws.length>0,
+          ok:(stock?.totalKg||0)>=need[mid].kg
+        });
+      }
+      rows.sort((a,b)=>b.needKg-a.needKg);
+      if(rows.length>0)out[p.id]=rows;
+    }
+    return out;
+  };
   const exportCurrentView=async()=>{
     if(typeof window.html2canvas!=="function"){
       alert("이미지 저장 라이브러리(html2canvas)가 로드되지 않았습니다. 새로고침 후 다시 시도해주세요.");
       return;
     }
     setCapturing(true);
-    // 오프스크린 ExportPlansView 마운트 대기
+    // 1) 원자재 요약 미리 계산 → state에 세팅 (오프스크린 ExportPlansView가 참조)
+    try{
+      const mats=await buildExportMaterials(listFiltered);
+      setExportMats(mats);
+    }catch(e){
+      console.warn("[export mat] build failed",e);
+      setExportMats({});
+    }
+    // 2) 오프스크린 ExportPlansView 마운트/재렌더 대기
     await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
     const target=exportPlansRef.current;
     if(!target){setCapturing(false);alert("캡처할 영역이 없습니다");return}
@@ -2655,6 +2762,8 @@ function PlansTab({adminHash}){
       alert("이미지 저장 실패: "+(e.message||e));
     }
     setCapturing(false);
+    // 캡처 종료 후 다음 export를 위해 초기화 (오프스크린 div가 unmount될 때도 stale 상태 방지)
+    setExportMats({});
   };
 
   // 간트 드래그로 시간 변경 (move/resize-l/resize-r 공통)
@@ -2852,7 +2961,7 @@ function PlansTab({adminHash}){
       <div ref={exportRef}><ExportWeekView week={exportingWeek}/></div>
     </div>}
     {capturing&&<div style={{position:"fixed",left:-99999,top:0,zIndex:-1,pointerEvents:"none"}} aria-hidden="true">
-      <div ref={exportPlansRef}><ExportPlansView plans={listFiltered} lines={lines} dayStr={dayStr} allDates={allDates}/></div>
+      <div ref={exportPlansRef}><ExportPlansView plans={listFiltered} lines={lines} dayStr={dayStr} allDates={allDates} matsByPlan={exportMats}/></div>
     </div>}
   </div>;
 }
