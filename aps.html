@@ -130,12 +130,12 @@
       .aps-inv-panel-tbl td.nm{max-width:none}
     }
     /* === 재고 시트 (사진 형식 출력용) === */
-    .inv-sheet{background:#fff;color:#111;padding:20px 24px;border-radius:8px;font-family:"Pretendard","Apple SD Gothic Neo","Malgun Gothic",sans-serif}
+    .inv-sheet{background:#fff;color:#111;padding:20px 24px;border-radius:8px;font-family:"Pretendard","Apple SD Gothic Neo","Malgun Gothic",sans-serif;width:fit-content;max-width:100%;margin:0 auto;box-sizing:border-box}
     .inv-sheet-header{display:grid;grid-template-columns:1fr auto 1fr;align-items:flex-end;margin-bottom:14px;column-gap:16px}
     .inv-sheet-title{font-size:22px;font-weight:700;color:#111;text-align:center;grid-column:2}
     .inv-sheet-date{font-size:15px;color:#333;font-weight:500;text-align:right;grid-column:3;justify-self:end;white-space:nowrap}
     .inv-sheet-spacer{display:block;grid-column:1}
-    .inv-sheet-body{display:grid;grid-template-columns:max-content minmax(0,1fr);column-gap:14px;row-gap:0;align-items:flex-start}
+    .inv-sheet-body{display:grid;grid-template-columns:max-content max-content;column-gap:14px;row-gap:0;align-items:flex-start;justify-content:center}
     .inv-sheet-col{min-width:0}
     /* 제품 2분할(JSX)을 왼쪽 한 열로 stack, 원육은 오른쪽 한 열 full-height */
     .inv-sheet-body > .inv-sheet-col:nth-child(1),
