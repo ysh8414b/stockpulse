@@ -3716,6 +3716,10 @@ function InventorySheetTab({adminHash}){
           return cols.map((part,idx)=>(
             <div className="inv-sheet-col" key={"p"+idx}>
               <table className="inv-tbl">
+                <colgroup>
+                  <col/>
+                  <col style={{width:"64px"}}/>
+                </colgroup>
                 <thead><tr>
                   <th>제품명</th>
                   <th className="right">현 재고</th>
@@ -3733,6 +3737,12 @@ function InventorySheetTab({adminHash}){
         })()}
         <div className="inv-sheet-col">
           <table className="inv-tbl stripe">
+            <colgroup>
+              <col/>
+              <col style={{width:"70px"}}/>
+              <col style={{width:"74px"}}/>
+              <col style={{width:"56px"}}/>
+            </colgroup>
             <thead><tr>
               <th>원육명</th>
               <th>원산지</th>
