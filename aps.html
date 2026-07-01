@@ -150,7 +150,7 @@
     .inv-tbl .right{text-align:right;padding-right:4px}
     .inv-tbl .code{font-family:"Consolas","Menlo","Courier New",monospace;font-size:11px;color:#455a64;letter-spacing:.01em}
     .inv-tbl .zero{color:#dc2626;font-weight:700}
-    .inv-tbl .qty{font-variant-numeric:tabular-nums;font-weight:600;padding-left:14px;padding-right:4px}
+    .inv-tbl .qty{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;font-weight:600;padding-left:14px;padding-right:6px;white-space:nowrap}
     .inv-tbl .name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px}
     /* 제품 그룹 배경색 (사진과 동일) */
     .inv-row-y td{background:#fff2b3 !important}
@@ -3584,7 +3584,9 @@ function InventorySheetTab({adminHash}){
     if(!sheetRef.current)return;
     setBusy(true);setErr("");
     try{
-      const canvas=await html2canvas(sheetRef.current,{scale:2,backgroundColor:"#ffffff",useCORS:true});
+      if(document.fonts&&document.fonts.ready)await document.fonts.ready;
+      await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+      const canvas=await html2canvas(sheetRef.current,{scale:2,backgroundColor:"#ffffff",useCORS:true,letterRendering:true});
       const safeDate=dateLabel.replace(/[\/\\?%*:|"<>()]/g,"_").replace(/\s+/g,"_");
       const a=document.createElement("a");
       a.download=`재고시트_${safeDate}.png`;
