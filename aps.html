@@ -2360,7 +2360,7 @@ function ExportPlansView({plans,lines,dayStr,allDates,matsByPlan}){
                       <div style={{fontWeight:700,fontSize:13,color:C.text,lineHeight:1.3}}>{p.item_name}</div>
                       {mats.length>0&&<div style={{marginTop:3,fontSize:11,color:C.matName,lineHeight:1.45}}>
                         {mats.map((m,mi)=><div key={mi}>
-                          <span style={{fontWeight:700}}>{m.name}</span>
+                          <span style={{fontWeight:700}}>🥩 {m.name}</span>
                           <span> - <b>{fmtKg(m.needKg)}</b></span>
                           {m.hasKeywords&&!m.ok&&<span style={{color:C.matShort,fontWeight:700}}> ⚠ 부족</span>}
                         </div>)}
