@@ -358,6 +358,80 @@ function fmtKg(kg){
   return Math.round(kg*1000)+"g";
 }
 
+// ═══ 원육 재고 매칭 ═══
+// 원자재 매칭 키워드 파싱: 문자열/배열 모두 허용, 빈 값 제거
+function parseMatchKeywords(raw){
+  if(!raw)return[];
+  let arr=raw;
+  if(typeof raw==="string"){
+    try{arr=JSON.parse(raw)}catch(_){arr=[]}
+  }
+  if(!Array.isArray(arr))return[];
+  return arr.map(k=>String(k||"").trim()).filter(Boolean);
+}
+// 재고시트 원육 이름(lower)에 키워드가 매칭되는지 판정
+// 키워드 내부 공백은 AND: "삼겹양지 SWIFT" → 이름에 "삼겹양지"와 "SWIFT" 둘 다 포함되어야 매칭
+function nameMatchesKeyword(rawNameLower,keyword){
+  const parts=String(keyword||"").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if(!parts.length)return false;
+  return parts.every(p=>rawNameLower.includes(p));
+}
+// 재고시트 raws + 원자재 items(type='material')로부터 원자재별 총 kg 집계
+// 반환: {materialId: {item, totalKg, matches:[{rawName,kg,keyword}]}}
+// 각 원육은 첫 번째로 매칭된 원자재에만 귀속 (중복 계산 방지)
+function matchRawsToMaterials(raws,materialItems){
+  const result={};
+  const mats=(materialItems||[]).filter(m=>m&&m.type==="material");
+  for(const m of mats){
+    result[m.id]={item:m,totalKg:0,matches:[]};
+  }
+  for(const raw of (raws||[])){
+    const rawName=String(raw?.name||"").trim();
+    if(!rawName)continue;
+    const kg=Number(raw?.kg)||0;
+    if(kg<=0)continue;
+    const lower=rawName.toLowerCase();
+    for(const m of mats){
+      const kws=parseMatchKeywords(m.match_keywords);
+      let hitKw=null;
+      for(const kw of kws){
+        if(nameMatchesKeyword(lower,kw)){hitKw=kw;break}
+      }
+      if(hitKw){
+        result[m.id].totalKg+=kg;
+        result[m.id].matches.push({rawName,kg,keyword:hitKw});
+        break; // 하나의 원육은 하나의 원자재에만
+      }
+    }
+  }
+  return result;
+}
+// BOM 재귀 조회 → 특정 제품의 원자재별 필요 kg 계산
+// bomByParent: {parentId: [{child_id, qty, loss_rate}, ...]}
+// itemById: {id: item}
+// BOM qty는 "제품 1단위(박스)당 원자재 kg" 해석 → totalNeed = qty × (1 + loss_rate/100) × plannedQty
+// 반환: {materialId: {item, kg}}
+function calcMaterialRequirements(itemId,plannedQty,bomByParent,itemById){
+  const need={};
+  const walk=(parentId,factor)=>{
+    const rows=bomByParent[parentId]||[];
+    for(const r of rows){
+      const child=itemById[r.child_id];
+      if(!child)continue;
+      const eff=Number(r.qty)*(1+Number(r.loss_rate||0)/100)*factor;
+      if(child.type==="material"){
+        if(!need[child.id])need[child.id]={item:child,kg:0};
+        need[child.id].kg+=eff;
+      }else{
+        // 반제품은 재귀 (다단 BOM 지원)
+        walk(child.id,eff);
+      }
+    }
+  };
+  walk(itemId,Number(plannedQty)||0);
+  return need;
+}
+
 // ═══ 상수 ═══
 const TYPE_LABEL={product:"제품",semi:"반제품",material:"원자재"};
 const TYPE_PILL={
@@ -448,8 +522,29 @@ function ItemForm({adminHash,initial,onSaved,onCancel}){
   const[safety,setSafety]=useState(initial?.safety_stock??0);
   const[lt,setLt]=useState(initial?.lead_time_days??0);
   const[memo,setMemo]=useState(initial?.memo||"");
+  const[keywords,setKeywords]=useState(()=>{
+    const raw=initial?.match_keywords;
+    if(Array.isArray(raw))return raw.filter(k=>typeof k==="string"&&k.trim()).map(k=>k.trim());
+    return [];
+  });
+  const[kwInput,setKwInput]=useState("");
   const[err,setErr]=useState("");
   const[loading,setLoading]=useState(false);
+
+  const addKeyword=()=>{
+    const raw=kwInput.trim();
+    if(!raw)return;
+    // 콤마 구분 다중 입력 지원
+    const parts=raw.split(/[,\n]/).map(s=>s.trim()).filter(Boolean);
+    setKeywords(prev=>{
+      const set=new Set(prev.map(k=>k.toLowerCase()));
+      const merged=[...prev];
+      for(const p of parts){if(!set.has(p.toLowerCase())){merged.push(p);set.add(p.toLowerCase())}}
+      return merged;
+    });
+    setKwInput("");
+  };
+  const removeKeyword=(idx)=>setKeywords(prev=>prev.filter((_,i)=>i!==idx));
 
   const submit=async()=>{
     if(!code.trim()){setErr("코드를 입력하세요");return}
@@ -466,7 +561,8 @@ function ItemForm({adminHash,initial,onSaved,onCancel}){
         p_spec:spec.trim(),
         p_safety_stock:Number(safety)||0,
         p_lead_time_days:parseInt(lt)||0,
-        p_memo:memo.trim()
+        p_memo:memo.trim(),
+        p_match_keywords:type==="material"?keywords:[]
       });
       onSaved();
     }catch(e){
@@ -515,6 +611,30 @@ function ItemForm({adminHash,initial,onSaved,onCancel}){
           <div className="aps-form-label">메모</div>
           <textarea className="aps-input" value={memo} onChange={e=>setMemo(e.target.value)} maxLength={500} rows={2} style={{resize:"vertical"}}/>
         </div>
+        {type==="material"&&<div style={{gridColumn:"1 / -1",padding:"12px",background:"rgba(6,182,212,0.06)",border:"1px solid rgba(6,182,212,0.25)",borderRadius:"8px"}}>
+          <div className="aps-form-label" style={{display:"flex",alignItems:"center",gap:"6px",marginBottom:"6px"}}>
+            <span>🔗 재고시트 매칭 키워드</span>
+            <span style={{fontSize:11,fontWeight:400,color:"var(--muted)"}}>(원자재 전용)</span>
+          </div>
+          <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.55,marginBottom:"8px"}}>
+            재고시트 원육 이름에 아래 키워드가 <b>포함</b>되면 이 원자재의 재고로 자동 합산됩니다.<br/>
+            공백 구분은 <b>AND</b> — 예: <code style={{background:"rgba(148,163,184,0.15)",padding:"1px 4px",borderRadius:3}}>삼겹양지 SWIFT</code> 는 이름에 "삼겹양지" <b>와</b> "SWIFT" 둘 다 포함되어야 매칭. 대소문자 무관.
+          </div>
+          <div style={{display:"flex",gap:"6px",marginBottom:"8px"}}>
+            <input className="aps-input" style={{flex:1}} value={kwInput}
+              onChange={e=>setKwInput(e.target.value)}
+              onKeyDown={e=>{if(e.key==="Enter"||e.key===","){e.preventDefault();addKeyword()}}}
+              placeholder="예: 삼겹양지 SWIFT (엔터 또는 , 로 추가)"
+              maxLength={100}/>
+            <button className="aps-btn aps-btn-secondary" type="button" onClick={addKeyword} disabled={!kwInput.trim()}>+ 추가</button>
+          </div>
+          {keywords.length>0?<div style={{display:"flex",flexWrap:"wrap",gap:"6px"}}>
+            {keywords.map((kw,i)=><span key={i} style={{display:"inline-flex",alignItems:"center",gap:"6px",padding:"4px 8px 4px 10px",background:"rgba(6,182,212,0.18)",color:"#06b6d4",borderRadius:"14px",fontSize:12,fontWeight:600}}>
+              {kw}
+              <button type="button" onClick={()=>removeKeyword(i)} style={{background:"none",border:"none",color:"#06b6d4",cursor:"pointer",fontSize:14,lineHeight:1,padding:0,opacity:0.7}} title="삭제">×</button>
+            </span>)}
+          </div>:<div style={{fontSize:12,color:"var(--muted)",fontStyle:"italic"}}>키워드가 없으면 재고시트 매칭이 되지 않습니다.</div>}
+        </div>}
       </div>
       {err&&<div className="aps-err">{err}</div>}
       <div style={{display:"flex",gap:"8px",justifyContent:"flex-end",marginTop:"14px"}}>
@@ -1374,6 +1494,92 @@ function PlanForm({adminHash,items,lines,settings,initial,defaultDate,onSaved,on
   const[err,setErr]=useState("");
   const[loading,setLoading]=useState(false);
 
+  // ─── 원자재 소요/재고 카드용 ───
+  // 선택된 품목의 BOM(자식 = 원자재 or 반제품). BOM 재귀 조회를 위해 필요한 부모 BOM들 모두 캐시
+  const[bomByParent,setBomByParent]=useState({}); // {parentId: [bomRow]}
+  const[invData,setInvData]=useState(()=>loadStoredInventory()); // 재고시트 (raws)
+  const[bomLoading,setBomLoading]=useState(false);
+  // 재고시트 원격 fetch + 이벤트 구독
+  useEffect(()=>{
+    let cancelled=false;
+    (async()=>{
+      const remote=await loadRemoteInventory(adminHash);
+      if(cancelled||!remote)return;
+      const local=loadStoredInventory();
+      // 원격이 새로우면 로컬 갱신
+      if(!local||!local.savedAt||(remote.savedAt||"")>(local.savedAt||"")){
+        applyRemoteInventoryToLocal(remote);
+        setInvData(loadStoredInventory());
+      }
+    })();
+    const reload=()=>setInvData(loadStoredInventory());
+    window.addEventListener("aps-inv-data-change",reload);
+    window.addEventListener("storage",reload);
+    return()=>{
+      cancelled=true;
+      window.removeEventListener("aps-inv-data-change",reload);
+      window.removeEventListener("storage",reload);
+    };
+  },[adminHash]);
+  // itemId 변경 시 BOM 로드 (반제품이 자식이면 그 반제품의 BOM도 재귀 로드)
+  useEffect(()=>{
+    if(!itemId){setBomByParent({});return}
+    let cancelled=false;
+    (async()=>{
+      setBomLoading(true);
+      try{
+        const cache={};
+        const visited=new Set();
+        const walk=async(pid)=>{
+          if(visited.has(pid))return;
+          visited.add(pid);
+          const rows=await rpc("aps_list_bom",{p_admin_hash:adminHash,p_parent_id:pid});
+          if(cancelled)return;
+          cache[pid]=rows||[];
+          // 자식 중 반제품/제품이 있으면 재귀
+          for(const r of (rows||[])){
+            if(r.child_type==="semi"||r.child_type==="product"){
+              await walk(r.child_id);
+              if(cancelled)return;
+            }
+          }
+        };
+        await walk(Number(itemId));
+        if(!cancelled)setBomByParent(cache);
+      }catch(e){console.error("[PlanForm] BOM load:",e)}
+      if(!cancelled)setBomLoading(false);
+    })();
+    return()=>{cancelled=true};
+  },[itemId,adminHash]);
+  // 원자재 필요량 + 재고 매칭 계산
+  const materialReport=useMemo(()=>{
+    const itemById={};for(const it of items){itemById[it.id]=it}
+    const need=(itemId&&Number(qty)>0)?calcMaterialRequirements(Number(itemId),Number(qty),bomByParent,itemById):{};
+    // 원자재 재고 매칭
+    const mats=items.filter(i=>i.type==="material");
+    const stockByMat=matchRawsToMaterials(invData?.raws||[],mats);
+    // 필요·재고를 원자재 기준으로 합쳐 리스트화
+    const rows=[];
+    for(const mid of Object.keys(need)){
+      const mat=need[mid].item;
+      const needKg=need[mid].kg;
+      const stock=stockByMat[mid];
+      rows.push({
+        id:mid,
+        name:mat.name,
+        code:mat.code,
+        keywords:parseMatchKeywords(mat.match_keywords),
+        needKg,
+        stockKg:stock?.totalKg||0,
+        matches:stock?.matches||[],
+        ok:(stock?.totalKg||0)>=needKg,
+        hasKeywords:parseMatchKeywords(mat.match_keywords).length>0
+      });
+    }
+    rows.sort((a,b)=>b.needKg-a.needKg);
+    return rows;
+  },[itemId,qty,bomByParent,items,invData]);
+
   const submit=async()=>{
     if(!itemId){setErr("품목을 선택하세요");return}
     const q=Number(qty);
@@ -1445,6 +1651,47 @@ function PlanForm({adminHash,items,lines,settings,initial,defaultDate,onSaved,on
           <div className="aps-form-label">메모</div>
           <textarea className="aps-input" value={memo} onChange={e=>setMemo(e.target.value)} maxLength={500} rows={2} style={{resize:"vertical"}}/>
         </div>
+        {itemId&&Number(qty)>0&&<div style={{gridColumn:"1 / -1",padding:"12px",background:"rgba(148,163,184,0.06)",border:"1px solid var(--border)",borderRadius:"8px"}}>
+          <div style={{fontWeight:700,fontSize:13,marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
+            <span>🥩 원자재 소요/재고</span>
+            {bomLoading&&<span style={{fontSize:11,color:"var(--muted)",fontWeight:400}}>계산 중...</span>}
+          </div>
+          {!bomLoading&&materialReport.length===0&&<div style={{fontSize:12,color:"var(--muted)"}}>
+            이 품목에 등록된 BOM에 원자재가 없습니다. 📦 품목/BOM 탭에서 원자재를 등록하고 이 제품의 BOM에 추가하세요.
+          </div>}
+          {!bomLoading&&materialReport.length>0&&<div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {materialReport.map(r=>{
+              const shortage=r.needKg-r.stockKg;
+              const bg=!r.hasKeywords?"rgba(148,163,184,0.10)":(r.ok?"rgba(34,197,94,0.08)":"rgba(239,68,68,0.08)");
+              const borderColor=!r.hasKeywords?"var(--border)":(r.ok?"rgba(34,197,94,0.35)":"rgba(239,68,68,0.35)");
+              return <div key={r.id} style={{padding:"8px 10px",background:bg,border:"1px solid "+borderColor,borderRadius:6,fontSize:12}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:4}}>
+                  <div style={{fontWeight:700,fontSize:13}}>{r.name}</div>
+                  <div style={{fontSize:11,color:"var(--muted)"}}>{r.code}</div>
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                  <div style={{display:"flex",gap:12,alignItems:"baseline"}}>
+                    <div><span style={{color:"var(--muted)"}}>필요</span> <b>{fmtKg(r.needKg)}</b></div>
+                    <div><span style={{color:"var(--muted)"}}>재고</span> <b style={{color:r.hasKeywords?(r.ok?"#22c55e":"#ef4444"):"var(--muted)"}}>{fmtKg(r.stockKg)}</b></div>
+                  </div>
+                  {!r.hasKeywords?<div style={{fontSize:11,color:"var(--muted)",fontStyle:"italic"}}>⚠ 매칭 키워드 미설정</div>
+                    :r.ok?<div style={{fontSize:11,color:"#22c55e",fontWeight:700}}>✓ 충분 (+{fmtKg(-shortage)} 여유)</div>
+                    :<div style={{fontSize:11,color:"#ef4444",fontWeight:700}}>⚠ 부족 ({fmtKg(shortage)})</div>}
+                </div>
+                {r.hasKeywords&&r.matches.length>0&&<details style={{marginTop:6}}>
+                  <summary style={{cursor:"pointer",fontSize:11,color:"var(--muted)"}}>매칭 원육 {r.matches.length}건</summary>
+                  <div style={{marginTop:4,paddingLeft:8,borderLeft:"2px solid var(--border)"}}>
+                    {r.matches.map((m,i)=><div key={i} style={{fontSize:11,color:"var(--muted)",padding:"2px 0"}}>
+                      · {m.rawName} <b style={{color:"var(--text)"}}>{fmtKg(m.kg)}</b>
+                    </div>)}
+                  </div>
+                </details>}
+                {r.hasKeywords&&r.matches.length===0&&<div style={{marginTop:4,fontSize:11,color:"var(--muted)",fontStyle:"italic"}}>재고시트에서 매칭되는 원육 없음 (키워드: {r.keywords.join(", ")})</div>}
+              </div>;
+            })}
+            {(!invData||!invData.raws||invData.raws.length===0)&&<div style={{fontSize:11,color:"var(--muted)",fontStyle:"italic",padding:"4px 2px"}}>재고시트에 원육 데이터가 없습니다. 📋 재고 시트 탭에서 업로드하세요.</div>}
+          </div>}
+        </div>}
       </div>
       {err&&<div className="aps-err">{err}</div>}
       <div style={{display:"flex",gap:"8px",justifyContent:"flex-end",marginTop:"14px"}}>

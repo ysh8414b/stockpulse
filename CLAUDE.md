@@ -897,6 +897,43 @@
 - **운영 순서**: (1) Supabase SQL Editor에서 `setup_aps_staff.sql` 실행 → (2) 👥 인원 탭 → 직원 마스터 모드 → 명단 등록 → (3) 일일 가용 모드에서 휴무자 체크박스 클릭 → (4) 📷 이미지 저장 → 사진 양식 PNG 다운로드
 - **한계**: 캘린더 월간 뷰는 미구현(`aps_get_attendance_range` RPC는 만들어 둠 — 향후 확장). 휴무 상태는 단일 'off'만 사용(연차/병가/출장 분리 미사용 — RPC는 지원)
 
+### APS v7 — 원자재 매칭 키워드 + 생산계획 필요 원육 실시간 표시 (2026-07-01)
+- 사용자 요청: "생산계획 잡을 때 그 제품에 필요한 원육이 얼마나 남았는지 뜨도록 + 재고시트 원육이랑 BOM 원자재 자동 연동"
+- 배경: 재고시트 원육 이름은 브랜드/공장코드 포함(예: `냉동우육 삼겹양지 SWIFT 3D`)이라 매번 바뀌지만, BOM에서는 일반 부위명(`삼겹양지`)만 쓰고 싶음. 원산지 구분도 필요(`삼겹양지(미국)` vs `삼겹양지(호주)`)
+- 해결: 원자재마다 **매칭 키워드 배열**을 등록 → 재고시트 원육 이름에 키워드가 포함되면 그 원자재의 재고로 자동 합산. 원산지는 원자재 이름에 명시하는 것으로 통일
+- **`setup_aps_v7.sql`** (신규, 1회 실행, v6까지 실행 전제):
+  - `aps_items.match_keywords JSONB NOT NULL DEFAULT '[]'::jsonb` 컬럼 추가 (IF NOT EXISTS)
+  - `aps_list_items` 응답에 `match_keywords` 필드 추가
+  - `aps_upsert_item` 시그니처 확장: 11번째 파라미터 `p_match_keywords JSONB DEFAULT '[]'::jsonb`. `p_type='material'`이 아니면 무시하고 `[]` 저장 (제품/반제품은 재고시트 매칭 불필요)
+  - 시그니처 변경이므로 `DROP FUNCTION IF EXISTS aps_upsert_item(10인자)` + 신규 11인자 정의 → 클라이언트는 항상 `p_match_keywords` 전송해야 함
+- **매칭 규칙**:
+  - 키워드 하나 = 공백 구분 여러 토큰의 AND 매칭. 예: `삼겹양지 SWIFT` → 원육 이름에 "삼겹양지" **와** "SWIFT" 둘 다 포함되어야 매칭
+  - 배열 여러 키워드는 OR: `["삼겹양지 SWIFT", "삼겹양지 CARGILL"]` → 둘 중 하나라도 매칭되면 그 원자재 재고로 합산
+  - 대소문자 무관 (프론트에서 `toLowerCase()` 후 비교)
+  - 한 원육은 하나의 원자재에만 귀속(중복 계산 방지). 원자재 등록 순서상 앞선 것이 우선(만약 우선순위가 문제되면 후속 단계에서 명시적 priority 필드 추가 가능)
+- **`aps.html` 신규 헬퍼**:
+  - `parseMatchKeywords(raw)`: JSONB(문자열/배열) → 트림된 문자열 배열
+  - `nameMatchesKeyword(rawNameLower, keyword)`: 공백-AND 매칭 판정
+  - `matchRawsToMaterials(raws, materialItems)`: 재고시트 raws + 원자재 목록 → `{materialId:{item,totalKg,matches:[{rawName,kg,keyword}]}}`
+  - `calcMaterialRequirements(itemId, plannedQty, bomByParent, itemById)`: BOM 재귀 조회 → 원자재별 필요 kg. 반제품이 자식이면 그 반제품의 BOM도 재귀. loss_rate 자동 반영 (`qty × (1 + loss_rate/100) × plannedQty`)
+- **`ItemForm` 변경**: `type==="material"`일 때만 매칭 키워드 UI 노출
+  - 태그 스타일 입력: 텍스트 입력 후 Enter/콤마/`+ 추가` 버튼 → 태그 추가. 태그 X 버튼으로 삭제. 중복 키워드 자동 제거(대소문자 무관)
+  - 안내 텍스트에 AND/OR/대소문자 규칙 명시. 시안색 강조 박스로 원자재 전용임을 시각적으로 구분
+  - 저장 시 `type!=="material"`이면 `p_match_keywords: []` 강제 (서버에서도 재검증)
+- **`PlanForm` 변경**: 품목 + 수량이 입력되면 하단에 원자재 소요/재고 카드 자동 표시
+  - 재고시트 데이터 로드: 마운트 시 `loadStoredInventory()` + `loadRemoteInventory(adminHash)` 병행 (PC/모바일 동기화). `aps-inv-data-change` + `storage` 이벤트 구독으로 실시간 갱신
+  - BOM 로드: `itemId` 변경 시 `aps_list_bom` 재귀 호출(반제품 자식이 있으면 그 반제품 BOM까지) → `bomByParent` 캐시
+  - `materialReport` useMemo: `calcMaterialRequirements` + `matchRawsToMaterials` 조합 → 원자재별 `{needKg, stockKg, matches, ok, hasKeywords}` 리스트 계산
+  - 카드 UI: 원자재마다 별도 박스 (배경/테두리 색으로 상태 표시 — 초록:충분 / 빨강:부족 / 회색:키워드 미설정) + 필요 kg / 재고 kg 병기 + ✓ 충분 (+여유 kg) 또는 ⚠ 부족 (-shortage kg) 뱃지 + 매칭 원육 상세는 `<details>`로 접기 (원육명 × N건 + 각 kg)
+  - 재고시트 비어있으면 안내 문구, BOM 원자재 없으면 안내 문구 (graceful degradation)
+- **동작 예시**:
+  - 원자재 등록: `삼겹양지(미국)` + 키워드 `["삼겹양지 SWIFT", "삼겹양지 CARGILL"]`
+  - `돌돌우삼겹` 제품 BOM에 `삼겹양지(미국)` 자식 등록 (qty=0.5kg/박스, loss_rate=2%)
+  - 생산계획 추가 시 `돌돌우삼겹` 선택 + 수량 100 입력 → 카드에 "삼겹양지(미국) 필요 51kg / 재고 200kg ✓ 충분 (+149kg 여유)" 표시
+  - 매칭 원육 상세: `냉동우육 삼겹양지 SWIFT 3D 100kg`, `냉동우육 삼겹양지 SWIFT 969 100kg`
+- **운영 순서**: (1) Supabase에서 `setup_aps_v7.sql` 실행 → (2) 📦 품목/BOM 탭에서 원자재 편집 → 매칭 키워드 등록 → (3) 제품 BOM에 원자재 연결 → (4) 📅 생산계획 추가 시 자동 표시
+- **한계**: 원자재끼리 키워드가 겹치면 원자재 등록 순서(id 오름차순)로 우선. 원산지가 다른 원자재는 이름 + 키워드로 명확히 분리하도록 유도(예: SWIFT는 미국, TEYS는 호주 등 브랜드 코드가 원산지 판별의 핵심)
+
 ### APS — 통계 탭 인라인 수정 (실제 시각 + 실제 수량) (2026-06-30)
 - 사용자 요청: "통계탭은 시간하고 중량을 수정할수있도록 가능할까?" — 잘못 기록된 실제 시작/종료 시각을 통계 탭에서 바로 고치고, "40박스 계획 → 실제 35박스 생산" 같은 케이스를 위해 실제 생산 수량을 따로 입력
 - 기존 한계: 통계 탭은 `aps_get_item_stats` 집계만 읽는 read-only 뷰. 실제 시각 보정은 ▶/✓ 버튼 재클릭으로만 가능했고, 실제 수량 개념 자체가 없었음(계획 qty만)
