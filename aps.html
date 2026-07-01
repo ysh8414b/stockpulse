@@ -159,6 +159,24 @@
     .inv-row-g td{background:#d8e4bc !important}
     .inv-row-p td{background:#f2dcdb !important}
     .inv-row-w td{background:#ffffff !important}
+    /* 원육 행 — BOM 기준 원자재 부족 강조 */
+    .inv-tbl .raw-crit td{background:#ffe5e5 !important;color:#b91c1c;font-weight:700}
+    .inv-tbl .raw-empty td{background:#ffcccc !important;color:#7f1d1d;font-weight:700}
+    /* 원자재 재고 현황 섹션 (재고시트 body 아래) */
+    .inv-mat-section{margin-top:16px;padding-top:14px;border-top:2px dashed #cfd8dc}
+    .inv-mat-title{font-size:14px;font-weight:700;color:#111;margin-bottom:10px;text-align:center}
+    .inv-mat-alerts{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+    .inv-mat-alert{padding:8px 12px;border-radius:6px;font-size:13px;color:#111;display:flex;align-items:center;flex-wrap:wrap;gap:8px;line-height:1.4}
+    .inv-mat-alert.empty{background:#ffcccc;border-left:4px solid #dc2626}
+    .inv-mat-alert.critical{background:#ffe5e5;border-left:4px solid #f59e0b}
+    .inv-mat-alert b{color:#b91c1c;font-size:14px}
+    .inv-mat-alert-detail{color:#555;font-size:11.5px;font-weight:500}
+    .inv-mat-tbl{margin:0 auto;max-width:520px}
+    .inv-mat-tbl .inv-mat-row-empty td{background:#ffd6d6 !important;color:#7f1d1d;font-weight:700}
+    .inv-mat-tbl .inv-mat-row-critical td{background:#ffe5e5 !important;color:#b91c1c;font-weight:700}
+    .inv-mat-tbl .inv-mat-row-low td{background:#fff4e5 !important;color:#b45309}
+    .inv-mat-tbl .inv-mat-row-ok td{background:#e8f7e8 !important;color:#166534}
+    .inv-mat-nokw{font-size:10px;color:#b91c1c;margin-left:6px;font-weight:600}
     /* 편집 모달 */
     .inv-edit-textarea{width:100%;min-height:420px;padding:10px;border:1px solid var(--inp-bd);border-radius:7px;background:var(--inp-bg);color:var(--text);font-family:"Consolas","Menlo","Courier New",monospace;font-size:12px;line-height:1.5;resize:vertical;box-sizing:border-box}
     .inv-edit-legend{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 10px}
@@ -3500,6 +3518,27 @@ function InventorySheetTab({adminHash}){
   const[busy,setBusy]=useState(false);
   const[err,setErr]=useState("");
   const[syncStatus,setSyncStatus]=useState(""); // "syncing" | "synced" | "error" | ""
+  // 원자재 BOM 기반 필요 안전재고 (aps_get_material_requirements)
+  const[items,setItems]=useState([]);
+  const[matReqs,setMatReqs]=useState({}); // {material_id: {code,name,required_kg,source_count,sources}}
+  useEffect(()=>{
+    if(!adminHash)return;
+    let cancelled=false;
+    (async()=>{
+      try{
+        const[itemsRes,reqsRes]=await Promise.all([
+          rpc("aps_list_items",{p_admin_hash:adminHash}),
+          rpc("aps_get_material_requirements",{p_admin_hash:adminHash}).catch(_=>[])
+        ]);
+        if(cancelled)return;
+        setItems(itemsRes||[]);
+        const map={};
+        for(const r of (reqsRes||[]))map[r.material_id]=r;
+        setMatReqs(map);
+      }catch(e){console.error("[inv-sheet] items/reqs load:",e)}
+    })();
+    return()=>{cancelled=true};
+  },[adminHash]);
 
   // 마운트 시 원격에서 최신 재고 시트 fetch → 로컬보다 새로우면 교체
   useEffect(()=>{
@@ -3650,6 +3689,38 @@ function InventorySheetTab({adminHash}){
   const totalRawBox=raws.reduce((s,r)=>s+(r.box||0),0);
   const totalRawKg=raws.reduce((s,r)=>s+(r.kg||0),0);
 
+  // 원자재 재고 현황: BOM 필요치 vs 재고시트 매칭 kg
+  // status: empty(재고 0), critical(<50%), low(<100%), ok(>=100%)
+  const materialStatus=useMemo(()=>{
+    const mats=items.filter(i=>i.type==="material");
+    if(!mats.length)return[];
+    const stockByMat=matchRawsToMaterials(raws,mats);
+    const list=[];
+    for(const m of mats){
+      const req=matReqs[m.id];
+      const requiredKg=Number(req?.required_kg)||0;
+      if(requiredKg<=0)continue; // BOM에 부모 없는 원자재는 제외
+      const stock=stockByMat[m.id];
+      const stockKg=Number(stock?.totalKg)||0;
+      const ratio=requiredKg>0?stockKg/requiredKg:1;
+      let status="ok";
+      if(stockKg<=0)status="empty";
+      else if(ratio<0.5)status="critical";
+      else if(ratio<1.0)status="low";
+      list.push({
+        id:m.id,code:m.code,name:m.name,
+        requiredKg,stockKg,ratio,status,
+        matches:stock?.matches||[],
+        hasKeywords:parseMatchKeywords(m.match_keywords).length>0,
+        sources:req?.sources||[]
+      });
+    }
+    list.sort((a,b)=>a.ratio-b.ratio); // 부족한 순
+    return list;
+  },[items,matReqs,raws]);
+  const shortageList=materialStatus.filter(m=>m.status==="empty"||m.status==="critical");
+  const hasMatStatus=materialStatus.length>0;
+
   return <div>
     <div className="inv-upload-grid">
       <label className={"inv-upload-card"+(products.length?" has":"")} style={{cursor:"pointer",display:"block"}}>
@@ -3754,9 +3825,18 @@ function InventorySheetTab({adminHash}){
                 const visible=raws.filter(r=>Math.abs(r.kg)>=0.05);
                 if(raws.length===0)return <tr><td colSpan="4" style={{textAlign:"center",color:"#999",padding:"18px 8px"}}>원육 파일을 업로드하세요</td></tr>;
                 if(visible.length===0)return <tr><td colSpan="4" style={{textAlign:"center",color:"#999",padding:"18px 8px"}}>표시할 원육이 없습니다 (전부 0kg)</td></tr>;
+                // 원육 이름 → 매칭 원자재 상태 (raw name lower로 매칭)
+                const rawStatus={};
+                for(const s of materialStatus){
+                  for(const match of s.matches){
+                    rawStatus[String(match.rawName||"").toLowerCase()]=s.status;
+                  }
+                }
                 return visible.map(r=>{
                   const box=Math.round(r.box);
-                  return <tr key={r.code}>
+                  const st=rawStatus[String(r.name||"").toLowerCase()];
+                  const cls=st==="empty"?" raw-empty":st==="critical"?" raw-crit":"";
+                  return <tr key={r.code} className={cls.trim()||undefined}>
                     <td className="name" title={r.name}>{r.name}</td>
                     <td className="name" title={r.origin}>{r.origin}</td>
                     <td className="right qty">{r.kg.toFixed(1)}</td>
@@ -3768,6 +3848,48 @@ function InventorySheetTab({adminHash}){
           </table>
         </div>
       </div>
+      {hasMatStatus&&<div className="inv-mat-section">
+        <div className="inv-mat-title">🥩 BOM 기준 원자재 재고 현황</div>
+        {shortageList.length>0&&<div className="inv-mat-alerts">
+          {shortageList.map(m=>{
+            const shortage=m.requiredKg-m.stockKg;
+            const label=m.status==="empty"?"재고 없음":"재고 부족";
+            return <div key={m.id} className={"inv-mat-alert "+(m.status==="empty"?"empty":"critical")}>
+              <b>{m.name}</b>
+              <span>{label}</span>
+              <span className="inv-mat-alert-detail">
+                필요 {fmtKg(m.requiredKg)} / 재고 {fmtKg(m.stockKg)} (부족 {fmtKg(shortage)})
+                {!m.hasKeywords&&<span className="inv-mat-nokw">매칭 키워드 미설정</span>}
+              </span>
+            </div>;
+          })}
+        </div>}
+        <table className="inv-tbl stripe inv-mat-tbl">
+          <colgroup>
+            <col/>
+            <col style={{width:"90px"}}/>
+            <col style={{width:"90px"}}/>
+            <col style={{width:"66px"}}/>
+          </colgroup>
+          <thead><tr>
+            <th>원자재</th>
+            <th className="right">필요<br/><span style={{fontSize:9,fontWeight:500,color:"#666"}}>(BOM)</span></th>
+            <th className="right">재고<br/><span style={{fontSize:9,fontWeight:500,color:"#666"}}>(시트)</span></th>
+            <th className="right">비율</th>
+          </tr></thead>
+          <tbody>
+            {materialStatus.map(m=><tr key={m.id} className={"inv-mat-row-"+m.status}>
+              <td className="name" title={m.name}>
+                {m.name}
+                {!m.hasKeywords&&<span className="inv-mat-nokw">키워드 미설정</span>}
+              </td>
+              <td className="right qty">{fmtKg(m.requiredKg)}</td>
+              <td className="right qty">{fmtKg(m.stockKg)}</td>
+              <td className="right qty">{Math.round(m.ratio*100)}%</td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>}
     </div>}
 
     {editing&&<div className="aps-modal-bg" onClick={()=>setEditing(false)}>

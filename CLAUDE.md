@@ -956,6 +956,32 @@
 - **동작 예시**: `(마벨리에)돌돌차돌 1kg*4` 10박스 계획 → PNG 품목명 아래에 `🥩 차돌박이(미국) — 냉동우육 차돌백이 EXCEL 86E 190g · 냉동우육 차돌백이 EXCEL 86M 179.95kg` 표시 (재고 충분 시 부족 라벨 없음)
 - **한계**: 오프스크린 렌더 시점에 BOM RPC를 계획 수만큼 fetch → 계획 20~50건 규모에서는 즉시 완료. 100건 이상이면 저장 버튼 클릭 후 2~3초 지연 가능. 매칭 원육이 매우 많으면 (5건+) 한 줄이 길어져 자동 wrap
 
+### APS v8 — 원자재 안전재고 BOM 자동 계산 + 재고시트 표시 (2026-07-02)
+- 사용자 요청: "원육(원자재) 안전재고는 BOM설정되면 그 연동된 제품들의 안전재고 × 규격 합산 해주면 될것같아. 삼겹양지(미국)을 슬라이스(안전재고 24)/돌돌우삼겹(안전재고 32)이 쓴다면 계산 자동화. 재고시트 이미지에 뜨게하고 안전재고보다 50% 밑이면 빨강, 매칭 원육이 재고시트에 없으면 '차돌박이(미국) 재고부족' 안내"
+- 확정 계산법: `원자재 필요 안전재고 = Σ(직접 부모의 safety_stock × BOM.qty × (1 + loss_rate/100))` — 사용자 명확화 답변으로 "BOM에 등록된 원자재 소요량 사용" + "직접 연결된 부모만 (1단계, 반제품 재귀 X)"
+- **`setup_aps_v8.sql`** (신규, 1회 실행, v7까지 실행 전제):
+  - **`aps_get_material_requirements(p_admin_hash)` RPC 신규**: 원자재별 필요 kg 서버측 SQL 집계 — `aps_items c LEFT JOIN aps_bom b ON b.child_id=c.id LEFT JOIN aps_items p ON p.id=b.parent_id AND p.type IN ('product','semi') WHERE c.type='material' GROUP BY c.id`
+  - 응답 필드: `material_id, code, name, required_kg, source_count, sources[{parent_id, parent_code, parent_name, parent_type, parent_safety_stock, qty, loss_rate, contrib_kg}]`
+  - 부모가 원자재(material)인 경우 무시 (재귀 없음). required_kg=0인 원자재도 리스트에 포함(부모 없어서) — 클라이언트에서 필터
+- **`aps.html` `InventorySheetTab` 변경**:
+  - state 추가: `items`, `matReqs({material_id:{code,name,required_kg,...}})`
+  - 마운트 시 `aps_list_items` + `aps_get_material_requirements` 병행 fetch → `matReqs` 맵 구성. RPC 실패 시 빈 배열 fallback (구버전 SQL 서버 호환)
+  - `materialStatus` useMemo: 원자재 × 재고시트 매칭 결과와 필요치 결합 → `{id, code, name, requiredKg, stockKg, ratio, status, matches, hasKeywords, sources}` 리스트. `stockKg<=0=empty`, `ratio<0.5=critical`, `<1.0=low`, `>=1.0=ok`. required_kg=0인 원자재 제외
+  - `shortageList = materialStatus.filter(status in ['empty','critical'])` — 하단 알림 배너 노출
+  - **원육 테이블 행 강조**: `rawStatus{name.toLowerCase():status}` 역매핑 → 각 원육 행에 매칭 원자재의 status가 critical이면 `raw-crit`(옅은 빨강 배경), empty면 `raw-empty`(진한 빨강)
+  - **재고시트 body 아래 신규 섹션 "🥩 BOM 기준 원자재 재고 현황"**:
+    - 부족 알림 배너 (shortageList 존재 시): "**{원자재명}** 재고 없음/재고 부족 · 필요 XXkg / 재고 YYkg (부족 ZZkg) · 매칭 키워드 미설정" — 예: `차돌박이(미국) 재고 없음`
+    - 전체 표: 원자재 | 필요 (BOM) | 재고 (시트) | 비율 (%) — 상태별 배경색 4단(empty 진한 빨강, critical 빨강, low 주황, ok 초록)
+    - 매칭 키워드 없는 원자재는 "키워드 미설정" 인라인 뱃지 (빨강)
+  - **PNG 저장 시 자동 포함**: `sheetRef` 안에 렌더링되므로 📷 이미지 다운로드 결과 이미지 하단에 함께 저장됨. 라이트 톤(#111 텍스트, 흰/파스텔 배경)으로 사진 형식 스타일과 일관
+- **CSS 추가** ([aps.html:160](aps.html:160)):
+  - `.inv-tbl .raw-crit td`(옅은 빨강 배경 + 진한 빨강 텍스트), `.raw-empty td`(진한 빨강 배경)
+  - `.inv-mat-section`(상단 dashed 구분선), `.inv-mat-title`(가운데 정렬 14px 700), `.inv-mat-alerts`(세로 배열), `.inv-mat-alert.empty/critical`(좌측 컬러 border-left 4px)
+  - `.inv-mat-tbl`(max-width 520px 중앙 정렬), row status별 배경색 4단(empty/critical/low/ok)
+  - `.inv-mat-nokw`(빨강 10px "키워드 미설정" 뱃지)
+- **운영 순서**: (1) Supabase에서 `setup_aps_v8.sql` 실행 → (2) 📦 품목/BOM 탭에서 제품 안전재고 + 원자재 BOM 등록 + 원자재 매칭 키워드 등록 → (3) 📋 재고 시트 탭에서 원육 엑셀 업로드 → (4) 자동으로 재고시트 하단에 원자재 재고 현황 표시, 부족 시 빨강 강조, 📷 이미지 다운로드 시 함께 저장됨
+- **한계**: (1) 반제품이 원자재를 쓰는 경우 반제품 자체의 안전재고만 사용 (완제품 재귀 X — 사용자가 명시적으로 1단계 선택). (2) 원자재에 매칭 키워드 미설정이면 재고시트 원육이 있어도 재고 0으로 계산 → "키워드 미설정" 뱃지로 원인 표시. (3) 원육 하나가 여러 원자재에 매칭 가능한 경우 첫 매칭 원자재에만 귀속(기존 `matchRawsToMaterials` 규칙)
+
 ### APS — 통계 탭 인라인 수정 (실제 시각 + 실제 수량) (2026-06-30)
 - 사용자 요청: "통계탭은 시간하고 중량을 수정할수있도록 가능할까?" — 잘못 기록된 실제 시작/종료 시각을 통계 탭에서 바로 고치고, "40박스 계획 → 실제 35박스 생산" 같은 케이스를 위해 실제 생산 수량을 따로 입력
 - 기존 한계: 통계 탭은 `aps_get_item_stats` 집계만 읽는 read-only 뷰. 실제 시각 보정은 ▶/✓ 버튼 재클릭으로만 가능했고, 실제 수량 개념 자체가 없었음(계획 qty만)
