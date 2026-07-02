@@ -2630,6 +2630,8 @@ function PlansTab({adminHash}){
   },[adminHash]);
   // PNG export 직전에 계산되는 원자재 요약 (planId → [{name, needKg, matches:[{rawName,kg}]}])
   const[exportMats,setExportMats]=useState({});
+  // 리스트 뷰용 BOM 캐시 (items 로드 시 1회 미리 fetch, 이후 useMemo로 원자재 소요/재고 계산)
+  const[bomByParent,setBomByParent]=useState({});
   const[viewMode,setViewMode]=useState(()=>{
     try{const v=localStorage.getItem("aps-plan-view-mode");return (v==="list"||v==="gantt"||v==="timetable")?v:"gantt"}catch(e){return "gantt"}
   });
@@ -2681,6 +2683,58 @@ function PlansTab({adminHash}){
   // 간트: 상태만 — 자체적으로 dayStr 기준 윈도우 적용
   const statusFiltered=useMemo(()=>filter==="all"?plans:plans.filter(p=>p.status===filter),[plans,filter]);
   const listFiltered=useMemo(()=>allDates?statusFiltered:statusFiltered.filter(overlapsDay),[statusFiltered,allDates,overlapsDay]);
+
+  // items 변경 시 제품/반제품의 BOM을 미리 fetch (재귀) → bomByParent 캐시
+  useEffect(()=>{
+    let cancelled=false;
+    (async()=>{
+      const parents=items.filter(i=>i.type==="product"||i.type==="semi").map(i=>i.id);
+      if(parents.length===0){if(!cancelled)setBomByParent({});return;}
+      const cache={};
+      const walk=async(pid)=>{
+        if(cache[pid]!=null)return;
+        try{
+          const rows=await rpc("aps_list_bom",{p_admin_hash:adminHash,p_parent_id:pid});
+          cache[pid]=rows||[];
+          for(const r of rows||[]){
+            if(r.child_type==="semi"||r.child_type==="product")await walk(r.child_id);
+          }
+        }catch(e){cache[pid]=[];}
+      };
+      for(const pid of parents){if(cancelled)return;await walk(pid);}
+      if(!cancelled)setBomByParent(cache);
+    })();
+    return()=>{cancelled=true;};
+  },[items,adminHash]);
+
+  // 리스트 뷰용 원자재 소요/재고 (listFiltered + bomByParent + invData 기반, RPC 없음)
+  const listMats=useMemo(()=>{
+    if(!listFiltered||listFiltered.length===0)return{};
+    const itemById={};for(const it of items)itemById[it.id]=it;
+    const mats=items.filter(i=>i.type==="material");
+    const stockByMat=matchRawsToMaterials(invData?.raws||[],mats);
+    const out={};
+    for(const p of listFiltered){
+      const need=calcMaterialRequirements(p.item_id,Number(p.qty)||0,bomByParent,itemById);
+      const rows=[];
+      for(const mid of Object.keys(need)){
+        const mat=need[mid].item;
+        const kws=parseMatchKeywords(mat.match_keywords);
+        const stock=stockByMat[mid];
+        rows.push({
+          id:mid,
+          name:mat.name,
+          needKg:need[mid].kg,
+          stockKg:stock?.totalKg||0,
+          hasKeywords:kws.length>0,
+          ok:(stock?.totalKg||0)>=need[mid].kg
+        });
+      }
+      rows.sort((a,b)=>b.needKg-a.needKg);
+      if(rows.length>0)out[p.id]=rows;
+    }
+    return out;
+  },[listFiltered,items,invData,bomByParent]);
 
   const counts=useMemo(()=>{
     const base=allDates?plans:plans.filter(overlapsDay);
@@ -3046,6 +3100,16 @@ function PlansTab({adminHash}){
                     <td>
                       <div style={{fontWeight:600}}>{p.item_name}</div>
                       <div style={{fontSize:"11px",color:"var(--muted)"}}>{p.item_code}</div>
+                      {(listMats[p.id]||[]).length>0&&<div style={{marginTop:3,fontSize:"11px",lineHeight:1.45}}>
+                        {(listMats[p.id]||[]).map((m,mi)=>{
+                          const shortage=m.needKg-m.stockKg;
+                          return <div key={mi} style={{color:"#c2410c"}}>
+                            <span style={{fontWeight:700}}>🥩 {m.name}</span>
+                            <span> - <b>{fmtKg(m.needKg)}</b></span>
+                            {m.hasKeywords&&!m.ok&&<span style={{color:"#ef4444",fontWeight:700,marginLeft:4}}>⚠ 부족 ({fmtKg(shortage)})</span>}
+                          </div>;
+                        })}
+                      </div>}
                       {p.memo&&<div style={{fontSize:"11px",color:"var(--dimmer)",marginTop:2}}>{p.memo}</div>}
                     </td>
                     <td className="right" style={{fontWeight:600}}>
