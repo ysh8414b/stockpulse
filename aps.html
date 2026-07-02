@@ -3901,6 +3901,51 @@ function InventorySheetTab({adminHash}){
             </tr>)}
           </tbody>
         </table>
+        {/* 🔍 매칭 진단 패널 (문제 해결용) */}
+        {(()=>{
+          const mats=items.filter(i=>i.type==="material");
+          if(!mats.length||!raws.length)return null;
+          const usedRawKey=new Set(); // 첫 매칭 원자재 우선 규칙 재현
+          const perMat=mats.map(m=>{
+            const kws=parseMatchKeywords(m.match_keywords);
+            const hits=[];
+            for(const r of raws){
+              const nm=String(r?.name||"").trim();
+              if(!nm)continue;
+              const kg=Number(r?.kg)||0;
+              if(kg<=0)continue;
+              if(usedRawKey.has(nm))continue;
+              const lower=normForMatch(nm);
+              let hitKw=null;
+              for(const kw of kws){if(nameMatchesKeyword(lower,kw)){hitKw=kw;break}}
+              if(hitKw){hits.push({name:nm,kw:hitKw,kg});usedRawKey.add(nm)}
+            }
+            return{m,kws,hits};
+          });
+          const unmatchedRaws=raws.filter(r=>{
+            const nm=String(r?.name||"").trim();
+            const kg=Number(r?.kg)||0;
+            return nm&&kg>0&&!usedRawKey.has(nm);
+          });
+          return <details style={{marginTop:16,fontSize:11.5,background:"#fff",border:"1px solid #ddd",borderRadius:4,padding:"8px 12px"}}>
+            <summary style={{cursor:"pointer",fontWeight:700,color:"#374151",fontSize:12}}>🔍 매칭 진단 보기 (원자재별 등록 키워드 + 매칭된 원육)</summary>
+            <div style={{marginTop:10,color:"#111",lineHeight:1.6}}>
+              <div style={{marginBottom:12,padding:"6px 10px",background:"#f3f4f6",borderRadius:3,color:"#374151"}}>
+                💡 <b>첫 매칭 원자재 우선 규칙</b>: 원육 하나는 위에서부터 검사해서 처음 매칭된 원자재에만 귀속됨. 원자재 A의 광범위한 키워드(예: "삼겹")가 원자재 B의 원육(예: "삼겹양지 SWIFT")을 흡수해가는 경우가 흔한 원인.
+              </div>
+              {perMat.map(({m,kws,hits})=><div key={m.id} style={{marginBottom:10,paddingBottom:8,borderBottom:"1px dashed #e5e7eb"}}>
+                <div><b style={{color:"#111"}}>{m.name}</b> <span style={{color:"#6b7280"}}>(id={m.id})</span></div>
+                <div style={{color:"#4b5563"}}>키워드: {kws.length?kws.map((k,i)=><code key={i} style={{background:"#eef2ff",padding:"1px 5px",borderRadius:3,marginRight:4,fontSize:11}}>{k}</code>):<span style={{color:"#dc2626"}}>없음 (원자재 편집에서 등록 필요)</span>}</div>
+                <div style={{color:"#4b5563",marginTop:3}}>매칭된 원육: <b>{hits.length}개</b> {hits.length>0&&"("+hits.reduce((s,h)=>s+h.kg,0).toFixed(1)+"kg)"}</div>
+                {hits.map((h,i)=><div key={i} style={{marginLeft:12,color:"#065f46",fontSize:11}}>· {h.name} <span style={{color:"#6b7280"}}>({h.kg}kg, kw="{h.kw}")</span></div>)}
+              </div>)}
+              {unmatchedRaws.length>0&&<div style={{marginTop:12,padding:"8px 10px",background:"#fef3c7",borderRadius:3}}>
+                <div style={{fontWeight:700,color:"#92400e",marginBottom:6}}>⚠ 어느 원자재에도 매칭되지 않은 원육 ({unmatchedRaws.length}개)</div>
+                {unmatchedRaws.map((r,i)=><div key={i} style={{marginLeft:8,color:"#78350f",fontSize:11}}>· {r.name} ({r.kg}kg)</div>)}
+              </div>}
+            </div>
+          </details>;
+        })()}
       </div>}
     </div>}
 
