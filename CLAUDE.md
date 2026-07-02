@@ -1003,6 +1003,25 @@
 - **운영 순서**: Supabase에서 `setup_aps_v6.sql` 실행 1회 → 📈 통계 탭에서 품목 행 클릭 → 펼친 plan 목록에서 ✏ 수정 → 저장 시 통계 즉시 갱신
 - **한계**: 진행중(`in_progress`) plan은 수정 불가 (▶/✓ 버튼 흐름으로만 처리, RPC가 `only_done_editable` 거부). 일괄 편집·취소된 plan 복구 미지원
 
+### APS — 생산계획 라인별 색상 (2026-07-03)
+- 사용자 요청: "생산계획 라인별로 색상을 다르게 할수있을까"
+- 기존: 간트/시간표 막대는 status(planned/in_progress/done/canceled) 색상, 리스트 라인 그룹 헤더는 고정 시안색 → 라인이 여러 개일 때 라인별 구분이 시각적으로 안 됨
+- 변경: 라인별 12색 팔레트 도입, 라인 code 오름차순 인덱스 기반 deterministic 배정 → 4개 뷰(간트·시간표·리스트·PNG) 모두 동일 색상 적용
+- **`LINE_PALETTE`** ([aps.html:563](aps.html:563)): 12색(blue/emerald/amber/violet/pink/cyan/orange/lime/rose/indigo/teal/fuchsia) × 5필드(`base`, `bg`(alpha), `bgLight`, `fgLight`, `bdLight`) — 다크 모드용 rgba + 라이트 모드(PNG export)용 파스텔·진한색 페어
+- **`LINE_UNASSIGNED`**: 라인 미지정용 slate 뉴트럴
+- **`lineColorFor(lineId, lines)`**: `lines`를 `code` 오름차순 정렬한 뒤 index mod 12 → 팔레트 매핑. 라인 삭제·추가 시 다른 라인 색상도 변할 수 있으나(정렬 인덱스 기반) code가 유지되면 순서 안정. lineId 없으면 UNASSIGNED
+- **간트 뷰**:
+  - 좌측 라인 라벨 컬럼에 6px 두께 좌측 컬러 보더
+  - 막대 배경/테두리/텍스트 색상 → 라인 색상 (기존 status 색상 대체)
+  - status는 opacity로 표현: canceled 0.45 + line-through, done 0.72 + ✓ 아이콘, in_progress 1.0 + ▶ 아이콘, planned 0.9 + dashed border
+- **시간표 뷰**:
+  - 헤더에 4px 컬러 상단 보더
+  - 셀 배경 라인 색상, anchor 셀은 2px 상단 solid, 연속 셀은 dashed. status opacity(canceled 0.45 / done 0.75) + canceled 셀 품목명 line-through
+  - 우측 status 라벨은 기존 STATUS_PILL 색상 유지 (라인 색상과 status 정보 병존)
+- **리스트 뷰**: 라인 그룹 헤더 배경/좌측 4px 보더/텍스트 색상 → 라인 색상. 각 행에도 좌측 4px 컬러 보더로 라인 소속 시각화
+- **PNG export (`ExportPlansView`)**: 그룹 카드 좌측 5px 보더 + 헤더 배경(bgLight)/헤더 텍스트(fgLight) → 라인 색상 라이트 톤 (인쇄 친화)
+- 색상 배정은 랜덤이 아닌 code 알파벳순 → 사용자가 같은 라인은 항상 같은 색으로 인식 가능 (단, 라인 code 추가/변경으로 정렬 위치가 바뀌면 색도 이동)
+
 ### APS — 회의록 탭 + PNG export (2026-07-02)
 - 사용자 요청: "회의록 탭 만들어서 관리하고싶은데 가능할까? 회의록을 깔끔하게 정리해서 이미지로 공유"
 - 확정 사양: 구조화(안건/결정사항/액션아이템 3섹션) + 참석자 자유텍스트 + 액션 체크박스(완료 표시)

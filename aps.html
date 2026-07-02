@@ -561,6 +561,33 @@ const STOCK_PILL={
   ok:{bg:"rgba(34,197,94,0.12)",fg:"#22c55e",label:"정상"}
 };
 
+// 라인별 12색 팔레트 (다크·라이트 모드 자동 대응)
+// 다크: bg(alpha)+base(border/text) / 라이트(PNG): bgLight+fgLight+bdLight
+const LINE_PALETTE=[
+  {base:"#3b82f6",bg:"rgba(59,130,246,0.18)", bgLight:"#dbeafe",fgLight:"#1d4ed8",bdLight:"#93c5fd"},
+  {base:"#10b981",bg:"rgba(16,185,129,0.18)", bgLight:"#d1fae5",fgLight:"#047857",bdLight:"#6ee7b7"},
+  {base:"#f59e0b",bg:"rgba(245,158,11,0.18)", bgLight:"#fef3c7",fgLight:"#b45309",bdLight:"#fcd34d"},
+  {base:"#8b5cf6",bg:"rgba(139,92,246,0.18)", bgLight:"#ede9fe",fgLight:"#6d28d9",bdLight:"#c4b5fd"},
+  {base:"#ec4899",bg:"rgba(236,72,153,0.18)", bgLight:"#fce7f3",fgLight:"#be185d",bdLight:"#f9a8d4"},
+  {base:"#06b6d4",bg:"rgba(6,182,212,0.18)",  bgLight:"#cffafe",fgLight:"#0e7490",bdLight:"#67e8f9"},
+  {base:"#f97316",bg:"rgba(249,115,22,0.18)", bgLight:"#ffedd5",fgLight:"#c2410c",bdLight:"#fdba74"},
+  {base:"#84cc16",bg:"rgba(132,204,22,0.18)", bgLight:"#ecfccb",fgLight:"#4d7c0f",bdLight:"#bef264"},
+  {base:"#f43f5e",bg:"rgba(244,63,94,0.18)",  bgLight:"#ffe4e6",fgLight:"#be123c",bdLight:"#fda4af"},
+  {base:"#6366f1",bg:"rgba(99,102,241,0.18)", bgLight:"#e0e7ff",fgLight:"#4338ca",bdLight:"#a5b4fc"},
+  {base:"#14b8a6",bg:"rgba(20,184,166,0.18)", bgLight:"#ccfbf1",fgLight:"#0f766e",bdLight:"#5eead4"},
+  {base:"#d946ef",bg:"rgba(217,70,239,0.18)", bgLight:"#fae8ff",fgLight:"#a21caf",bdLight:"#e879f9"}
+];
+const LINE_UNASSIGNED={base:"#94a3b8",bg:"rgba(148,163,184,0.18)",bgLight:"#f1f5f9",fgLight:"#475569",bdLight:"#cbd5e1"};
+
+// deterministic: 라인을 code 순으로 정렬한 인덱스 mod 팔레트 길이. lineId 없으면 UNASSIGNED
+function lineColorFor(lineId,lines){
+  if(!lineId)return LINE_UNASSIGNED;
+  const sorted=[...(lines||[])].sort((a,b)=>(a.code||"").localeCompare(b.code||""));
+  const idx=sorted.findIndex(l=>l.id===lineId);
+  if(idx<0)return LINE_UNASSIGNED;
+  return LINE_PALETTE[idx%LINE_PALETTE.length];
+}
+
 function Pill({map,k,label}){
   const m=map[k]||{bg:"var(--card-bg)",fg:"var(--muted)"};
   return <span className="aps-pill" style={{background:m.bg,color:m.fg}}>{label||m.label||k}</span>;
@@ -2013,7 +2040,8 @@ function GanttView({plans,lines,settings,dayStr,onPlanClick,onPlanTimeChange,onO
               const key=line.id===null?"null":line.id;
               const info=layoutByLine.get(key)||{laneCount:1,plans:[]};
               const rowH=rowHeightFor(info.laneCount);
-              return <div key={key} style={{height:rowH,padding:"8px 12px",borderBottom:"1px solid var(--div)",boxSizing:"border-box",overflow:"hidden",display:"flex",flexDirection:"column",justifyContent:"center"}}>
+              const lc=lineColorFor(line.id,lines);
+              return <div key={key} style={{height:rowH,padding:"8px 12px 8px 14px",borderBottom:"1px solid var(--div)",borderLeft:`6px solid ${lc.base}`,boxSizing:"border-box",overflow:"hidden",display:"flex",flexDirection:"column",justifyContent:"center"}}>
                 <div style={{fontWeight:600,fontSize:15,color:line.virtual?"var(--muted)":"var(--text)",lineHeight:1.3,wordBreak:"keep-all",overflowWrap:"break-word"}}>{line.name}</div>
                 <div style={{fontSize:12,color:"var(--muted)",marginTop:2,lineHeight:1.35,wordBreak:"keep-all",overflowWrap:"break-word"}}>{line.memo||line.code}{info.plans.length>0&&<span style={{marginLeft:6,color:"var(--dimmer)"}}>· {info.plans.length}건</span>}</div>
               </div>;
@@ -2063,8 +2091,10 @@ function GanttView({plans,lines,settings,dayStr,onPlanClick,onPlanTimeChange,onO
                 }}/>)}
                 {/* 막대 (레인별 스택) */}
                 {info.plans.map(lp=>{
-                  const sp=STATUS_PILL[lp.plan.status]||{};
-                  const isDraggable=lp.plan.status==="planned"||lp.plan.status==="in_progress";
+                  const lc=lineColorFor(lp.plan.line_id,lines);
+                  const st=lp.plan.status;
+                  const statusOpacity=st==="canceled"?0.45:st==="done"?0.72:st==="planned"?0.9:1;
+                  const isDraggable=st==="planned"||st==="in_progress";
                   const isDragging=drag?.planId===lp.plan.id;
 
                   // 드래그 중이면 effective 시간 재계산
@@ -2119,28 +2149,31 @@ function GanttView({plans,lines,settings,dayStr,onPlanClick,onPlanTimeChange,onO
                   };
 
                   return <div key={lp.plan.id} className="aps-gantt-bar" onMouseDown={onBarDown} onMouseMove={onBarHover}
-                    title={`${lp.plan.item_name} · ${STATUS_LABEL[lp.plan.status]} · ${fmtNum(lp.plan.qty)}${lp.plan.item_unit}\n${tipPlan}${tipActual}${tipHint}`}
+                    title={`${lp.plan.item_name} · ${STATUS_LABEL[st]} · ${fmtNum(lp.plan.qty)}${lp.plan.item_unit}\n${tipPlan}${tipActual}${tipHint}`}
                     style={{
                       position:"absolute",
                       left:effLeftHour*hourPx+2,
                       width:Math.max(effWidthHour*hourPx-4,12),
                       top:4+lp.lane*(laneH+GANTT_LANE_GAP),
                       height:laneH,
-                      background:sp.bg||"var(--card-bg)",
-                      border:`1px solid ${sp.fg||"var(--card-bd)"}`,
-                      borderLeftWidth:effLeftEdge?4:1,
-                      borderRightWidth:effRightEdge?4:1,
+                      background:lc.bg,
+                      border:`1px ${st==="planned"?"dashed":"solid"} ${lc.base}`,
+                      borderLeftWidth:effLeftEdge?4:(st==="planned"?1:1),
+                      borderRightWidth:effRightEdge?4:(st==="planned"?1:1),
                       padding:"0 8px",
                       fontSize:12,fontWeight:600,
-                      color:sp.fg||"var(--text)",
+                      color:lc.base,
+                      textDecoration:st==="canceled"?"line-through":"none",
                       whiteSpace:"nowrap",
                       display:"flex",alignItems:"center",
                       cursor:isDraggable?"move":"pointer",
                       userSelect:"none",
-                      opacity:isDragging?0.85:1,
+                      opacity:isDragging?0.85:statusOpacity,
                       boxShadow:isDragging?"0 4px 14px rgba(0,0,0,0.35)":undefined,
                       zIndex:isDragging?4:undefined
                     }}>
+                    {st==="done"&&<span style={{marginRight:4,fontWeight:800}}>✓</span>}
+                    {st==="in_progress"&&<span style={{marginRight:4,fontWeight:800}}>▶</span>}
                     {lp.plan.item_name} · {fmtNum(lp.plan.qty)}{lp.plan.item_unit}
                   </div>;
                 })}
@@ -2242,10 +2275,13 @@ function TimetableView({plans,lines,settings,dayStr,onPlanClick,onOpenSettings})
         <thead>
           <tr>
             <th style={{padding:"12px 8px",fontSize:13,fontWeight:600,color:"var(--muted)",borderBottom:"1px solid var(--div2)",textAlign:"center",background:"var(--card-bg)"}}>시간</th>
-            {displayLines.map((line,i)=><th key={i} style={{padding:"12px",fontSize:16,fontWeight:600,color:"var(--text)",borderBottom:"1px solid var(--div2)",borderLeft:"1px solid var(--div2)",textAlign:"left",background:"var(--card-bg)",wordBreak:"break-word"}}>
-              {line.name||line.code||"-"}
-              {(line.memo||(!line.virtual&&line.code))&&<div style={{fontSize:11,color:"var(--muted)",fontWeight:400,marginTop:2}}>{line.memo||line.code}</div>}
-            </th>)}
+            {displayLines.map((line,i)=>{
+              const lc=lineColorFor(line.id,lines);
+              return <th key={i} style={{padding:"12px",fontSize:16,fontWeight:600,color:"var(--text)",borderBottom:"1px solid var(--div2)",borderLeft:"1px solid var(--div2)",borderTop:`4px solid ${lc.base}`,textAlign:"left",background:"var(--card-bg)",wordBreak:"break-word"}}>
+                {line.name||line.code||"-"}
+                {(line.memo||(!line.virtual&&line.code))&&<div style={{fontSize:11,color:"var(--muted)",fontWeight:400,marginTop:2}}>{line.memo||line.code}</div>}
+              </th>;
+            })}
           </tr>
         </thead>
         <tbody>
@@ -2262,7 +2298,9 @@ function TimetableView({plans,lines,settings,dayStr,onPlanClick,onOpenSettings})
                   return <td key={li} style={{padding:0,borderTop:"1px solid var(--div2)",borderLeft:"1px solid var(--div2)",height:88}}></td>;
                 }
                 const p=cell.primary;
+                const lc=lineColorFor(p.line_id,lines);
                 const pill=STATUS_PILL[p.status]||{bg:"rgba(148,163,184,0.18)",fg:"#94a3b8"};
+                const cellOpacity=p.status==="canceled"?0.45:p.status==="done"?0.75:1;
                 const tipPlan=`계획: ${fmtKstDateTime(p.start_at)} ~ ${fmtKstDateTime(p.end_at)}`;
                 const tipActual=p.actual_start_at
                   ?`\n실제: ${fmtKstDateTime(p.actual_start_at)||"-"} ~ ${fmtKstDateTime(p.actual_end_at)||"진행중"}`
@@ -2271,15 +2309,16 @@ function TimetableView({plans,lines,settings,dayStr,onPlanClick,onOpenSettings})
                   title={`${p.item_name} · ${STATUS_LABEL[p.status]} · ${fmtNum(p.qty)}${p.item_unit||""}\n${tipPlan}${tipActual}`}
                   style={{
                     padding:0,
-                    borderTop:cell.isAnchor?"1px solid var(--div2)":`1px dashed ${pill.fg}`,
+                    borderTop:cell.isAnchor?`2px solid ${lc.base}`:`1px dashed ${lc.base}`,
                     borderLeft:"1px solid var(--div2)",
-                    background:pill.bg,
+                    background:lc.bg,
                     cursor:"pointer",
                     height:88,
-                    verticalAlign:"top"
+                    verticalAlign:"top",
+                    opacity:cellOpacity
                   }}>
                   {cell.isAnchor&&<div style={{padding:"10px 12px"}}>
-                    <div style={{fontSize:17,fontWeight:700,color:"var(--text)",lineHeight:1.3,wordBreak:"break-word"}}>{p.item_name}</div>
+                    <div style={{fontSize:17,fontWeight:700,color:"var(--text)",lineHeight:1.3,wordBreak:"break-word",textDecoration:p.status==="canceled"?"line-through":"none"}}>{p.item_name}</div>
                     <div style={{fontSize:15,color:"var(--text)",marginTop:4,fontVariantNumeric:"tabular-nums"}}>
                       {fmtNum(p.qty)}{p.item_unit||""} · {fmtKstTime(p.start_at)}~{fmtKstTime(p.end_at)}
                     </div>
@@ -2441,10 +2480,12 @@ function ExportPlansView({plans,lines,dayStr,allDates,matsByPlan}){
     {groups.length===0?
       <div style={{padding:"60px 20px",textAlign:"center",color:C.muted,fontSize:14,border:`1px dashed ${C.border}`,borderRadius:8}}>표시할 생산계획이 없습니다</div>:
       <div style={{display:"flex",flexDirection:"column",gap:12}}>
-        {groups.map(g=>(
-          <div key={g.line_id||"none"} style={{border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
-            <div style={{background:C.lineHdr,borderBottom:`1px solid ${C.lineHdrBd}`,padding:"9px 14px",display:"flex",alignItems:"center",gap:8}}>
-              <span style={{fontSize:14,fontWeight:800}}>🏭 {g.line_id?g.line_name:"라인 미지정"}</span>
+        {groups.map(g=>{
+          const lc=lineColorFor(g.line_id,lines);
+          return (
+          <div key={g.line_id||"none"} style={{border:`1px solid ${C.border}`,borderLeft:`5px solid ${lc.base}`,borderRadius:8,overflow:"hidden"}}>
+            <div style={{background:lc.bgLight,borderBottom:`1px solid ${lc.bdLight}`,padding:"9px 14px",display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:14,fontWeight:800,color:lc.fgLight}}>🏭 {g.line_id?g.line_name:"라인 미지정"}</span>
               {g.line_memo&&<span style={{fontSize:12,color:C.muted,fontWeight:500}}>{g.line_memo}</span>}
               <span style={{marginLeft:"auto",fontSize:11,color:C.muted,fontWeight:700}}>{g.plans.length}건</span>
             </div>
@@ -2491,7 +2532,8 @@ function ExportPlansView({plans,lines,dayStr,allDates,matsByPlan}){
               </tbody>
             </table>
           </div>
-        ))}
+          );
+        })}
       </div>
     }
     <div style={{marginTop:14,display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:10,color:C.muted}}>
@@ -2979,9 +3021,11 @@ function PlansTab({adminHash}){
                 if(a.line_id&&!b.line_id)return -1;
                 return (a.line_code||"").localeCompare(b.line_code||"");
               });
-              return arr.flatMap(g=>[
-                <tr key={"hdr-"+(g.line_id||"none")} style={{background:"rgba(6,182,212,0.08)"}}>
-                  <td colSpan={7} style={{padding:"8px 12px",fontWeight:700,fontSize:13,borderTop:"2px solid rgba(6,182,212,0.25)"}}>
+              return arr.flatMap(g=>{
+                const lc=lineColorFor(g.line_id,lines);
+                return [
+                <tr key={"hdr-"+(g.line_id||"none")} style={{background:lc.bg}}>
+                  <td colSpan={7} style={{padding:"8px 12px",fontWeight:700,fontSize:13,borderTop:`3px solid ${lc.base}`,borderLeft:`4px solid ${lc.base}`,color:lc.base}}>
                     🏭 {g.line_id?<>{g.line_name}{(()=>{const ln=lines.find(l=>l.id===g.line_id);const m=ln?.memo?.trim();return m?<span style={{color:"var(--muted)",fontWeight:500,fontSize:12,marginLeft:6}}>{m}</span>:null})()}</>:<span style={{color:"var(--muted)"}}>라인 미지정</span>}
                     <span style={{marginLeft:10,color:"var(--muted)",fontWeight:500,fontSize:11}}>{g.plans.length}건</span>
                   </td>
@@ -2991,7 +3035,8 @@ function PlansTab({adminHash}){
                   const overdue=p.status!=="done"&&p.status!=="canceled"&&endMs>0&&endMs<nowMs;
                   const isFirst=idx===0;
                   const isLast=idx===g.plans.length-1;
-                  return <tr key={p.id}>
+                  const rowStyle={borderLeft:`4px solid ${lc.base}`};
+                  return <tr key={p.id} style={rowStyle}>
                     <td className="center" style={{fontSize:"11px"}}>
                       <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
                         <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>movePlan(p,"up")} disabled={isFirst} style={{padding:"2px 8px",lineHeight:1,opacity:isFirst?0.3:1}} title="위로">▲</button>
@@ -3028,7 +3073,8 @@ function PlansTab({adminHash}){
                     </td>
                   </tr>;
                 })
-              ]);
+              ];
+              });
             })()}
           </tbody>
         </table>
