@@ -387,10 +387,15 @@ function parseMatchKeywords(raw){
   if(!Array.isArray(arr))return[];
   return arr.map(k=>String(k||"").trim()).filter(Boolean);
 }
-// 재고시트 원육 이름(lower)에 키워드가 매칭되는지 판정
+// 문자열 정규화: NFC 유니코드 + 공백 정리 + lowercase
+// 한글은 NFC(조합형)/NFD(분해형) 코드포인트가 다르므로 반드시 통일해야 .includes() 매칭 성공
+function normForMatch(s){
+  return String(s||"").normalize("NFC").replace(/\s+/g," ").trim().toLowerCase();
+}
+// 재고시트 원육 이름(정규화된 lower)에 키워드가 매칭되는지 판정
 // 키워드 내부 공백은 AND: "삼겹양지 SWIFT" → 이름에 "삼겹양지"와 "SWIFT" 둘 다 포함되어야 매칭
 function nameMatchesKeyword(rawNameLower,keyword){
-  const parts=String(keyword||"").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const parts=normForMatch(keyword).split(/\s+/).filter(Boolean);
   if(!parts.length)return false;
   return parts.every(p=>rawNameLower.includes(p));
 }
@@ -403,12 +408,14 @@ function matchRawsToMaterials(raws,materialItems){
   for(const m of mats){
     result[m.id]={item:m,totalKg:0,matches:[]};
   }
+  const debug=(typeof window!=="undefined"&&window.__APS_DEBUG_MATCH__);
   for(const raw of (raws||[])){
     const rawName=String(raw?.name||"").trim();
     if(!rawName)continue;
     const kg=Number(raw?.kg)||0;
     if(kg<=0)continue;
-    const lower=rawName.toLowerCase();
+    const lower=normForMatch(rawName);
+    let matched=false;
     for(const m of mats){
       const kws=parseMatchKeywords(m.match_keywords);
       let hitKw=null;
@@ -418,8 +425,13 @@ function matchRawsToMaterials(raws,materialItems){
       if(hitKw){
         result[m.id].totalKg+=kg;
         result[m.id].matches.push({rawName,kg,keyword:hitKw});
+        matched=true;
         break; // 하나의 원육은 하나의 원자재에만
       }
+    }
+    if(debug&&!matched){
+      const kwList=mats.map(m=>({name:m.name,kws:parseMatchKeywords(m.match_keywords)})).filter(x=>x.kws.length);
+      console.log("[APS-MATCH-MISS]",JSON.stringify(rawName),"→ lower:",JSON.stringify(lower),"| tried:",kwList);
     }
   }
   return result;
