@@ -3894,20 +3894,6 @@ function InventorySheetTab({adminHash}){
       </div>
       {hasMatStatus&&<div className="inv-mat-section">
         <div className="inv-mat-title">🥩 BOM 기준 원자재 재고 현황</div>
-        {shortageList.length>0&&<div className="inv-mat-alerts">
-          {shortageList.map(m=>{
-            const shortage=m.requiredKg-m.stockKg;
-            const label=m.status==="empty"?"재고 없음":"재고 부족";
-            return <div key={m.id} className={"inv-mat-alert "+(m.status==="empty"?"empty":"critical")}>
-              <b>{m.name}</b>
-              <span>{label}</span>
-              <span className="inv-mat-alert-detail">
-                필요 {fmtKg(m.requiredKg)} / 재고 {fmtKg(m.stockKg)} (부족 {fmtKg(shortage)})
-                {!m.hasKeywords&&<span className="inv-mat-nokw">매칭 키워드 미설정</span>}
-              </span>
-            </div>;
-          })}
-        </div>}
         <table className="inv-tbl stripe inv-mat-tbl">
           <colgroup>
             <col/>
