@@ -227,6 +227,49 @@
     .aps-staff-summary .lbl{font-size:13px;font-weight:600;color:var(--muted)}
     .aps-staff-summary .num{font-size:20px;font-weight:800;color:#06b6d4}
     .aps-staff-summary .small{font-size:12px;color:var(--dimmer)}
+    /* 회의록 */
+    .mtg-layout{display:grid;grid-template-columns:340px 1fr;gap:16px;align-items:flex-start}
+    .mtg-list-panel{background:var(--card-bg);border:1px solid var(--card-bd);border-radius:10px;padding:10px;max-height:78vh;overflow-y:auto;position:sticky;top:14px}
+    .mtg-list-item{padding:10px 12px;border-radius:8px;border:1px solid transparent;cursor:pointer;margin-bottom:6px;transition:all .12s;background:var(--bg)}
+    .mtg-list-item:hover{border-color:var(--card-hbd)}
+    .mtg-list-item.active{border-color:#06b6d4;background:rgba(6,182,212,0.08)}
+    .mtg-list-item .ttl{font-size:13.5px;font-weight:700;color:var(--text);margin-bottom:4px;line-height:1.35;word-break:break-word}
+    .mtg-list-item .meta{font-size:11px;color:var(--muted);display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap}
+    .mtg-list-item .cnt{font-size:10.5px;color:#06b6d4;background:rgba(6,182,212,0.14);padding:1px 6px;border-radius:8px;font-weight:600}
+    .mtg-list-item .open{font-size:10.5px;color:#f97316;background:rgba(249,115,22,0.14);padding:1px 6px;border-radius:8px;font-weight:600}
+    .mtg-detail{background:var(--card-bg);border:1px solid var(--card-bd);border-radius:10px;padding:20px 22px;min-height:60vh}
+    .mtg-detail-hdr{border-bottom:1px solid var(--div2);padding-bottom:14px;margin-bottom:16px}
+    .mtg-detail-ttl{font-size:22px;font-weight:800;color:var(--text);letter-spacing:-.01em;line-height:1.3;word-break:break-word}
+    .mtg-detail-meta{display:flex;gap:14px;font-size:12.5px;color:var(--muted);margin-top:8px;flex-wrap:wrap}
+    .mtg-detail-meta b{color:var(--text);font-weight:700}
+    .mtg-sec{margin-top:20px}
+    .mtg-sec-hdr{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700;color:var(--text);margin-bottom:10px}
+    .mtg-sec-hdr .cnt{font-size:11px;color:var(--muted);font-weight:600;background:var(--card-bg);border:1px solid var(--div2);padding:1px 8px;border-radius:8px}
+    .mtg-item{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:var(--bg);border:1px solid var(--div);border-radius:8px;margin-bottom:6px;transition:border-color .12s}
+    .mtg-item:hover{border-color:var(--card-hbd)}
+    .mtg-item.done{opacity:.55}
+    .mtg-item.done .content{text-decoration:line-through}
+    .mtg-item .content{flex:1;font-size:13.5px;line-height:1.5;color:var(--text);white-space:pre-wrap;word-break:break-word;min-width:0}
+    .mtg-item .sub{display:flex;gap:10px;font-size:11.5px;color:var(--muted);margin-top:4px;flex-wrap:wrap}
+    .mtg-item .sub b{color:var(--text);font-weight:600}
+    .mtg-item .sub .overdue{color:#ef4444;font-weight:700}
+    .mtg-item .acts{display:flex;gap:4px;flex-shrink:0}
+    .mtg-item .acts button{background:none;border:none;color:var(--muted);font-size:15px;cursor:pointer;padding:2px 6px;border-radius:4px}
+    .mtg-item .acts button:hover{background:var(--hover);color:var(--text)}
+    .mtg-add{display:flex;gap:6px;padding:8px;background:var(--bg);border:1px dashed var(--div2);border-radius:8px;flex-wrap:wrap;align-items:center}
+    .mtg-add input,.mtg-add textarea{flex:1;min-width:140px;background:var(--inp-bg);border:1px solid var(--inp-bd);color:var(--text);padding:6px 9px;border-radius:6px;font-size:13px;outline:none;font-family:inherit;box-sizing:border-box}
+    .mtg-add textarea{resize:vertical;min-height:34px}
+    .mtg-add .add-btn{background:#06b6d4;color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit}
+    .mtg-add .add-btn:disabled{opacity:.5;cursor:not-allowed}
+    .mtg-check{width:16px;height:16px;flex-shrink:0;margin-top:3px;cursor:pointer;accent-color:#06b6d4}
+    .mtg-kind-badge{display:inline-block;font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:8px;letter-spacing:.02em;flex-shrink:0;margin-top:2px}
+    .mtg-kind-agenda{background:rgba(139,92,246,0.14);color:#8b5cf6}
+    .mtg-kind-decision{background:rgba(34,197,94,0.14);color:#22c55e}
+    .mtg-kind-action{background:rgba(249,115,22,0.14);color:#f97316}
+    @media(max-width:900px){
+      .mtg-layout{grid-template-columns:1fr}
+      .mtg-list-panel{position:static;max-height:none}
+    }
     @media(max-width:700px){
       .aps-shell{padding:12px 14px 50px}
       .aps-header{padding:14px 14px}
@@ -4791,9 +4834,450 @@ function StaffTab({adminHash}){
 }
 
 // ═══════════════════════════════════════════
+// 회의록 (Meetings)
+// ═══════════════════════════════════════════
+const MTG_KINDS=[
+  {key:"agenda",  label:"안건",     icon:"📋", cls:"mtg-kind-agenda"},
+  {key:"decision",label:"결정사항", icon:"✅", cls:"mtg-kind-decision"},
+  {key:"action",  label:"액션아이템",icon:"🚀", cls:"mtg-kind-action"},
+];
+function fmtMtgWhen(iso){
+  if(!iso)return"";
+  const d=new Date(iso);
+  if(isNaN(d.getTime()))return"";
+  const kst=new Date(d.getTime()+KST_OFFSET_MS);
+  const y=kst.getUTCFullYear();
+  const m=String(kst.getUTCMonth()+1).padStart(2,"0");
+  const da=String(kst.getUTCDate()).padStart(2,"0");
+  const dow=DOW_LABEL[(kst.getUTCDay()+6)%7];
+  const h=String(kst.getUTCHours()).padStart(2,"0");
+  const mi=String(kst.getUTCMinutes()).padStart(2,"0");
+  return `${y}-${m}-${da} (${dow}) ${h}:${mi}`;
+}
+function fmtMtgWhenShort(iso){
+  if(!iso)return"";
+  const d=new Date(iso);
+  if(isNaN(d.getTime()))return"";
+  const kst=new Date(d.getTime()+KST_OFFSET_MS);
+  const m=String(kst.getUTCMonth()+1).padStart(2,"0");
+  const da=String(kst.getUTCDate()).padStart(2,"0");
+  const dow=DOW_LABEL[(kst.getUTCDay()+6)%7];
+  const h=String(kst.getUTCHours()).padStart(2,"0");
+  const mi=String(kst.getUTCMinutes()).padStart(2,"0");
+  return `${m}/${da}(${dow}) ${h}:${mi}`;
+}
+
+function MeetingForm({adminHash,initial,onCancel,onSaved}){
+  const isEdit=!!initial;
+  const nowInput=(()=>{const d=new Date();const kst=new Date(d.getTime()+KST_OFFSET_MS);return kst.toISOString().slice(0,16)})();
+  const[title,setTitle]=useState(initial?.title||"");
+  const[when,setWhen]=useState(initial?isoToKstInput(initial.meeting_at):nowInput);
+  const[attendees,setAttendees]=useState(initial?.attendees||"");
+  const[author,setAuthor]=useState(initial?.author||"");
+  const[memo,setMemo]=useState(initial?.memo||"");
+  const[err,setErr]=useState("");
+  const[loading,setLoading]=useState(false);
+
+  const submit=async()=>{
+    if(!title.trim()){setErr("제목을 입력하세요");return}
+    setLoading(true);setErr("");
+    try{
+      await rpc("aps_upsert_meeting",{
+        p_admin_hash:adminHash,
+        p_id:isEdit?initial.id:null,
+        p_meeting_at:kstInputToIso(when),
+        p_title:title.trim(),
+        p_attendees:attendees.trim(),
+        p_author:author.trim(),
+        p_memo:memo.trim()
+      });
+      onSaved();
+    }catch(e){
+      setErr(errMsg(e,{title_required:"제목은 필수입니다",unauthorized:"인증 실패"}));
+    }
+    setLoading(false);
+  };
+
+  return <div className="aps-modal-bg" onClick={onCancel}>
+    <div className="aps-modal" onClick={e=>e.stopPropagation()}>
+      <div style={{fontWeight:700,fontSize:"16px",marginBottom:"14px"}}>{isEdit?"📝 회의록 수정":"📝 새 회의록"}</div>
+      <div className="aps-form-grid">
+        <div style={{gridColumn:"1 / -1"}}>
+          <div className="aps-form-label">제목 *</div>
+          <input className="aps-input" value={title} onChange={e=>setTitle(e.target.value)} maxLength={200} placeholder="예: 6월 생산 주간회의" autoFocus/>
+        </div>
+        <div>
+          <div className="aps-form-label">일시</div>
+          <input className="aps-input" type="datetime-local" value={when} onChange={e=>setWhen(e.target.value)}/>
+        </div>
+        <div>
+          <div className="aps-form-label">작성자</div>
+          <input className="aps-input" value={author} onChange={e=>setAuthor(e.target.value)} maxLength={40} placeholder="예: 홍길동"/>
+        </div>
+        <div style={{gridColumn:"1 / -1"}}>
+          <div className="aps-form-label">참석자 <span style={{fontWeight:400,color:"var(--dimmer)"}}>(쉼표·줄바꿈으로 구분)</span></div>
+          <textarea className="aps-input" value={attendees} onChange={e=>setAttendees(e.target.value)} maxLength={500} rows={2} placeholder="예: 홍길동, 김철수, 이영희" style={{resize:"vertical"}}/>
+        </div>
+        <div style={{gridColumn:"1 / -1"}}>
+          <div className="aps-form-label">메모 <span style={{fontWeight:400,color:"var(--dimmer)"}}>(개요/배경 등)</span></div>
+          <textarea className="aps-input" value={memo} onChange={e=>setMemo(e.target.value)} maxLength={1000} rows={3} style={{resize:"vertical"}} placeholder="회의 배경, 자유 메모 등"/>
+        </div>
+      </div>
+      {err&&<div className="aps-err">{err}</div>}
+      <div style={{display:"flex",gap:"8px",justifyContent:"flex-end",marginTop:"14px"}}>
+        <button className="aps-btn aps-btn-secondary" onClick={onCancel} disabled={loading}>취소</button>
+        <button className="aps-btn aps-btn-primary" onClick={submit} disabled={loading}>{loading?"저장 중...":(isEdit?"수정":"추가")}</button>
+      </div>
+    </div>
+  </div>;
+}
+
+// PNG 저장용 오프스크린 뷰 (라이트 톤 리포트 스타일)
+function ExportMeetingView({meeting,items}){
+  const C={bg:"#ffffff",text:"#0f172a",muted:"#64748b",border:"#e2e8f0",strong:"#111827",accent:"#06b6d4",agenda:"#8b5cf6",decision:"#22c55e",action:"#f97316"};
+  const byKind=(k)=>items.filter(it=>it.kind===k);
+  const sectionColor=(k)=>k==="agenda"?C.agenda:k==="decision"?C.decision:C.action;
+  return <div style={{background:C.bg,color:C.text,fontFamily:"Pretendard, -apple-system, system-ui, sans-serif",padding:"32px 40px 24px",width:820,boxSizing:"border-box"}}>
+    {/* 헤더 */}
+    <div style={{textAlign:"center",borderBottom:`3px solid ${C.strong}`,paddingBottom:14,marginBottom:16}}>
+      <div style={{fontSize:12,fontWeight:700,letterSpacing:".28em",color:C.muted,marginBottom:6}}>MEETING MINUTES</div>
+      <div style={{fontSize:26,fontWeight:800,color:C.strong,letterSpacing:"-.01em",lineHeight:1.25}}>{meeting.title}</div>
+      <div style={{fontSize:14,fontWeight:600,color:C.text,marginTop:8}}>{fmtMtgWhen(meeting.meeting_at)}</div>
+    </div>
+    {/* 참석자/작성자 */}
+    <div style={{background:"#f8fafc",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 16px",marginBottom:14,fontSize:13,lineHeight:1.7}}>
+      {meeting.attendees&&<div><span style={{color:C.muted,fontWeight:700,marginRight:8,letterSpacing:".04em"}}>참석자</span>{meeting.attendees}</div>}
+      {meeting.author&&<div><span style={{color:C.muted,fontWeight:700,marginRight:8,letterSpacing:".04em"}}>작성자</span>{meeting.author}</div>}
+    </div>
+    {/* 개요/메모 */}
+    {meeting.memo&&<div style={{marginBottom:16}}>
+      <div style={{fontSize:13,fontWeight:700,color:C.muted,letterSpacing:".04em",marginBottom:6}}>개요</div>
+      <div style={{fontSize:13.5,lineHeight:1.65,color:C.text,whiteSpace:"pre-wrap",padding:"10px 14px",background:"#fafafa",border:`1px solid ${C.border}`,borderRadius:6}}>{meeting.memo}</div>
+    </div>}
+    {/* 3 섹션 */}
+    {MTG_KINDS.map(K=>{
+      const list=byKind(K.key);
+      if(list.length===0)return null;
+      const col=sectionColor(K.key);
+      return <div key={K.key} style={{marginBottom:16}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,borderLeft:`4px solid ${col}`,paddingLeft:10,marginBottom:10}}>
+          <span style={{fontSize:15,fontWeight:800,color:C.strong,letterSpacing:"-.01em"}}>{K.icon} {K.label}</span>
+          <span style={{fontSize:11,fontWeight:700,color:C.muted,background:"#f1f5f9",padding:"1px 8px",borderRadius:8}}>{list.length}건</span>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+          {list.map((it,i)=>{
+            const isAction=K.key==="action";
+            return <div key={it.id} style={{display:"flex",gap:10,padding:"9px 12px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,fontSize:13.5,lineHeight:1.5,opacity:it.done?0.55:1}}>
+              <span style={{color:col,fontWeight:800,minWidth:18}}>{i+1}.</span>
+              <div style={{flex:1}}>
+                <div style={{color:C.text,textDecoration:it.done?"line-through":"none",whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{it.content||"(내용 없음)"}</div>
+                {isAction&&(it.assignee||it.due_date||it.done)&&<div style={{fontSize:11.5,color:C.muted,marginTop:4,display:"flex",gap:12,flexWrap:"wrap"}}>
+                  {it.assignee&&<span>👤 <b style={{color:C.strong}}>{it.assignee}</b></span>}
+                  {it.due_date&&<span>📅 <b style={{color:C.strong}}>{it.due_date}</b></span>}
+                  {it.done&&<span style={{color:C.decision,fontWeight:700}}>✓ 완료</span>}
+                </div>}
+              </div>
+            </div>;
+          })}
+        </div>
+      </div>;
+    })}
+    {/* 푸터 */}
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:18,paddingTop:12,borderTop:`1px solid ${C.border}`,fontSize:11,color:C.muted}}>
+      <span style={{fontWeight:700,letterSpacing:".08em"}}>STOCKPULSE · APS</span>
+      <span>생성: {new Date().toLocaleString("ko-KR")}</span>
+    </div>
+  </div>;
+}
+
+function MeetingItemRow({item,onToggle,onEdit,onDelete}){
+  const isAction=item.kind==="action";
+  const overdue=isAction&&item.due_date&&!item.done&&item.due_date<todayStr();
+  return <div className={"mtg-item"+(item.done?" done":"")}>
+    {isAction?<input className="mtg-check" type="checkbox" checked={!!item.done} onChange={onToggle}/>:<span style={{width:16,height:16,flexShrink:0,marginTop:3,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:13,color:"var(--muted)"}}>•</span>}
+    <div style={{flex:1,minWidth:0}}>
+      <div className="content">{item.content||<span style={{color:"var(--dimmer)",fontStyle:"italic"}}>(내용 없음)</span>}</div>
+      {isAction&&(item.assignee||item.due_date)&&<div className="sub">
+        {item.assignee&&<span>👤 <b>{item.assignee}</b></span>}
+        {item.due_date&&<span className={overdue?"overdue":""}>📅 <b>{item.due_date}</b>{overdue?" ⚠ 지연":""}</span>}
+      </div>}
+    </div>
+    <div className="acts">
+      <button title="수정" onClick={onEdit}>✏</button>
+      <button title="삭제" onClick={onDelete}>🗑</button>
+    </div>
+  </div>;
+}
+
+function MeetingItemEditor({item,onSave,onCancel}){
+  const isAction=item.kind==="action";
+  const[content,setContent]=useState(item.content||"");
+  const[assignee,setAssignee]=useState(item.assignee||"");
+  const[due,setDue]=useState(item.due_date||"");
+  const[saving,setSaving]=useState(false);
+  const save=async()=>{
+    if(!content.trim())return;
+    setSaving(true);
+    try{await onSave({content:content.trim(),assignee:assignee.trim(),due_date:due||null})}catch(e){alert("저장 실패: "+e.message)}
+    setSaving(false);
+  };
+  return <div className="mtg-add" style={{border:"1px solid #06b6d4"}}>
+    <textarea value={content} onChange={e=>setContent(e.target.value)} rows={2} placeholder="내용" autoFocus/>
+    {isAction&&<>
+      <input value={assignee} onChange={e=>setAssignee(e.target.value)} placeholder="담당자" maxLength={40} style={{maxWidth:130}}/>
+      <input type="date" value={due} onChange={e=>setDue(e.target.value)} style={{maxWidth:150}}/>
+    </>}
+    <button className="add-btn" onClick={save} disabled={saving||!content.trim()}>{saving?"...":"저장"}</button>
+    <button className="add-btn" style={{background:"var(--card-bg)",color:"var(--muted)",border:"1px solid var(--card-bd)"}} onClick={onCancel}>취소</button>
+  </div>;
+}
+
+function MeetingItemAdd({kind,onAdd}){
+  const isAction=kind==="action";
+  const[content,setContent]=useState("");
+  const[assignee,setAssignee]=useState("");
+  const[due,setDue]=useState("");
+  const[saving,setSaving]=useState(false);
+  const submit=async()=>{
+    if(!content.trim())return;
+    setSaving(true);
+    try{
+      await onAdd({content:content.trim(),assignee:assignee.trim(),due_date:due||null});
+      setContent("");setAssignee("");setDue("");
+    }catch(e){alert("추가 실패: "+e.message)}
+    setSaving(false);
+  };
+  const onKey=(e)=>{if(e.key==="Enter"&&(e.ctrlKey||e.metaKey)){e.preventDefault();submit()}};
+  const placeholder=kind==="agenda"?"안건 추가 (Ctrl+Enter로 빠른 추가)":kind==="decision"?"결정사항 추가":"액션아이템 추가";
+  return <div className="mtg-add">
+    <textarea value={content} onChange={e=>setContent(e.target.value)} onKeyDown={onKey} rows={1} placeholder={placeholder}/>
+    {isAction&&<>
+      <input value={assignee} onChange={e=>setAssignee(e.target.value)} placeholder="담당자" maxLength={40} style={{maxWidth:130}}/>
+      <input type="date" value={due} onChange={e=>setDue(e.target.value)} style={{maxWidth:150}}/>
+    </>}
+    <button className="add-btn" onClick={submit} disabled={saving||!content.trim()}>{saving?"...":"+ 추가"}</button>
+  </div>;
+}
+
+function MeetingsTab({adminHash}){
+  const[meetings,setMeetings]=useState([]);
+  const[selectedId,setSelectedId]=useState(null);
+  const[detail,setDetail]=useState(null); // {meeting, items}
+  const[loading,setLoading]=useState(true);
+  const[loadingDetail,setLoadingDetail]=useState(false);
+  const[showForm,setShowForm]=useState(false);
+  const[editing,setEditing]=useState(null);
+  const[search,setSearch]=useState("");
+  const[days,setDays]=useState(365);
+  const[editingItemId,setEditingItemId]=useState(null);
+  const[capturing,setCapturing]=useState(false);
+  const exportRef=useRef(null);
+
+  const loadList=useCallback(async()=>{
+    setLoading(true);
+    try{
+      const data=await rpc("aps_list_meetings",{p_admin_hash:adminHash,p_days:days||null,p_search:search});
+      setMeetings(data||[]);
+    }catch(e){console.error(e);setMeetings([])}
+    setLoading(false);
+  },[adminHash,days,search]);
+
+  const loadDetail=useCallback(async(id)=>{
+    if(!id){setDetail(null);return}
+    setLoadingDetail(true);
+    try{
+      const data=await rpc("aps_get_meeting",{p_admin_hash:adminHash,p_id:id});
+      setDetail(data);
+    }catch(e){console.error(e);setDetail(null)}
+    setLoadingDetail(false);
+  },[adminHash]);
+
+  useEffect(()=>{loadList()},[loadList]);
+  useEffect(()=>{loadDetail(selectedId)},[selectedId,loadDetail]);
+
+  // 목록 로드 후 첫 회의 자동 선택 (아직 선택 안 됐을 때만)
+  useEffect(()=>{
+    if(!selectedId&&meetings.length>0)setSelectedId(meetings[0].id);
+  },[meetings,selectedId]);
+
+  const openNew=()=>{setEditing(null);setShowForm(true)};
+  const openEdit=(m)=>{setEditing(m);setShowForm(true)};
+  const onSavedMeeting=async()=>{setShowForm(false);await loadList();if(selectedId)await loadDetail(selectedId)};
+
+  const delMeeting=async(m)=>{
+    if(!confirm(`회의록 "${m.title}" 을(를) 삭제하시겠습니까?\n항목도 모두 삭제됩니다.`))return;
+    try{
+      await rpc("aps_delete_meeting",{p_admin_hash:adminHash,p_id:m.id});
+      if(selectedId===m.id)setSelectedId(null);
+      await loadList();
+    }catch(e){alert("삭제 실패: "+e.message)}
+  };
+
+  const addItem=async(kind,payload)=>{
+    await rpc("aps_upsert_meeting_item",{
+      p_admin_hash:adminHash,
+      p_id:null,
+      p_meeting_id:selectedId,
+      p_kind:kind,
+      p_content:payload.content,
+      p_assignee:payload.assignee||"",
+      p_due_date:payload.due_date||null,
+      p_done:false
+    });
+    await loadDetail(selectedId);
+  };
+
+  const saveItem=async(item,payload)=>{
+    await rpc("aps_upsert_meeting_item",{
+      p_admin_hash:adminHash,
+      p_id:item.id,
+      p_meeting_id:item.meeting_id,
+      p_kind:item.kind,
+      p_content:payload.content,
+      p_assignee:payload.assignee||"",
+      p_due_date:payload.due_date||null,
+      p_done:item.done
+    });
+    setEditingItemId(null);
+    await loadDetail(selectedId);
+  };
+
+  const toggleDone=async(item)=>{
+    // 낙관적 업데이트
+    setDetail(d=>d?{...d,items:d.items.map(it=>it.id===item.id?{...it,done:!it.done}:it)}:d);
+    try{await rpc("aps_toggle_meeting_item_done",{p_admin_hash:adminHash,p_id:item.id})}
+    catch(e){alert("갱신 실패: "+e.message);await loadDetail(selectedId)}
+  };
+
+  const delItem=async(item)=>{
+    if(!confirm("항목을 삭제하시겠습니까?"))return;
+    try{
+      await rpc("aps_delete_meeting_item",{p_admin_hash:adminHash,p_id:item.id});
+      await loadDetail(selectedId);
+    }catch(e){alert("삭제 실패: "+e.message)}
+  };
+
+  const exportPng=async()=>{
+    if(!detail){alert("먼저 회의록을 선택하세요");return}
+    if(typeof window.html2canvas!=="function"){
+      alert("이미지 저장 라이브러리(html2canvas)가 로드되지 않았습니다. 새로고침 후 다시 시도해주세요.");return;
+    }
+    setCapturing(true);
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const target=exportRef.current;
+    if(!target){setCapturing(false);return}
+    try{
+      const canvas=await window.html2canvas(target,{backgroundColor:"#ffffff",scale:2,logging:false,useCORS:true});
+      const link=document.createElement("a");
+      const dateStr=isoToKstDateStr(detail.meeting.meeting_at)||todayStr();
+      const safeTitle=(detail.meeting.title||"회의록").replace(/[\\/:*?"<>|]/g,"_").slice(0,40);
+      link.download=`회의록_${dateStr}_${safeTitle}.png`;
+      link.href=canvas.toDataURL("image/png");
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }catch(e){console.error(e);alert("이미지 저장 실패: "+(e.message||e))}
+    setCapturing(false);
+  };
+
+  const dayOptions=[
+    {v:30,l:"30일"},{v:90,l:"90일"},{v:180,l:"180일"},{v:365,l:"1년"},{v:0,l:"전체"}
+  ];
+
+  return <div>
+    <div className="aps-toolbar">
+      <div style={{fontSize:15,fontWeight:700}}>📝 회의록 <span style={{color:"var(--muted)",fontSize:12,fontWeight:500,marginLeft:6}}>{meetings.length}건</span></div>
+      <div style={{flex:1}}/>
+      <input className="aps-input" style={{maxWidth:220}} placeholder="제목·참석자·메모 검색" value={search} onChange={e=>setSearch(e.target.value)}/>
+      <select className="aps-select" value={days} onChange={e=>setDays(Number(e.target.value))}>
+        {dayOptions.map(d=><option key={d.v} value={d.v}>{d.l}</option>)}
+      </select>
+      <button className="aps-btn aps-btn-primary" onClick={openNew}>+ 회의록 추가</button>
+    </div>
+
+    <div className="mtg-layout">
+      {/* 좌측: 회의록 목록 */}
+      <div className="mtg-list-panel">
+        {loading?<div className="aps-empty" style={{padding:"20px 6px"}}>로딩 중...</div>
+        :meetings.length===0?
+          <div className="aps-empty" style={{padding:"20px 6px"}}>
+            <div className="aps-empty-emoji">📝</div>
+            <div>{search?"검색 결과 없음":"등록된 회의록이 없습니다"}</div>
+          </div>
+        :meetings.map(m=>
+          <div key={m.id} className={"mtg-list-item"+(selectedId===m.id?" active":"")} onClick={()=>setSelectedId(m.id)}>
+            <div className="ttl">{m.title}</div>
+            <div className="meta">
+              <span>{fmtMtgWhenShort(m.meeting_at)}</span>
+              <span style={{display:"flex",gap:4}}>
+                {m.item_count>0&&<span className="cnt">{m.item_count}</span>}
+                {m.open_actions>0&&<span className="open">⚠{m.open_actions}</span>}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 우측: 상세 */}
+      <div className="mtg-detail">
+        {loadingDetail?<div className="aps-empty">로딩 중...</div>
+        :!detail?<div className="aps-empty">
+          <div className="aps-empty-emoji">📝</div>
+          <div>{meetings.length===0?"+ 회의록 추가로 시작하세요":"좌측에서 회의록을 선택하세요"}</div>
+        </div>
+        :<>
+          <div className="mtg-detail-hdr">
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,flexWrap:"wrap"}}>
+              <div style={{flex:1,minWidth:200}}>
+                <div className="mtg-detail-ttl">{detail.meeting.title}</div>
+                <div className="mtg-detail-meta">
+                  <span>📅 <b>{fmtMtgWhen(detail.meeting.meeting_at)}</b></span>
+                  {detail.meeting.author&&<span>✍ <b>{detail.meeting.author}</b></span>}
+                </div>
+                {detail.meeting.attendees&&<div style={{fontSize:12.5,color:"var(--muted)",marginTop:6}}>👥 {detail.meeting.attendees}</div>}
+              </div>
+              <div style={{display:"flex",gap:6,flexShrink:0}}>
+                <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={exportPng} disabled={capturing} title="회의록을 PNG 이미지로 저장">{capturing?"저장 중...":"📷 이미지"}</button>
+                <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>openEdit(detail.meeting)}>✏ 수정</button>
+                <button className="aps-btn aps-btn-danger aps-btn-sm" onClick={()=>delMeeting(detail.meeting)}>🗑 삭제</button>
+              </div>
+            </div>
+            {detail.meeting.memo&&<div style={{marginTop:12,padding:"10px 14px",background:"var(--bg)",border:"1px solid var(--div2)",borderRadius:8,fontSize:13,lineHeight:1.6,whiteSpace:"pre-wrap",color:"var(--text)"}}>{detail.meeting.memo}</div>}
+          </div>
+
+          {/* 3 섹션 */}
+          {MTG_KINDS.map(K=>{
+            const list=detail.items.filter(it=>it.kind===K.key);
+            return <div key={K.key} className="mtg-sec">
+              <div className="mtg-sec-hdr">
+                <span>{K.icon} {K.label}</span>
+                <span className="cnt">{list.length}건</span>
+              </div>
+              {list.map(it=>
+                editingItemId===it.id
+                ? <MeetingItemEditor key={it.id} item={it} onSave={p=>saveItem(it,p)} onCancel={()=>setEditingItemId(null)}/>
+                : <MeetingItemRow key={it.id} item={it} onToggle={()=>toggleDone(it)} onEdit={()=>setEditingItemId(it.id)} onDelete={()=>delItem(it)}/>
+              )}
+              <MeetingItemAdd kind={K.key} onAdd={p=>addItem(K.key,p)}/>
+            </div>;
+          })}
+        </>}
+      </div>
+    </div>
+
+    {showForm&&<MeetingForm adminHash={adminHash} initial={editing} onCancel={()=>setShowForm(false)} onSaved={onSavedMeeting}/>}
+
+    {/* 오프스크린 PNG 캡처용 */}
+    {capturing&&detail&&<div style={{position:"fixed",left:-99999,top:0,pointerEvents:"none"}}>
+      <div ref={exportRef}><ExportMeetingView meeting={detail.meeting} items={detail.items}/></div>
+    </div>}
+  </div>;
+}
+
+// ═══════════════════════════════════════════
 // App (탭 네비게이션 + 로그인 게이트)
 // ═══════════════════════════════════════════
-const VALID_TABS=["items","lines","plans","staff","inventory","stats","sheet","sales"];
+const VALID_TABS=["items","lines","plans","staff","inventory","stats","sheet","sales","meetings"];
 function getTabFromHash(){
   const h=(window.location.hash||"").replace(/^#/,"");
   return VALID_TABS.includes(h)?h:"items";
@@ -4872,6 +5356,7 @@ function App(){
           <button className={"aps-tab"+(tab==="stats"?" active":"")} onClick={()=>setTab("stats")}>📈 통계</button>
           <button className={"aps-tab"+(tab==="sheet"?" active":"")} onClick={()=>setTab("sheet")}>📋 재고 시트</button>
           <button className={"aps-tab"+(tab==="sales"?" active":"")} onClick={()=>setTab("sales")}>💰 매출</button>
+          <button className={"aps-tab"+(tab==="meetings"?" active":"")} onClick={()=>setTab("meetings")}>📝 회의록</button>
         </div>
         {tab==="items"&&<ItemsTab adminHash={adminHash}/>}
         {tab==="lines"&&<LinesTab adminHash={adminHash}/>}
@@ -4881,6 +5366,7 @@ function App(){
         {tab==="stats"&&<StatsTab adminHash={adminHash}/>}
         {tab==="sheet"&&<InventorySheetTab adminHash={adminHash}/>}
         {tab==="sales"&&<SalesTab adminHash={adminHash}/>}
+        {tab==="meetings"&&<MeetingsTab adminHash={adminHash}/>}
       </>}
     </div>
 

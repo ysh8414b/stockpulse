@@ -1003,6 +1003,33 @@
 - **운영 순서**: Supabase에서 `setup_aps_v6.sql` 실행 1회 → 📈 통계 탭에서 품목 행 클릭 → 펼친 plan 목록에서 ✏ 수정 → 저장 시 통계 즉시 갱신
 - **한계**: 진행중(`in_progress`) plan은 수정 불가 (▶/✓ 버튼 흐름으로만 처리, RPC가 `only_done_editable` 거부). 일괄 편집·취소된 plan 복구 미지원
 
+### APS — 회의록 탭 + PNG export (2026-07-02)
+- 사용자 요청: "회의록 탭 만들어서 관리하고싶은데 가능할까? 회의록을 깔끔하게 정리해서 이미지로 공유"
+- 확정 사양: 구조화(안건/결정사항/액션아이템 3섹션) + 참석자 자유텍스트 + 액션 체크박스(완료 표시)
+- **`setup_aps_meetings.sql`** (신규, 1회 실행): 테이블 2개 + 트리거 1개 + RPC 7개
+  - `aps_meetings` (id, meeting_at TIMESTAMPTZ, title, attendees, author, memo)
+  - `aps_meeting_items` (id, meeting_id FK CASCADE, kind CHECK IN ('agenda','decision','action'), content, assignee, due_date, done, sort_order)
+  - 트리거 `aps_meeting_items_assign_sort_order`: 같은 (meeting_id, kind) 그룹 내 MAX(sort_order)+1 자동 부여
+  - RLS ENABLE + 정책 없음 → RPC만 허용
+  - RPC: `aps_list_meetings`(days/search 필터 + item_count + open_actions 카운트), `aps_get_meeting`(헤더+items JSON 묶음), `aps_upsert_meeting`, `aps_delete_meeting`, `aps_upsert_meeting_item`, `aps_delete_meeting_item`, `aps_toggle_meeting_item_done`(빠른 완료 토글)
+- **`aps.html` 변경**:
+  - `VALID_TABS`에 "meetings" 추가 → URL 해시 동기화 동작 (`aps.html#meetings`)
+  - 신규 9번째 탭 **📝 회의록** (💰 매출 오른쪽)
+  - `MTG_KINDS` 상수: 안건(📋 보라)/결정사항(✅ 초록)/액션(🚀 주황) 3섹션 + 색상 스킴
+  - `fmtMtgWhen`/`fmtMtgWhenShort`: KST 요일 포함 시각 포맷팅
+  - **`MeetingsTab`** — 2컬럼 레이아웃 (좌 340px 목록 sticky panel + 우 상세 flex). 모바일(≤900px)은 세로 스택
+    - 목록: 제목·작성자·참석자·메모 ILIKE 검색 + 기간 필터(30/90/180/365/전체) + item_count·open_actions 뱃지
+    - 상세: 헤더(제목·일시·참석자·작성자·개요) + 3섹션 각각 항목 리스트 + 인라인 add form(Ctrl+Enter로 빠른 추가) + ✏수정/🗑삭제
+    - 액션아이템만 체크박스(낙관적 업데이트 후 RPC), 담당자·기한 필드 노출. 기한 지난 미완료는 빨강 ⚠지연 표시
+    - 목록 로드 후 첫 회의 자동 선택
+  - **`MeetingForm`** 중앙 모달: 제목/일시(datetime-local, 기본값 현재 KST 시각)/작성자/참석자(textarea)/개요 메모
+  - **`MeetingItemRow`** + **`MeetingItemEditor`** + **`MeetingItemAdd`**: 인라인 CRUD, 액션만 담당자·date input 추가 렌더
+  - **`ExportMeetingView`** — PNG용 오프스크린 라이트 톤 리포트(820px, Pretendard, "MEETING MINUTES" 헤더 + 굵은 하단선 + 참석자 카드 + 3섹션 좌측 컬러 보더 + 번호 매김 + STOCKPULSE·APS 푸터). done 항목은 취소선 + opacity 0.55
+  - **PNG 저장**: 📷 이미지 버튼 → 오프스크린 div 마운트 → html2canvas(scale:2) → `회의록_YYYY-MM-DD_제목.png` 다운로드
+  - CSS 추가: `.mtg-layout`/`.mtg-list-panel`/`.mtg-list-item`/`.mtg-detail`/`.mtg-sec`/`.mtg-item`/`.mtg-add`/`.mtg-check`/`.mtg-kind-{agenda,decision,action}` — 다크·라이트 모드 자동 대응(var(--bg)/var(--text) 사용)
+- **운영 순서**: (1) Supabase SQL Editor에서 `setup_aps_meetings.sql` 실행 → (2) 📝 회의록 탭 → + 회의록 추가 → 제목·일시 입력 → (3) 상세 화면에서 안건/결정/액션 추가 → (4) 📷 이미지 버튼으로 PNG 저장·공유
+- **한계**: BBCode 서식(굵게/색상) 미지원(자유메모는 whitespace 보존만). 회의록 간 항목 복사·이월 미지원. PNG는 항목 매우 많은 회의(50+건)에서 세로가 길어질 수 있음
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
