@@ -171,7 +171,8 @@
     .inv-mat-alert.critical{background:#ffe5e5;border-left:4px solid #f59e0b}
     .inv-mat-alert b{color:#b91c1c;font-size:14px}
     .inv-mat-alert-detail{color:#555;font-size:11.5px;font-weight:500}
-    .inv-mat-tbl{margin:0 auto;max-width:520px}
+    .inv-mat-tbl{margin:0 auto;width:auto;max-width:100%;table-layout:auto}
+    .inv-mat-tbl th:first-child,.inv-mat-tbl td:first-child{white-space:nowrap;padding-right:14px}
     .inv-mat-tbl .inv-mat-row-empty td{background:#ffd6d6 !important;color:#7f1d1d;font-weight:700}
     .inv-mat-tbl .inv-mat-row-critical td{background:#ffe5e5 !important;color:#b91c1c;font-weight:700}
     .inv-mat-tbl .inv-mat-row-low td{background:#fff4e5 !important;color:#b45309}
@@ -4119,7 +4120,7 @@ function InventorySheetTab({adminHash}){
         <div className="inv-mat-title">🥩 BOM 기준 원자재 재고 현황</div>
         <table className="inv-tbl stripe inv-mat-tbl">
           <colgroup>
-            <col/>
+            <col style={{minWidth:"140px"}}/>
             <col style={{width:"90px"}}/>
             <col style={{width:"90px"}}/>
             <col style={{width:"66px"}}/>
