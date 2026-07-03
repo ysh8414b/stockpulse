@@ -1063,6 +1063,28 @@
 - **운영 순서**: (1) Supabase SQL Editor에서 `setup_aps_meetings.sql` 실행 → (2) 📝 회의록 탭 → + 회의록 추가 → 제목·일시 입력 → (3) 상세 화면에서 안건/결정/액션 추가 → (4) 📷 이미지 버튼으로 PNG 저장·공유
 - **한계**: BBCode 서식(굵게/색상) 미지원(자유메모는 whitespace 보존만). 회의록 간 항목 복사·이월 미지원. PNG는 항목 매우 많은 회의(50+건)에서 세로가 길어질 수 있음
 
+### APS — 통계 탭 날짜별 뷰 추가 (2026-07-04)
+- 사용자 요청: "통계탭은 날짜별로 나눠서 보여지게 가능할까"
+- 기존: 통계 탭은 품목별 집계 하나뿐 → "이 품목 평균 몇 시간 걸리나" 확인 최적, 반면 "그날 뭘 얼마나 했나"(일자별 회고) 시나리오에는 부적합
+- 변경: 통계 탭 최상단에 `📦 품목별 / 📅 날짜별` 뷰 토글 추가, 마지막 선택은 localStorage(`aps-stats-view-mode`)에 영속화 (생산계획 탭 viewMode 패턴 동일)
+- **`setup_aps_v9.sql`** (신규, 1회 실행, v8까지 실행 전제):
+  - **`aps_get_done_plans_all(p_admin_hash, p_days_back)`** 신규 RPC: status='done' + actual 시각 있는 plan 전체를 기간 필터로 반환
+  - 응답 필드셋은 `aps_get_done_plans_for_item`과 통일 + `item_code`/`item_type` 추가 → 클라이언트에서 `StatsDrilldownTable` 재사용
+  - 정렬: `actual_end_at DESC, id DESC` (최신 완료가 위)
+- **`aps.html` 변경**:
+  - `StatsDrilldownTable`에 `showItemColumn` prop 추가 (default false) — true일 때 `#` 다음에 품목명·코드 컬럼 렌더 + minWidth 760→920
+  - `StatsTab` 최상단에 `viewToggle` UI + `viewMode==="date"`이면 `<DateStatsView>` 렌더 후 early return, `viewMode==="item"`이면 기존 렌더 그대로
+  - 기존 `load(range)` useCallback에 `if(viewMode!=="item")return` 가드 추가 → 날짜별 뷰에서 불필요한 `aps_get_item_stats` 호출 방지
+  - 신규 **`DateStatsView`** 컴포넌트:
+    - 독립 state: `plans`/`range`/`expanded(dateStr)`/`editingId`/`editForm`/`saving`
+    - `aps_get_done_plans_all` fetch → `groups` useMemo: `isoToKstDateStr(actual_end_at)`로 KST 날짜 그룹핑 → 각 날짜에 `count`/`totalHours`/`byUnit`(품목 단위별 총량) 집계 → 날짜 내림차순
+    - 요약 카드 3개: 완료 계획 / 총 생산 시간 / 실적 있는 날짜
+    - 표: 날짜(요일 색상 강조 — 일 빨강/토 파랑) + 완료 건수 + 품목별 수량 (unit별 분리 표시, 예 "22 박스 · 5.5 kg") + 총 시간
+    - 날짜 행 클릭 → 펼침 → `StatsDrilldownTable` 재사용(showItemColumn=true)로 그날 완료된 plan 리스트 표시
+    - 인라인 편집 로직(`startEdit`/`saveEdit`/`aps_update_plan_actuals`)은 품목별 뷰와 동일 패턴 재사용 → 저장 시 `load(range)` 재호출로 상위 통계 즉시 갱신
+- **트레이드오프**: 두 뷰 모두 독립 fetch → 뷰 전환 시 매번 새로 로딩(캐시 없음). 대신 코드 흐름이 단순하고 편집 후 자동 반영이 즉시 동작
+- **운영 순서**: Supabase에서 `setup_aps_v9.sql` 실행 1회 → 📈 통계 탭에서 `📅 날짜별` 토글로 즉시 사용
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)

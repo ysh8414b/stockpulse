@@ -3248,15 +3248,16 @@ function fmtHours(h){
   return mm===0?`${hh}시간`:`${hh}시간 ${mm}분`;
 }
 
-function StatsDrilldownTable({plans,editingId,editForm,setEditForm,saving,startEdit,cancelEdit,saveEdit}){
+function StatsDrilldownTable({plans,editingId,editForm,setEditForm,saving,startEdit,cancelEdit,saveEdit,showItemColumn=false}){
   const inputStyle={width:"100%",padding:"4px 6px",fontSize:11,background:"var(--bg)",border:"1px solid var(--div2)",borderRadius:4,color:"var(--text)"};
   return <div style={{padding:"10px 14px"}}>
     <div style={{fontSize:11,color:"var(--muted)",marginBottom:8}}>완료 계획 {plans.length}건 · ✏ 수정 버튼으로 실제 시각·실제 수량 보정</div>
     <div style={{overflowX:"auto"}}>
-      <table style={{width:"100%",fontSize:12,borderCollapse:"collapse",minWidth:760}}>
+      <table style={{width:"100%",fontSize:12,borderCollapse:"collapse",minWidth:showItemColumn?920:760}}>
         <thead>
           <tr style={{color:"var(--muted)",fontSize:10,textTransform:"uppercase",letterSpacing:"0.5px"}}>
             <th style={{padding:"6px 8px",textAlign:"left",width:60}}>#</th>
+            {showItemColumn&&<th style={{padding:"6px 8px",textAlign:"left",minWidth:160}}>품목</th>}
             <th style={{padding:"6px 8px",textAlign:"left",width:90}}>라인</th>
             <th style={{padding:"6px 8px",textAlign:"left",minWidth:170}}>실제 시작</th>
             <th style={{padding:"6px 8px",textAlign:"left",minWidth:170}}>실제 종료</th>
@@ -3278,6 +3279,10 @@ function StatsDrilldownTable({plans,editingId,editForm,setEditForm,saving,startE
             const qtyChanged=p.actual_qty!=null&&Number(p.actual_qty)!==Number(p.qty);
             return <tr key={p.id} style={{borderTop:"1px solid var(--div2)"}}>
               <td style={{padding:"6px 8px",fontSize:11,color:"var(--muted)",fontFamily:"monospace"}}>#{p.id}</td>
+              {showItemColumn&&<td style={{padding:"6px 8px"}}>
+                <div style={{fontWeight:600,fontSize:12}}>{p.item_name||"-"}</div>
+                {p.item_code&&<div style={{fontSize:10,color:"var(--muted)",fontFamily:"monospace"}}>{p.item_code}</div>}
+              </td>}
               <td style={{padding:"6px 8px",fontSize:11}}>{p.line_code||"-"}</td>
               {isEdit?<>
                 <td style={{padding:"6px 8px"}}>
@@ -3315,7 +3320,191 @@ function StatsDrilldownTable({plans,editingId,editForm,setEditForm,saving,startE
   </div>;
 }
 
+// ═══════════════════════════════════════════
+// 통계 탭 — 날짜별 뷰
+// aps_get_done_plans_all로 기간 내 모든 완료 plan을 받아
+// KST 실제 종료 날짜(YYYY-MM-DD) 기준으로 그룹핑하여 표시.
+// StatsDrilldownTable을 showItemColumn=true로 재사용.
+// ═══════════════════════════════════════════
+function DateStatsView({adminHash}){
+  const[plans,setPlans]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[range,setRange]=useState("30");
+  const[expanded,setExpanded]=useState(null);          // 펼친 dateStr
+  const[editingId,setEditingId]=useState(null);
+  const[editForm,setEditForm]=useState({start:"",end:"",qty:""});
+  const[saving,setSaving]=useState(false);
+
+  const load=useCallback(async(rangeKey)=>{
+    setLoading(true);
+    try{
+      const days=rangeKey==="all"?null:parseInt(rangeKey);
+      const data=await rpc("aps_get_done_plans_all",{p_admin_hash:adminHash,p_days_back:days});
+      setPlans(data||[]);
+    }catch(e){console.error(e);alert("완료 계획 로딩 실패: "+e.message);}
+    setLoading(false);
+  },[adminHash]);
+  useEffect(()=>{load(range)},[load,range]);
+
+  // range 바뀌면 펼침·편집 상태 초기화
+  useEffect(()=>{setExpanded(null);setEditingId(null);},[range]);
+
+  const startEdit=(plan)=>{
+    setEditingId(plan.id);
+    setEditForm({
+      start:isoToKstInput(plan.actual_start_at),
+      end:isoToKstInput(plan.actual_end_at),
+      qty:plan.actual_qty!=null?String(plan.actual_qty):"",
+    });
+  };
+  const cancelEdit=()=>{setEditingId(null);setEditForm({start:"",end:"",qty:""});};
+  const saveEdit=async(plan)=>{
+    if(!editForm.start||!editForm.end){alert("시작/종료 시각을 모두 입력하세요");return;}
+    const startIso=kstInputToIso(editForm.start);
+    const endIso=kstInputToIso(editForm.end);
+    if(new Date(endIso).getTime()<=new Date(startIso).getTime()){alert("종료 시각은 시작 시각보다 뒤여야 합니다");return;}
+    const qtyStr=String(editForm.qty||"").trim();
+    let qty=null;
+    if(qtyStr!==""){
+      qty=Number(qtyStr);
+      if(isNaN(qty)||qty<0){alert("실제 수량은 0 이상의 숫자여야 합니다 (비우면 계획 수량 그대로 사용)");return;}
+    }
+    setSaving(true);
+    try{
+      await rpc("aps_update_plan_actuals",{
+        p_admin_hash:adminHash,
+        p_id:plan.id,
+        p_actual_start_at:startIso,
+        p_actual_end_at:endIso,
+        p_actual_qty:qty,
+      });
+      await load(range);
+      setEditingId(null);
+    }catch(e){alert("저장 실패: "+e.message);}
+    setSaving(false);
+  };
+
+  // 날짜별 그룹핑 (KST 실제 종료 날짜 기준)
+  const groups=useMemo(()=>{
+    const map=new Map();
+    plans.forEach(p=>{
+      const d=isoToKstDateStr(p.actual_end_at);
+      if(!d)return;
+      if(!map.has(d))map.set(d,[]);
+      map.get(d).push(p);
+    });
+    const arr=Array.from(map.entries()).map(([date,list])=>{
+      const count=list.length;
+      const totalHours=list.reduce((a,p)=>{
+        const s=p.actual_start_at?new Date(p.actual_start_at).getTime():0;
+        const e=p.actual_end_at?new Date(p.actual_end_at).getTime():0;
+        return a+Math.max(0,(e-s)/3600000);
+      },0);
+      // 품목마다 단위(unit)가 다르므로 unit별로 총량 집계
+      const byUnit={};
+      list.forEach(p=>{
+        const u=p.item_unit||"EA";
+        const qty=Number(p.actual_qty!=null?p.actual_qty:p.qty)||0;
+        byUnit[u]=(byUnit[u]||0)+qty;
+      });
+      return {date,count,totalHours,byUnit,list};
+    });
+    arr.sort((a,b)=>b.date.localeCompare(a.date));
+    return arr;
+  },[plans]);
+
+  const totalCount=plans.length;
+  const totalHours=useMemo(()=>plans.reduce((a,p)=>{
+    const s=p.actual_start_at?new Date(p.actual_start_at).getTime():0;
+    const e=p.actual_end_at?new Date(p.actual_end_at).getTime():0;
+    return a+Math.max(0,(e-s)/3600000);
+  },0),[plans]);
+  const totalDates=groups.length;
+
+  const toggleExpand=(dateStr)=>{
+    if(expanded===dateStr){setExpanded(null);setEditingId(null);}
+    else{setExpanded(dateStr);setEditingId(null);}
+  };
+
+  return <div>
+    <div className="aps-toolbar">
+      <div className="aps-filter">
+        {RANGES.map(r=><button key={r} className={range===r?"on":""} onClick={()=>setRange(r)}>{RANGE_LABEL[r]}</button>)}
+      </div>
+    </div>
+
+    {/* 요약 카드 */}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10,marginBottom:14}}>
+      <div style={{padding:"14px 16px",background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:8}}>
+        <div style={{fontSize:11,color:"var(--muted)",marginBottom:4}}>완료 계획 ({RANGE_LABEL[range]})</div>
+        <div style={{fontSize:22,fontWeight:700}}>{totalCount}<span style={{fontSize:12,color:"var(--muted)",fontWeight:400,marginLeft:4}}>건</span></div>
+      </div>
+      <div style={{padding:"14px 16px",background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:8}}>
+        <div style={{fontSize:11,color:"var(--muted)",marginBottom:4}}>총 생산 시간</div>
+        <div style={{fontSize:22,fontWeight:700}}>{fmtHours(totalHours)}</div>
+      </div>
+      <div style={{padding:"14px 16px",background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:8}}>
+        <div style={{fontSize:11,color:"var(--muted)",marginBottom:4}}>실적 있는 날짜</div>
+        <div style={{fontSize:22,fontWeight:700}}>{totalDates}<span style={{fontSize:12,color:"var(--muted)",fontWeight:400,marginLeft:4}}>일</span></div>
+      </div>
+    </div>
+
+    {loading?<Loader/>:groups.length===0?
+      <Empty emoji="📈" text={`${RANGE_LABEL[range]} 동안 완료된 생산 실적이 없습니다`}/>:
+      <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8}}>
+        <table className="aps-table">
+          <thead><tr>
+            <th>날짜</th>
+            <th className="right" style={{width:80}}>완료</th>
+            <th className="hide-mobile">품목별 수량</th>
+            <th className="right" style={{width:110}}>총 시간</th>
+          </tr></thead>
+          <tbody>
+            {groups.map(g=>{
+              const isOpen=expanded===g.date;
+              const[y,m,d]=g.date.split("-").map(Number);
+              const dow=DOW_LABEL[(new Date(Date.UTC(y,m-1,d)).getUTCDay()+6)%7];
+              const dowColor=dow==="일"?"#ef4444":dow==="토"?"#3b82f6":"var(--muted)";
+              const unitEntries=Object.entries(g.byUnit);
+              return <React.Fragment key={g.date}>
+                <tr onClick={()=>toggleExpand(g.date)} style={{cursor:"pointer",background:isOpen?"var(--card-bg)":""}} title="클릭하여 완료 계획 목록 펼치기">
+                  <td>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <span style={{display:"inline-block",fontSize:9,color:"var(--muted)",transition:"transform 0.15s",transform:isOpen?"rotate(90deg)":"none"}}>▶</span>
+                      <div style={{fontWeight:600}}>{g.date} <span style={{color:dowColor,fontWeight:700,marginLeft:4}}>({dow})</span></div>
+                    </div>
+                  </td>
+                  <td className="right" style={{fontWeight:600}}>{g.count}건</td>
+                  <td className="hide-mobile" style={{fontSize:12,color:"var(--muted)"}}>
+                    {unitEntries.length===0?<span style={{color:"var(--dimmer)"}}>-</span>:
+                      unitEntries.map(([u,q])=><span key={u} style={{marginRight:12}}>{fmtNum(q)} <span style={{fontSize:10,color:"var(--dimmer)"}}>{u}</span></span>)}
+                  </td>
+                  <td className="right" style={{fontWeight:600,color:"#22c55e"}}>{fmtHours(g.totalHours)}</td>
+                </tr>
+                {isOpen&&<tr>
+                  <td colSpan={4} style={{padding:0,background:"var(--card-bg)",borderTop:"1px solid var(--div2)",borderBottom:"1px solid var(--div2)"}}>
+                    <StatsDrilldownTable plans={g.list} editingId={editingId} editForm={editForm} setEditForm={setEditForm} saving={saving} startEdit={startEdit} cancelEdit={cancelEdit} saveEdit={saveEdit} showItemColumn={true}/>
+                  </td>
+                </tr>}
+              </React.Fragment>;
+            })}
+          </tbody>
+        </table>
+      </div>
+    }
+    <div style={{fontSize:11,color:"var(--dimmer)",marginTop:8,lineHeight:1.5}}>
+      ※ 실제 종료 시각(KST) 기준 날짜별 그룹핑 · 날짜 행 클릭 시 그날 완료된 계획 목록 펼침 · 잘못 기록된 시각·실제 수량은 ✏ 버튼으로 직접 수정 가능
+    </div>
+  </div>;
+}
+
 function StatsTab({adminHash}){
+  const[viewMode,setViewMode]=useState(()=>{
+    const v=localStorage.getItem("aps-stats-view-mode");
+    return v==="date"?"date":"item";
+  });
+  useEffect(()=>{localStorage.setItem("aps-stats-view-mode",viewMode)},[viewMode]);
+
   const[stats,setStats]=useState([]);
   const[loading,setLoading]=useState(true);
   const[range,setRange]=useState("30");
@@ -3329,6 +3518,7 @@ function StatsTab({adminHash}){
   const[saving,setSaving]=useState(false);
 
   const load=useCallback(async(rangeKey)=>{
+    if(viewMode!=="item")return;
     setLoading(true);
     try{
       const days=rangeKey==="all"?null:parseInt(rangeKey);
@@ -3336,7 +3526,7 @@ function StatsTab({adminHash}){
       setStats(data||[]);
     }catch(e){console.error(e)}
     setLoading(false);
-  },[adminHash]);
+  },[adminHash,viewMode]);
   useEffect(()=>{load(range)},[load,range]);
 
   // range 바뀌면 드릴다운 캐시 무효화 (기간 필터가 plan 목록에도 반영됨)
@@ -3446,7 +3636,18 @@ function StatsTab({adminHash}){
     }catch(e){alert("정리 실패: "+e.message)}
   };
 
+  const viewToggle=<div className="aps-view-toggle" style={{marginBottom:14}}>
+    <button className={viewMode==="item"?"on":""} onClick={()=>setViewMode("item")}>📦 품목별</button>
+    <button className={viewMode==="date"?"on":""} onClick={()=>setViewMode("date")}>📅 날짜별</button>
+  </div>;
+
+  if(viewMode==="date")return <div>
+    {viewToggle}
+    <DateStatsView adminHash={adminHash}/>
+  </div>;
+
   return <div>
+    {viewToggle}
     <div className="aps-toolbar">
       <div className="aps-filter">
         {RANGES.map(r=><button key={r} className={range===r?"on":""} onClick={()=>setRange(r)}>{RANGE_LABEL[r]}</button>)}
