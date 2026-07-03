@@ -2420,7 +2420,7 @@ function ExportWeekView({week}){
 
 // 이미지 저장용 생산계획 리포트 (오프스크린 렌더 → html2canvas 캡처)
 // 라인별 그룹 + 인쇄 친화 라이트 테마. viewMode 무관하게 항상 동일 레이아웃
-function ExportPlansView({plans,lines,dayStr,allDates,matsByPlan}){
+function ExportPlansView({plans,lines,dayStr,allDates,matsByPlan,width=820}){
   const C={bg:"#ffffff",text:"#0f172a",muted:"#64748b",border:"#e2e8f0",cardBg:"#f8fafc",lineHdr:"#ecfeff",lineHdrBd:"#a5f3fc",rowAlt:"#fafbfc",matBg:"#fff7ed",matBd:"#fed7aa",matName:"#9a3412",matStock:"#166534",matShort:"#b91c1c"};
   const S={
     planned:{bg:"#f1f5f9",fg:"#475569"},
@@ -2466,7 +2466,7 @@ function ExportPlansView({plans,lines,dayStr,allDates,matsByPlan}){
     const dow=DOW_LABEL[(kst.getUTCDay()+6)%7];
     return `${mo}/${da}(${dow}) ${h}:${mi}`;
   };
-  return <div style={{background:C.bg,color:C.text,fontFamily:"Pretendard, -apple-system, system-ui, sans-serif",padding:"24px 28px 18px",width:820,boxSizing:"border-box"}}>
+  return <div style={{background:C.bg,color:C.text,fontFamily:"Pretendard, -apple-system, system-ui, sans-serif",padding:"24px 28px 18px",width,boxSizing:"border-box"}}>
     <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",marginBottom:16,borderBottom:`2px solid ${C.text}`,paddingBottom:10}}>
       <div>
         <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:".15em"}}>PRODUCTION PLAN · {subLabel}</div>
@@ -4670,6 +4670,15 @@ function ExportStaffView({title,dateStr,deptGroups,offIds,totalAvail}){
   </div>;
 }
 
+// 인원 + 생산계획 통합 export (오프스크린)
+function ExportCombinedView({title,dateStr,deptGroups,offIds,totalAvail,plans,lines}){
+  return <div style={{background:"#ffffff",fontFamily:"Pretendard, -apple-system, system-ui, sans-serif",width:880,boxSizing:"border-box"}}>
+    <ExportStaffView title={title} dateStr={dateStr} deptGroups={deptGroups} offIds={offIds} totalAvail={totalAvail}/>
+    <div style={{borderTop:"2px dashed #111827",margin:"4px 22px 6px"}}></div>
+    <ExportPlansView plans={plans} lines={lines} dayStr={dateStr} allDates={false} matsByPlan={{}} width={880}/>
+  </div>;
+}
+
 function StaffTab({adminHash}){
   const[staff,setStaff]=useState([]);
   const[offIds,setOffIds]=useState(new Set()); // 휴무자 staff_id Set
@@ -4681,6 +4690,11 @@ function StaffTab({adminHash}){
   const[title,setTitle]=useState(loadStaffTitle());
   const[capturing,setCapturing]=useState(false);
   const exportRef=useRef(null);
+  // 인원+생산계획 통합 이미지 저장용 (오프스크린)
+  const[combinedCapturing,setCombinedCapturing]=useState(false);
+  const[combinedPlans,setCombinedPlans]=useState(null);
+  const[combinedLines,setCombinedLines]=useState([]);
+  const combinedExportRef=useRef(null);
 
   const loadStaff=useCallback(async()=>{
     try{
@@ -4795,6 +4809,49 @@ function StaffTab({adminHash}){
     setCapturing(false);
   };
 
+  // 인원 + 같은날짜 생산계획을 한 이미지로 저장
+  const exportCombined=async()=>{
+    if(typeof window.html2canvas!=="function"){
+      alert("이미지 저장 라이브러리(html2canvas)가 로드되지 않았습니다.");return;
+    }
+    setCombinedCapturing(true);
+    try{
+      // 1) 계획 + 라인 fetch → dateStr과 겹치는 계획만 추림 (KST 00:00 ~ 24:00)
+      const[plD,lnD]=await Promise.all([
+        rpc("aps_list_plans",{p_admin_hash:adminHash,p_status:null}),
+        rpc("aps_list_lines",{p_admin_hash:adminHash})
+      ]);
+      const dayStartMs=new Date(dateStr+"T00:00:00+09:00").getTime();
+      const dayEndMs=dayStartMs+24*3600*1000;
+      const dayPlans=(plD||[]).filter(p=>{
+        if(!p.start_at||!p.end_at)return false;
+        const s=new Date(p.start_at).getTime();
+        const e=new Date(p.end_at).getTime();
+        return s<dayEndMs && e>dayStartMs;
+      });
+      setCombinedPlans(dayPlans);
+      setCombinedLines(lnD||[]);
+    }catch(e){
+      console.error(e);
+      alert("계획 데이터를 불러오지 못했습니다: "+(e.message||e));
+      setCombinedCapturing(false);
+      return;
+    }
+    // 2) 오프스크린 렌더 대기 후 캡처
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const target=combinedExportRef.current;
+    if(!target){setCombinedCapturing(false);setCombinedPlans(null);alert("캡처할 영역이 없습니다");return}
+    try{
+      const canvas=await window.html2canvas(target,{backgroundColor:"#ffffff",scale:2,logging:false,useCORS:true});
+      const link=document.createElement("a");
+      link.download=`가용인원_생산계획_${dateStr}.png`;
+      link.href=canvas.toDataURL("image/png");
+      document.body.appendChild(link);link.click();document.body.removeChild(link);
+    }catch(e){console.error(e);alert("이미지 저장 실패: "+(e.message||e))}
+    setCombinedCapturing(false);
+    setCombinedPlans(null);
+  };
+
   if(loading)return <Loader/>;
 
   return <div>
@@ -4830,6 +4887,13 @@ function StaffTab({adminHash}){
             disabled={capturing||totalActive===0}
             title="현재 가용 인원을 이미지로 저장">
             {capturing?"저장 중...":"📷 이미지 저장"}
+          </button>
+          <button
+            className="aps-btn aps-btn-secondary aps-btn-sm"
+            onClick={exportCombined}
+            disabled={combinedCapturing||totalActive===0}
+            title={`선택된 날짜(${dateStr})의 가용 인원 + 생산계획을 하나의 이미지로 저장`}>
+            {combinedCapturing?"저장 중...":"📷 인원+계획"}
           </button>
         </div>
 
@@ -4873,6 +4937,12 @@ function StaffTab({adminHash}){
         {capturing&&<div style={{position:"fixed",left:-99999,top:0,zIndex:-1,pointerEvents:"none"}}>
           <div ref={exportRef}>
             <ExportStaffView title={title} dateStr={dateStr} deptGroups={deptGroups} offIds={offIds} totalAvail={totalAvail}/>
+          </div>
+        </div>}
+        {/* 오프스크린: 인원 + 생산계획 통합 캡처 영역 */}
+        {combinedCapturing&&combinedPlans!==null&&<div style={{position:"fixed",left:-99999,top:0,zIndex:-1,pointerEvents:"none"}}>
+          <div ref={combinedExportRef}>
+            <ExportCombinedView title={title} dateStr={dateStr} deptGroups={deptGroups} offIds={offIds} totalAvail={totalAvail} plans={combinedPlans} lines={combinedLines}/>
           </div>
         </div>}
       </>

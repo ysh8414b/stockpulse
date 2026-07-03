@@ -897,6 +897,16 @@
 - **운영 순서**: (1) Supabase SQL Editor에서 `setup_aps_staff.sql` 실행 → (2) 👥 인원 탭 → 직원 마스터 모드 → 명단 등록 → (3) 일일 가용 모드에서 휴무자 체크박스 클릭 → (4) 📷 이미지 저장 → 사진 양식 PNG 다운로드
 - **한계**: 캘린더 월간 뷰는 미구현(`aps_get_attendance_range` RPC는 만들어 둠 — 향후 확장). 휴무 상태는 단일 'off'만 사용(연차/병가/출장 분리 미사용 — RPC는 지원)
 
+### APS — 인원 + 생산계획 통합 PNG 저장 (2026-07-03)
+- 사용자 요청: "생산계획 이미지랑 인원 이미지랑 합쳐서 같이 다운받고 싶다. 같은날짜로 한눈에 보이게"
+- 기존: 👥 인원 탭에서는 `ExportStaffView`만, 📅 생산계획 탭에서는 `ExportPlansView`만 각각 별도 PNG 저장 → 두 이미지를 오프라인에서 합성해야 했음
+- 변경: 👥 인원 탭 일일 가용 모드에 `📷 인원+계획` 신규 버튼 추가 → 현재 선택된 날짜의 가용 인원 + 그 날짜와 겹치는 생산계획을 한 PNG로 저장
+- **`ExportPlansView`**: `width` prop 추가 (default 820) → 통합 뷰에서는 880으로 전달해 인원 뷰와 폭 통일
+- **신규 `ExportCombinedView`** ([aps.html:4674](aps.html:4674)): 880px 폭 컨테이너에 `ExportStaffView` + dashed divider + `ExportPlansView`를 세로 스택 (재사용 컴포넌트, 코드 중복 없음)
+- **`StaffTab` 변경**: `combinedCapturing`/`combinedPlans`/`combinedLines` state + `combinedExportRef` + `exportCombined()` 핸들러 (`aps_list_plans`+`aps_list_lines` fetch → 인라인 KST 00:00~24:00 overlap 필터 → 오프스크린 렌더 → html2canvas → `가용인원_생산계획_YYYY-MM-DD.png` 다운로드)
+- 원자재 정보(matsByPlan)는 빈 객체 전달 → 원육 상세는 미표시 (MVP 범위, 필요 시 후속에서 buildExportMaterials 재사용 가능)
+- 한계: 계획 아이템의 원육 매칭 정보 미표시. 계획 0건인 날짜에도 저장 가능 (플레이스홀더 "표시할 생산계획이 없습니다")
+
 ### APS v7 — 원자재 매칭 키워드 + 생산계획 필요 원육 실시간 표시 (2026-07-01)
 - 사용자 요청: "생산계획 잡을 때 그 제품에 필요한 원육이 얼마나 남았는지 뜨도록 + 재고시트 원육이랑 BOM 원자재 자동 연동"
 - 배경: 재고시트 원육 이름은 브랜드/공장코드 포함(예: `냉동우육 삼겹양지 SWIFT 3D`)이라 매번 바뀌지만, BOM에서는 일반 부위명(`삼겹양지`)만 쓰고 싶음. 원산지 구분도 필요(`삼겹양지(미국)` vs `삼겹양지(호주)`)
