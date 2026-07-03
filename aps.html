@@ -2859,6 +2859,11 @@ function PlansTab({adminHash}){
   // 생산계획 PNG 저장 (전용 오프스크린 ExportPlansView 렌더 → html2canvas 캡처)
   const exportPlansRef=useRef(null);
   const[capturing,setCapturing]=useState(false);
+  // 인원+생산계획 통합 이미지 저장용 (오프스크린)
+  const combinedExportRef=useRef(null);
+  const[combinedCapturing,setCombinedCapturing]=useState(false);
+  const[combinedStaff,setCombinedStaff]=useState(null);
+  const[combinedOffIds,setCombinedOffIds]=useState(new Set());
   // 계획들의 원자재 소요/재고 미리 계산 (PNG 저장 직전)
   // 반환: {planId: [{name, code, needKg, matches:[{rawName,kg}], stockKg, ok, hasKeywords}]}
   const buildExportMaterials=async(planList)=>{
@@ -2947,6 +2952,40 @@ function PlansTab({adminHash}){
     setExportMats({});
   };
 
+  // 인원 + 생산계획 통합 이미지 저장 (선택된 dayStr 기준)
+  const exportCombinedFromPlans=async()=>{
+    if(typeof window.html2canvas!=="function"){
+      alert("이미지 저장 라이브러리(html2canvas)가 로드되지 않았습니다.");return;
+    }
+    if(allDates){alert("통합 이미지는 단일 날짜에서만 저장됩니다. 🗓 전체 날짜를 OFF로 변경해주세요.");return}
+    setCombinedCapturing(true);
+    try{
+      const[staffD,attD]=await Promise.all([
+        rpc("aps_list_staff",{p_admin_hash:adminHash,p_only_active:false}),
+        rpc("aps_get_attendance",{p_admin_hash:adminHash,p_date:dayStr})
+      ]);
+      setCombinedStaff(staffD||[]);
+      setCombinedOffIds(new Set((attD||[]).map(r=>r.staff_id)));
+    }catch(e){
+      console.error(e);
+      alert("인원 데이터를 불러오지 못했습니다: "+(e.message||e));
+      setCombinedCapturing(false);
+      return;
+    }
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const target=combinedExportRef.current;
+    if(!target){setCombinedCapturing(false);setCombinedStaff(null);alert("캡처할 영역이 없습니다");return}
+    try{
+      const canvas=await window.html2canvas(target,{backgroundColor:"#ffffff",scale:2,logging:false,useCORS:true});
+      const link=document.createElement("a");
+      link.download=`가용인원_생산계획_${dayStr}.png`;
+      link.href=canvas.toDataURL("image/png");
+      document.body.appendChild(link);link.click();document.body.removeChild(link);
+    }catch(e){console.error(e);alert("이미지 저장 실패: "+(e.message||e))}
+    setCombinedCapturing(false);
+    setCombinedStaff(null);
+  };
+
   // 간트 드래그로 시간 변경 (move/resize-l/resize-r 공통)
   const updatePlanTime=async(p,newStartMs,newEndMs)=>{
     // 낙관적 업데이트 — 서버 응답 전에 화면 즉시 반영
@@ -3005,6 +3044,13 @@ function PlansTab({adminHash}){
         disabled={capturing||loading||plans.length===0}
         title="현재 보고 있는 날짜의 생산계획을 라인별로 정리하여 PNG로 저장">
         📷 {capturing?"저장 중...":"이미지 저장"}
+      </button>
+      <button
+        className="aps-btn aps-btn-secondary"
+        onClick={exportCombinedFromPlans}
+        disabled={combinedCapturing||loading||allDates}
+        title={allDates?"전체 날짜 모드에서는 사용 불가 (단일 날짜에서만)":`선택된 날짜(${dayStr})의 가용 인원 + 생산계획을 하나의 이미지로 저장`}>
+        📷 {combinedCapturing?"저장 중...":"인원+계획"}
       </button>
       <button className="aps-btn aps-btn-primary" onClick={()=>{setEditing(null);setShowForm(true)}} disabled={items.filter(i=>i.type!=="material").length===0}>+ 생산계획 추가</button>
     </div>
@@ -3157,6 +3203,31 @@ function PlansTab({adminHash}){
     </div>}
     {capturing&&<div style={{position:"fixed",left:-99999,top:0,zIndex:-1,pointerEvents:"none"}} aria-hidden="true">
       <div ref={exportPlansRef}><ExportPlansView plans={listFiltered} lines={lines} dayStr={dayStr} allDates={allDates} matsByPlan={exportMats}/></div>
+    </div>}
+    {combinedCapturing&&combinedStaff!==null&&<div style={{position:"fixed",left:-99999,top:0,zIndex:-1,pointerEvents:"none"}} aria-hidden="true">
+      <div ref={combinedExportRef}>
+        {(()=>{
+          // 인원 데이터 → deptGroups + totalAvail 계산
+          const order=[];
+          const map=new Map();
+          (combinedStaff||[]).forEach(s=>{
+            if(!s.active)return;
+            const k=s.department||"";
+            if(!map.has(k)){map.set(k,[]);order.push(k)}
+            map.get(k).push(s);
+          });
+          const deptGroups=order.map(d=>({dept:d,staff:map.get(d)||[]}));
+          const totalAvail=deptGroups.reduce((sum,g)=>sum+g.staff.filter(s=>!combinedOffIds.has(s.id)).length,0);
+          return <ExportCombinedView
+            title={loadStaffTitle()}
+            dateStr={dayStr}
+            deptGroups={deptGroups}
+            offIds={combinedOffIds}
+            totalAvail={totalAvail}
+            plans={listFiltered}
+            lines={lines}/>;
+        })()}
+      </div>
     </div>}
   </div>;
 }
@@ -4625,7 +4696,7 @@ function StaffForm({adminHash,initial,deptOptions,onSaved,onCancel}){
 }
 
 // PNG 저장용 오프스크린 뷰 (사진과 동일 레이아웃, 라이트 톤 고정)
-function ExportStaffView({title,dateStr,deptGroups,offIds,totalAvail}){
+function ExportStaffView({title,dateStr,deptGroups,offIds,totalAvail,hideHeader=false}){
   const C={bg:"#ffffff",text:"#111827",hdr:"#111827",hdrFg:"#ffffff",border:"#111827",mutedBg:"#f8fafc",muted:"#6b7280"};
   const fmtDate=(s)=>{
     if(!s)return"";
@@ -4636,10 +4707,10 @@ function ExportStaffView({title,dateStr,deptGroups,offIds,totalAvail}){
     return `${String(m).padStart(2,"0")}/${String(d).padStart(2,"0")} (${dow})`;
   };
   return <div style={{background:C.bg,color:C.text,fontFamily:"Pretendard, -apple-system, system-ui, sans-serif",padding:"20px 22px 16px",width:880,boxSizing:"border-box"}}>
-    <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",marginBottom:14}}>
+    {!hideHeader&&<div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",marginBottom:14}}>
       <div style={{fontSize:22,fontWeight:800,letterSpacing:"-.01em"}}>{title||"생산 가용 인원 및 생산 계획"}</div>
       <div style={{fontSize:16,fontWeight:700,color:C.text}}>{fmtDate(dateStr)}</div>
-    </div>
+    </div>}
     <div style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(deptGroups.length||1,7)}, 1fr)`,gap:0,border:`1.5px solid ${C.border}`,borderRadius:0,overflow:"hidden"}}>
       {deptGroups.map((g,gi)=>{
         const availCnt=g.staff.filter(s=>!offIds.has(s.id)).length;
@@ -4670,12 +4741,12 @@ function ExportStaffView({title,dateStr,deptGroups,offIds,totalAvail}){
   </div>;
 }
 
-// 인원 + 생산계획 통합 export (오프스크린)
+// 인원 + 생산계획 통합 export (오프스크린) — 생산계획 위, 인원 아래 (헤더 숨김)
 function ExportCombinedView({title,dateStr,deptGroups,offIds,totalAvail,plans,lines}){
   return <div style={{background:"#ffffff",fontFamily:"Pretendard, -apple-system, system-ui, sans-serif",width:880,boxSizing:"border-box"}}>
-    <ExportStaffView title={title} dateStr={dateStr} deptGroups={deptGroups} offIds={offIds} totalAvail={totalAvail}/>
-    <div style={{borderTop:"2px dashed #111827",margin:"4px 22px 6px"}}></div>
     <ExportPlansView plans={plans} lines={lines} dayStr={dateStr} allDates={false} matsByPlan={{}} width={880}/>
+    <div style={{borderTop:"2px dashed #111827",margin:"4px 22px 6px"}}></div>
+    <ExportStaffView title={title} dateStr={dateStr} deptGroups={deptGroups} offIds={offIds} totalAvail={totalAvail} hideHeader={true}/>
   </div>;
 }
 

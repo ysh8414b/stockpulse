@@ -900,10 +900,14 @@
 ### APS — 인원 + 생산계획 통합 PNG 저장 (2026-07-03)
 - 사용자 요청: "생산계획 이미지랑 인원 이미지랑 합쳐서 같이 다운받고 싶다. 같은날짜로 한눈에 보이게"
 - 기존: 👥 인원 탭에서는 `ExportStaffView`만, 📅 생산계획 탭에서는 `ExportPlansView`만 각각 별도 PNG 저장 → 두 이미지를 오프라인에서 합성해야 했음
-- 변경: 👥 인원 탭 일일 가용 모드에 `📷 인원+계획` 신규 버튼 추가 → 현재 선택된 날짜의 가용 인원 + 그 날짜와 겹치는 생산계획을 한 PNG로 저장
+- 변경: **두 탭 모두**에 `📷 인원+계획` 신규 버튼 추가 (사용자가 어느 탭에서 작업 중이든 접근 가능하도록)
+  - 👥 인원 탭 일일 가용 모드: 헤더 오른쪽 `📷 이미지 저장` 옆
+  - 📅 생산계획 탭 툴바: `📷 이미지 저장` 옆 (allDates=true면 disabled — 통합 이미지는 단일 날짜 전용)
+- 현재 선택된 날짜의 가용 인원 + 그 날짜와 겹치는 생산계획을 한 PNG로 저장 → `가용인원_생산계획_YYYY-MM-DD.png`
 - **`ExportPlansView`**: `width` prop 추가 (default 820) → 통합 뷰에서는 880으로 전달해 인원 뷰와 폭 통일
 - **신규 `ExportCombinedView`** ([aps.html:4674](aps.html:4674)): 880px 폭 컨테이너에 `ExportStaffView` + dashed divider + `ExportPlansView`를 세로 스택 (재사용 컴포넌트, 코드 중복 없음)
-- **`StaffTab` 변경**: `combinedCapturing`/`combinedPlans`/`combinedLines` state + `combinedExportRef` + `exportCombined()` 핸들러 (`aps_list_plans`+`aps_list_lines` fetch → 인라인 KST 00:00~24:00 overlap 필터 → 오프스크린 렌더 → html2canvas → `가용인원_생산계획_YYYY-MM-DD.png` 다운로드)
+- **`StaffTab`**: `combinedCapturing`/`combinedPlans`/`combinedLines` state + `combinedExportRef` + `exportCombined()` 핸들러 → `aps_list_plans`+`aps_list_lines` fetch, 인라인 KST 00:00~24:00 overlap 필터
+- **`PlansTab`**: `combinedCapturing`/`combinedStaff`/`combinedOffIds` state + `combinedExportRef` + `exportCombinedFromPlans()` 핸들러 → `aps_list_staff`+`aps_get_attendance` fetch, 오프스크린 렌더 시 인라인 IIFE로 deptGroups/totalAvail 계산 (`title`은 `loadStaffTitle()`로 인원 탭과 동일)
 - 원자재 정보(matsByPlan)는 빈 객체 전달 → 원육 상세는 미표시 (MVP 범위, 필요 시 후속에서 buildExportMaterials 재사용 가능)
 - 한계: 계획 아이템의 원육 매칭 정보 미표시. 계획 0건인 날짜에도 저장 가능 (플레이스홀더 "표시할 생산계획이 없습니다")
 
