@@ -1099,7 +1099,8 @@
 - **CSS 변경** ([aps.html:113-131](aps.html:113)):
   - `td.plan` 클래스 신설 (시안색 `#06b6d4`, width:32px, font-size:10px, font-weight:600)
   - `td.plan.none` (0인 경우 `var(--dimmer)` 회색)
-  - 기존 컬럼 폭 축소: `td.nm max-width:110→85px`, `td.qty width:34→32px`, `td.safety width:34→32px` — 240px 폭 패널에 5컬럼(dot/nm/qty/safety/plan) 배치 공간 확보
+  - 기존 컬럼 폭 축소: `td.qty width:34→32px`, `td.safety width:34→32px` — 5컬럼(dot/nm/qty/safety/plan) 배치 공간 확보
+- **패널 폭 확대 (2026-07-06 follow-up)**: 사용자 피드백 "품목명이 짤린다" → `.aps-inv-panel` 240→320px, `td.nm max-width` 85→170px로 확대. 모바일 미디어쿼리(<980px)는 그대로 100% 폭 유지
 - **`PlansTab`** ([aps.html:3155](aps.html:3155)): `<InventoryQuickPanel plans={plans}/>` prop 전달 (기존 items/adminHash와 함께)
 - 별도 SQL 변경 없음, 기존 `aps_list_plans` 응답의 item_code/status/qty/start_at 필드 그대로 사용
 - 한계: 계획 상태 여부만 판단 → 이미 부분 생산된 in_progress 계획도 원래 qty 전량으로 합산됨 (실제 남은 수량 개념 미구현. actual_qty가 완료 시 채워지지만 in_progress에서는 없음). 반제품 → 완제품 파급 소요량 미반영(사용자가 계획을 완제품 기준으로만 잡는다는 전제)
