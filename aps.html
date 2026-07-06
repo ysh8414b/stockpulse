@@ -1618,6 +1618,9 @@ function PlanForm({adminHash,items,lines,settings,initial,defaultDate,onSaved,on
   const defaultStartInput=`${baseDate}T${String(wsh).padStart(2,"0")}:00`;
   const defaultEndInput=`${baseDate}T${String(Math.min(wsh+1,23)).padStart(2,"0")}:00`;
   const[itemId,setItemId]=useState(initial?.item_id||"");
+  const[itemQuery,setItemQuery]=useState("");
+  const[itemOpen,setItemOpen]=useState(false);
+  const[itemHi,setItemHi]=useState(0);
   const[lineId,setLineId]=useState(initial?.line_id||"");
   const[qty,setQty]=useState(initial?.qty||"");
   const[startAt,setStartAt]=useState(initial?isoToKstInput(initial.start_at):defaultStartInput);
@@ -1740,17 +1743,91 @@ function PlanForm({adminHash,items,lines,settings,initial,defaultDate,onSaved,on
   };
 
   const producible=items.filter(i=>i.type==="product"||i.type==="semi");
+  const selectedItem=producible.find(i=>String(i.id)===String(itemId));
+  const filteredProducible=useMemo(()=>{
+    const q=itemQuery.trim().toLowerCase();
+    if(!q)return producible;
+    return producible.filter(i=>{
+      const code=(i.code||"").toLowerCase();
+      const name=(i.name||"").toLowerCase();
+      const label=(TYPE_LABEL[i.type]||"").toLowerCase();
+      return code.includes(q)||name.includes(q)||label.includes(q);
+    });
+  },[producible,itemQuery]);
+  useEffect(()=>{setItemHi(0)},[itemQuery,itemOpen]);
+  const pickItem=(i)=>{
+    setItemId(i.id);
+    setItemQuery("");
+    setItemOpen(false);
+  };
+  const onItemKey=(e)=>{
+    if(!itemOpen&&(e.key==="ArrowDown"||e.key==="Enter")){setItemOpen(true);return}
+    if(e.key==="ArrowDown"){e.preventDefault();setItemHi(h=>Math.min(h+1,filteredProducible.length-1))}
+    else if(e.key==="ArrowUp"){e.preventDefault();setItemHi(h=>Math.max(h-1,0))}
+    else if(e.key==="Enter"){e.preventDefault();const p=filteredProducible[itemHi];if(p)pickItem(p)}
+    else if(e.key==="Escape"){setItemOpen(false)}
+  };
 
   return <div className="aps-modal-bg aps-side" onClick={onCancel}>
     <div className="aps-modal aps-modal-side" onClick={e=>e.stopPropagation()}>
       <div style={{fontWeight:700,fontSize:"16px",marginBottom:"14px"}}>{isEdit?"📅 생산계획 수정":"📅 생산계획 추가"}</div>
       <div className="aps-form-grid">
         <div style={{gridColumn:"1 / -1"}}>
-          <div className="aps-form-label">품목 *</div>
-          <select className="aps-select" style={{width:"100%"}} value={itemId} onChange={e=>setItemId(e.target.value)}>
-            <option value="">- 제품/반제품 선택 -</option>
-            {producible.map(i=><option key={i.id} value={i.id}>[{TYPE_LABEL[i.type]}] {i.code} - {i.name}</option>)}
-          </select>
+          <div className="aps-form-label">품목 * <span style={{color:"var(--muted)",fontWeight:400}}>(코드/이름 검색)</span></div>
+          <div style={{position:"relative"}}>
+            <div style={{display:"flex",gap:6,alignItems:"center"}}>
+              <input
+                className="aps-input"
+                type="text"
+                placeholder={selectedItem?`✓ [${TYPE_LABEL[selectedItem.type]}] ${selectedItem.code} - ${selectedItem.name}`:"품목 검색... (예: 우삼겹, F0000)"}
+                value={itemQuery}
+                onChange={e=>{setItemQuery(e.target.value);setItemOpen(true)}}
+                onFocus={()=>setItemOpen(true)}
+                onBlur={()=>setTimeout(()=>setItemOpen(false),150)}
+                onKeyDown={onItemKey}
+                style={{flex:1}}
+              />
+              {itemId&&<button
+                type="button"
+                className="aps-btn aps-btn-secondary"
+                style={{padding:"6px 10px",fontSize:12}}
+                onClick={()=>{setItemId("");setItemQuery("");setItemOpen(true)}}
+                title="선택 해제">✕</button>}
+            </div>
+            {itemOpen&&<div style={{
+              position:"absolute",top:"100%",left:0,right:0,marginTop:4,
+              maxHeight:260,overflowY:"auto",zIndex:20,
+              background:"var(--card-bg)",border:"1px solid var(--border)",borderRadius:7,
+              boxShadow:"0 8px 24px rgba(0,0,0,0.18)"
+            }}>
+              {filteredProducible.length===0&&<div style={{padding:"12px",fontSize:12,color:"var(--muted)",textAlign:"center"}}>
+                일치하는 품목이 없습니다
+              </div>}
+              {filteredProducible.map((i,idx)=>{
+                const isSel=String(i.id)===String(itemId);
+                const isHi=idx===itemHi;
+                return <div key={i.id}
+                  onMouseDown={e=>{e.preventDefault();pickItem(i)}}
+                  onMouseEnter={()=>setItemHi(idx)}
+                  style={{
+                    padding:"8px 10px",cursor:"pointer",fontSize:12,
+                    background:isHi?"rgba(6,182,212,0.12)":(isSel?"rgba(6,182,212,0.05)":"transparent"),
+                    borderBottom:"1px solid var(--border)",
+                    display:"flex",alignItems:"center",gap:8
+                  }}>
+                  <span style={{
+                    fontSize:10,fontWeight:700,padding:"2px 6px",borderRadius:4,
+                    background:i.type==="product"?"rgba(34,197,94,0.15)":"rgba(139,92,246,0.15)",
+                    color:i.type==="product"?"#22c55e":"#8b5cf6",
+                    minWidth:34,textAlign:"center"
+                  }}>{TYPE_LABEL[i.type]}</span>
+                  <span style={{color:"var(--muted)",fontSize:11,minWidth:70}}>{i.code}</span>
+                  <span style={{flex:1,fontWeight:isSel?700:400}}>{i.name}</span>
+                  {isSel&&<span style={{color:"#06b6d4",fontSize:12,fontWeight:700}}>✓</span>}
+                </div>;
+              })}
+            </div>}
+          </div>
         </div>
         <div style={{gridColumn:"1 / -1"}}>
           <div className="aps-form-label">라인 {lines.length===0&&<span style={{color:"#f59e0b"}}>(먼저 등록 필요)</span>}</div>
