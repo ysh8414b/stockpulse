@@ -116,12 +116,14 @@
     .aps-inv-panel-tbl td{padding:3px 4px;border-bottom:1px solid var(--div);line-height:1.3;vertical-align:middle}
     .aps-inv-panel-tbl td.dot{width:10px;padding-right:0}
     .aps-inv-panel-tbl td.dot span{display:inline-block;width:6px;height:6px;border-radius:50%;vertical-align:middle}
-    .aps-inv-panel-tbl td.nm{color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:110px}
-    .aps-inv-panel-tbl td.qty{text-align:right;font-variant-numeric:tabular-nums;font-weight:700;color:var(--text);width:34px;white-space:nowrap}
+    .aps-inv-panel-tbl td.nm{color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:85px}
+    .aps-inv-panel-tbl td.qty{text-align:right;font-variant-numeric:tabular-nums;font-weight:700;color:var(--text);width:32px;white-space:nowrap}
     .aps-inv-panel-tbl td.qty.zero{color:#ef4444}
     .aps-inv-panel-tbl td.qty.low{color:#f59e0b}
-    .aps-inv-panel-tbl td.safety{text-align:right;font-variant-numeric:tabular-nums;font-weight:500;color:var(--muted);width:34px;white-space:nowrap;font-size:10px}
+    .aps-inv-panel-tbl td.safety{text-align:right;font-variant-numeric:tabular-nums;font-weight:500;color:var(--muted);width:32px;white-space:nowrap;font-size:10px}
     .aps-inv-panel-tbl td.safety.none{color:var(--dimmer)}
+    .aps-inv-panel-tbl td.plan{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;color:#06b6d4;width:32px;white-space:nowrap;font-size:10px}
+    .aps-inv-panel-tbl td.plan.none{color:var(--dimmer);font-weight:500}
     .aps-inv-panel-tbl tr.head td{padding:2px 4px;font-size:9px;color:var(--dimmer);font-weight:600;letter-spacing:.04em;text-transform:uppercase;border-bottom:1px solid var(--div2)}
     .aps-inv-panel-subhead{font-size:10px;color:var(--muted);font-weight:600;padding:8px 2px 4px!important;background:none!important;text-transform:uppercase;letter-spacing:.04em}
     @media(max-width:980px){
@@ -1443,7 +1445,7 @@ function fmtSavedAt(iso){
   }catch(e){return ""}
 }
 
-function InventoryQuickPanel({onClose,onJumpToSheet,adminHash,items}){
+function InventoryQuickPanel({onClose,onJumpToSheet,adminHash,items,plans}){
   const[data,setData]=useState(()=>loadStoredInventory());
   const[showRaws,setShowRaws]=useState(false);
   const[query,setQuery]=useState("");
@@ -1501,6 +1503,21 @@ function InventoryQuickPanel({onClose,onJumpToSheet,adminHash,items}){
     const m={};(items||[]).forEach(i=>{if(i.code)m[i.code]=Number(i.safety_stock||0)});return m;
   },[items]);
 
+  // 오늘부터 계획된 수량 합산 (item_code별). status는 planned/in_progress만 (done/canceled 제외)
+  // KST 기준 오늘 이후 start_at을 가진 계획만 포함
+  const plannedMap=useMemo(()=>{
+    const m={};
+    const today=todayStr();
+    (plans||[]).forEach(p=>{
+      if(!p.item_code)return;
+      if(p.status!=="planned"&&p.status!=="in_progress")return;
+      const d=isoToKstDateStr(p.start_at);
+      if(!d||d<today)return;
+      m[p.item_code]=(m[p.item_code]||0)+Number(p.qty||0);
+    });
+    return m;
+  },[plans]);
+
   // 템플릿 순서대로 + 박스 0 포함, 검색 적용
   const rows=useMemo(()=>{
     const q=query.trim().toLowerCase();
@@ -1512,13 +1529,14 @@ function InventoryQuickPanel({onClose,onJumpToSheet,adminHash,items}){
         color:t.color||"w",
         box:p?Math.round(p.box):0,
         safety:Math.round(safetyMap[t.code]||0),
+        planned:Math.round(plannedMap[t.code]||0),
         hasData:!!p
       };
     }).filter(r=>{
       if(!q)return true;
       return r.code.toLowerCase().includes(q)||(r.name||"").toLowerCase().includes(q);
     });
-  },[template,productMap,safetyMap,query]);
+  },[template,productMap,safetyMap,plannedMap,query]);
 
   // 템플릿 밖 추가 품목 (업로드에는 있는데 마스터에 없음)
   const extras=useMemo(()=>{
@@ -1561,28 +1579,32 @@ function InventoryQuickPanel({onClose,onJumpToSheet,adminHash,items}){
               <td>품목</td>
               <td style={{textAlign:"right"}}>현재</td>
               <td style={{textAlign:"right"}}>안전</td>
+              <td style={{textAlign:"right"}} title="오늘 이후 계획된 수량 합계 (planned/in_progress)">계획</td>
             </tr>
             {rows.map(r=>{
               const low=r.safety>0&&r.box<r.safety;
               const qtyCls=r.box===0?" zero":(low?" low":"");
-              return <tr key={r.code} style={{background:INV_COLOR_BG[r.color]||"transparent"}} title={`${r.code} — ${r.name}${r.safety>0?` · 안전재고 ${r.safety}`:""}`}>
+              return <tr key={r.code} style={{background:INV_COLOR_BG[r.color]||"transparent"}} title={`${r.code} — ${r.name}${r.safety>0?` · 안전재고 ${r.safety}`:""}${r.planned>0?` · 오늘 이후 계획 ${r.planned}`:""}`}>
                 <td className="dot"><span style={{background:INV_COLOR_DOT[r.color]||"#94a3b8"}}/></td>
                 <td className="nm">{r.name||r.code}</td>
                 <td className={"qty"+qtyCls}>{r.box}</td>
                 <td className={"safety"+(r.safety===0?" none":"")}>{r.safety>0?r.safety:"–"}</td>
+                <td className={"plan"+(r.planned===0?" none":"")}>{r.planned>0?r.planned:"–"}</td>
               </tr>;
             })}
-            {extras.length>0&&<tr><td colSpan="4" className="aps-inv-panel-subhead">+ 마스터 외 ({extras.length})</td></tr>}
+            {extras.length>0&&<tr><td colSpan="5" className="aps-inv-panel-subhead">+ 마스터 외 ({extras.length})</td></tr>}
             {extras.map(p=>{
               const safety=Math.round(safetyMap[p.code]||0);
               const box=Math.round(p.box);
+              const planned=Math.round(plannedMap[p.code]||0);
               const low=safety>0&&box<safety;
               const qtyCls=box===0?" zero":(low?" low":"");
-              return <tr key={"x"+p.code} title={`${p.code} — ${p.name}${safety>0?` · 안전재고 ${safety}`:""}`}>
+              return <tr key={"x"+p.code} title={`${p.code} — ${p.name}${safety>0?` · 안전재고 ${safety}`:""}${planned>0?` · 오늘 이후 계획 ${planned}`:""}`}>
                 <td className="dot"><span style={{background:"#94a3b8",opacity:.4}}/></td>
                 <td className="nm" style={{color:"var(--muted)"}}>{p.name||p.code}</td>
                 <td className={"qty"+qtyCls}>{box}</td>
                 <td className={"safety"+(safety===0?" none":"")}>{safety>0?safety:"–"}</td>
+                <td className={"plan"+(planned===0?" none":"")}>{planned>0?planned:"–"}</td>
               </tr>;
             })}
           </tbody>
@@ -3157,6 +3179,7 @@ function PlansTab({adminHash}){
           onJumpToSheet={()=>{window.location.hash="#sheet"}}
           adminHash={adminHash}
           items={items}
+          plans={plans}
         />}
         <div className={invPanelOpen?"aps-plans-main":""}>
         {viewMode==="gantt"?

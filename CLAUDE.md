@@ -1085,6 +1085,25 @@
 - **트레이드오프**: 두 뷰 모두 독립 fetch → 뷰 전환 시 매번 새로 로딩(캐시 없음). 대신 코드 흐름이 단순하고 편집 후 자동 반영이 즉시 동작
 - **운영 순서**: Supabase에서 `setup_aps_v9.sql` 실행 1회 → 📈 통계 탭에서 `📅 날짜별` 토글로 즉시 사용
 
+### APS — 재고 패널에 오늘 이후 계획 수량 컬럼 추가 (2026-07-06)
+- 사용자 요청: "생산계획에서 재고on누르면 현재, 안전 재고 뜨는데 계획잡혀있는 품목도 옆에 계획이라고 뜨게. 만약 오늘이 7월 5일이고 7월 6일 계획 잡혀있으면 5,6일 계획된 수량이 뜨는거지. 당일부터 계획잡힌 날짜까지 합산하고 이전날짜는 없어지는"
+- 기존: `InventoryQuickPanel`에 `현재`(재고시트 박스 수) + `안전`(aps_items.safety_stock) 두 컬럼 → 앞으로 얼마나 만들 예정인지가 즉시 안 보임 → 매번 계획 탭 표를 훑어야 함
+- 변경: `계획` 컬럼 신설 — 오늘(KST) 이후 시작(start_at)하는 planned/in_progress 계획의 수량을 item_code별로 합산하여 표시. 완료/취소 계획은 제외. 오늘 이전 시작 계획은 자동 제외 → 지난 날짜는 사라지고 미래 계획만 남음
+- **`InventoryQuickPanel` 변경** ([aps.html:1446](aps.html:1446)):
+  - props에 `plans` 추가 (PlansTab의 `aps_list_plans` 결과 그대로 전달)
+  - `plannedMap` useMemo: `plans.filter(status in ['planned','in_progress'] && isoToKstDateStr(start_at) >= todayStr())` → item_code별 qty 합산 map
+  - `rows` useMemo에 `planned` 필드 추가 (템플릿 매칭 + extras 양쪽 모두). 값 0이면 `–` 회색 표시(`td.plan.none`), 값 있으면 시안색 강조(`td.plan`)
+  - 테이블 head 행에 "계획" 컬럼 추가 (title 툴팁: "오늘 이후 계획된 수량 합계")
+  - 마스터 외(extras) 섹션 colSpan="4" → colSpan="5"로 조정
+  - 각 tr `title` 툴팁에 "· 오늘 이후 계획 N" 정보 추가
+- **CSS 변경** ([aps.html:113-131](aps.html:113)):
+  - `td.plan` 클래스 신설 (시안색 `#06b6d4`, width:32px, font-size:10px, font-weight:600)
+  - `td.plan.none` (0인 경우 `var(--dimmer)` 회색)
+  - 기존 컬럼 폭 축소: `td.nm max-width:110→85px`, `td.qty width:34→32px`, `td.safety width:34→32px` — 240px 폭 패널에 5컬럼(dot/nm/qty/safety/plan) 배치 공간 확보
+- **`PlansTab`** ([aps.html:3155](aps.html:3155)): `<InventoryQuickPanel plans={plans}/>` prop 전달 (기존 items/adminHash와 함께)
+- 별도 SQL 변경 없음, 기존 `aps_list_plans` 응답의 item_code/status/qty/start_at 필드 그대로 사용
+- 한계: 계획 상태 여부만 판단 → 이미 부분 생산된 in_progress 계획도 원래 qty 전량으로 합산됨 (실제 남은 수량 개념 미구현. actual_qty가 완료 시 채워지지만 in_progress에서는 없음). 반제품 → 완제품 파급 소요량 미반영(사용자가 계획을 완제품 기준으로만 잡는다는 전제)
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
