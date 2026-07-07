@@ -1160,6 +1160,23 @@
 - **테이블 스키마는 그대로 유지** (필드명은 raw_meat_* / product_* 그대로 사용 가능) → SQL DROP 없이 함수만 CREATE OR REPLACE로 갱신 가능
 - **운영 순서** (이미 setup_aps_production.sql 실행한 사용자): `aps_get_production_dates`/`aps_get_raw_meat_history_by_product` 두 함수 블록만 재실행. 기존 업로드 데이터는 있으면 삭제 후 재업로드 (파서가 뒤바뀌었으므로 기존 저장 데이터는 좌우가 반대로 저장돼 있음)
 
+### APS 로스탭 — 제품명 스펙 파싱 + 실제 완성 kg 반영 (2026-07-07)
+- 사용자 지적: "제품명이 `500g*8`, `1kg*6` 등으로 된 제품은 excel product_kg가 사실상 총 팩 수 → 팩당 kg를 곱해야 실제 완성 kg. 예: `[S]돌돌말이 우삼겹 500g*8` 288 → 288×0.5 = 144kg"
+- 배경: excel 좌측(A-H)의 kg 컬럼은 kg 단위가 아니라 (박스 수 × 박스당 팩 수) = 총 팩 수. 실제 완성 kg를 얻으려면 제품명 스펙에서 팩당 무게를 파싱해서 곱해야 함
+- **`extractPackWeightFromName(name)`** 신규 헬퍼: 정규식 `(\d+(?:\.\d+)?)\s*(kg|g)\s*\*\s*\d+` 매칭. 예 `500g*8`→0.5, `1kg*6`→1, `3kg*5`→3, `600g*10`→0.6. 매칭 안 되면 null → excel 값 그대로 사용
+- **`computeSheetLoss` 변경**:
+  - 각 chain의 product에서 `packWeightKg = extractPackWeightFromName(product_name)` 계산
+  - `totalOutputKg = packWeightKg != null ? excelProdKg * packWeightKg : excelProdKg`
+  - product entry에 `pack_weight_kg`, `excel_product_kg` 필드 추가 (UI 표시용)
+  - Loss = Σraw_kg − actualOutputKg (스펙 파싱으로 훨씬 정확)
+- **`ProductionLossDetail` UI**:
+  - Chain 헤더의 생산량 표시가 조건부: 스펙 있으면 `<b>실제 144 kg</b> (288팩 × 500g)`, 스펙 없으면 excel 값 `288 Kg` 그대로
+  - `pack_weight_kg`가 1kg 이상이면 `Xkg`, 미만이면 `Xg` 형식 표기
+- **인트로 텍스트 갱신**: `<code>500g*8</code>/<code>1kg*6</code> 등 스펙 있으면 excel의 생산량 × 팩당 kg = 실제 완성 kg (예: 288 × 500g = 144kg) 명시
+- **효과**: 이전에는 excel product_kg가 원육 kg보다 훨씬 크게 나와서 로스가 음수(-)로 표시되는 케이스가 정상 계산됨. 예: 원육 153kg → 실제 완성 144kg → 로스 9kg = 5.93% (기존엔 288kg product로 -35kg = -22% 오표시)
+- **한계**: (1) `X × Y` (곱셈 기호 `×`)나 `Xg/N` 같은 다른 표기법은 미지원 (asterisk `*`만 매칭). (2) 제품명에 무게가 여러 개 있으면 첫 번째만 사용 (예: `120g*10*5팩` → 120g). (3) 스펙 없는 제품(냉장 원육 등)은 excel 값 그대로 사용 → 실제 로스와 다를 수 있음 (그러나 원육 성격 자체가 스펙 없이 kg 단위로 유통되므로 대체로 정확)
+- 별도 SQL 변경 없음 (계산은 클라이언트 로직)
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)

@@ -6054,9 +6054,27 @@ function parseProductionWorkbook(buf){
   return sheets;
 }
 
+// 제품명에서 팩당 무게(kg) 추출
+// 예: "[S]돌돌말이 우삼겹 500g*8" → 0.5 (500g = 0.5kg)
+// 예: "원육_등심 1kg*6" → 1.0
+// 예: "치즈스틱 3kg*5" → 3.0
+// 매칭 안 되면 null → excel product_kg 값 그대로 사용
+// 로직: excel의 product_kg 컬럼은 사실상 총 팩 수(박스×팩) 값이므로 팩당 kg를 곱해야 실제 완성 kg
+function extractPackWeightFromName(name){
+  if(!name)return null;
+  const m = String(name).match(/(\d+(?:\.\d+)?)\s*(kg|g)\s*\*\s*\d+/i);
+  if(!m)return null;
+  const val = parseFloat(m[1]);
+  if(isNaN(val)||val<=0)return null;
+  const unit = m[2].toLowerCase();
+  return unit === 'kg' ? val : val/1000;
+}
+
 // 시트 rows → chain별 로스 계산
 // 하나의 chain = 하나의 생산 제품(chain_start) + 여러 원육(chain_start 및 continuation 행들)
-// Loss = Σ raw_meat_kg − product_kg (양수: 실제 로스, 음수·0: 로스 없음)
+// 실제 완성 kg = excel product_kg × 팩당 kg (제품명 스펙 파싱 성공 시)
+// 스펙 없는 제품은 excel product_kg 그대로 사용
+// Loss = Σ raw_meat_kg − 실제 완성 kg
 function computeSheetLoss(rows){
   // chain_id 별로 묶기
   const chains={};
@@ -6090,7 +6108,10 @@ function computeSheetLoss(rows){
     if(!c.product)continue; // chain_start 행이 없으면 skip
     const totalInputKg=c.raw_meats.reduce((s,m)=>s+m.meat_kg,0);
     const totalInputAmt=c.raw_meats.reduce((s,m)=>s+m.meat_amount,0);
-    const totalOutputKg=c.product.product_kg||0;
+    // 제품명에서 팩당 무게 파싱 → excel product_kg는 총 팩 수로 취급, 팩당 kg 곱해 실제 완성 kg 산출
+    const packWeightKg = extractPackWeightFromName(c.product.product_name);
+    const excelProdKg = c.product.product_kg||0;
+    const totalOutputKg = packWeightKg != null ? excelProdKg * packWeightKg : excelProdKg;
     const totalOutputAmt=c.product.product_amount||0;
     const lossKg=totalInputKg-totalOutputKg;
     const lossRate=totalInputKg>0 ? Math.round(lossKg/totalInputKg*100*100)/100 : 0;
@@ -6101,6 +6122,8 @@ function computeSheetLoss(rows){
         raw_meats:c.raw_meats,
       },
       chain_id:c.chain_id,
+      pack_weight_kg: packWeightKg,        // 팩당 kg (스펙 없으면 null)
+      excel_product_kg: excelProdKg,       // excel 원본 값 (총 팩수 개념)
       loss_info:{
         total_input_kg: Math.round(totalInputKg*100)/100,
         total_output_kg: Math.round(totalOutputKg*100)/100,
@@ -6172,7 +6195,16 @@ function ProductionLossDetail({loss,rows,date}){
           <div style={{flex:1,minWidth:200}}>
             <div style={{fontWeight:700,fontSize:14}}>📦 {prod.product_name||"(제품명 없음)"} <span style={{fontSize:11,color:"var(--muted)",fontFamily:"monospace",marginLeft:6}}>{prod.product_code}</span></div>
             <div style={{fontSize:11,color:"var(--muted)"}}>
-              {prod.product_origin||"-"} · 생산 {fmtLossKg(prod.product_boxes,0)}박스 · {fmtLossKg(prod.product_kg)} {prod.product_unit||"Kg"}
+              {prod.product_origin||"-"} · 생산 {fmtLossKg(prod.product_boxes,0)}박스 · {
+                p.pack_weight_kg != null ? <>
+                  <b style={{color:"var(--text)"}}>{fmtLossKg(li.total_output_kg)} kg</b>
+                  <span style={{opacity:0.7,marginLeft:4}}>
+                    ({fmtLossKg(p.excel_product_kg,0)}팩 × {p.pack_weight_kg>=1?p.pack_weight_kg+"kg":Math.round(p.pack_weight_kg*1000)+"g"})
+                  </span>
+                </> : <>
+                  {fmtLossKg(p.excel_product_kg)} {prod.product_unit||"Kg"}
+                </>
+              }
               {prod.product_amount>0?` · ${Number(prod.product_amount).toLocaleString("ko-KR")}원`:""}
             </div>
           </div>
@@ -6374,7 +6406,7 @@ function ProductionLossTab({adminHash}){
     </div>
 
     <div style={{fontSize:11,color:"var(--muted)",padding:"8px 12px",background:"rgba(59,130,246,0.06)",borderLeft:"3px solid #3b82f6",borderRadius:4,marginBottom:12}}>
-      <b>계산 방식:</b> 엑셀 좌측(A-H) = 생산 제품, 우측(I-P) = 투입 원육. 하나의 제품에 여러 원육을 순차 투입 → 로스 = Σ원육 kg − 제품 kg. 우측 "원본 로스"는 엑셀에 적힌 로스율(참고용).
+      <b>계산 방식:</b> 엑셀 좌측(A-H) = 생산 제품, 우측(I-P) = 투입 원육. 제품명에 <code>500g*8</code>/<code>1kg*6</code> 등 스펙 있으면 <b>excel의 생산량 × 팩당 kg</b> = 실제 완성 kg (예: 288 × 500g = 144kg). 로스 = Σ원육 kg − 실제 완성 kg. 우측 "원본 로스"는 엑셀에 적힌 로스율(참고용).
     </div>
 
     <div style={{display:"grid",gridTemplateColumns:"260px 1fr",gap:12}} className="aps-loss-grid">
