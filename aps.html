@@ -6268,6 +6268,193 @@ function ProductionLossDetail({loss,rows,date}){
   </div>;
 }
 
+// ═══════════════════════════════════════════
+// 제품 검색 뷰 — 제품명/코드로 필터해 평균 로스율 집계
+// aps_get_product_chain_stats 로 chain-level 데이터 fetch 후
+// 클라이언트에서 팩당 kg 파싱(extractPackWeightFromName)을 반영해 실제 완성 kg 계산
+// ═══════════════════════════════════════════
+function ProductLossSearchView({adminHash}){
+  const[chains,setChains]=useState([]);
+  const[busy,setBusy]=useState(false);
+  const[err,setErr]=useState("");
+  const[range,setRange]=useState(365);
+  const[q,setQ]=useState("");
+  const[sortKey,setSortKey]=useState("rate"); // rate | uses | rawkg | recent
+
+  const load=useCallback(async()=>{
+    if(!adminHash)return;
+    setBusy(true);setErr("");
+    try{
+      const data=await rpc("aps_get_product_chain_stats",{p_admin_hash:adminHash,p_days_back:range});
+      setChains(Array.isArray(data)?data:[]);
+    }catch(e){setErr("로딩 실패: "+(e.message||e));setChains([]);}
+    finally{setBusy(false);}
+  },[adminHash,range]);
+  useEffect(()=>{load()},[load]);
+
+  // chain-level → 제품별 집계 (팩당 kg 파싱 반영)
+  const grouped=useMemo(()=>{
+    const map=new Map(); // product_code → {code, name, unit, origin, chains:[], totalRawKg, totalOutputKg, dates:Set}
+    for(const c of chains){
+      const code=c.product_code||"";
+      if(!code)continue;
+      const packKg=extractPackWeightFromName(c.product_name);
+      const excelProdKg=Number(c.product_kg)||0;
+      const actualOutputKg=packKg!=null?excelProdKg*packKg:excelProdKg;
+      const rawKg=Number(c.chain_raw_kg)||0;
+      let g=map.get(code);
+      if(!g){
+        g={
+          code, name:c.product_name||"", unit:c.product_unit||"Kg", origin:c.product_origin||"",
+          totalRawKg:0, totalOutputKg:0, totalRawAmount:0, totalProductAmount:0,
+          totalBoxes:0, uses:0, dates:new Set(), lastDate:c.date,
+          hasPackSpec:packKg!=null,
+        };
+        map.set(code,g);
+      }
+      // 대표 이름/원산지는 가장 최근 데이터로 유지 (chain은 date desc로 옴)
+      if(!g.name && c.product_name) g.name=c.product_name;
+      g.totalRawKg += rawKg;
+      g.totalOutputKg += actualOutputKg;
+      g.totalRawAmount += Number(c.chain_raw_amount)||0;
+      g.totalProductAmount += Number(c.product_amount)||0;
+      g.totalBoxes += Number(c.product_boxes)||0;
+      g.uses += 1;
+      g.dates.add(c.date);
+      if(c.date > g.lastDate) g.lastDate=c.date;
+      if(packKg!=null) g.hasPackSpec=true;
+    }
+    const list=[];
+    for(const g of map.values()){
+      const lossKg=g.totalRawKg-g.totalOutputKg;
+      const lossRate=g.totalRawKg>0 ? Math.round(lossKg/g.totalRawKg*100*100)/100 : 0;
+      list.push({
+        ...g,
+        useDays:g.dates.size,
+        lossKg:Math.round(lossKg*100)/100,
+        lossRate,
+      });
+    }
+    return list;
+  },[chains]);
+
+  const filtered=useMemo(()=>{
+    const query=q.trim().toLowerCase();
+    let list=grouped;
+    if(query){
+      list=grouped.filter(g=>
+        (g.name||"").toLowerCase().includes(query) ||
+        (g.code||"").toLowerCase().includes(query)
+      );
+    }
+    // 정렬
+    const sorted=[...list];
+    if(sortKey==="rate") sorted.sort((a,b)=>b.lossRate-a.lossRate);
+    else if(sortKey==="uses") sorted.sort((a,b)=>b.uses-a.uses);
+    else if(sortKey==="rawkg") sorted.sort((a,b)=>b.totalRawKg-a.totalRawKg);
+    else if(sortKey==="recent") sorted.sort((a,b)=>(b.lastDate||"").localeCompare(a.lastDate||""));
+    return sorted;
+  },[grouped,q,sortKey]);
+
+  const overall=useMemo(()=>{
+    const totalRaw=filtered.reduce((s,g)=>s+g.totalRawKg,0);
+    const totalOut=filtered.reduce((s,g)=>s+g.totalOutputKg,0);
+    const lossKg=totalRaw-totalOut;
+    const rate=totalRaw>0 ? Math.round(lossKg/totalRaw*100*100)/100 : 0;
+    return {totalRaw,totalOut,lossKg:Math.max(lossKg,0),rate,products:filtered.length};
+  },[filtered]);
+
+  return <div>
+    <div className="aps-toolbar" style={{gap:8,flexWrap:"wrap"}}>
+      <input className="aps-input" placeholder="🔍 제품명·코드 검색 (예: 돌돌우삼겹, 500g*8)"
+        value={q} onChange={e=>setQ(e.target.value)}
+        style={{minWidth:260,flex:1,maxWidth:420}}/>
+      <select className="aps-input aps-input-sm" value={range} onChange={e=>setRange(Number(e.target.value))}>
+        <option value={30}>최근 30일</option>
+        <option value={90}>최근 90일</option>
+        <option value={180}>최근 180일</option>
+        <option value={365}>최근 365일</option>
+      </select>
+      <select className="aps-input aps-input-sm" value={sortKey} onChange={e=>setSortKey(e.target.value)}>
+        <option value="rate">평균 로스율 ↓</option>
+        <option value="uses">사용 횟수 ↓</option>
+        <option value="rawkg">총 원육 kg ↓</option>
+        <option value="recent">최근 사용일 ↓</option>
+      </select>
+      <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={load} disabled={busy}>새로고침</button>
+    </div>
+
+    {err&&<div style={{padding:"10px 14px",background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:6,color:"#ef4444",fontSize:13,marginBottom:10}}>{err}</div>}
+
+    {/* 요약 카드 */}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10,marginBottom:14}}>
+      <div style={{padding:12,background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:8}}>
+        <div style={{fontSize:11,color:"var(--muted)",fontWeight:600}}>{q?"검색 결과":"전체 제품"}</div>
+        <div style={{fontSize:20,fontWeight:800,marginTop:4}}>{overall.products}개</div>
+      </div>
+      <div style={{padding:12,background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:8}}>
+        <div style={{fontSize:11,color:"var(--muted)",fontWeight:600}}>총 원육 투입</div>
+        <div style={{fontSize:20,fontWeight:800,marginTop:4}}>{fmtLossKg(overall.totalRaw)}<span style={{fontSize:12,marginLeft:3}}>kg</span></div>
+      </div>
+      <div style={{padding:12,background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:8}}>
+        <div style={{fontSize:11,color:"var(--muted)",fontWeight:600}}>총 실제 완성</div>
+        <div style={{fontSize:20,fontWeight:800,marginTop:4}}>{fmtLossKg(overall.totalOut)}<span style={{fontSize:12,marginLeft:3}}>kg</span></div>
+      </div>
+      <div style={{padding:12,background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:8}}>
+        <div style={{fontSize:11,color:"var(--muted)",fontWeight:600}}>평균 로스율</div>
+        <div style={{fontSize:22,fontWeight:800,marginTop:4,color:lossRateColor(overall.rate)}}>{fmtLossPct(overall.rate)}</div>
+      </div>
+    </div>
+
+    {busy?<Loader/>:
+      filtered.length===0?<Empty emoji="🔍" text={q?`"${q}" 검색 결과 없음`:"저장된 생산일보 없음"}/>:
+      <div style={{border:"1px solid var(--card-bd)",borderRadius:8,overflow:"auto",background:"var(--card-bg)"}}>
+        <table className="aps-table" style={{fontSize:13,minWidth:820}}>
+          <thead><tr>
+            <th style={{width:38}}>#</th>
+            <th>제품명</th>
+            <th className="right" style={{width:70}}>사용 횟수</th>
+            <th className="right hide-mobile" style={{width:70}}>사용 일수</th>
+            <th className="right" style={{width:110}}>총 원육 kg</th>
+            <th className="right" style={{width:110}}>실제 완성 kg</th>
+            <th className="right" style={{width:105}}>총 로스 kg</th>
+            <th className="right" style={{width:95}}>평균 로스율</th>
+            <th className="right hide-mobile" style={{width:100}}>최근 사용일</th>
+          </tr></thead>
+          <tbody>
+            {filtered.map((g,i)=>{
+              return <tr key={g.code}>
+                <td style={{color:"var(--muted)",fontSize:11}}>{i+1}</td>
+                <td>
+                  <div style={{fontWeight:600}}>{g.name||"(제품명 없음)"}</div>
+                  <div style={{fontSize:10,color:"var(--muted)",fontFamily:"monospace",marginTop:2}}>
+                    {g.code}{g.origin?` · ${g.origin}`:""}{g.hasPackSpec?" · 팩 스펙":""}
+                  </div>
+                </td>
+                <td className="right" style={{fontWeight:700}}>{g.uses}</td>
+                <td className="right hide-mobile" style={{color:"var(--muted)"}}>{g.useDays}</td>
+                <td className="right">{fmtLossKg(g.totalRawKg)}</td>
+                <td className="right">{fmtLossKg(g.totalOutputKg)}</td>
+                <td className="right" style={{fontWeight:600,color:g.lossKg>0.01?lossRateColor(g.lossRate):"var(--muted)"}}>
+                  {g.lossKg>0.01?fmtLossKg(g.lossKg):"0"}
+                </td>
+                <td className="right" style={{fontWeight:800,color:lossRateColor(g.lossRate),fontSize:14}}>
+                  {fmtLossPct(g.lossRate)}
+                </td>
+                <td className="right hide-mobile" style={{color:"var(--muted)",fontSize:11}}>{g.lastDate||"-"}</td>
+              </tr>;
+            })}
+          </tbody>
+        </table>
+      </div>
+    }
+
+    <div style={{fontSize:11,color:"var(--muted)",marginTop:12,padding:"8px 12px",background:"rgba(59,130,246,0.05)",borderLeft:"3px solid #3b82f6",borderRadius:4}}>
+      💡 <b>평균 로스율</b> = (Σ 원육 kg − Σ 실제 완성 kg) / Σ 원육 kg × 100. 제품명에 <code>500g*8</code>/<code>1kg*6</code> 등 스펙이 있으면 팩당 kg를 곱해 실제 완성 kg 계산. 스펙 없는 제품은 excel 원본 kg 그대로 사용. 이 제품이 여러 chain에 등장하면 모두 합산됩니다.
+    </div>
+  </div>;
+}
+
 function ProductionLossTab({adminHash}){
   const[busy,setBusy]=useState(false);
   const[err,setErr]=useState("");
@@ -6277,6 +6464,11 @@ function ProductionLossTab({adminHash}){
   const[selectedDate,setSelectedDate]=useState(null);
   const[sheetRows,setSheetRows]=useState([]);
   const[loadingDay,setLoadingDay]=useState(false);
+  const[viewMode,setViewMode]=useState(()=>{
+    const v=localStorage.getItem("aps-loss-view-mode");
+    return v==="product"||v==="daily"?v:"daily";
+  });
+  useEffect(()=>{localStorage.setItem("aps-loss-view-mode",viewMode)},[viewMode]);
 
   const loadMeta=useCallback(async()=>{
     if(!adminHash)return;
@@ -6370,6 +6562,14 @@ function ProductionLossTab({adminHash}){
         {meta ? (meta.total_dates>0 ? `${meta.total_dates}일치 · ${meta.min_date} ~ ${meta.max_date}` : "저장된 생산일보 없음") : "..."}
       </div>
       <div style={{flex:1}}></div>
+      <div className="aps-view-toggle" role="tablist" style={{marginRight:6}}>
+        <button role="tab" aria-selected={viewMode==="daily"}
+          className={"aps-view-toggle-btn"+(viewMode==="daily"?" active":"")}
+          onClick={()=>setViewMode("daily")} disabled={busy}>📅 일자별</button>
+        <button role="tab" aria-selected={viewMode==="product"}
+          className={"aps-view-toggle-btn"+(viewMode==="product"?" active":"")}
+          onClick={()=>setViewMode("product")} disabled={busy}>🔍 제품 검색</button>
+      </div>
       <label className="aps-btn aps-btn-primary" style={{cursor:busy?"wait":"pointer",opacity:busy?0.6:1}}>
         {busy?"업로드 중...":"📁 생산일보 업로드"}
         <input type="file" accept=".xlsx,.xls" onChange={handleFile} disabled={busy} style={{display:"none"}}/>
@@ -6381,6 +6581,8 @@ function ProductionLossTab({adminHash}){
 
     {err&&<div style={{padding:"10px 14px",background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:6,color:"#ef4444",fontSize:13,marginBottom:10}}>{err}</div>}
     {ok&&<div style={{padding:"10px 14px",background:"rgba(34,197,94,0.1)",border:"1px solid rgba(34,197,94,0.3)",borderRadius:6,color:"#22c55e",fontSize:13,marginBottom:10}}>{ok}</div>}
+
+    {viewMode==="product" ? <ProductLossSearchView adminHash={adminHash}/> : <>
 
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10,marginBottom:14}}>
       <div style={{padding:14,background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:8}}>
@@ -6456,6 +6658,7 @@ function ProductionLossTab({adminHash}){
         }
       </div>
     </div>
+    </>}
   </div>;
 }
 

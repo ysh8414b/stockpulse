@@ -1177,6 +1177,30 @@
 - **한계**: (1) `X × Y` (곱셈 기호 `×`)나 `Xg/N` 같은 다른 표기법은 미지원 (asterisk `*`만 매칭). (2) 제품명에 무게가 여러 개 있으면 첫 번째만 사용 (예: `120g*10*5팩` → 120g). (3) 스펙 없는 제품(냉장 원육 등)은 excel 값 그대로 사용 → 실제 로스와 다를 수 있음 (그러나 원육 성격 자체가 스펙 없이 kg 단위로 유통되므로 대체로 정확)
 - 별도 SQL 변경 없음 (계산은 클라이언트 로직)
 
+### APS 로스탭 — 제품 검색 뷰 추가 (2026-07-07)
+- 사용자 요청: "로스탭에 제품명 검색해서 평균로스 볼수있게" — 특정 제품의 누적 로스 트렌드를 한 번에 보고 싶다
+- 기존: 로스탭은 `📅 일자별` 뷰만 존재 → 특정 제품의 누적 평균 로스를 보려면 각 날짜를 하나씩 클릭해야 함
+- 변경: 로스탭 툴바에 `📅 일자별 / 🔍 제품 검색` 뷰 토글 추가, localStorage(`aps-loss-view-mode`)에 마지막 선택 영속화 (통계 탭 viewMode 패턴 동일)
+- **`setup_aps_production_v2.sql`** (신규, 1회 실행, setup_aps_production.sql 실행 전제):
+  - **`aps_get_product_chain_stats(hash, days_back)`** 신규 RPC: chain-level 통계 반환
+  - CTE 3단(`chain_starts` — chain_start & product_code<>'' 조건 / `chain_raws` — GROUP BY (date, chain_id)로 원육 kg 합계 / `joined` — LEFT JOIN)
+  - 응답 필드: `date, chain_id, product_code, product_name, product_origin, product_boxes, product_kg, product_unit, product_amount, chain_raw_kg, chain_raw_amount`
+  - 팩당 kg 파싱은 서버에서 하지 않음 — 클라이언트 `extractPackWeightFromName`이 제품명에서 스펙 추출 후 계산 (일자별 뷰와 산식 통일)
+- **`aps.html`** 변경:
+  - 신규 컴포넌트 **`ProductLossSearchView({adminHash})`**: 제품 검색 + 평균 로스 집계 UI
+    - state: `chains`, `range`(30/90/180/365일), `q`(검색어), `sortKey`(rate/uses/rawkg/recent)
+    - `grouped` useMemo: chain 단위 데이터 → `product_code` 기준 집계 → `{code, name, unit, origin, totalRawKg, totalOutputKg, uses, useDays(dates.size), lastDate, hasPackSpec, lossKg, lossRate}` 리스트. 각 chain의 `actualOutputKg = packKg != null ? excelProdKg * packKg : excelProdKg` 산식 적용 (일자별 뷰의 `computeSheetLoss`와 동일)
+    - `filtered` useMemo: `q`(대소문자 무관 부분일치, 제품명·코드 매칭) + sortKey 정렬
+    - `overall` useMemo: 필터된 결과의 총 원육/실제 완성/평균 로스율 (Σ 방식)
+    - 요약 카드 4개: 검색 결과 개수 / 총 원육 투입 / 총 실제 완성 / 평균 로스율 (색상 lossRateColor)
+    - 메인 테이블: # / 제품명(+ 코드·원산지·팩 스펙 여부) / 사용 횟수(chain 수) / 사용 일수 / 총 원육 kg / 실제 완성 kg / 총 로스 kg / 평균 로스율 / 최근 사용일
+    - 안내 박스: 산식 + 팩 스펙 처리 + 여러 chain 합산 규칙 명시
+  - **`ProductionLossTab`** 확장: `viewMode` state + `localStorage` 영속화. 툴바 우측(업로드 버튼 옆)에 `📅 일자별 / 🔍 제품 검색` segmented 토글(`aps-view-toggle` 재사용). `viewMode==="product"`이면 `<ProductLossSearchView>` 렌더, `viewMode==="daily"`이면 기존 요약 카드 + 안내 + 날짜 리스트/상세 그리드 렌더
+  - 두 뷰 사이 fragment(`<>...</>`) 감싸기, 안내 텍스트("계산 방식: …")는 daily 모드에서만 표시
+- **동작 예시**: "돌돌우삼겹" 검색 → 최근 365일 동안 이 제품이 chain_start로 등장한 모든 날짜의 원육 kg + 실제 완성 kg 합산 → 평균 로스율 5.9% 표시. `500g*8` 스펙 자동 반영. "팩 스펙" 뱃지로 스펙 파싱 여부 시각화
+- **운영 순서**: Supabase에서 `setup_aps_production_v2.sql` 실행 1회 → 🩸 로스탭 → `🔍 제품 검색` 토글 → 즉시 사용
+- **한계**: (1) 서버측은 chain-level 원본 데이터만 반환하고 팩당 kg 파싱·집계는 클라이언트 → 365일치 chain이 수천 건이면 초기 로딩 payload 커질 수 있음(그래도 화면당 1회만). (2) 제품 검색 뷰는 검색어 무관하게 항상 전체 chain을 fetch → 검색만 클라이언트 필터. 서버측 ILIKE 필터 추가 시 payload 절감 가능하나 sortKey/집계가 클라이언트 로직이라 큰 이득 없음. (3) 제품이 `product_code` 기준으로 그룹핑됨 → 코드가 없거나 여러 제품이 같은 코드를 쓰면 병합될 수 있음(실제로는 회사 ERP에서 code=고유식별자로 신뢰 가능)
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
