@@ -1105,6 +1105,61 @@
 - 별도 SQL 변경 없음, 기존 `aps_list_plans` 응답의 item_code/status/qty/start_at 필드 그대로 사용
 - 한계: 계획 상태 여부만 판단 → 이미 부분 생산된 in_progress 계획도 원래 qty 전량으로 합산됨 (실제 남은 수량 개념 미구현. actual_qty가 완료 시 채워지지만 in_progress에서는 없음). 반제품 → 완제품 파급 소요량 미반영(사용자가 계획을 완제품 기준으로만 잡는다는 전제)
 
+### APS 🩸 로스탭 + 제품별 원육 이력 모달 (2026-07-07)
+- 사용자 요청: "로스탭을 만들고싶어. 참고 로직 파일과 생산일보 엑셀 첨부. 그리고 품목탭 제품 클릭하면 지금까지 그 제품 만들 때 어떤 원육 사용했는지 볼 수 있게. 생산일보 엑셀 업로드 → 누적"
+- 참고 파이썬 로직: 원육 chain 개념 — 하나의 원육으로 여러 제품을 만들 때 첫 제품에 원육 매칭, 뒤 제품들은 `_inherited` carry-over. 체인 마지막 제품이 원본 원육 kg 기준으로 최종 로스 흡수, 중간 제품은 로스 0
+- 엑셀 구조 분석: 시트 하나 = 하루 (시트명 YYYYMMDD). 좌측(A-H) = 원육, 우측(I-P) = 상품, 로스율(Q). 좌측 비면 상속. `XXXXXXXX 로스량 합계` 행 = 체인 로스 요약 (검증용). 마지막 "합 계" 행 스킵
+- **`setup_aps_production.sql`** (신규, 1회 실행):
+  - `aps_production_log` 테이블 (date, sheet_name, row_index, chain_id, is_chain_start/is_inherited/is_loss_summary 플래그, 원육 필드 8개 + 상품 필드 8개 + loss_reported 3개)
+  - 인덱스: date DESC, product_code, raw_meat_code, (date, row_index)
+  - RLS ENABLE + 정책 없음 → RPC로만 접근
+  - RPC 7종 (모두 `aps_assert_admin` 검증):
+    - `aps_upsert_production_batch(hash, rows)`: 날짜 범위 DELETE+INSERT 재업로드 idempotent
+    - `aps_get_production_by_date(hash, date)`: 시트 원본 로우 목록 (row_index 순)
+    - `aps_get_production_dates(hash)`: 저장된 날짜 목록 + 날짜별 요약(product_rows / total_raw_kg / total_prod_kg / total_loss_kg / loss_rate)
+    - `aps_get_raw_meat_history_by_product(hash, product_code, days_back=365)`: 제품별 원육 사용 이력 — CTE로 prod_rows → matched_raws(chain_id 기준 JOIN chain_start) → per_raw(원육별 집계) + daily_details(일자별) → `{summary:[], daily:[]}` 반환. 상속 chain 관계는 이 SQL이 자동 역추적
+    - `aps_get_production_meta(hash)`: 총 row 수, 총 date 수, 기간
+    - `aps_cleanup_production(hash, days=365)`: 365일 초과 삭제
+    - `aps_clear_production(hash)`: 전체 초기화 (WHERE TRUE)
+- **`aps.html` 신규 헬퍼**:
+  - `sheetNameToDate(name)`: "20260615" 또는 "2026-06-15" → "2026-06-15"
+  - `extractDateFromHeaderCell(v)`: R2 A열 "2026년06월15일" 파싱 fallback
+  - `parseProductionWorkbook(buf)`: SheetJS로 모든 시트 순회 → 각 시트를 원육/상품 페어 로우로 정규화. chain_id는 chain_start 카운터로 증가, is_inherited는 좌측 빈 데이터 행, is_loss_summary는 `XXXXXXXX` 또는 "로스량 합계" 매칭. 500행씩 배치 업로드
+  - `calcProductLoss(entry)`: 원육 총 투입 kg / 상품 산출 kg → 로스 kg / 로스율 계산
+  - `computeSheetLoss(rows)`: **참고 파이썬 로직 완전 이식** — rows → product_entries 구성 (chain_start는 원육 매칭, is_inherited는 carry-over placeholder) → 순회하며 remaining_kg 넘김 → 체인 중간 제품 로스 0 처리 → 체인 마지막 제품(상속됨) 원본 투입 기준 재계산 → 요약 반환
+  - `fmtLossKg`/`fmtLossPct`/`lossRateColor` (rate별 색상: ≤5% 초록/≤15% 노랑/≤30% 주황/>30% 빨강)
+- **신규 `ProductionLossTab({adminHash})`**:
+  - 툴바: 📁 생산일보 업로드 + 새로고침 + 🗑 365일 정리 + ⚠ 초기화
+  - 요약 카드 4개: 저장 일자 / 총 로우 / 기간 / 전체 평균 로스율
+  - 2컬럼 레이아웃(grid 260px 1fr): 좌 = 날짜 리스트 sticky panel (최근 순, 활성 시안색 border), 우 = 그날 상세
+  - 상세: 오늘 요약(원육 총 투입 / 상품 총 산출 / 총 로스 / 평균 로스율) + `ProductionLossDetail` 체인별 카드
+  - `ProductionLossDetail`: chain_id 기준 그룹핑 → 각 체인 카드 헤더에 🥩 원육명·코드·원산지·kg + 체인 로스 강조 + 하위에 상품 테이블(순번/제품/박스/kg/매입금액/계산 로스/원본 로스). 상속 제품은 "↪ 상속" 뱃지
+- **신규 `RawMeatHistoryModal({adminHash, product, onClose})`**:
+  - 품목탭에서 제품/반제품 행의 🥩 원육 버튼 클릭 → 모달 오픈
+  - 기간 필터 (30/90/180/365일)
+  - `📊 원육별 총 사용량` 테이블: 순번/원육(코드·원산지)/사용 일수/이 제품 총 생산 kg/비중(%)/기간
+  - `📅 일자별 사용 원육`: 각 일자마다 사용된 원육들을 색상 뱃지로 (원육명 → 제품 X kg)
+  - 서버 CTE가 상속 체인 자동 역추적 → 클라이언트 계산 없이 즉시 표시
+- **`ItemsTab` 변경**: 제품/반제품 행의 작업 컬럼에 `🥩 원육` 버튼 추가 (원자재는 제외). `histTarget` state + `<RawMeatHistoryModal>` 렌더
+- **탭 등록**: `VALID_TABS`에 "loss" 추가, App 렌더에 `<ProductionLossTab>` 등록, `📝 회의록` 옆에 `🩸 로스` 탭 버튼
+- **운영 순서**: (1) Supabase에서 `setup_aps_production.sql` 실행 → (2) 🩸 로스탭 → 📁 생산일보 업로드 → (3) 저장된 날짜 클릭해 상세 확인 → (4) 📦 품목/BOM 탭에서 제품 행의 🥩 원육 버튼 클릭 → 원육 사용 이력 조회
+- **한계**: (1) 로스 계산은 excel의 product_kg를 그대로 완성품 kg로 간주 — 참고 파이썬의 spec conversion(packs_per_box/kg_per_box)은 미구현 (aps_items.spec 정보와 연동 필요 시 후속 확장). 매칭 없는 코드는 loss=0 나올 수 있음. 대신 "원본 로스" 컬럼에 excel의 XXXXXXXX 로스율을 병기해 참고 가능. (2) 시트명이 YYYYMMDD 아니고 R2도 없으면 시트 스킵. (3) 원육 이력 모달은 chain_start 원육만 표시 → 상속 chain의 실제 사용 원육은 자동 역추적됨
+
+### APS 로스탭 — 좌우 매핑 정정 (2026-07-07)
+- 사용자 지적: "왼쪽이 A3 생산 제품, 오른쪽이 I3 투입 품목인데 뭘 보고 왼쪽이 원육이라 판단했어?"
+- 원인: 최초 구현 시 인코딩 깨진 엑셀 원문에서 R3 그룹 헤더를 정확히 못 읽고 R5-R7의 kg 합계(원육 888 = 제품 37.9+812.2+37.9)만 보고 "왼쪽=원육, 오른쪽=제품"으로 오판. 실제 그룹 헤더는 A3="생산 제품", I3="투입 품목"으로 정반대
+- 재해석: 하나의 제품(LEFT) 만들 때 여러 원육(RIGHT)이 순차 투입 → 그게 하나의 chain. LEFT 비고 RIGHT만 있는 행 = 같은 제품에 원육 추가 투입 (상속이 아니라 continuation). 참고 파이썬의 carry-over/chain 상속 로직은 "원육 하나가 여러 제품에 분배" 시나리오인데, 실제 엑셀은 반대(제품 1 : 원육 N) → 상속 로직 불필요
+- **`parseProductionWorkbook` 컬럼 스왑**: 0-7 → product_*, 8-15 → raw_meat_*. XXXXXXXX 감지 위치도 col 0 → col 8. `is_chain_start`=LEFT 채워짐, `is_inherited`=계속 필드명 유지하되 의미는 continuation(같은 제품에 원육 추가)
+- **`computeSheetLoss` 재작성**: 참고 파이썬 carry-over 로직 완전 제거. chain_id 기준 그룹핑 → 각 chain당 하나의 제품 + 여러 원육 → `loss = Σraw_meat_kg − product_kg`. 코드 절반으로 축약
+- **`ProductionLossDetail` UI 재정렬**: chain 헤더가 이제 📦 제품(코드·박스·kg·매입금액 요약), 아래 테이블이 🥩 투입 원육 리스트(순번·원육명·박스·kg·매입금액·비중). 하단 합계 행에 "원육 총량 → 제품 kg / 로스율" 명시
+- **SQL 2종 재작성**:
+  - `aps_get_production_dates`: total_raw_kg는 모든 non-summary 로우의 raw_meat_kg 합. total_prod_kg는 chain_start의 product_kg 합. loss_kg = GREATEST(raw − prod, 0)
+  - `aps_get_raw_meat_history_by_product`: product_code로 **is_chain_start** 로우 찾고 (date, chain_id)로 같은 chain 내 모든 raw_meat 로우(chain_start + continuation) JOIN. 응답 필드도 `total_product_kg` → `total_raw_kg`로 개명 (원육 총 사용량으로 의미 변경)
+- **`RawMeatHistoryModal`**: 컬럼 라벨 "이 제품 총 생산 kg" → "총 사용 kg" (원육 사용량 관점). daily 뱃지 "→ 제품 X kg" → "X kg 투입"
+- **인트로 텍스트 수정**: "상속 체인은 원본 원육 투입 기준" → "엑셀 좌측=제품/우측=원육. 하나 제품에 여러 원육 순차 투입"
+- **테이블 스키마는 그대로 유지** (필드명은 raw_meat_* / product_* 그대로 사용 가능) → SQL DROP 없이 함수만 CREATE OR REPLACE로 갱신 가능
+- **운영 순서** (이미 setup_aps_production.sql 실행한 사용자): `aps_get_production_dates`/`aps_get_raw_meat_history_by_product` 두 함수 블록만 재실행. 기존 업로드 데이터는 있으면 삭제 후 재업로드 (파서가 뒤바뀌었으므로 기존 저장 데이터는 좌우가 반대로 저장돼 있음)
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
