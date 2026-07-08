@@ -908,8 +908,18 @@
 - **신규 `ExportCombinedView`** ([aps.html:4674](aps.html:4674)): 880px 폭 컨테이너에 `ExportStaffView` + dashed divider + `ExportPlansView`를 세로 스택 (재사용 컴포넌트, 코드 중복 없음)
 - **`StaffTab`**: `combinedCapturing`/`combinedPlans`/`combinedLines` state + `combinedExportRef` + `exportCombined()` 핸들러 → `aps_list_plans`+`aps_list_lines` fetch, 인라인 KST 00:00~24:00 overlap 필터
 - **`PlansTab`**: `combinedCapturing`/`combinedStaff`/`combinedOffIds` state + `combinedExportRef` + `exportCombinedFromPlans()` 핸들러 → `aps_list_staff`+`aps_get_attendance` fetch, 오프스크린 렌더 시 인라인 IIFE로 deptGroups/totalAvail 계산 (`title`은 `loadStaffTitle()`로 인원 탭과 동일)
-- 원자재 정보(matsByPlan)는 빈 객체 전달 → 원육 상세는 미표시 (MVP 범위, 필요 시 후속에서 buildExportMaterials 재사용 가능)
-- 한계: 계획 아이템의 원육 매칭 정보 미표시. 계획 0건인 날짜에도 저장 가능 (플레이스홀더 "표시할 생산계획이 없습니다")
+- 한계: 계획 0건인 날짜에도 저장 가능 (플레이스홀더 "표시할 생산계획이 없습니다")
+
+### APS — 인원+계획 통합 PNG에 사용 원육 정보 추가 (2026-07-08)
+- 기존: `ExportCombinedView`가 내부 `ExportPlansView`에 `matsByPlan={}` 하드코딩 전달 → 통합 이미지에는 🥩 원육 라인이 안 뜸 (사용자 보고 "인원+계획 이미지에는 사용원육이 안떠")
+- 원인: 2026-07-03 초기 구현에서 MVP 범위로 원육 상세를 제외 → 별도 생산계획 PNG에는 표시되는데 통합 PNG에서는 누락
+- 변경:
+  - **`buildExportMaterialsFor(adminHash, planList, items, invData)`** 최상단 헬퍼 신설 ([aps.html:543](aps.html:543)) — 기존 `PlansTab` 내부 `buildExportMaterials` arrow function을 top-level로 승격
+  - `ExportCombinedView`에 `matsByPlan` prop 추가 → 내부 `ExportPlansView`에 그대로 전달 (기존 `{}` 하드코딩 제거)
+  - `PlansTab.exportCombinedFromPlans`: `buildExportMaterialsFor(adminHash, listFiltered, items, invData)` 호출 → `combinedMats` state 세팅 → `ExportCombinedView`에 전달
+  - `StaffTab.exportCombined`: 기존 계획/라인 fetch에 `aps_list_items` 추가, 재고시트는 `loadStoredInventory()` + `loadRemoteInventory(adminHash)` 병행하여 `_invRemoteIsNewer` 비교로 신선한 쪽 선택 → `buildExportMaterialsFor` 호출 → `combinedMats`
+  - `PlansTab.exportCurrentView`도 top-level 헬퍼로 마이그레이션 (기존 inner 함수 제거) — 3개 export 경로가 동일 헬퍼 공유
+- 효과: `가용인원_생산계획_YYYY-MM-DD.png` 파일에 각 계획 아래 `🥩 [원자재명] — [원육명1 kg1] · [원육명2 kg2] · ...` 인라인 라인이 나타남 (별도 생산계획 PNG와 동일 포맷)
 
 ### APS v7 — 원자재 매칭 키워드 + 생산계획 필요 원육 실시간 표시 (2026-07-01)
 - 사용자 요청: "생산계획 잡을 때 그 제품에 필요한 원육이 얼마나 남았는지 뜨도록 + 재고시트 원육이랑 BOM 원자재 자동 연동"

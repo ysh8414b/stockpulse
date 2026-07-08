@@ -538,6 +538,53 @@ function calcMaterialRequirements(itemId,plannedQty,bomByParent,itemById){
   return need;
 }
 
+// 계획별 원자재 소요/재고 요약 계산 (PNG export 공용)
+// 반환: {planId: [{id, name, code, needKg, stockKg, matches, hasKeywords, ok}]}
+async function buildExportMaterialsFor(adminHash,planList,items,invData){
+  if(!planList||planList.length===0)return{};
+  const itemById={};for(const it of (items||[]))itemById[it.id]=it;
+  const bomByParent={};
+  const visited=new Set();
+  const walk=async(pid)=>{
+    if(visited.has(pid))return;
+    visited.add(pid);
+    let rows;
+    try{rows=await rpc("aps_list_bom",{p_admin_hash:adminHash,p_parent_id:pid})}
+    catch(e){console.warn("[export mat] BOM fetch fail",pid,e);return}
+    bomByParent[pid]=rows||[];
+    for(const r of (rows||[])){
+      if(r.child_type==="semi"||r.child_type==="product")await walk(r.child_id);
+    }
+  };
+  const uniqIds=Array.from(new Set(planList.map(p=>p.item_id).filter(Boolean)));
+  for(const id of uniqIds)await walk(id);
+  const mats=(items||[]).filter(i=>i.type==="material");
+  const stockByMat=matchRawsToMaterials(invData?.raws||[],mats);
+  const out={};
+  for(const p of planList){
+    const need=calcMaterialRequirements(p.item_id,Number(p.qty)||0,bomByParent,itemById);
+    const rows=[];
+    for(const mid of Object.keys(need)){
+      const mat=need[mid].item;
+      const kws=parseMatchKeywords(mat.match_keywords);
+      const stock=stockByMat[mid];
+      rows.push({
+        id:mid,
+        name:mat.name,
+        code:mat.code,
+        needKg:need[mid].kg,
+        stockKg:stock?.totalKg||0,
+        matches:stock?.matches||[],
+        hasKeywords:kws.length>0,
+        ok:(stock?.totalKg||0)>=need[mid].kg
+      });
+    }
+    rows.sort((a,b)=>b.needKg-a.needKg);
+    if(rows.length>0)out[p.id]=rows;
+  }
+  return out;
+}
+
 // ═══ 상수 ═══
 const TYPE_LABEL={product:"제품",semi:"반제품",material:"원자재"};
 const TYPE_PILL={
@@ -3075,53 +3122,7 @@ function PlansTab({adminHash}){
   const[combinedCapturing,setCombinedCapturing]=useState(false);
   const[combinedStaff,setCombinedStaff]=useState(null);
   const[combinedOffIds,setCombinedOffIds]=useState(new Set());
-  // 계획들의 원자재 소요/재고 미리 계산 (PNG 저장 직전)
-  // 반환: {planId: [{name, code, needKg, matches:[{rawName,kg}], stockKg, ok, hasKeywords}]}
-  const buildExportMaterials=async(planList)=>{
-    if(!planList||planList.length===0)return{};
-    const itemById={};for(const it of items)itemById[it.id]=it;
-    // 필요한 부모 BOM 목록: 각 plan의 item_id (반제품이 자식이면 재귀 fetch)
-    const bomByParent={};
-    const visited=new Set();
-    const walk=async(pid)=>{
-      if(visited.has(pid))return;
-      visited.add(pid);
-      let rows;
-      try{rows=await rpc("aps_list_bom",{p_admin_hash:adminHash,p_parent_id:pid})}
-      catch(e){console.warn("[export mat] BOM fetch fail",pid,e);return}
-      bomByParent[pid]=rows||[];
-      for(const r of (rows||[])){
-        if(r.child_type==="semi"||r.child_type==="product")await walk(r.child_id);
-      }
-    };
-    const uniqIds=Array.from(new Set(planList.map(p=>p.item_id).filter(Boolean)));
-    for(const id of uniqIds)await walk(id);
-    const mats=items.filter(i=>i.type==="material");
-    const stockByMat=matchRawsToMaterials(invData?.raws||[],mats);
-    const out={};
-    for(const p of planList){
-      const need=calcMaterialRequirements(p.item_id,Number(p.qty)||0,bomByParent,itemById);
-      const rows=[];
-      for(const mid of Object.keys(need)){
-        const mat=need[mid].item;
-        const kws=parseMatchKeywords(mat.match_keywords);
-        const stock=stockByMat[mid];
-        rows.push({
-          id:mid,
-          name:mat.name,
-          code:mat.code,
-          needKg:need[mid].kg,
-          stockKg:stock?.totalKg||0,
-          matches:stock?.matches||[],
-          hasKeywords:kws.length>0,
-          ok:(stock?.totalKg||0)>=need[mid].kg
-        });
-      }
-      rows.sort((a,b)=>b.needKg-a.needKg);
-      if(rows.length>0)out[p.id]=rows;
-    }
-    return out;
-  };
+  const[combinedMats,setCombinedMats]=useState({});
   const exportCurrentView=async()=>{
     if(typeof window.html2canvas!=="function"){
       alert("이미지 저장 라이브러리(html2canvas)가 로드되지 않았습니다. 새로고침 후 다시 시도해주세요.");
@@ -3130,7 +3131,7 @@ function PlansTab({adminHash}){
     setCapturing(true);
     // 1) 원자재 요약 미리 계산 → state에 세팅 (오프스크린 ExportPlansView가 참조)
     try{
-      const mats=await buildExportMaterials(listFiltered);
+      const mats=await buildExportMaterialsFor(adminHash,listFiltered,items,invData);
       setExportMats(mats);
     }catch(e){
       console.warn("[export mat] build failed",e);
@@ -3183,9 +3184,17 @@ function PlansTab({adminHash}){
       setCombinedCapturing(false);
       return;
     }
+    // 원자재 요약 미리 계산 (PlansTab의 items/invData state 재사용)
+    try{
+      const mats=await buildExportMaterialsFor(adminHash,listFiltered,items,invData);
+      setCombinedMats(mats);
+    }catch(e){
+      console.warn("[export combined mat] build failed",e);
+      setCombinedMats({});
+    }
     await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
     const target=combinedExportRef.current;
-    if(!target){setCombinedCapturing(false);setCombinedStaff(null);alert("캡처할 영역이 없습니다");return}
+    if(!target){setCombinedCapturing(false);setCombinedStaff(null);setCombinedMats({});alert("캡처할 영역이 없습니다");return}
     try{
       const canvas=await window.html2canvas(target,{backgroundColor:"#ffffff",scale:2,logging:false,useCORS:true});
       const link=document.createElement("a");
@@ -3195,6 +3204,7 @@ function PlansTab({adminHash}){
     }catch(e){console.error(e);alert("이미지 저장 실패: "+(e.message||e))}
     setCombinedCapturing(false);
     setCombinedStaff(null);
+    setCombinedMats({});
   };
 
   // 간트 드래그로 시간 변경 (move/resize-l/resize-r 공통)
@@ -3437,7 +3447,8 @@ function PlansTab({adminHash}){
             offIds={combinedOffIds}
             totalAvail={totalAvail}
             plans={listFiltered}
-            lines={lines}/>;
+            lines={lines}
+            matsByPlan={combinedMats}/>;
         })()}
       </div>
     </div>}
@@ -5155,9 +5166,9 @@ function ExportStaffView({title,dateStr,deptGroups,offIds,totalAvail,hideHeader=
 }
 
 // 인원 + 생산계획 통합 export (오프스크린) — 생산계획 위, 인원 아래 (헤더 숨김)
-function ExportCombinedView({title,dateStr,deptGroups,offIds,totalAvail,plans,lines}){
+function ExportCombinedView({title,dateStr,deptGroups,offIds,totalAvail,plans,lines,matsByPlan}){
   return <div style={{background:"#ffffff",fontFamily:"Pretendard, -apple-system, system-ui, sans-serif",width:880,boxSizing:"border-box"}}>
-    <ExportPlansView plans={plans} lines={lines} dayStr={dateStr} allDates={false} matsByPlan={{}} width={880}/>
+    <ExportPlansView plans={plans} lines={lines} dayStr={dateStr} allDates={false} matsByPlan={matsByPlan||{}} width={880}/>
     <div style={{borderTop:"2px dashed #111827",margin:"4px 22px 6px"}}></div>
     <ExportStaffView title={title} dateStr={dateStr} deptGroups={deptGroups} offIds={offIds} totalAvail={totalAvail} hideHeader={true}/>
   </div>;
@@ -5178,6 +5189,7 @@ function StaffTab({adminHash}){
   const[combinedCapturing,setCombinedCapturing]=useState(false);
   const[combinedPlans,setCombinedPlans]=useState(null);
   const[combinedLines,setCombinedLines]=useState([]);
+  const[combinedMats,setCombinedMats]=useState({});
   const combinedExportRef=useRef(null);
 
   const loadStaff=useCallback(async()=>{
@@ -5299,20 +5311,24 @@ function StaffTab({adminHash}){
       alert("이미지 저장 라이브러리(html2canvas)가 로드되지 않았습니다.");return;
     }
     setCombinedCapturing(true);
+    let dayPlans=[];
+    let itemsD=[];
     try{
-      // 1) 계획 + 라인 fetch → dateStr과 겹치는 계획만 추림 (KST 00:00 ~ 24:00)
-      const[plD,lnD]=await Promise.all([
+      // 1) 계획 + 라인 + 품목 fetch → dateStr과 겹치는 계획만 추림 (KST 00:00 ~ 24:00)
+      const[plD,lnD,itD]=await Promise.all([
         rpc("aps_list_plans",{p_admin_hash:adminHash,p_status:null}),
-        rpc("aps_list_lines",{p_admin_hash:adminHash})
+        rpc("aps_list_lines",{p_admin_hash:adminHash}),
+        rpc("aps_list_items",{p_admin_hash:adminHash})
       ]);
       const dayStartMs=new Date(dateStr+"T00:00:00+09:00").getTime();
       const dayEndMs=dayStartMs+24*3600*1000;
-      const dayPlans=(plD||[]).filter(p=>{
+      dayPlans=(plD||[]).filter(p=>{
         if(!p.start_at||!p.end_at)return false;
         const s=new Date(p.start_at).getTime();
         const e=new Date(p.end_at).getTime();
         return s<dayEndMs && e>dayStartMs;
       });
+      itemsD=itD||[];
       setCombinedPlans(dayPlans);
       setCombinedLines(lnD||[]);
     }catch(e){
@@ -5321,10 +5337,24 @@ function StaffTab({adminHash}){
       setCombinedCapturing(false);
       return;
     }
-    // 2) 오프스크린 렌더 대기 후 캡처
+    // 2) 재고시트(원육) — 로컬 우선, 원격이 더 최신이면 그것으로 교체
+    let invForExport=loadStoredInventory();
+    try{
+      const remote=await loadRemoteInventory(adminHash);
+      if(remote&&_invRemoteIsNewer(invForExport,remote))invForExport=remote;
+    }catch(e){console.warn("[export combined] remote inv fetch fail",e)}
+    // 3) 원자재 요약 계산
+    try{
+      const mats=await buildExportMaterialsFor(adminHash,dayPlans,itemsD,invForExport);
+      setCombinedMats(mats);
+    }catch(e){
+      console.warn("[export combined mat] build failed",e);
+      setCombinedMats({});
+    }
+    // 4) 오프스크린 렌더 대기 후 캡처
     await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
     const target=combinedExportRef.current;
-    if(!target){setCombinedCapturing(false);setCombinedPlans(null);alert("캡처할 영역이 없습니다");return}
+    if(!target){setCombinedCapturing(false);setCombinedPlans(null);setCombinedMats({});alert("캡처할 영역이 없습니다");return}
     try{
       const canvas=await window.html2canvas(target,{backgroundColor:"#ffffff",scale:2,logging:false,useCORS:true});
       const link=document.createElement("a");
@@ -5334,6 +5364,7 @@ function StaffTab({adminHash}){
     }catch(e){console.error(e);alert("이미지 저장 실패: "+(e.message||e))}
     setCombinedCapturing(false);
     setCombinedPlans(null);
+    setCombinedMats({});
   };
 
   if(loading)return <Loader/>;
@@ -5426,7 +5457,7 @@ function StaffTab({adminHash}){
         {/* 오프스크린: 인원 + 생산계획 통합 캡처 영역 */}
         {combinedCapturing&&combinedPlans!==null&&<div style={{position:"fixed",left:-99999,top:0,zIndex:-1,pointerEvents:"none"}}>
           <div ref={combinedExportRef}>
-            <ExportCombinedView title={title} dateStr={dateStr} deptGroups={deptGroups} offIds={offIds} totalAvail={totalAvail} plans={combinedPlans} lines={combinedLines}/>
+            <ExportCombinedView title={title} dateStr={dateStr} deptGroups={deptGroups} offIds={offIds} totalAvail={totalAvail} plans={combinedPlans} lines={combinedLines} matsByPlan={combinedMats}/>
           </div>
         </div>}
       </>
