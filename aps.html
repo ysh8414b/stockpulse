@@ -6010,6 +6010,7 @@ function parseProductionWorkbook(buf){
     const rows=[];
     let chainId=0;
     let rowIdx=0;
+    let currentChainInvalid=false; // 제품 수량 0 chain 감지 시 이후 continuation/loss summary도 skip
     // 헤더 R1~R4 스킵 → R5부터 데이터
     // R3 그룹 헤더: LEFT(A-H) = "생산 제품", RIGHT(I-P) = "투입 품목"
     for(let i=4;i<arr.length;i++){
@@ -6037,6 +6038,23 @@ function parseProductionWorkbook(buf){
 
       // 합계행 (첫 컬럼 한글-only "합 계") 스킵
       if(prodCode && /^[가-힣\s]+$/.test(prodCode) && !rawCode)continue;
+
+      // LEFT(제품) 정보가 있으면 새 chain 시작 의도 — 코드/이름 중 하나라도 채워짐
+      const hasProdInfo = !!prodCode || !!prodName;
+
+      // 제품 수량 0인 chain은 무효 → 이 행 스킵 + 이후 continuation/loss summary도 스킵
+      if(hasProdInfo && prodKg<=0){
+        currentChainInvalid = true;
+        continue;
+      }
+      // 유효한 새 chain 시작 시 무효 플래그 해제
+      if(hasProdInfo){
+        currentChainInvalid = false;
+      }
+      // LEFT 빈 행(continuation/loss summary)이 무효 chain에 속하면 스킵
+      if(!hasProdInfo && currentChainInvalid){
+        continue;
+      }
 
       // XXXXXXXX 로스량 합계 행 — RIGHT 컬럼에 위치
       const isLossSummary = (rawCode==="XXXXXXXX") ||

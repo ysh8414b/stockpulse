@@ -1187,6 +1187,18 @@
 - **한계**: (1) `X × Y` (곱셈 기호 `×`)나 `Xg/N` 같은 다른 표기법은 미지원 (asterisk `*`만 매칭). (2) 제품명에 무게가 여러 개 있으면 첫 번째만 사용 (예: `120g*10*5팩` → 120g). (3) 스펙 없는 제품(냉장 원육 등)은 excel 값 그대로 사용 → 실제 로스와 다를 수 있음 (그러나 원육 성격 자체가 스펙 없이 kg 단위로 유통되므로 대체로 정확)
 - 별도 SQL 변경 없음 (계산은 클라이언트 로직)
 
+### APS 로스탭 — 수량 0인 제품 chain 자동 스킵 (2026-07-09)
+- 사용자 요청: "로스탭에서 생산일보 업로드할때 생산제품에 수량이 안적혀있으면 그 제품하고 연결된 원육은 없는것처럼 해줄수있을까? 예시엑셀의 `소일반갈비(작업)`이랑 `[S]돌돌말이 우차돌박이 500g*8`처럼 수량이 없는 것들"
+- 기존 문제: `parseProductionWorkbook`에서 `hasProd = !!prodCode && prodKg>0`만 체크 → prodCode 있고 prodKg=0인 행은 `hasProd=false`로 판정되어 이전 chain의 continuation으로 오분류되고, 옆의 원육 kg이 이전 유효 chain에 잘못 합산됨
+- 예시: R5 `소양다리(작업)` 정상 chain 다음 R7 `소일반갈비(작업)` prodKg=0에 원육 53.5kg 있으면 → R7의 53.5kg이 R5(소양다리) chain에 합산되어 로스율 왜곡
+- 변경: `parseProductionWorkbook`에 `currentChainInvalid` 상태 변수 도입
+  - `hasProdInfo = !!prodCode || !!prodName` (LEFT에 제품 코드/이름 중 하나라도 있으면 새 chain 시작 의도)
+  - `if(hasProdInfo && prodKg<=0){currentChainInvalid=true;continue}` — 수량 0인 무효 chain 스킵
+  - `if(hasProdInfo){currentChainInvalid=false}` — 유효 chain 시작 시 플래그 해제
+  - `if(!hasProdInfo && currentChainInvalid)continue` — 무효 chain 소속의 continuation/loss summary도 스킵
+- 결과: R7·R8·R9(R8 continuation) 모두 저장에서 제외 → 이전 chain에 원육 kg 오합산 방지. 이후 R10 유효 chain부터 정상 처리
+- chain_id 증가는 원래 유효 chain(`hasProd`)에서만 발생하므로 무효 chain 스킵해도 chain_id 카운터 무결성 유지
+
 ### APS 로스탭 — 제품 검색 뷰 추가 (2026-07-07)
 - 사용자 요청: "로스탭에 제품명 검색해서 평균로스 볼수있게" — 특정 제품의 누적 로스 트렌드를 한 번에 보고 싶다
 - 기존: 로스탭은 `📅 일자별` 뷰만 존재 → 특정 제품의 누적 평균 로스를 보려면 각 날짜를 하나씩 클릭해야 함
