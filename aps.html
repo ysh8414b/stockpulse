@@ -6591,6 +6591,21 @@ function ProductionLossTab({adminHash}){
     }catch(e){setErr("삭제 실패: "+(e.message||e))}
     finally{setBusy(false)}
   }
+  async function handleDeleteDate(date){
+    if(!date)return;
+    if(!confirm(`${date} 생산일보 데이터를 삭제합니다. 계속하시겠어요?`))return;
+    setBusy(true);setErr("");setOk("");
+    try{
+      const res=await rpc("aps_delete_production_date",{p_admin_hash:adminHash,p_date:date});
+      setOk(`✓ ${date} ${res?.deleted||0}건 삭제`);
+      if(selectedDate===date){
+        setSheetRows([]);
+        setSelectedDate(null);
+      }
+      await loadMeta();
+    }catch(e){setErr("삭제 실패: "+(e.message||e))}
+    finally{setBusy(false)}
+  }
 
   const loss=useMemo(()=>{
     if(!sheetRows||sheetRows.length===0)return null;
@@ -6669,13 +6684,24 @@ function ProductionLossTab({adminHash}){
           dates.map(d=>{
             const active=d.date===selectedDate;
             return <div key={d.date} onClick={()=>setSelectedDate(d.date)}
-              style={{padding:"10px 12px",borderBottom:"1px solid var(--div2)",cursor:"pointer",background:active?"rgba(6,182,212,0.1)":"transparent",borderLeft:active?"3px solid #06b6d4":"3px solid transparent"}}>
-              <div style={{fontWeight:700,fontSize:13}}>{d.date}</div>
-              <div style={{fontSize:10,color:"var(--muted)",marginTop:2}}>
-                {d.product_rows}건 · 원육 {fmtLossKg(d.total_raw_kg)}kg
-              </div>
-              <div style={{fontSize:12,fontWeight:700,marginTop:3,color:lossRateColor(d.loss_rate)}}>
-                로스 {fmtLossPct(d.loss_rate)}
+              style={{padding:"10px 12px",borderBottom:"1px solid var(--div2)",cursor:"pointer",background:active?"rgba(6,182,212,0.1)":"transparent",borderLeft:active?"3px solid #06b6d4":"3px solid transparent",position:"relative"}}>
+              <div style={{display:"flex",alignItems:"flex-start",gap:6}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:13}}>{d.date}</div>
+                  <div style={{fontSize:10,color:"var(--muted)",marginTop:2}}>
+                    {d.product_rows}건 · 원육 {fmtLossKg(d.total_raw_kg)}kg
+                  </div>
+                  <div style={{fontSize:12,fontWeight:700,marginTop:3,color:lossRateColor(d.loss_rate)}}>
+                    로스 {fmtLossPct(d.loss_rate)}
+                  </div>
+                </div>
+                <button
+                  onClick={e=>{e.stopPropagation();handleDeleteDate(d.date)}}
+                  disabled={busy}
+                  title={`${d.date} 삭제`}
+                  style={{background:"transparent",border:"1px solid rgba(239,68,68,0.35)",color:"#ef4444",borderRadius:4,padding:"2px 6px",fontSize:11,cursor:busy?"wait":"pointer",lineHeight:1,flexShrink:0}}>
+                  🗑
+                </button>
               </div>
             </div>;
           })

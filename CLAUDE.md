@@ -1187,6 +1187,16 @@
 - **한계**: (1) `X × Y` (곱셈 기호 `×`)나 `Xg/N` 같은 다른 표기법은 미지원 (asterisk `*`만 매칭). (2) 제품명에 무게가 여러 개 있으면 첫 번째만 사용 (예: `120g*10*5팩` → 120g). (3) 스펙 없는 제품(냉장 원육 등)은 excel 값 그대로 사용 → 실제 로스와 다를 수 있음 (그러나 원육 성격 자체가 스펙 없이 kg 단위로 유통되므로 대체로 정확)
 - 별도 SQL 변경 없음 (계산은 클라이언트 로직)
 
+### APS 로스탭 — 날짜별 삭제 버튼 (2026-07-09)
+- 사용자 요청: "업로드 데이터를 전체초기화말고 날짜 하나하나 삭제할수있는 기능"
+- 기존: 🗑 365일 정리 / ⚠ 전체 초기화만 존재 → 특정 날짜만 잘못 업로드된 경우 대응 불가
+- **`setup_aps_production.sql` 신규 RPC `aps_delete_production_date(p_admin_hash, p_date)`**: `aps_assert_admin` 검증 후 `DELETE FROM aps_production_log WHERE date = p_date`. p_date NULL이면 `date_required` 예외. 반환 `{deleted, date}`
+- **`aps.html` `ProductionLossTab`**:
+  - `handleDeleteDate(date)` 핸들러 추가 — confirm 후 RPC 호출, 삭제한 날짜가 현재 selectedDate이면 `sheetRows`/`selectedDate` 초기화
+  - 좌측 날짜 리스트 각 행에 🗑 삭제 버튼 (빨강 outline, `e.stopPropagation()`으로 selectedDate 클릭과 충돌 방지, busy 상태 시 disabled)
+  - 기존 날짜 셀 flex 레이아웃(정보 좌 / 삭제 버튼 우 flex-shrink:0)
+- 운영 순서: Supabase에서 `setup_aps_production.sql`의 `aps_delete_production_date` 함수 블록만 재실행 → 즉시 사용
+
 ### APS 로스탭 — 수량 0인 제품 chain 자동 스킵 (2026-07-09)
 - 사용자 요청: "로스탭에서 생산일보 업로드할때 생산제품에 수량이 안적혀있으면 그 제품하고 연결된 원육은 없는것처럼 해줄수있을까? 예시엑셀의 `소일반갈비(작업)`이랑 `[S]돌돌말이 우차돌박이 500g*8`처럼 수량이 없는 것들"
 - 기존 문제: `parseProductionWorkbook`에서 `hasProd = !!prodCode && prodKg>0`만 체크 → prodCode 있고 prodKg=0인 행은 `hasProd=false`로 판정되어 이전 chain의 continuation으로 오분류되고, 옆의 원육 kg이 이전 유효 chain에 잘못 합산됨
