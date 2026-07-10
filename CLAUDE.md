@@ -1197,6 +1197,14 @@
   - 기존 날짜 셀 flex 레이아웃(정보 좌 / 삭제 버튼 우 flex-shrink:0)
 - 운영 순서: Supabase에서 `setup_aps_production.sql`의 `aps_delete_production_date` 함수 블록만 재실행 → 즉시 사용
 
+### APS 로스탭 — 제품 코드 = 원육 코드 chain 자동 제외 (2026-07-11)
+- 사용자 요청: "투입원육이랑 생산제품이 코드가 같으면 제외해줘" — 재작업/재포장 케이스로 실제 로스 계산에 노이즈가 됨
+- 변경: `parseProductionWorkbook`에 `currentChainProdCode` 상태 변수 추가
+  - **chain_start 케이스**: `hasProdInfo && prodCode && rawCode && prodCode === rawCode`면 chain 자체 무효 → `currentChainInvalid=true`+`currentChainProdCode=""`+`continue`. `chainId++`도 발생 안 함(0 수량 chain과 동일 흐름)
+  - **continuation 케이스**: LEFT 빈 행에서 `rawCode === currentChainProdCode`면 그 행만 스킵 (chain의 다른 원육 continuation은 유지)
+  - 유효 chain 시작 시 `currentChainProdCode = prodCode` 기록 → 이후 continuation 원육 코드 비교용
+- 별도 SQL 변경 없음 (클라이언트 파서 단계에서 필터링, DB에는 저장되지 않음)
+
 ### APS 로스탭 — 수량 0인 제품 chain 자동 스킵 (2026-07-09)
 - 사용자 요청: "로스탭에서 생산일보 업로드할때 생산제품에 수량이 안적혀있으면 그 제품하고 연결된 원육은 없는것처럼 해줄수있을까? 예시엑셀의 `소일반갈비(작업)`이랑 `[S]돌돌말이 우차돌박이 500g*8`처럼 수량이 없는 것들"
 - 기존 문제: `parseProductionWorkbook`에서 `hasProd = !!prodCode && prodKg>0`만 체크 → prodCode 있고 prodKg=0인 행은 `hasProd=false`로 판정되어 이전 chain의 continuation으로 오분류되고, 옆의 원육 kg이 이전 유효 chain에 잘못 합산됨

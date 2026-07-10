@@ -6011,6 +6011,7 @@ function parseProductionWorkbook(buf){
     let chainId=0;
     let rowIdx=0;
     let currentChainInvalid=false; // 제품 수량 0 chain 감지 시 이후 continuation/loss summary도 skip
+    let currentChainProdCode=""; // 유효 chain의 제품 코드 — continuation 원육 코드가 같으면 그 행 스킵
     // 헤더 R1~R4 스킵 → R5부터 데이터
     // R3 그룹 헤더: LEFT(A-H) = "생산 제품", RIGHT(I-P) = "투입 품목"
     for(let i=4;i<arr.length;i++){
@@ -6045,14 +6046,26 @@ function parseProductionWorkbook(buf){
       // 제품 수량 0인 chain은 무효 → 이 행 스킵 + 이후 continuation/loss summary도 스킵
       if(hasProdInfo && prodKg<=0){
         currentChainInvalid = true;
+        currentChainProdCode = "";
         continue;
       }
-      // 유효한 새 chain 시작 시 무효 플래그 해제
+      // 제품 코드 = 원육 코드인 chain은 무효 (재작업/재포장 케이스) → 전체 chain 스킵
+      if(hasProdInfo && prodCode && rawCode && prodCode === rawCode){
+        currentChainInvalid = true;
+        currentChainProdCode = "";
+        continue;
+      }
+      // 유효한 새 chain 시작 시 무효 플래그 해제 + 제품 코드 기록
       if(hasProdInfo){
         currentChainInvalid = false;
+        currentChainProdCode = prodCode;
       }
       // LEFT 빈 행(continuation/loss summary)이 무효 chain에 속하면 스킵
       if(!hasProdInfo && currentChainInvalid){
+        continue;
+      }
+      // continuation 행에서 원육 코드가 chain 제품 코드와 같으면 그 행만 스킵 (chain 자체는 유지)
+      if(!hasProdInfo && currentChainProdCode && rawCode && rawCode === currentChainProdCode){
         continue;
       }
 
