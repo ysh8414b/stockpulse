@@ -1607,22 +1607,14 @@ function InventoryQuickPanel({onClose,onJumpToSheet,adminHash,items,plans}){
   const[data,setData]=useState(()=>loadStoredInventory());
   const[showRaws,setShowRaws]=useState(false);
   const[query,setQuery]=useState("");
-  const[template,setTemplate]=useState(()=>{
-    try{
-      const t=localStorage.getItem(TEMPLATE_KEY);
-      if(t){const p=JSON.parse(t);if(Array.isArray(p))return p}
-    }catch(e){}
-    return DEFAULT_PRODUCT_TEMPLATE;
-  });
+  const[template,setTemplate]=useState(()=>loadStoredTemplate()||DEFAULT_PRODUCT_TEMPLATE);
 
   // 같은 탭(InventorySheetTab의 업로드) + 다른 탭(storage 이벤트) 양쪽 구독
   useEffect(()=>{
     const reload=()=>{
       setData(loadStoredInventory());
-      try{
-        const t=localStorage.getItem(TEMPLATE_KEY);
-        if(t){const p=JSON.parse(t);if(Array.isArray(p))setTemplate(p)}
-      }catch(e){}
+      const t=loadStoredTemplate();
+      if(t)setTemplate(t);
     };
     const onStorage=(e)=>{if(!e.key||e.key===INVENTORY_DATA_KEY||e.key===TEMPLATE_KEY)reload()};
     window.addEventListener("storage",onStorage);
@@ -1644,6 +1636,8 @@ function InventoryQuickPanel({onClose,onJumpToSheet,adminHash,items,plans}){
       const action=!remote?"no-remote":_invRemoteIsNewer(local,remote)?"apply-remote":"keep-local";
       console.info("[aps-inv-sync] InventoryQuickPanel mount:",{localSaved:local?.savedAt||"",remoteSaved:remote?.savedAt||"",action});
       if(!remote)return;
+      const adoptedTpl=adoptRemoteTemplate(remote,_toTs(local?.savedAt),_toTs(remote?.savedAt));
+      if(adoptedTpl)setTemplate(adoptedTpl);
       if(_invRemoteIsNewer(local,remote)){
         applyRemoteInventoryToLocal(remote);
         setData(remote);
@@ -4088,6 +4082,24 @@ const COLOR_PREVIEW={y:"#fff2b3",o:"#fcd5b4",b:"#dbe5f1",g:"#d8e4bc",p:"#f2dcdb"
 const TEMPLATE_KEY="aps-inv-template";
 const INVENTORY_DATA_KEY="aps-inv-data";  // 업로드한 재고 데이터 자동 저장 (생산계획 탭에서 공유)
 
+// ───── 제품 마스터 목록(template) 로컬 저장 ─────
+// 2026-08-11: 목록도 Supabase payload 에 함께 동기화 (기존엔 localStorage 전용이라
+//             다른 기기·스토리지 초기화 시 기본 37개 목록으로 되돌아갔음)
+function loadStoredTemplate(){
+  try{
+    const t=localStorage.getItem(TEMPLATE_KEY);
+    if(t){const p=JSON.parse(t);if(Array.isArray(p))return p}
+  }catch(e){}
+  return null;  // null = 이 기기에 저장된 목록 없음 (빈 배열과 구분)
+}
+function saveStoredTemplate(tpl){
+  if(!Array.isArray(tpl))return;
+  try{
+    localStorage.setItem(TEMPLATE_KEY,JSON.stringify(tpl));
+    window.dispatchEvent(new CustomEvent("aps-inv-data-change"));
+  }catch(e){}
+}
+
 function loadStoredInventory(){
   try{
     const raw=localStorage.getItem(INVENTORY_DATA_KEY);
@@ -4126,6 +4138,7 @@ function _normalizeRemoteInv(r){
     rawName:r.rawName||"",
     dateLabel:r.dateLabel||"",
     title:r.title||"",
+    template:Array.isArray(r.template)?r.template:null,  // 구버전 payload 에는 없음 → null
     savedAt:r.updated_at||r.savedAt||""
   };
 }
@@ -4159,6 +4172,14 @@ async function saveRemoteInventory(adminHash,patch){
       dateLabel:merged.dateLabel||"",
       title:merged.title||""
     };
+    // 제품 마스터 목록도 함께 저장. payload 는 통째로 교체되므로 빠뜨리면 서버 목록이 지워진다
+    //  → 이 기기에 목록이 없으면 서버의 기존 목록을 그대로 실어서 보존
+    let tpl=Array.isArray(patch&&patch.template)?patch.template:loadStoredTemplate();
+    if(!Array.isArray(tpl)){
+      const cur2=await loadRemoteInventory(adminHash);
+      if(cur2&&Array.isArray(cur2.template))tpl=cur2.template;
+    }
+    if(Array.isArray(tpl))payload.template=tpl;
     const updatedAt=await rpc("aps_save_inventory_sheet",{p_admin_hash:adminHash,p_payload:payload});
     // 서버 timestamp 를 로컬 캐시에도 반영 → 다음 비교 시 일관성 유지
     if(typeof updatedAt==="string"&&updatedAt)saveStoredInventory({savedAt:updatedAt});
@@ -4169,6 +4190,17 @@ async function clearRemoteInventory(adminHash){
   if(!adminHash){console.warn("[aps-inv-sync] clear skipped: no adminHash");return}
   try{await rpc("aps_clear_inventory_sheet",{p_admin_hash:adminHash})}
   catch(e){console.warn("[aps-inv-sync] clear failed:",e?.message||e)}
+}
+// 원격 payload 의 제품 마스터 목록을 이 기기에 반영할지 판단
+//  - 이 기기에 저장된 목록이 없으면(첫 접속·스토리지 초기화) 무조건 채택
+//  - 있으면 원격이 더 최신일 때만 채택
+// 반환: 채택한 목록 배열 | null(유지)
+function adoptRemoteTemplate(remote,localTs,remoteTs){
+  if(!remote||!Array.isArray(remote.template))return null;
+  const local=loadStoredTemplate();
+  if(local&&!(remoteTs>localTs))return null;
+  saveStoredTemplate(remote.template);
+  return remote.template;
 }
 // 원격에서 가져온 데이터로 로컬 캐시 교체 + 이벤트 발행
 function applyRemoteInventoryToLocal(remote){
@@ -4245,6 +4277,9 @@ function InventorySheetTab({adminHash}){
         ?(stored&&(stored.products?.length||stored.raws?.length)?"push-local":"empty")
         :(remoteTs>localTs?"apply-remote":(localTs>remoteTs?"push-local":"same"));
       console.info("[aps-inv-sync] InventorySheetTab mount:",{localSaved:stored?.savedAt||"",remoteSaved:remote?.savedAt||"",action});
+      // 제품 마스터 목록은 재고 데이터와 별개로 판단 (이 기기에 목록이 없으면 원격 채택)
+      const adoptedTpl=adoptRemoteTemplate(remote,localTs,remoteTs);
+      if(adoptedTpl)setTemplate(adoptedTpl);
       if(remote){
         // 원격이 더 새롭거나 로컬이 없으면 원격으로 교체
         if(remoteTs>localTs){
@@ -4260,8 +4295,8 @@ function InventorySheetTab({adminHash}){
         }
         setSyncStatus("synced");
       }else{
-        // 원격이 비어있는데 로컬에 데이터 있으면 push
-        if(stored&&(stored.products?.length||stored.raws?.length)){
+        // 원격이 비어있는데 로컬에 데이터(또는 편집한 제품 목록)가 있으면 push
+        if((stored&&(stored.products?.length||stored.raws?.length))||loadStoredTemplate()){
           const ok=await saveRemoteInventory(adminHash,stored);
           setSyncStatus(ok?"synced":"error");
         }else{
@@ -4271,20 +4306,12 @@ function InventorySheetTab({adminHash}){
     })();
     return()=>{cancelled=true};
   },[adminHash]);
-  const[template,setTemplate]=useState(()=>{
-    try{
-      const stored=localStorage.getItem(TEMPLATE_KEY);
-      if(stored){const parsed=JSON.parse(stored);if(Array.isArray(parsed)&&parsed.length)return parsed}
-    }catch(e){}
-    return DEFAULT_PRODUCT_TEMPLATE;
-  });
+  // 저장된 목록이 없으면 기본 목록을 "표시만" 한다 (localStorage 에는 쓰지 않음)
+  //  → 저장한 적 없는 기기를 구분해야 원격 목록을 채택할 수 있음
+  const[template,setTemplate]=useState(()=>loadStoredTemplate()||DEFAULT_PRODUCT_TEMPLATE);
   const[editing,setEditing]=useState(false);
   const[editText,setEditText]=useState("");
   const sheetRef=useRef(null);
-
-  useEffect(()=>{
-    try{localStorage.setItem(TEMPLATE_KEY,JSON.stringify(template))}catch(e){}
-  },[template]);
 
   async function handleFile(e,kind){
     const f=e.target.files&&e.target.files[0];
@@ -4336,6 +4363,9 @@ function InventorySheetTab({adminHash}){
     if(adminHash){
       setSyncStatus("syncing");
       await clearRemoteInventory(adminHash);
+      // 업로드 데이터만 지우는 동작 → 편집한 제품 목록은 서버에 다시 올려 보존
+      const tpl=loadStoredTemplate();
+      if(tpl)await saveRemoteInventory(adminHash,{template:tpl});
       setSyncStatus("synced");
     }
   }
@@ -4358,7 +4388,13 @@ function InventorySheetTab({adminHash}){
       if(!confirm("목록이 비어 있습니다. 비운 채로 저장하시겠습니까? (제품 표가 빈 칸으로 표시됩니다)"))return;
     }
     setTemplate(parsed);
+    saveStoredTemplate(parsed);
     setEditing(false);
+    // 다른 기기에서도 같은 목록을 쓰도록 원격에도 반영
+    if(adminHash){
+      setSyncStatus("syncing");
+      saveRemoteInventory(adminHash,{template:parsed}).then(ok=>setSyncStatus(ok?"synced":"error"));
+    }
   }
   function resetTemplate(){
     if(!confirm("기본 마스터 목록(사진 기준 37개)으로 되돌릴까요?"))return;

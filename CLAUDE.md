@@ -1241,6 +1241,18 @@
 - **운영 순서**: Supabase에서 `setup_aps_production_v2.sql` 실행 1회 → 🩸 로스탭 → `🔍 제품 검색` 토글 → 즉시 사용
 - **한계**: (1) 서버측은 chain-level 원본 데이터만 반환하고 팩당 kg 파싱·집계는 클라이언트 → 365일치 chain이 수천 건이면 초기 로딩 payload 커질 수 있음(그래도 화면당 1회만). (2) 제품 검색 뷰는 검색어 무관하게 항상 전체 chain을 fetch → 검색만 클라이언트 필터. 서버측 ILIKE 필터 추가 시 payload 절감 가능하나 sortKey/집계가 클라이언트 로직이라 큰 이득 없음. (3) 제품이 `product_code` 기준으로 그룹핑됨 → 코드가 없거나 여러 제품이 같은 코드를 쓰면 병합될 수 있음(실제로는 회사 ERP에서 code=고유식별자로 신뢰 가능)
 
+### APS — 재고시트 제품 마스터 목록 Supabase 동기화 (2026-08-11)
+- 사용자 보고: "재고시트탭에서 제품 목록 편집하고 저장하면 바뀌긴 하는데 제품파일을 다시 업로드하면 원래대로 돌아옴"
+- 원인: 제품 마스터 목록(`template`)만 localStorage(`aps-inv-template`) 전용이고 Supabase payload(products/raws/prodName/rawName/title/dateLabel)에는 미포함 → 기기·브라우저가 바뀌거나 스토리지가 비워지면(iOS Safari 7일 스토리지 정리 포함) 코드에 박힌 `DEFAULT_PRODUCT_TEMPLATE`(37개)로 복귀. 추가로 마운트마다 기본 목록을 localStorage에 덮어쓰는 effect가 있어 "이 기기에 저장한 적 없음" 상태를 구분할 수 없었음
+- **변경 1 — 목록 저장 헬퍼 신설** ([aps.html:4088](aps.html:4088)): `loadStoredTemplate()`(없으면 `null` 반환 — 빈 배열과 구분) / `saveStoredTemplate(tpl)`(저장 + `aps-inv-data-change` 이벤트 발행)
+- **변경 2 — payload에 `template` 포함**: `_normalizeRemoteInv`에 `template` 필드 추가(구버전 payload는 `null`), `saveRemoteInventory`가 항상 목록을 실어 보냄. payload는 통째로 교체되므로, 이 기기에 목록이 없으면 `loadRemoteInventory`로 서버 목록을 먼저 읽어 그대로 재전송해 보존
+- **변경 3 — `adoptRemoteTemplate(remote, localTs, remoteTs)`**: 이 기기에 저장된 목록이 없으면 무조건 원격 채택, 있으면 원격이 더 최신일 때만 채택. `InventorySheetTab` + `InventoryQuickPanel` 마운트 동기화에 연결
+- **변경 4 — 기본 목록 자동 저장 제거**: `useState(loadStoredTemplate()||DEFAULT_PRODUCT_TEMPLATE)`로 초기화만 하고 localStorage에는 쓰지 않음(기존 `useEffect([template])` 삭제). 실제 저장은 `saveTemplate`/원격 채택 시점에만
+- **변경 5 — `saveTemplate` 원격 push**: 목록 저장 시 `saveRemoteInventory({template})` 호출 + 동기화 뱃지 갱신. `clearAll`(업로드 초기화)은 원격 row 삭제 후 로컬 목록을 다시 push해 목록만 보존
+- SQL 변경 없음 (`aps_inventory_sheet.payload`가 free-form JSONB)
+- **적용 후 1회 필요**: 올바른 목록을 가진 기기에서 📝 제품 목록 편집 → 저장(또는 파일 업로드) 1회 → 서버에 목록이 시드됨. 이후 다른 기기는 접속 시 자동 채택
+- 한계: 두 기기에서 동시에 목록을 편집하면 마지막 저장이 이김(last-write-wins, 재고 시트와 동일 정책)
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
