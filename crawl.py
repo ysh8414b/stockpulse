@@ -45,6 +45,9 @@ NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET", "")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 DART_API_KEY = os.environ.get("DART_API_KEY", "")  # https://opendart.fss.or.kr 무료 발급
 
+# 재료 포착 TOP 10을 close 모드가 아닐 때도 강제 산출 (수동 실행/테스트용)
+FORCE_CATALYST = os.environ.get("FORCE_CATALYST", "").strip().lower() in ("1", "true", "yes", "on")
+
 YAHOO_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
 }
@@ -4602,14 +4605,17 @@ def main():
         oversold = crawl_oversold_stocks(krx_data)
 
     # 10-2. 재료 포착 TOP 10 (close 모드에서만 — DART/뉴스 API 비용 + 확정 종가 필요)
+    #        FORCE_CATALYST=1 이면 시간대·중복 여부 무관하게 강제 산출 (수동 실행/테스트용)
     catalysts = None
-    if ai_mode == "close":
+    if ai_mode == "close" or FORCE_CATALYST:
         existing_cat = supabase_request("GET", "catalyst_stocks", params={
             "date": f"eq.{TODAY}", "select": "id", "limit": "1"
         })
-        if existing_cat:
+        if existing_cat and not FORCE_CATALYST:
             log("  ℹ️ 재료 포착 종목 이미 산출됨 — 스킵")
         else:
+            if FORCE_CATALYST:
+                log("  ⚡ FORCE_CATALYST — 시간대 무관 강제 산출")
             # 달러 표기 계약금액을 원화로 환산하기 위한 환율 (없으면 기본값)
             usdkrw = 1350.0
             for idx in (indices or []):

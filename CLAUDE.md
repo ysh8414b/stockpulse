@@ -1284,6 +1284,10 @@
   - SEO fallback/`<noscript>`/meta description의 "이슈 종목 TOP 15" 문구도 갱신
 - **부수 수정**: `crawl.py`에 `import time` 추가 — line 326의 Supabase 재시도 `time.sleep(wait)`가 import 없이 호출되던 잠복 NameError
 - **운영 순서**: (1) [opendart.fss.or.kr](https://opendart.fss.or.kr) 가입 → 인증키 발급 → GitHub Secrets에 `DART_API_KEY` 등록 → (2) Supabase에서 `setup_catalyst.sql` 실행 → (3) 다음 close 모드(15:35) 크롤링부터 자동 채워짐
+- **즉시 실행 수단 2가지** (마감 시간까지 기다리지 않고 확인):
+  - `FORCE_CATALYST` env — truthy면 `ai_mode != "close"`여도 강제 산출 + 당일 중복 스킵도 무시. `crawl.yml`의 `workflow_dispatch.inputs.force_catalyst`(boolean) → `env: FORCE_CATALYST: ${{ inputs.force_catalyst }}`로 연결. 예약 실행 시에는 빈 문자열이라 자연히 false
+  - **`test_catalyst.py`** (신규) — Supabase에 쓰지 않는 로컬 드라이런. 크롤링 전체를 돌리지 않고 시세 조회 → 재료 포착만 실행해 콘솔에 TOP N 출력. `SUPABASE_KEY` 없으면 공개 anon 키로 자동 폴백(`daily_prices`는 anon SELECT 허용). 옵션 `--top N`, `--no-flow`(수급 조회 생략). 스코어링 튜닝용
+- **실측 성능** (2026-08-13 드라이런): 시총 3000억+ 기본 조건 통과 682종목 / `load_price_history` + 682종목 지표 계산 33초 / 섹터 매핑 캐시 미스 시 65초 추가
 - **한계**: (1) Groq에 웹 검색이 없어 "원출처 직접 확인"은 DART API로만 충족 — 키가 없으면 뉴스 키워드 추정으로 격하됨. (2) 5분 실시간 갱신 불가(장 마감 후 1회). (3) DART `report_nm`에는 계약금액이 없어 규모는 뉴스 제목·요약에서만 추출 → 상당수가 "미공개"로 표시됨(의도된 동작). (4) 수급 점수는 상위 30개만 조회하므로 31위 밖 종목은 수급 0점으로 최종 순위가 소폭 보수적
 
 ## 알려진 이슈
