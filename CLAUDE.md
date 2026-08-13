@@ -1253,11 +1253,45 @@
 - **적용 후 1회 필요**: 올바른 목록을 가진 기기에서 📝 제품 목록 편집 → 저장(또는 파일 업로드) 1회 → 서버에 목록이 시드됨. 이후 다른 기기는 접속 시 자동 채택
 - 한계: 두 기기에서 동시에 목록을 편집하면 마지막 저장이 이김(last-write-wins, 재고 시트와 동일 정책)
 
+### 이슈 종목 탭 → 재료 포착 TOP 10 전면 교체 (2026-08-13)
+- 사용자 요청: `종목 top10 탭.txt` 프롬프트("좋은 재료가 났는데 아직 주가에 덜 반영된 종목 TOP 10")를 이슈 종목 탭에 그대로 구현
+- 기존: `crawl_issue_stocks()`의 복합 점수(거래대금 50 + 등락률 10 + 테마 10 + 뉴스 10 + 섹터 10 + 상한가 10) → 사실상 "오늘 많이 오르고 많이 거래된 종목". 재료의 실체·신뢰도·미반영 여부를 판정하지 않음
+- 변경: 별도 파이프라인 `crawl_catalyst_stocks()` 신설. `issue_stocks`는 그대로 유지(시장 개요 TOP 5 + analysis.html이 계속 사용)하고, **탭 화면만** 신규 `catalyst_stocks`를 렌더
+- **`setup_catalyst.sql`** (신규, 1회 실행): `catalyst_stocks` 테이블 38컬럼 + 인덱스 3종 + RLS(anon SELECT)
+- **DART OpenAPI 연동** (`DART_API_KEY` env, 미설정 시 뉴스만으로 graceful degradation):
+  - `fetch_dart_disclosures(days_back=5)`: `list.json`을 `pblntf_ty=B`(주요사항보고)/`I`(거래소공시) × `corp_cls=Y`/`K`로 bulk 조회(페이지당 100건, 최대 30페이지, 0.12초 간격). 정기공시·지분공시·감사보고서는 애초에 미조회
+  - `classify_dart_report()`: `DART_MATERIAL_TYPES` 23종 매핑(공급계약 25점 ~ 전환사채 9점 / 지속성 4~15점). `[기재정정]`은 신규 재료가 아니므로 ×0.6 감점
+  - 반환: `{stock_code: [{type, title, credibility, persistence, date, url, days_ago}]}`
+- **지표 계산**:
+  - `load_price_history()`: `daily_prices`(낙폭 탭용으로 이미 60일 누적 중)에서 종가+거래대금 페이지네이션 로드
+  - `compute_price_metrics()`: 1일/5일/20일 수익률 + 20일 평균 거래대금 대비 배수. `save_daily_close` 직후 호출되므로 오늘 행은 제외하고 계산
+  - `fetch_investor_trend_multi()`: 기존 `fetch_investor_trend`의 5거래일 합산판(`pageSize=5`, 일별 `closePrice`로 억원 환산)
+  - `parse_amount_eok()`: 계약 규모를 억원으로 추출(`1조 2,000억`/`3,500억원`/`2억 달러`/`5000만 달러`). USD는 당일 USD/KRW 지수로 환산. **못 찾으면 0 = 미확인** — 추정치를 만들지 않음. 시총의 20배 초과 값은 오인식으로 폐기
+- **스코어링 100점** (프롬프트 배점 그대로): 뉴스 질·신뢰도 25 + 기업가치 영향 25 + 주가 미반영 20 + 거래대금 8·수급 7 + 추가 모멘텀 15
+  - 후보: 시총 3,000억+ / ETF 제외 / **섹터 중립**(기존 상승섹터 가점 삭제) → (a) DART 재료성 공시 보유 전부 + (b) 거래대금 평소 2배↑ & 300억+ 급증 종목, 합계 최대 140개
+  - 재료 확정: 공시 우선(원출처) → 없으면 `NEWS_MATERIAL_KEYWORDS` 12종으로 뉴스 판정(신뢰도 상한 12점). 언론사 등급(`NEWS_SOURCE_TIER`) 가중, `특징주/급등주/수혜주` 등 시세 반응 기사는 ×0.6
+  - 재료 없는 종목은 아예 제외 — 이 탭의 목적이 "재료 보유 종목"이므로
+  - 미반영 점수: `max(1일, 5일)` 수익률 기준 30%↑=0점 / 20%↑=4 / 12%↑=9 / 6%↑=14 / 0%↑=18 / 하락=20. 20일 수익률 60%↑면 추가 -5
+  - 2패스: 1차 점수(85점)로 상위 30개만 수급 조회 → 수급 7점 더해 최종 재정렬 → TOP 10
+- **`generate_catalyst_commentary()`**: Groq로 종목당 3문장(`why_now`/`catalyst_impact`/`priced_in`). 프롬프트에 "제공된 데이터에 없는 계약금액·고객사·임상 단계·목표주가 생성 금지", "규모 미확인이면 '규모 미공개'로 쓸 것" 절대 규칙. 실패해도 표는 정상 표시(빈 문자열)
+- **`main()` 통합**: `ai_mode == "close"`(15:35/16:00)에서만 실행 — DART/뉴스 API 비용 + 확정 종가 필요. 당일 이미 산출됐으면 스킵. 저장은 `DELETE date=eq.TODAY` 후 INSERT(과거 보존), 90일 초과 cleanup
+- **`index.html`**:
+  - 탭 라벨 "이슈 종목" → "**재료 포착**" (해시 `#issues`는 유지 — 기존 공유 링크 호환)
+  - `TabStocks` 전면 재작성: 8컬럼 표(순위/종목·섹터·시총/현재가/1일·5일/핵심 재료/규모/외인·기관/종합점수) + 행 클릭 시 재료 원문 카드(원출처 링크) → 점수 5축 바 → AI 3문장 → 보조 지표 5종 → 최근 공시 → 관련 뉴스
+  - 갱신 시각 뱃지(`date + generated_time`), 목적 설명 인트로, 면책 고지 추가
+  - 구 `TabStocks`(3축 분석 + 자금 흐름 위젯) 160줄 삭제, 그와 함께만 쓰이던 `stkAn` state + `stock_analysis` 폴링 쿼리 제거(폴링당 Supabase 쿼리 1개 절감). `analysis.html`은 `stock_analysis`를 독자적으로 읽으므로 영향 없음
+  - CSS: 죽은 `.stock-*` 반응형 규칙을 `.cat-*`로 교체(index.html 인라인 + style.css 양쪽). 모바일은 4행 카드 레이아웃, 규모 셀에 `::before`로 "규모" 라벨
+  - SEO fallback/`<noscript>`/meta description의 "이슈 종목 TOP 15" 문구도 갱신
+- **부수 수정**: `crawl.py`에 `import time` 추가 — line 326의 Supabase 재시도 `time.sleep(wait)`가 import 없이 호출되던 잠복 NameError
+- **운영 순서**: (1) [opendart.fss.or.kr](https://opendart.fss.or.kr) 가입 → 인증키 발급 → GitHub Secrets에 `DART_API_KEY` 등록 → (2) Supabase에서 `setup_catalyst.sql` 실행 → (3) 다음 close 모드(15:35) 크롤링부터 자동 채워짐
+- **한계**: (1) Groq에 웹 검색이 없어 "원출처 직접 확인"은 DART API로만 충족 — 키가 없으면 뉴스 키워드 추정으로 격하됨. (2) 5분 실시간 갱신 불가(장 마감 후 1회). (3) DART `report_nm`에는 계약금액이 없어 규모는 뉴스 제목·요약에서만 추출 → 상당수가 "미공개"로 표시됨(의도된 동작). (4) 수급 점수는 상위 30개만 조회하므로 31위 밖 종목은 수급 0점으로 최종 순위가 소폭 보수적
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
 - 테마 순위가 장 마감 후에도 변동됨 (뉴스 갱신 때문)
 - 과대 낙폭 탭은 평일 15:00(장중, 현재 시세 기준) + close 모드(15:35/16:00, 확정 종가)에 갱신됨. 그 외 시간대에는 마지막 갱신 데이터 표시
+- 재료 포착 탭은 close 모드(15:35/16:00) 하루 1회만 산출됨. 장중에는 전 거래일 데이터가 표시되며, `DART_API_KEY` 미설정 시 공시 원출처 없이 뉴스 추정으로만 동작
 
 ## 개발 서버
 - `python -m http.server 8000` (launch.json 설정됨)
