@@ -3142,6 +3142,11 @@ CATALYST_FLOW_FETCH_LIMIT = 30              # 투자자 수급을 조회할 상�
 CATALYST_PRICE_HISTORY_DAYS = 60            # daily_prices 조회 범위 (캘린더일)
 CATALYST_MIN_TRADING_VALUE = 30_000_000_000  # 거래급증 후보 최소 거래대금 (300억)
 
+# ── 성과 추적 (catalyst_track) ──
+CATALYST_TRACK_MAX_DAYS = 20                # 몇 거래일까지 추적할지 (경과 시 closed)
+CATALYST_TRACK_HORIZONS = {1: "ret_d1", 5: "ret_d5", 10: "ret_d10", 20: "ret_d20"}
+CATALYST_TRACK_KEEP_DAYS = 365              # 성과 기록 보존 기간
+
 
 # ── DART 공시명 → (재료 유형, 신뢰도 25점 만점, 지속성 15점 만점) ──
 #    앞에서부터 먼저 매칭되는 항목이 채택되므로 구체적인 것을 위에 둔다.
@@ -4003,6 +4008,116 @@ JSON 형식으로만 답하라:
         return catalysts
 
 
+def seed_catalyst_track(catalysts):
+    """오늘 선정된 재료 포착 종목을 성과 추적 테이블에 편입.
+
+    entry_price = 선정일 종가 (= 그날 종가에 샀다고 가정한 가상 매수단가).
+    같은 날 재실행되면 오늘분만 지우고 다시 넣으므로 중복되지 않는다.
+    """
+    if not catalysts:
+        return 0
+
+    rows = []
+    for c in catalysts:
+        price = float(c.get("price") or 0)
+        if price <= 0:
+            continue
+        rows.append({
+            "pick_date": TODAY,
+            "code": c["code"],
+            "name": c.get("name", ""),
+            "market": c.get("market", ""),
+            "display_sector": c.get("display_sector", ""),
+            "rank": c.get("rank", 0),
+            "total_score": c.get("total_score", 0),
+            "catalyst_type": c.get("catalyst_type", ""),
+            "catalyst_source": c.get("catalyst_source", ""),
+            "catalyst_amount": c.get("catalyst_amount", 0),
+            "entry_price": price,
+            "last_price": price,
+            "last_date": TODAY,
+            "days_tracked": 0,
+            "ret_cum": 0,
+            "max_price": price,
+            "min_price": price,
+            "max_ret": 0,
+            "min_ret": 0,
+            "status": "open",
+        })
+
+    if not rows:
+        return 0
+
+    supabase_request("DELETE", "catalyst_track", params={"pick_date": f"eq.{TODAY}"})
+    result = supabase_request("POST", "catalyst_track", data=rows)
+    log(f"  📈 성과 추적 편입 {len(rows)}종목 {'✅' if result else '❌'}")
+    return len(rows)
+
+
+def update_catalyst_track(krx_data):
+    """추적 중인(open) 재료 포착 종목의 수익률을 오늘 종가로 갱신.
+
+    - days_tracked 를 1 올리고, D+1/5/10/20 시점이면 그때의 수익률을 확정 기록
+    - 누적 수익률 / 추적 중 최고·최저 수익률(최대 낙폭) 갱신
+    - 20거래일 경과하면 status='closed' 로 마감
+
+    close 모드에서 하루 1회만 호출된다는 전제 (last_date로 중복 갱신 방지).
+    """
+    if not krx_data:
+        return 0
+
+    open_rows = supabase_request("GET", "catalyst_track", params={
+        "status": "eq.open",
+        "last_date": f"neq.{TODAY}",
+        "select": "id,code,name,entry_price,days_tracked,max_price,min_price",
+        "order": "pick_date.desc",
+        "limit": "500",
+    })
+    if not open_rows:
+        log("  ℹ️ 갱신할 성과 추적 종목 없음")
+        return 0
+
+    updated, closed, skipped = 0, 0, 0
+    for row in open_rows:
+        d = krx_data.get(row["code"])
+        price = float(d.get("price", 0)) if d else 0
+        entry = float(row.get("entry_price") or 0)
+        if price <= 0 or entry <= 0:
+            skipped += 1
+            continue
+
+        days = int(row.get("days_tracked") or 0) + 1
+        ret_cum = (price - entry) / entry * 100
+        max_price = max(float(row.get("max_price") or entry), price)
+        min_price = min(float(row.get("min_price") or entry), price)
+
+        payload = {
+            "last_price": price,
+            "last_date": TODAY,
+            "days_tracked": days,
+            "ret_cum": round(ret_cum, 2),
+            "max_price": max_price,
+            "min_price": min_price,
+            "max_ret": round((max_price - entry) / entry * 100, 2),
+            "min_ret": round((min_price - entry) / entry * 100, 2),
+            "updated_at": datetime.now(timezone(timedelta(hours=9))).isoformat(),
+        }
+        # 거래일 기준 D+1/5/10/20 시점의 수익률을 그 시점에 한 번만 확정 기록
+        horizon_field = CATALYST_TRACK_HORIZONS.get(days)
+        if horizon_field:
+            payload[horizon_field] = round(ret_cum, 2)
+        if days >= CATALYST_TRACK_MAX_DAYS:
+            payload["status"] = "closed"
+            closed += 1
+
+        if supabase_request("PATCH", "catalyst_track", data=payload,
+                            params={"id": f"eq.{row['id']}"}) is not None:
+            updated += 1
+
+    log(f"  📈 성과 추적 갱신 {updated}종목 (마감 {closed} · 시세없음 {skipped})")
+    return updated
+
+
 # ─────────────────────────────────────────
 # 3. 시장 지수 (Yahoo Finance API)
 # ─────────────────────────────────────────
@@ -4607,6 +4722,9 @@ def main():
     # 10-2. 재료 포착 TOP 10 (close 모드에서만 — DART/뉴스 API 비용 + 확정 종가 필요)
     #        FORCE_CATALYST=1 이면 시간대·중복 여부 무관하게 강제 산출 (수동 실행/테스트용)
     catalysts = None
+    if ai_mode == "close":
+        # 기존 추천분의 성과를 먼저 갱신 (오늘 신규 편입분이 섞이기 전에)
+        update_catalyst_track(krx_data)
     if ai_mode == "close" or FORCE_CATALYST:
         existing_cat = supabase_request("GET", "catalyst_stocks", params={
             "date": f"eq.{TODAY}", "select": "id", "limit": "1"
@@ -4797,6 +4915,8 @@ def main():
         if catalysts:
             result = supabase_request("POST", "catalyst_stocks", data=catalysts)
             log(f"  🎯 재료 포착 {len(catalysts)}개 저장 {'✅' if result else '❌'}")
+            # 성과 추적 편입 (선정일 종가 = 가상 매수단가)
+            seed_catalyst_track(catalysts)
         else:
             log("  ℹ️ 재료 포착 종목 없음 — 빈 상태로 갱신")
 
@@ -4816,8 +4936,11 @@ def main():
         supabase_request("DELETE", "daily_prices", params={"date": f"lt.{cutoff_dp}"})
         cutoff_os = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
         supabase_request("DELETE", "oversold_stocks", params={"date": f"lt.{cutoff_os}"})
-        supabase_request("DELETE", "catalyst_stocks", params={"date": f"lt.{cutoff_os}"})
-        log(f"  🧹 {cutoff_dp} 이전 일봉 / {cutoff_os} 이전 과대 낙폭·재료 포착 정리")
+        # 재료 포착은 성과 추적 이력을 남겨야 하므로 1년 보존
+        cutoff_ct = (datetime.now() - timedelta(days=CATALYST_TRACK_KEEP_DAYS)).strftime("%Y-%m-%d")
+        supabase_request("DELETE", "catalyst_stocks", params={"date": f"lt.{cutoff_ct}"})
+        supabase_request("DELETE", "catalyst_track", params={"pick_date": f"lt.{cutoff_ct}"})
+        log(f"  🧹 {cutoff_dp} 이전 일봉 / {cutoff_os} 이전 과대 낙폭 / {cutoff_ct} 이전 재료 포착·성과 정리")
 
     log("")
     log("=" * 50)

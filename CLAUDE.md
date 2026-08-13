@@ -1290,12 +1290,36 @@
 - **실측 성능** (2026-08-13 드라이런): 시총 3000억+ 기본 조건 통과 682종목 / `load_price_history` + 682종목 지표 계산 33초 / 섹터 매핑 캐시 미스 시 65초 추가
 - **한계**: (1) Groq에 웹 검색이 없어 "원출처 직접 확인"은 DART API로만 충족 — 키가 없으면 뉴스 키워드 추정으로 격하됨. (2) 5분 실시간 갱신 불가(장 마감 후 1회). (3) DART `report_nm`에는 계약금액이 없어 규모는 뉴스 제목·요약에서만 추출 → 상당수가 "미공개"로 표시됨(의도된 동작). (4) 수급 점수는 상위 30개만 조회하므로 31위 밖 종목은 수급 0점으로 최종 순위가 소폭 보수적
 
+### 재료 포착 성과 추적 (catalyst_track) (2026-08-13)
+- 사용자 요청: "재료포착 탭 종목들을 데이터로 저장해서, 그날부터 매수했으면 실적이 어떤지 확인하고 싶다"
+- 기존: `catalyst_stocks`는 이미 날짜별로 저장되고 있었으나(90일 보존) **선정 이후 주가가 어떻게 됐는지 추적하는 레이어가 없음** → 과거 추천의 적중률을 알 수 없었음
+- **`setup_catalyst_track.sql`** (신규, 1회 실행): `catalyst_track` 테이블
+  - 편입 스냅샷(불변): `pick_date`, `code`, `name`, `market`, `display_sector`, `rank`, `total_score`, `catalyst_type`, `catalyst_source`, `catalyst_amount`, `entry_price`(선정일 종가 = 가상 매수단가)
+  - 추적 상태(매 거래일 갱신): `last_price`, `last_date`, `days_tracked`, `ret_cum`, `ret_d1`/`ret_d5`/`ret_d10`/`ret_d20`(도달 전 NULL), `max_price`/`min_price`/`max_ret`/`min_ret`(최대 낙폭), `status`(open|closed), `updated_at`
+  - `UNIQUE(pick_date, code)` — 같은 날 재실행해도 중복 편입 안 됨. RLS anon SELECT 허용
+- **crawl.py 상수**: `CATALYST_TRACK_MAX_DAYS=20`(추적 거래일), `CATALYST_TRACK_HORIZONS={1:"ret_d1",5:"ret_d5",10:"ret_d10",20:"ret_d20"}`, `CATALYST_TRACK_KEEP_DAYS=365`
+- **`seed_catalyst_track(catalysts)`**: 재료 포착 저장 직후 호출. `entry_price = 당일 종가`. `DELETE pick_date=eq.TODAY` 선행으로 재실행 안전. 가격 0인 종목은 편입 제외
+- **`update_catalyst_track(krx_data)`**: close 모드에서 **오늘 신규 편입 전에** 먼저 호출 → `status=eq.open & last_date=neq.TODAY` 인 행만 GET(최대 500) → `days_tracked+1`, 누적/최고/최저 수익률 갱신, D+1/5/10/20 도달 시 그 시점 수익률 확정 기록, 20거래일 경과 시 `status='closed'`. 행별 PATCH(최대 200건). krx_data에 시세 없는 종목(거래정지 등)은 skip
+- **거래일 카운트**: close 모드가 거래일마다 1회 도는 것을 이용해 `days_tracked`를 증가시키고, `last_date != TODAY` 가드로 중복 증가를 막음. 크롤링이 하루 실패하면 그날은 카운트되지 않아 D+N이 실제 달력보다 하루씩 밀릴 수 있음(허용 오차)
+- **보존 기간 변경**: `catalyst_stocks` 90일 → **365일**, `catalyst_track` 365일 (성과 이력을 남겨야 하므로). `oversold_stocks`는 90일 유지
+- **index.html `TabStocks` 뷰 토글**: `◆ 오늘의 재료 포착` / `📈 성과 추적` segmented 버튼 (`view` state)
+  - 신규 `CatalystTrack` 컴포넌트 — 마운트 시에만 `db("catalyst_track","order=pick_date.desc,rank.asc&limit=1000")` **lazy fetch** → 90초 폴링 루프에 쿼리를 추가하지 않음
+  - 요약 카드 5개: 추적 종목 / 평균 수익률(현재) / 승률 / 최고 / 최저
+  - `📐 보유 기간별 성적`: D+1·D+5·D+10·D+20·현재 각각 평균 수익률 + 승률 + 표본 수. 해당 구간에 **도달한 종목만** 집계 (미도달은 "아직 미도달")
+  - `🗓 선정일별 성적`: 날짜별 접기/펼치기 카드 → 펼치면 종목 표(순위/종목·재료/진입가/현재가/누적/D+1·5·10·20/최고·최저). 종목명 클릭 시 네이버 증권
+  - 종목 검색(이름·코드·재료유형·섹터), 면책 고지 포함
+  - 테이블 미존재/네트워크 실패 시 `db()`가 null 반환 → "catalyst_track 테이블을 확인하세요" empty state로 graceful degradation
+  - CSS: `.cat-trk-stats`(모바일 2열), `.cat-trk-horizon`(모바일 3열 wrap), `.cat-trk-row` — index.html 인라인 + style.css 양쪽. 넓은 표는 `overflow-x:auto` 컨테이너 안에서만 스크롤(페이지 가로 스크롤 없음)
+- **운영 순서**: (1) Supabase에서 `setup_catalyst_track.sql` 실행 → (2) 다음 close 모드(15:35)부터 그날 TOP 10이 자동 편입 → (3) 그 다음 거래일부터 수익률 누적. D+1은 하루 뒤, D+20은 약 한 달 뒤에 채워짐
+- **한계**: (1) 소급 적용 불가 — 이미 지난 추천은 진입가 스냅샷이 없으므로 SQL 실행 시점 이후 선정분부터 쌓임. (2) 수수료·세금·슬리피지·실제 체결가 미반영(선정일 종가 기준 단순 가격 수익률). (3) 코스피 대비 초과수익(벤치마크) 미계산. (4) 20거래일 이후는 마감되어 장기 성과는 추적하지 않음
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
 - 테마 순위가 장 마감 후에도 변동됨 (뉴스 갱신 때문)
 - 과대 낙폭 탭은 평일 15:00(장중, 현재 시세 기준) + close 모드(15:35/16:00, 확정 종가)에 갱신됨. 그 외 시간대에는 마지막 갱신 데이터 표시
 - 재료 포착 탭은 close 모드(15:35/16:00) 하루 1회만 산출됨. 장중에는 전 거래일 데이터가 표시되며, `DART_API_KEY` 미설정 시 공시 원출처 없이 뉴스 추정으로만 동작
+- 성과 추적(`catalyst_track`)은 `setup_catalyst_track.sql` 실행 이후 선정분부터만 쌓임 — 과거 추천은 진입가 스냅샷이 없어 소급 집계 불가
 
 ## 개발 서버
 - `python -m http.server 8000` (launch.json 설정됨)
