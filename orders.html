@@ -363,23 +363,59 @@ function buildPallets(lines,methodMap,cfg){
   return all.map((p,i)=>({...p,no:i+1,total:all.length,boxes:p.lines.reduce((s,l)=>s+l.count,0)}));
 }
 
-// 날짜의 발주서들 → [{order, site, lines, pallets}] (생산지점별로 분리)
+// 같은 업체·센터의 발주서 여러 개 → 한 리스트용 대표 발주 (발주번호는 ", "로 연결)
+function mergeOrders(list){
+  if(list.length===1)return list[0];
+  return{...list[0],id:list.map(o=>o.id).join("+"),order_no:list.map(o=>o.order_no).join(", "),
+    file_name:list.map(o=>o.file_name).join(", "),merged_count:list.length};
+}
+// 날짜의 발주서들 → [{order, orders, vendor, site, lines, pallets}]
+// 입고일(이미 날짜별 조회) + 업체명 + 센터가 같으면 발주번호가 달라도 한 리스트로 합쳐 적재 (추가 발주 대응)
+// 같은 상품코드·같은 소비기한은 수량을 합쳐 한 줄로 → 파렛트를 같이 채움. 그 안에서 생산지점별로 분리
 function buildSiteGroups(orders,prodMap,methodMap,cfg){
-  const groups=[],unmatched=[];
-  for(const o of orders){
-    const bySite=new Map();
+  const buckets=new Map(),unmatched=[];
+  const sorted=[...orders].sort((a,b)=>String(a.order_no).localeCompare(String(b.order_no),undefined,{numeric:true}));
+  for(const o of sorted){
+    const vendor=(o.vendor||"").trim(),center=(o.center||"").trim();
     for(const it of (o.items||[])){
       const p=prodMap[it.code];
       if(!p){unmatched.push({order:o,item:it});continue}
       const site=(p.site||"").trim()||NO_SITE;
-      if(!bySite.has(site))bySite.set(site,[]);
-      bySite.get(site).push(enrichLine(it,p));
-    }
-    for(const[site,lines]of bySite){
-      groups.push({order:o,site,lines,pallets:buildPallets(lines,methodMap,cfg||DEFAULT_PALLET)});
+      const key=vendor+"\u0001"+center+"\u0001"+site;
+      let b=buckets.get(key);
+      if(!b){b={vendor,center,site,orders:[],items:new Map()};buckets.set(key,b)}
+      if(!b.orders.includes(o))b.orders.push(o);
+      const ik=it.code+"|"+(it.expiry_date||"");
+      const cur=b.items.get(ik);
+      if(cur)cur.item.qty=Number(cur.item.qty||0)+Number(it.qty||0);
+      else b.items.set(ik,{item:{...it,line_no:b.items.size+1,qty:Number(it.qty||0)},product:p});
     }
   }
+  const groups=[...buckets.values()]
+    .sort((a,b)=>a.vendor.localeCompare(b.vendor)||a.center.localeCompare(b.center))
+    .map(b=>{
+      const lines=[...b.items.values()].map(e=>enrichLine(e.item,e.product));
+      return{order:mergeOrders(b.orders),orders:b.orders,vendor:b.vendor,site:b.site,lines,pallets:buildPallets(lines,methodMap,cfg||DEFAULT_PALLET)};
+    });
   return{groups,unmatched};
+}
+
+// 부착리스트 제목 배경색 — 업체명마다 다른 색 (ol_settings "vendor_colors" = {업체명: "RRGGBB"}, 처음 보는 업체는 안 쓴 색 자동 배정)
+const TITLE_COLORS=[
+  {rgb:"FFFF00",label:"노랑"},{rgb:"92D050",label:"연두"},{rgb:"8DB4E2",label:"하늘"},{rgb:"FABF8F",label:"주황"},
+  {rgb:"CCA8F0",label:"보라"},{rgb:"FF99CC",label:"분홍"},{rgb:"B7DEE8",label:"청록"},{rgb:"D9D9D9",label:"회색"}
+];
+const TITLE_NONE="none"; // 배경색 없음 (자동 배정에는 안 씀)
+const titleBg=c=>c===TITLE_NONE?"#ffffff":"#"+(c||"FFFF00");
+function assignVendorColors(vendors,saved){
+  const map={...(saved||{})},added={};
+  for(const v of vendors){
+    if(map[v])continue;
+    const used=new Set(Object.values(map));
+    const c=(TITLE_COLORS.find(t=>!used.has(t.rgb))||TITLE_COLORS[Object.keys(map).length%TITLE_COLORS.length]).rgb;
+    map[v]=c;added[v]=c;
+  }
+  return{map,added};
 }
 
 // ═══════════════════════════════════════════
@@ -974,10 +1010,10 @@ function OrdersTab({adminHash,masters,reloadMasters,dates,reloadDates,selDate,se
 // ═══════════════════════════════════════════
 function expiryOf(ln,dueDate){return ln.item.expiry_date?String(ln.item.expiry_date).slice(0,10):addDays(dueDate,6)}
 
-function AttachSheetPreview({group,pallet,prefix}){
+function AttachSheetPreview({group,pallet,prefix,color}){
   const o=group.order;
   return <div className="ol-sheet">
-    <div className="ttl">{prefix} 파렛트 적재리스트 (신선)</div>
+    <div className="ttl" style={{background:titleBg(color)}}>{prefix} 파렛트 적재리스트 (신선)</div>
     <table style={{margin:"8px 0"}}><tbody>
       <tr><td style={{fontSize:20,fontWeight:900,width:120}}>{pallet.total}/{pallet.no}</td><td></td><td style={{fontWeight:700,textAlign:"right"}}>총 박스 수량</td><td style={{fontWeight:900,fontSize:16}}>{pallet.boxes}</td></tr>
       <tr><td style={{fontWeight:700}}>입고예정일자</td><td>{o.due_date}</td><td style={{fontWeight:700,textAlign:"right"}}>납품센터명</td><td>( {o.center}(신선) 센터 )</td></tr>
@@ -1004,14 +1040,17 @@ const XS_BORDER={top:XS_THIN,bottom:XS_THIN,left:XS_THIN,right:XS_THIN};
 const XS_HEAD={font:{name:"Pretendard",sz:20,bold:true},alignment:{horizontal:"center",vertical:"center"},border:XS_BORDER};
 const XS_CELL={font:{name:"Pretendard",sz:15},alignment:{horizontal:"center",vertical:"center",wrapText:true},border:XS_BORDER};
 
-function buildPalletSheet(group,pallet,prefix){
+function buildPalletSheet(group,pallet,prefix,color){
   const o=group.order;
+  const title={...XS_TITLE};
+  if(color===TITLE_NONE)delete title.fill;
+  else title.fill={patternType:"solid",fgColor:{rgb:color||"FFFF00"}};
   const ws={};
   const put=(addr,cell)=>{ws[addr]=cell};
   const s=(v,st)=>({t:typeof v==="number"?"n":"s",v,s:st});
   const lastRow=9+pallet.lines.length-1;
-  put("A1",s(`${prefix} 파렛트 적재리스트 (신선)`,XS_TITLE));
-  ["B1","C1","D1","E1","F1"].forEach(a=>put(a,s("",XS_TITLE)));
+  put("A1",s(`${prefix} 파렛트 적재리스트 (신선)`,title));
+  ["B1","C1","D1","E1","F1"].forEach(a=>put(a,s("",title)));
   put("A3",s(`${pallet.total}/${pallet.no}`,XS_BIG)); // 총 파렛트 수/번호 (적재이미지와 동일 표기)
   put("D3",s("총 박스 수량",XS_INFO_LABEL));
   put("E3",{t:"n",v:pallet.boxes,f:`SUM(D9:D${Math.max(lastRow,9)})`,s:XS_BIG});
@@ -1052,32 +1091,45 @@ function buildPalletSheet(group,pallet,prefix){
   return ws;
 }
 
-function downloadAttachXlsx(groups,site,date,prefix){
+function downloadAttachXlsx(groups,site,date,prefix,colorOf){
   const wb=XLSX.utils.book_new();
   const multi=groups.length>1;
   groups.forEach((g,gi)=>{
     g.pallets.forEach(p=>{
       const name=(multi?`${gi+1}-${p.no}`:String(p.no)).slice(0,31);
-      XLSX.utils.book_append_sheet(wb,buildPalletSheet(g,p,prefix),name);
+      XLSX.utils.book_append_sheet(wb,buildPalletSheet(g,p,prefix,colorOf(g.vendor)),name);
     });
   });
   const safe=s=>String(s).replace(/[\\/:*?"<>|]/g,"_");
   XLSX.writeFile(wb,`부착리스트_${date}_${safe(site)}.xlsx`);
 }
 
-function AttachListView({groups,site,date,prefix}){
+function AttachListView({groups,site,date,prefix,vendorColors,onVendorColor}){
   const total=groups.reduce((s,g)=>s+g.pallets.length,0);
+  const colorOf=v=>vendorColors[v]||TITLE_COLORS[0].rgb;
+  const vendors=[...new Set(groups.map(g=>g.vendor))];
   return <>
     <div className="ol-toolbar">
-      <button className="ol-btn ol-btn-primary" onClick={()=>downloadAttachXlsx(groups,site,date,prefix)} disabled={!total}>📥 부착리스트 엑셀 다운로드 ({total}시트)</button>
+      <button className="ol-btn ol-btn-primary" onClick={()=>downloadAttachXlsx(groups,site,date,prefix,colorOf)} disabled={!total}>📥 부착리스트 엑셀 다운로드 ({total}시트)</button>
       <span style={{fontSize:12,color:"var(--muted)"}}>파렛트 1개 = 시트 1개 · 소비기한은 발주서의 유통(소비)기한, 없으면 입고일+6일</span>
     </div>
+    {vendors.length>0&&<div className="ol-toolbar" style={{fontSize:12}}>
+      <span style={{color:"var(--muted)"}}>업체별 제목 색</span>
+      {vendors.map(v=><label key={v} style={{display:"inline-flex",alignItems:"center",gap:6}}>
+        <span style={{width:16,height:16,borderRadius:3,border:"1px solid #888",background:titleBg(colorOf(v))}}/>
+        <b>{v||"(업체명 없음)"}</b>
+        <select className="ol-input" style={{width:"auto",padding:"3px 6px",fontSize:12}} value={colorOf(v)} onChange={e=>onVendorColor(v,e.target.value)}>
+          {TITLE_COLORS.map(t=><option key={t.rgb} value={t.rgb}>{t.label}</option>)}
+          <option value={TITLE_NONE}>배경색 없음</option>
+        </select>
+      </label>)}
+    </div>}
     {groups.map(g=><div key={g.order.id+g.site} style={{marginBottom:18}}>
-      <div style={{fontWeight:800,margin:"6px 0 8px"}}>📄 발주 {g.order.order_no} · {g.order.center} · {g.pallets.length}파렛트</div>
+      <div style={{fontWeight:800,margin:"6px 0 8px"}}>📄 {g.vendor||"(업체명 없음)"} · 발주 {g.order.order_no}{g.orders.length>1&&<span className="ol-pill" style={{marginLeft:6}}>발주서 {g.orders.length}건 합침</span>} · {g.order.center} · {g.pallets.length}파렛트</div>
       {g.lines.some(l=>l.partial)&&<div className="ol-warn" style={{padding:"8px 12px"}}>⚠ 입수량으로 나누어떨어지지 않는 품목이 있어 박스 수를 올림했습니다: {g.lines.filter(l=>l.partial).map(l=>`${l.item.name} (${fmtNum(l.item.qty)}÷${l.per})`).join(", ")}</div>}
       {g.pallets.map(p=><div key={p.no}>
         <div style={{fontSize:12,color:"var(--muted)",margin:"0 0 4px"}}>시트 {groups.length>1?`${groups.indexOf(g)+1}-`:""}{p.no} · {p.kind==="mixed"?"혼적":"단독"} · {p.boxes}박스</div>
-        <AttachSheetPreview group={g} pallet={p} prefix={prefix}/>
+        <AttachSheetPreview group={g} pallet={p} prefix={prefix} color={colorOf(g.vendor)}/>
       </div>)}
     </div>)}
   </>;
@@ -1353,7 +1405,7 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
 
   return <div style={{marginBottom:22}}>
     <div className="ol-toolbar" style={{marginBottom:8}}>
-      <b>📄 발주 {group.order.order_no} · {group.order.center}</b>
+      <b>📄 {group.vendor||"(업체명 없음)"} · 발주 {group.order.order_no} · {group.order.center}{group.orders.length>1?` (발주서 ${group.orders.length}건 합침)`:""}</b>
       <button className={"ol-btn ol-btn-sm "+(edit?"ol-btn-primary":"ol-btn-secondary")} onClick={e=>{e.currentTarget.blur();setEdit(v=>!v)}}>{edit?"✓ 편집 끝내기":"✏ 편집"}</button>
       {edited&&<button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={reset}>↺ 원래대로</button>}
       <select className="ol-input" style={{width:"auto",padding:"5px 8px",fontSize:12}} value={paper} onChange={e=>setPaper(e.target.value)} title="저장 용지 크기">
@@ -1389,7 +1441,7 @@ function LoadImageView({groups,date,prefix,adminHash,masters}){
 // ═══════════════════════════════════════════
 // 발주리스트 탭 (부착리스트 / 적재이미지 — 생산지점별)
 // ═══════════════════════════════════════════
-function ListsTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrders}){
+function ListsTab({adminHash,masters,reloadMasters,dates,selDate,setSelDate,orders,loadingOrders}){
   const[sub,setSub]=useState(()=>lsGet("ol-list-sub","attach")==="image"?"image":"attach");
   const[site,setSite]=useState("");
   const[prefix,setPrefix]=useState(()=>lsGet("ol-prefix","쿠팡"));
@@ -1402,6 +1454,16 @@ function ListsTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
   const sites=useMemo(()=>[...new Set(groups.map(g=>g.site))].sort(),[groups]);
   useEffect(()=>{if(sites.length&&!sites.includes(site))setSite(sites[0])},[sites]);
   const siteGroups=groups.filter(g=>g.site===site);
+  // 업체별 제목 색: 저장값 + 처음 보는 업체 자동 배정(저장)
+  const[colorEdits,setColorEdits]=useState({});
+  const savedColors=masters.settings?.vendor_colors;
+  const vendorColors=useMemo(()=>assignVendorColors([...new Set(groups.map(g=>g.vendor))].sort(),{...(savedColors||{}),...colorEdits}),[groups,savedColors,colorEdits]);
+  const saveColors=async map=>{
+    try{await rpc("ol_set_setting",{p_admin_hash:adminHash,p_key:"vendor_colors",p_value:map});reloadMasters&&reloadMasters()}
+    catch(e){console.warn("vendor_colors 저장 실패",e)}
+  };
+  useEffect(()=>{if(Object.keys(vendorColors.added).length)saveColors(vendorColors.map)},[vendorColors]);
+  const onVendorColor=(v,rgb)=>{setColorEdits(c=>({...c,[v]:rgb}));saveColors({...vendorColors.map,[v]:rgb})};
 
   return <div className="ol-layout">
     <DateList dates={dates} selected={selDate} onSelect={setSelDate}/>
@@ -1426,7 +1488,7 @@ function ListsTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
               return <button key={s} className={site===s?"on":""} onClick={()=>setSite(s)}>🏭 {s} · {n}파렛</button>;
             })}
           </div>
-          {sub==="attach"?<AttachListView groups={siteGroups} site={site} date={selDate} prefix={prefix}/>:<LoadImageView groups={siteGroups} date={selDate} prefix={prefix} adminHash={adminHash} masters={masters}/>}
+          {sub==="attach"?<AttachListView groups={siteGroups} site={site} date={selDate} prefix={prefix} vendorColors={vendorColors.map} onVendorColor={onVendorColor}/>:<LoadImageView groups={siteGroups} date={selDate} prefix={prefix} adminHash={adminHash} masters={masters}/>}
         </>}
       </>}
     </div>
