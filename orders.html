@@ -239,13 +239,14 @@ function parseOrderWorkbook(buf,fileName){
 }
 
 // ═══════════════════════════════════════════
-// 파렛트 계산 — 박스규격(가로×세로×높이) 기반
-//  - 단독: 1층 박스 수 = 파렛트(1100×1100) 바닥에 박스를 가장 많이 까는 배치(회전 허용, 2구역 혼합)
-//          단수 = (최대 높이 − 파렛트 자체 높이) ÷ 박스 높이  →  용량 = 1층 × 단수
+// 파렛트 계산
+//  - 단독 1파렛트 용량 = 적재방식의 '최대 박스' (항상 이 값 — 박스규격으로 늘거나 줄지 않음)
+//  - 박스규격(가로×세로)은 1단에 몇 박스 깔리는지 계산하는 데만 사용 (파렛트 바닥에 가장 많이 까는 배치, 회전 허용)
+//          단수 = ⌊최대 박스 ÷ 1단 박스 수⌋ (혼적 1자리에 쌓는 높이로 사용)
 //  - 혼적: 1층 = 6방(자리). 자리마다 한 제품을 위로 쌓음(그 제품 단수까지)
 //          자투리를 담는 데 필요한 자리 = ⌈자투리 ÷ 단수⌉, 6방 미만일 때만 혼적으로 보내고
 //          자리 수 큰 것부터 기존 혼적 파렛트 빈자리에 채움(First-Fit Decreasing)
-//  - 박스규격이 없거나 파렛트에 안 들어가는 규격이면 적재방식의 '규격 없을 때 최대 박스'로 계산
+//  - 박스규격이 없거나 파렛트에 안 들어가면 단수 = ⌊최대 박스 ÷ 6⌋
 // ═══════════════════════════════════════════
 const DEFAULT_CAP=40;
 const DEFAULT_PALLET={pallet_w:1100,pallet_d:1100,max_height:1700,pallet_base:0};
@@ -310,13 +311,14 @@ function boxCapacity(p,methodMap,cfg){
   const slots=mixed.length?Math.min(...mixed.map(m=>m.per_layer||6)):6;
   const cols=mixed.length?Math.max(...mixed.map(m=>m.cols||3)):3;
   const canMix=mixed.length>0;
-  const dims=parseSpec(p?.box_spec);
-  if(dims){
-    const layers=Math.floor((cfg.max_height-cfg.pallet_base)/dims.h);
-    const perLayer=layerCount(cfg.pallet_w,cfg.pallet_d,dims.w,dims.d);
-    if(layers>0&&perLayer>0)return{fromSpec:true,dims,layers,perLayer,cap:layers*perLayer,stack:layers,slots,cols,canMix};
-  }
+  // 용량은 항상 적재방식의 최대 박스 — 규격은 1단 박스 수 계산에만 사용
   const cap=single.length?Math.max(...single.map(m=>m.max_boxes)):mixed.length?Math.min(...mixed.map(m=>m.max_boxes)):DEFAULT_CAP;
+  const dims=parseSpec(p?.box_spec);
+  const perLayer=dims?layerCount(cfg.pallet_w,cfg.pallet_d,dims.w,dims.d):0;
+  if(perLayer>0){
+    const layers=Math.max(1,Math.floor(cap/perLayer));
+    return{fromSpec:true,dims,layers,perLayer,cap,rem:cap%perLayer,stack:layers,slots,cols,canMix};
+  }
   return{fromSpec:false,badSpec:!!dims,dims,layers:null,perLayer:null,cap,stack:Math.max(1,Math.floor(cap/slots)),slots,cols,canMix};
 }
 function enrichLine(item,p){
@@ -330,8 +332,8 @@ function toMethodMap(methods){
 }
 // 적재량 설명 문구
 function capText(c){
-  if(c.fromSpec)return `${c.perLayer}박스 × ${c.layers}단 = ${c.cap}박스`;
-  return c.badSpec?`규격이 파렛트에 안 맞음 → 기본 ${c.cap}박스`:`규격 없음 → 기본 ${c.cap}박스`;
+  if(c.fromSpec)return c.cap<c.perLayer?`최대 ${c.cap}박스 · 1단 ${c.perLayer}박스 (1단도 안 참)`:`최대 ${c.cap}박스 · 1단 ${c.perLayer}박스 × ${c.layers}단${c.rem?` + ${c.rem}박스`:""}`;
+  return c.badSpec?`최대 ${c.cap}박스 · 규격이 파렛트에 안 맞음`:`최대 ${c.cap}박스 · 규격 없음`;
 }
 function buildPallets(lines,methodMap,cfg){
   const singles=[],pool=[];
@@ -541,17 +543,15 @@ function PalletSettings({adminHash,masters,onChanged,onClose}){
   const[err,setErr]=useState("");const[busy,setBusy]=useState(false);
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
   const fields=[
-    ["pallet_w","파렛트 가로 (mm)"],["pallet_d","파렛트 세로 (mm)"],
-    ["max_height","최대 적재 높이 (mm)"],["pallet_base","파렛트 자체 높이 (mm)"]
+    ["pallet_w","파렛트 가로 (mm)"],["pallet_d","파렛트 세로 (mm)"]
   ];
   const save=async()=>{
     const vals={};
     for(const[k,label]of fields){
       const v=Number(form[k]);
-      if(!Number.isFinite(v)||v<0||(k!=="pallet_base"&&v<=0)){setErr(label+" 값을 확인하세요");return}
+      if(!Number.isFinite(v)||v<=0){setErr(label+" 값을 확인하세요");return}
       vals[k]=v;
     }
-    if(vals.pallet_base>=vals.max_height){setErr("파렛트 자체 높이는 최대 높이보다 작아야 합니다");return}
     setBusy(true);setErr("");
     try{
       for(const k in vals)if(vals[k]!==cur[k])await rpc("ol_set_setting",{p_admin_hash:adminHash,p_key:k,p_value:vals[k]});
@@ -562,8 +562,8 @@ function PalletSettings({adminHash,masters,onChanged,onClose}){
   return <>
     <div style={{fontSize:17,fontWeight:700,marginBottom:6}}>⚙ 파렛트 설정</div>
     <div style={{fontSize:12,color:"var(--muted)",marginBottom:14,lineHeight:1.6}}>
-      제품의 박스규격(가로×세로×높이)과 이 값으로 적재량을 자동 계산합니다.<br/>
-      단수 = (최대 적재 높이 − 파렛트 자체 높이) ÷ 박스 높이. 최대 높이에 파렛트 높이가 <b>포함</b>된 기준이면 파렛트 자체 높이(예: 150)를 넣으세요.
+      제품의 박스규격(가로×세로)과 이 파렛트 크기로 <b>1단에 몇 박스</b> 깔리는지만 계산합니다.<br/>
+      파렛트 1개에 싣는 최대 박스 수는 <b>적재방식의 '최대 박스'</b>로 정해집니다.
     </div>
     <div className="ol-grid">
       {fields.map(([k,label])=><div key={k}><div className="ol-label">{label}</div><input className="ol-input" type="number" min="0" value={form[k]} onChange={e=>set(k,e.target.value)}/></div>)}
@@ -737,7 +737,7 @@ function MethodManager({adminHash,masters,onChanged,onClose}){
       <div className="ol-grid" style={{marginBottom:8}}>
         <div><div className="ol-label">이름</div><input className="ol-input" value={form.name} onChange={e=>set("name",e.target.value)} placeholder="예: 단독 40박스"/></div>
         <div><div className="ol-label">유형</div><select className="ol-input" value={form.kind} onChange={e=>set("kind",e.target.value)}><option value="single">단독</option><option value="mixed">혼적</option></select></div>
-        <div><div className="ol-label">규격 없을 때 최대 박스</div><input className="ol-input" type="number" min="1" value={form.max_boxes} onChange={e=>set("max_boxes",e.target.value)}/></div>
+        <div><div className="ol-label">최대 박스 (파렛트 1개)</div><input className="ol-input" type="number" min="1" value={form.max_boxes} onChange={e=>set("max_boxes",e.target.value)}/></div>
         {form.kind==="mixed"&&<div><div className="ol-label">층당 박스 수 (방)</div><input className="ol-input" type="number" min="1" max="12" value={form.per_layer} onChange={e=>set("per_layer",e.target.value)}/></div>}
         {form.kind==="mixed"&&<div><div className="ol-label">이미지 가로 칸 수</div><input className="ol-input" type="number" min="1" max="6" value={form.cols} onChange={e=>set("cols",e.target.value)}/></div>}
       </div>
@@ -748,7 +748,7 @@ function MethodManager({adminHash,masters,onChanged,onClose}){
       </div>
     </div>
     {err&&<div className="ol-err">{err}</div>}
-    <div className="ol-scroll"><table className="ol-table"><thead><tr><th>이름</th><th>유형</th><th className="right">규격 없을 때</th><th className="right">층당 방</th><th className="right">사용 제품</th><th>메모</th><th></th></tr></thead><tbody>
+    <div className="ol-scroll"><table className="ol-table"><thead><tr><th>이름</th><th>유형</th><th className="right">최대 박스</th><th className="right">층당 방</th><th className="right">사용 제품</th><th>메모</th><th></th></tr></thead><tbody>
       {masters.methods.map(m=><tr key={m.id}>
         <td style={{fontWeight:600}}>{m.name}</td>
         <td><span className={"ol-pill "+m.kind}>{m.kind==="mixed"?"혼적":"단독"}</span></td>
