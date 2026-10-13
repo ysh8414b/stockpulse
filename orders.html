@@ -11,6 +11,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <!-- xlsx-js-style: SheetJS 0.18.5 포크 — 읽기 + 스타일(테두리/폰트/채우기) 포함 쓰기 -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
   <script src="shared.js"></script>
@@ -33,6 +34,7 @@
     .ol-scroll{overflow-x:auto}
     .ol-input{width:100%;padding:8px 12px;border-radius:7px;border:1px solid var(--inp-bd);background:var(--inp-bg);color:var(--text);font-size:13px;outline:none;font-family:inherit;box-sizing:border-box}
     .ol-input:focus{border-color:rgba(6,182,212,0.45)}
+    select.ol-input option{background:var(--bg);color:var(--text)}
     .ol-btn{padding:8px 16px;border-radius:7px;border:none;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s;white-space:nowrap}
     .ol-btn:disabled{opacity:.5;cursor:not-allowed}
     .ol-btn-primary{background:linear-gradient(135deg,#06b6d4,#8b5cf6);color:#fff}
@@ -1120,80 +1122,233 @@ function splitCols(n,cols){
 }
 const imgName=p=>p.image_name||p.name;
 
-function LoadImage({group,date,prefix,refCb}){
+// ── 적재이미지 편집 (위치 이동 + 글씨 수정) ──
+// 편집 내용은 ol_settings에 key = "img:{발주번호}:{생산지점}" 로 저장 (PC·모바일 공유)
+// sig(파렛트 구성 요약)가 달라지면(발주서 재업로드 등) 이전 편집은 무시
+const imgEditCache=new Map();
+// 저장 용지 (mm, 가로만) — 300dpi로 렌더링, 사방 여백 PAPER_MARGIN_MM
+const PAPER_SIZES={
+  "A4-l":{label:"A4 가로",w:297,h:210},
+  "A3-l":{label:"A3 가로",w:420,h:297}
+};
+const PAPER_MARGIN_MM=10;
+function imgEditKey(group){return `img:${group.order.order_no}:${group.site}`}
+function imageSig(group){return group.pallets.map(p=>p.kind[0]+p.lines.map(l=>l.product.code+":"+l.count).join(",")).join("|")}
+
+// 더블클릭으로 글씨 수정 (Enter 저장 · Shift+Enter 줄바꿈 · Esc 취소)
+function EditText({id,value,edit,texts,onText,style}){
+  const[active,setActive]=useState(false);
+  const ref=useRef(null);
+  const shown=texts&&texts[id]!=null?texts[id]:String(value);
+  useEffect(()=>{
+    if(!active||!ref.current)return;
+    ref.current.focus();
+    const r=document.createRange();r.selectNodeContents(ref.current);
+    const sel=window.getSelection();sel.removeAllRanges();sel.addRange(r);
+  },[active]);
+  useEffect(()=>{if(!edit)setActive(false)},[edit]);
+  const commit=()=>{
+    const t=(ref.current?.innerText||"").replace(/\n+$/,"");
+    setActive(false);
+    if(t!==shown)onText(id,t===String(value)?null:t);
+  };
+  return <div key={shown+(active?"#":"")} ref={ref}
+    contentEditable={active} suppressContentEditableWarning
+    title={edit&&!active?"더블클릭해서 글씨 수정":undefined}
+    onDoubleClick={e=>{if(edit){e.stopPropagation();setActive(true)}}}
+    onBlur={()=>{if(active)commit()}}
+    onKeyDown={e=>{
+      if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();ref.current.blur()}
+      if(e.key==="Escape"){e.preventDefault();setActive(false)}
+    }}
+    style={{...style,whiteSpace:"pre-wrap",outline:active?"2px solid #06b6d4":"none",cursor:active?"text":undefined,userSelect:active?"text":undefined,minWidth:active?20:undefined,minHeight:edit&&!shown?"1em":undefined}}
+  >{shown}</div>;
+}
+
+// 편집 모드에서 끌어서 위치 이동 (원래 자리 기준 상대 이동량 dx/dy 저장)
+function DragBlock({id,edit,pos,onMove,style,children}){
+  const base=pos[id]||{dx:0,dy:0};
+  const[drag,setDrag]=useState(null);
+  const cur=drag?{dx:base.dx+drag.x,dy:base.dy+drag.y}:base;
+  // 포인터 캡처를 쓰면 더블클릭이 글씨까지 안 내려가므로 window 이벤트로 추적
+  const dragRef=useRef(null);
+  const down=e=>{
+    if(!edit||e.button>0||e.target.isContentEditable)return;
+    if(e.pointerType==="mouse")e.preventDefault();
+    dragRef.current={sx:e.clientX,sy:e.clientY,x:0,y:0};
+    setDrag(dragRef.current);
+  };
+  useEffect(()=>{
+    if(!drag)return;
+    const move=e=>{
+      const d=dragRef.current;if(!d)return;
+      dragRef.current={...d,x:e.clientX-d.sx,y:e.clientY-d.sy};
+      setDrag(dragRef.current);
+    };
+    const up=()=>{
+      const d=dragRef.current;dragRef.current=null;setDrag(null);
+      if(d&&(Math.abs(d.x)>2||Math.abs(d.y)>2))onMove(id,{dx:Math.round(base.dx+d.x),dy:Math.round(base.dy+d.y)});
+    };
+    window.addEventListener("pointermove",move);
+    window.addEventListener("pointerup",up);
+    window.addEventListener("pointercancel",up);
+    return()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);window.removeEventListener("pointercancel",up)};
+  },[!!drag]);
+  return <div onPointerDown={down}
+    style={{...style,position:"relative",left:cur.dx,top:cur.dy,
+      cursor:edit?(drag?"grabbing":"grab"):undefined,
+      outline:edit?"1px dashed rgba(6,182,212,0.8)":"none",outlineOffset:4,
+      touchAction:edit?"none":undefined,userSelect:edit?"none":undefined,zIndex:drag?5:undefined}}>
+    {children}
+  </div>;
+}
+
+function LoadImage({group,date,prefix,refCb,edit,ed,onMove,onText}){
   const pallets=group.pallets;
   const total=pallets.length;
   const singles=groupSinglePallets(pallets);
   const mixed=pallets.filter(p=>p.kind==="mixed");
   const font="'Pretendard','Apple SD Gothic Neo','Malgun Gothic',sans-serif";
-  return <div ref={refCb} style={{width:920,background:"#ffffff",color:"#111",padding:"34px 40px 40px",boxSizing:"border-box",fontFamily:font}}>
-    <div style={{display:"flex",alignItems:"baseline",gap:40,justifyContent:"center",marginBottom:6}}>
-      <div style={{fontSize:28,fontWeight:800}}>{prefix} {fmtMd(date)}일 ({dowOf(date)}) 적재리스트</div>
-      <div style={{fontSize:46,fontWeight:900}}>총{total}파렛</div>
-    </div>
-    <div style={{textAlign:"center",fontSize:13,color:"#666",marginBottom:26}}>{group.site} · {group.order.center} · 발주 {group.order.order_no}</div>
+  const T=(id,value,style)=><EditText id={id} value={value} edit={edit} texts={ed.text} onText={onText} style={style}/>;
+  const D=(id,style,children)=><DragBlock key={id} id={id} edit={edit} pos={ed.pos} onMove={onMove} style={style}>{children}</DragBlock>;
+  return <div ref={refCb} style={{width:920,background:"#ffffff",color:"#111",padding:"34px 40px 40px",boxSizing:"border-box",fontFamily:font,overflow:"hidden"}}>
+    {D("hd",{display:"flex",alignItems:"baseline",gap:40,justifyContent:"center",marginBottom:6},<>
+      {T("title",`${prefix} ${fmtMd(date)}일 (${dowOf(date)}) 적재리스트`,{fontSize:28,fontWeight:800})}
+      {T("total",`총${total}파렛`,{fontSize:46,fontWeight:900})}
+    </>)}
+    {D("sub",{textAlign:"center",fontSize:13,color:"#666",marginBottom:26},
+      T("sub",`${group.site} · ${group.order.center} · 발주 ${group.order.order_no}`,{}))}
     <div style={{display:"flex",gap:30,alignItems:"flex-start"}}>
       <div style={{flex:1,display:"grid",gridTemplateColumns:"1fr 1fr",rowGap:34,columnGap:20}}>
-        {singles.map((s,i)=><div key={i} style={{textAlign:"center",color:s.product.color,fontWeight:800,fontSize:21,lineHeight:1.5}}>
-          <div>{total}/{s.from}{s.to>s.from?`-${s.to}`:""}</div>
-          <div>{imgName(s.product)}</div>
-          <div>{s.count}개 / {s.n}파렛</div>
-        </div>)}
+        {singles.map(s=>{
+          const k="s"+s.from;
+          return D(k,{textAlign:"center",color:s.product.color,fontWeight:800,fontSize:21,lineHeight:1.5},<>
+            {T(k+".l",`${total}/${s.from}${s.to>s.from?`-${s.to}`:""}`)}
+            {T(k+".n",imgName(s.product))}
+            {T(k+".q",`${s.count}개 / ${s.n}파렛`)}
+          </>);
+        })}
       </div>
       {mixed.length>0&&<div style={{display:"flex",flexDirection:"column",gap:24}}>
         {mixed.map(p=>{
+          const k="m"+p.no;
           const cols=Math.max(1,p.cols||3);
           const cells=layoutMixed(p.lines,Math.max(p.slots||6,p.lines.length));
           const rows=[];for(let i=0;i<cells.length;i+=cols)rows.push(cells.slice(i,i+cols));
-          return <table key={p.no} style={{borderCollapse:"collapse"}}><tbody>
-            {rows.map((row,ri)=><tr key={ri}>
-              {row.map((c,ci)=><td key={ci} style={{border:"1.5px solid #333",width:132,height:128,textAlign:"center",verticalAlign:"middle",position:"relative",color:c?c.ln.product.color:"#111",fontWeight:800,fontSize:17,lineHeight:1.35,padding:4}}>
-                {ri===0&&ci===0&&<div style={{position:"absolute",top:6,left:10,color:"#111",fontSize:16,fontWeight:800}}>{total}-{p.no}</div>}
-                {c&&c.n>0&&<><div>{imgName(c.ln.product)}</div><div>{c.n}</div></>}
-              </td>)}
-            </tr>)}
-          </tbody></table>;
+          return D(k,{},
+            <table style={{borderCollapse:"collapse"}}><tbody>
+              {rows.map((row,ri)=><tr key={ri}>
+                {row.map((c,ci)=>{
+                  const ck=`${k}.c${ri*cols+ci}`;
+                  return <td key={ci} style={{border:"1.5px solid #333",width:132,height:128,textAlign:"center",verticalAlign:"middle",position:"relative",color:c?c.ln.product.color:"#111",fontWeight:800,fontSize:17,lineHeight:1.35,padding:4}}>
+                    {ri===0&&ci===0&&<div style={{position:"absolute",top:6,left:10,color:"#111",fontSize:16,fontWeight:800}}>{T(k+".label",`${total}-${p.no}`)}</div>}
+                    {c&&c.n>0&&<>{T(ck+".n",imgName(c.ln.product))}{T(ck+".c",String(c.n))}</>}
+                  </td>;
+                })}
+              </tr>)}
+            </tbody></table>);
         })}
       </div>}
     </div>
   </div>;
 }
 
-function LoadImageView({groups,date,prefix}){
-  const refs=useRef({});
-  const[saving,setSaving]=useState("");
-  const save=async g=>{
-    const key=g.order.id+"|"+g.site;
-    const el=refs.current[key];
-    if(!el)return;
-    setSaving(key);
-    try{
-      const canvas=await html2canvas(el,{scale:2,backgroundColor:"#ffffff"});
-      const a=document.createElement("a");
-      a.href=canvas.toDataURL("image/png");
-      a.download=`적재리스트_${date}_${g.site}_${g.order.order_no}.png`.replace(/[\\/:*?"<>|]/g,"_");
-      a.click();
-    }catch(e){alert("이미지 저장 실패: "+e.message)}
-    setSaving("");
+function LoadImageCard({group,date,prefix,adminHash,masters}){
+  const key=imgEditKey(group);
+  const sig=imageSig(group);
+  const stored=imgEditCache.has(key)?imgEditCache.get(key):masters.settings?.[key];
+  const fresh=()=>stored&&stored.sig===sig?{sig,pos:stored.pos||{},text:stored.text||{}}:{sig,pos:{},text:{}};
+  const[ed,setEd]=useState(fresh);
+  const edRef=useRef(ed);
+  useEffect(()=>{const v=fresh();setEd(v);edRef.current=v},[key,sig]);
+  const[edit,setEdit]=useState(false);
+  const[status,setStatus]=useState("");
+  const[saving,setSaving]=useState(false);
+  const elRef=useRef(null);
+  const staleDropped=!!stored&&stored.sig!==sig&&(Object.keys(stored.pos||{}).length+Object.keys(stored.text||{}).length>0);
+  const edited=Object.keys(ed.pos).length+Object.keys(ed.text).length>0;
+
+  const persist=async next=>{
+    edRef.current=next;setEd(next);imgEditCache.set(key,next);
+    setStatus("저장 중…");
+    try{await rpc("ol_set_setting",{p_admin_hash:adminHash,p_key:key,p_value:next});setStatus("✓ 저장됨")}
+    catch(e){setStatus("⚠ "+errMsg(e))}
   };
-  return <>
-    {groups.map(g=>{
-      const key=g.order.id+"|"+g.site;
-      return <div key={key} style={{marginBottom:22}}>
-        <div className="ol-toolbar" style={{marginBottom:8}}>
-          <b>📄 발주 {g.order.order_no} · {g.order.center}</b>
-          <button className="ol-btn ol-btn-primary ol-btn-sm" onClick={()=>save(g)} disabled={saving===key}>{saving===key?"저장 중...":"📷 PNG 저장"}</button>
-        </div>
-        <div className="ol-img-wrap"><LoadImage group={g} date={date} prefix={prefix} refCb={el=>{refs.current[key]=el}}/></div>
-      </div>;
-    })}
-  </>;
+  const onMove=(id,p)=>persist({...edRef.current,pos:{...edRef.current.pos,[id]:p}});
+  const onText=(id,t)=>{
+    const text={...edRef.current.text};
+    if(t==null)delete text[id];else text[id]=t;
+    persist({...edRef.current,text});
+  };
+  const reset=()=>{if(confirm("이 적재이미지의 위치·글씨 수정을 모두 되돌릴까요?"))persist({sig,pos:{},text:{}})};
+
+  // 용지 선택 (A4/A3 × 가로/세로) — 마지막 선택 기억
+  const[paper,setPaper]=useState(()=>{const v=lsGet("ol-paper","A4-l");return PAPER_SIZES[v]?v:"A4-l"});
+  useEffect(()=>lsSet("ol-paper",paper),[paper]);
+
+  // 이미지를 용지 크기(300dpi) 캔버스 가운데에 여백 두고 맞춰 넣음 → PNG 또는 PDF
+  const saveImage=async format=>{
+    setSaving(true);
+    const wasEdit=edit;
+    if(wasEdit){setEdit(false);await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))}
+    try{
+      const ps=PAPER_SIZES[paper]||PAPER_SIZES["A4-l"];
+      const pxW=Math.round(ps.w/25.4*300),pxH=Math.round(ps.h/25.4*300);
+      const margin=Math.round(PAPER_MARGIN_MM/25.4*300);
+      const el=elRef.current;
+      const scale=Math.min(5,Math.max(2,Math.ceil((pxW-2*margin)/el.offsetWidth)));
+      const shot=await html2canvas(el,{scale,backgroundColor:"#ffffff"});
+      const page=document.createElement("canvas");
+      page.width=pxW;page.height=pxH;
+      const ctx=page.getContext("2d");
+      ctx.fillStyle="#ffffff";ctx.fillRect(0,0,pxW,pxH);
+      const fit=Math.min((pxW-2*margin)/shot.width,(pxH-2*margin)/shot.height);
+      const dw=shot.width*fit,dh=shot.height*fit;
+      ctx.imageSmoothingQuality="high";
+      ctx.drawImage(shot,(pxW-dw)/2,(pxH-dh)/2,dw,dh);
+      const base=`적재리스트_${date}_${group.site}_${group.order.order_no}_${ps.label.replace(" ","")}`.replace(/[\\/:*?"<>|]/g,"_");
+      if(format==="pdf"){
+        const{jsPDF}=window.jspdf;
+        const pdf=new jsPDF({orientation:ps.w>ps.h?"landscape":"portrait",unit:"mm",format:[ps.w,ps.h]});
+        pdf.addImage(page.toDataURL("image/jpeg",0.95),"JPEG",0,0,ps.w,ps.h);
+        pdf.save(base+".pdf");
+      }else{
+        const a=document.createElement("a");
+        a.href=page.toDataURL("image/png");
+        a.download=base+".png";
+        a.click();
+      }
+    }catch(e){alert("이미지 저장 실패: "+e.message)}
+    if(wasEdit)setEdit(true);
+    setSaving(false);
+  };
+
+  return <div style={{marginBottom:22}}>
+    <div className="ol-toolbar" style={{marginBottom:8}}>
+      <b>📄 발주 {group.order.order_no} · {group.order.center}</b>
+      <button className={"ol-btn ol-btn-sm "+(edit?"ol-btn-primary":"ol-btn-secondary")} onClick={e=>{e.currentTarget.blur();setEdit(v=>!v)}}>{edit?"✓ 편집 끝내기":"✏ 편집"}</button>
+      {edited&&<button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={reset}>↺ 원래대로</button>}
+      <select className="ol-input" style={{width:"auto",padding:"5px 8px",fontSize:12}} value={paper} onChange={e=>setPaper(e.target.value)} title="저장 용지 크기">
+        {Object.entries(PAPER_SIZES).map(([k,v])=><option key={k} value={k}>{v.label} ({v.w}×{v.h}mm)</option>)}
+      </select>
+      <button className="ol-btn ol-btn-primary ol-btn-sm" onClick={()=>saveImage("png")} disabled={saving}>{saving?"저장 중...":"📷 PNG"}</button>
+      <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>saveImage("pdf")} disabled={saving}>📄 PDF</button>
+      {status&&<span style={{fontSize:12,color:status.startsWith("⚠")?"#ef4444":"var(--muted)"}}>{status}</span>}
+    </div>
+    {edit&&<div style={{fontSize:12,color:"var(--muted)",marginBottom:8}}>점선 상자를 <b>끌어서</b> 위치 이동 · 글씨를 <b>더블클릭</b>해서 수정 (Enter 저장, Shift+Enter 줄바꿈, Esc 취소, 비우면 글씨 숨김) · 수정 내용은 자동 저장</div>}
+    {staleDropped&&<div className="ol-warn" style={{padding:"8px 12px",fontSize:12}}>발주 내용이 바뀌어 파렛트 구성이 달라졌습니다. 이전에 수정한 위치·글씨는 적용하지 않았습니다.</div>}
+    <div className="ol-img-wrap"><LoadImage group={group} date={date} prefix={prefix} refCb={el=>{elRef.current=el}} edit={edit} ed={ed} onMove={onMove} onText={onText}/></div>
+  </div>;
+}
+
+function LoadImageView({groups,date,prefix,adminHash,masters}){
+  return <>{groups.map(g=><LoadImageCard key={g.order.id+"|"+g.site} group={g} date={date} prefix={prefix} adminHash={adminHash} masters={masters}/>)}</>;
 }
 
 // ═══════════════════════════════════════════
 // 발주리스트 탭 (부착리스트 / 적재이미지 — 생산지점별)
 // ═══════════════════════════════════════════
-function ListsTab({masters,dates,selDate,setSelDate,orders,loadingOrders}){
+function ListsTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrders}){
   const[sub,setSub]=useState(()=>lsGet("ol-list-sub","attach")==="image"?"image":"attach");
   const[site,setSite]=useState("");
   const[prefix,setPrefix]=useState(()=>lsGet("ol-prefix","쿠팡"));
@@ -1230,7 +1385,7 @@ function ListsTab({masters,dates,selDate,setSelDate,orders,loadingOrders}){
               return <button key={s} className={site===s?"on":""} onClick={()=>setSite(s)}>🏭 {s} · {n}파렛</button>;
             })}
           </div>
-          {sub==="attach"?<AttachListView groups={siteGroups} site={site} date={selDate} prefix={prefix}/>:<LoadImageView groups={siteGroups} date={selDate} prefix={prefix}/>}
+          {sub==="attach"?<AttachListView groups={siteGroups} site={site} date={selDate} prefix={prefix}/>:<LoadImageView groups={siteGroups} date={selDate} prefix={prefix} adminHash={adminHash} masters={masters}/>}
         </>}
       </>}
     </div>
