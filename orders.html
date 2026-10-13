@@ -237,16 +237,85 @@ function parseOrderWorkbook(buf,fileName){
 }
 
 // ═══════════════════════════════════════════
-// 파렛트 계산
-//  - 단독(single) 방식: 파렛트당 최대 박스(여러 개 선택 시 가장 큰 값)로 꽉 채운 파렛트 생성
-//  - 남은 자투리 박스: 혼적(mixed) 방식이 있으면 혼적 풀로, 없으면 단독 파렛트 1개
-//  - 혼적 풀: 순서대로 혼적 최대 박스까지 채워 한 파렛트에 여러 제품
+// 파렛트 계산 — 박스규격(가로×세로×높이) 기반
+//  - 단독: 1층 박스 수 = 파렛트(1100×1100) 바닥에 박스를 가장 많이 까는 배치(회전 허용, 2구역 혼합)
+//          단수 = (최대 높이 − 파렛트 자체 높이) ÷ 박스 높이  →  용량 = 1층 × 단수
+//  - 혼적: 1층 = 6방(자리). 자리마다 한 제품을 위로 쌓음(그 제품 단수까지)
+//          자투리를 담는 데 필요한 자리 = ⌈자투리 ÷ 단수⌉, 6방 미만일 때만 혼적으로 보내고
+//          자리 수 큰 것부터 기존 혼적 파렛트 빈자리에 채움(First-Fit Decreasing)
+//  - 박스규격이 없거나 파렛트에 안 들어가는 규격이면 적재방식의 '규격 없을 때 최대 박스'로 계산
 // ═══════════════════════════════════════════
 const DEFAULT_CAP=40;
+const DEFAULT_PALLET={pallet_w:1100,pallet_d:1100,max_height:1700,pallet_base:0};
+function palletCfg(settings){
+  const c={...DEFAULT_PALLET};
+  for(const k in c){const v=Number(settings?.[k]);if(Number.isFinite(v)&&v>=0)c[k]=v}
+  return c;
+}
+function parseSpec(spec){
+  const n=String(spec||"").match(/[\d.]+/g);
+  if(!n||n.length<3)return null;
+  const[w,d,h]=n.slice(0,3).map(Number);
+  return w>0&&d>0&&h>0?{w,d,h}:null;
+}
+// 직사각형 L×W에 a×b 박스: 한 방향으로 k줄 + 나머지 회전 배치 (2구역, 양 축 모두 시도)
+function twoBlockCount(L,W,a,b){
+  if(L<Math.min(a,b)||W<Math.min(a,b))return 0;
+  const grid=(L,W,a,b)=>Math.floor(L/a)*Math.floor(W/b);
+  let best=Math.max(grid(L,W,a,b),grid(L,W,b,a));
+  for(const[X,Y]of[[L,W],[W,L]]){
+    for(let k=1;k*a<=X;k++)best=Math.max(best,k*Math.floor(Y/b)+grid(X-k*a,Y,b,a));
+    for(let k=1;k*b<=X;k++)best=Math.max(best,k*Math.floor(Y/a)+grid(X-k*b,Y,a,b));
+  }
+  return best;
+}
+// 파렛트 바닥 1층 박스 수 — 2구역 배치 + 5구역 바람개비 배치 중 최대
+// 5구역: 네 블록이 가운데를 돌아가며 감싸는 형태 (각 블록은 2구역 배치로 채움)
+//   예: 460×300 박스, 1100×1100 → 300+300+460=1060 → 600×460 블록(2개) × 4 = 8
+const _layerCache=new Map();
+function layerCount(L,W,a,b){
+  const key=[L,W,Math.max(a,b),Math.min(a,b)].join("|");
+  if(_layerCache.has(key))return _layerCache.get(key);
+  const f=(w,h)=>(w<=0||h<=0)?0:twoBlockCount(w,h,a,b);
+  let best=f(L,W);
+  // 분할 후보: i·a + j·b 조합(래스터 포인트)과 그 여집합
+  const raster=S=>{
+    const set=new Set([0]);
+    for(let i=0;i*a<=S;i++)for(let j=0;i*a+j*b<=S;j++){const r=i*a+j*b;set.add(r);set.add(S-r)}
+    return [...set].filter(v=>v>=0&&v<=S).sort((x,y)=>x-y);
+  };
+  const X=raster(L),Y=raster(W);
+  for(const x1 of X)for(const x2 of X){
+    if(x2<x1)continue;
+    for(const y1 of Y)for(const y2 of Y){
+      if(y2<y1)continue;
+      // 좌하 [0,x1]×[0,y2] · 우하 [x1,L]×[0,y1] · 우상 [x2,L]×[y1,W] · 좌상 [0,x2]×[y2,W] · 가운데 [x1,x2]×[y1,y2]
+      const n=f(x1,y2)+f(L-x1,y1)+f(L-x2,W-y1)+f(x2,W-y2)+f(x2-x1,y2-y1);
+      if(n>best)best=n;
+    }
+  }
+  _layerCache.set(key,best);
+  return best;
+}
 function productMethods(p,methodMap){
   const ids=Array.isArray(p?.method_ids)?p.method_ids:[];
   const ms=ids.map(id=>methodMap[id]).filter(Boolean);
   return{single:ms.filter(m=>m.kind==="single"),mixed:ms.filter(m=>m.kind==="mixed")};
+}
+// 제품 1개의 파렛트 적재 능력
+function boxCapacity(p,methodMap,cfg){
+  const{single,mixed}=productMethods(p,methodMap);
+  const slots=mixed.length?Math.min(...mixed.map(m=>m.per_layer||6)):6;
+  const cols=mixed.length?Math.max(...mixed.map(m=>m.cols||3)):3;
+  const canMix=mixed.length>0;
+  const dims=parseSpec(p?.box_spec);
+  if(dims){
+    const layers=Math.floor((cfg.max_height-cfg.pallet_base)/dims.h);
+    const perLayer=layerCount(cfg.pallet_w,cfg.pallet_d,dims.w,dims.d);
+    if(layers>0&&perLayer>0)return{fromSpec:true,dims,layers,perLayer,cap:layers*perLayer,stack:layers,slots,cols,canMix};
+  }
+  const cap=single.length?Math.max(...single.map(m=>m.max_boxes)):mixed.length?Math.min(...mixed.map(m=>m.max_boxes)):DEFAULT_CAP;
+  return{fromSpec:false,badSpec:!!dims,dims,layers:null,perLayer:null,cap,stack:Math.max(1,Math.floor(cap/slots)),slots,cols,canMix};
 }
 function enrichLine(item,p){
   const per=Math.max(1,Number(p?.per_box)||1);
@@ -254,39 +323,46 @@ function enrichLine(item,p){
   const boxes=Math.ceil(exact-1e-9);
   return{item,product:p,per,boxes,partial:Math.abs(exact-Math.round(exact))>1e-9};
 }
-function buildPallets(lines,methodMap){
+function toMethodMap(methods){
+  return Object.fromEntries((methods||[]).map(m=>[Number(m.id),{...m,max_boxes:Number(m.max_boxes)||DEFAULT_CAP,cols:Number(m.cols)||3,per_layer:Number(m.per_layer)||6}]));
+}
+// 적재량 설명 문구
+function capText(c){
+  if(c.fromSpec)return `${c.perLayer}박스 × ${c.layers}단 = ${c.cap}박스`;
+  return c.badSpec?`규격이 파렛트에 안 맞음 → 기본 ${c.cap}박스`:`규격 없음 → 기본 ${c.cap}박스`;
+}
+function buildPallets(lines,methodMap,cfg){
   const singles=[],pool=[];
   for(const ln of lines){
     if(ln.boxes<=0)continue;
-    const{single,mixed}=productMethods(ln.product,methodMap);
-    const cap=single.length?Math.max(...single.map(m=>m.max_boxes)):mixed.length?Math.min(...mixed.map(m=>m.max_boxes)):DEFAULT_CAP;
-    const full=Math.floor(ln.boxes/cap),rem=ln.boxes%cap;
-    for(let i=0;i<full;i++)singles.push({kind:"single",lines:[{...ln,count:cap}]});
+    const c=boxCapacity(ln.product,methodMap,cfg);
+    const full=Math.floor(ln.boxes/c.cap),rem=ln.boxes%c.cap;
+    for(let i=0;i<full;i++)singles.push({kind:"single",lines:[{...ln,count:c.cap,capInfo:c}]});
     if(rem>0){
-      if(mixed.length)pool.push({...ln,count:rem,mixCap:Math.min(...mixed.map(m=>m.max_boxes)),cols:Math.max(...mixed.map(m=>m.cols||3))});
-      else singles.push({kind:"single",lines:[{...ln,count:rem}]});
+      const need=Math.ceil(rem/c.stack);
+      if(c.canMix&&need<c.slots)pool.push({...ln,count:rem,need,stack:c.stack,h:c.dims?.h||1,slots:c.slots,cols:c.cols,capInfo:c});
+      else singles.push({kind:"single",lines:[{...ln,count:rem,capInfo:c}]});
     }
   }
+  // 자리 많이 차지하는 제품부터, 들어갈 수 있는 첫 혼적 파렛트에
   const mixedPallets=[];
-  let cur=null;
-  for(const e of pool){
-    let left=e.count;
-    while(left>0){
-      if(!cur||cur.used>=cur.cap){cur={kind:"mixed",cap:e.mixCap,cols:e.cols,used:0,lines:[]};mixedPallets.push(cur)}
-      const take=Math.min(left,cur.cap-cur.used);
-      const prev=cur.lines.find(l=>l.product.code===e.product.code);
-      if(prev)prev.count+=take;else cur.lines.push({...e,count:take});
-      cur.cols=Math.max(cur.cols,e.cols);
-      cur.used+=take;left-=take;
-    }
+  const sorted=pool.map((e,i)=>({e,i})).sort((x,y)=>y.e.need-x.e.need||x.i-y.i).map(x=>x.e);
+  for(const e of sorted){
+    let p=mixedPallets.find(m=>m.slots-m.usedSlots>=e.need&&e.need<=e.slots);
+    if(!p){p={kind:"mixed",slots:e.slots,cols:e.cols,usedSlots:0,lines:[]};mixedPallets.push(p)}
+    p.lines.push(e);
+    p.usedSlots+=e.need;
+    p.slots=Math.min(p.slots,e.slots);
+    p.cols=Math.max(p.cols,e.cols);
   }
-  // 혼적 풀에 한 제품만 남았으면 단독 파렛트로 취급
+  // 혼적 파렛트 안에서는 발주서 순서대로 표시
+  for(const p of mixedPallets)p.lines.sort((a,b)=>a.item.line_no-b.item.line_no);
   const all=singles.concat(mixedPallets.map(p=>p.lines.length===1?{kind:"single",lines:p.lines}:p));
   return all.map((p,i)=>({...p,no:i+1,total:all.length,boxes:p.lines.reduce((s,l)=>s+l.count,0)}));
 }
 
 // 날짜의 발주서들 → [{order, site, lines, pallets}] (생산지점별로 분리)
-function buildSiteGroups(orders,prodMap,methodMap){
+function buildSiteGroups(orders,prodMap,methodMap,cfg){
   const groups=[],unmatched=[];
   for(const o of orders){
     const bySite=new Map();
@@ -298,7 +374,7 @@ function buildSiteGroups(orders,prodMap,methodMap){
       bySite.get(site).push(enrichLine(it,p));
     }
     for(const[site,lines]of bySite){
-      groups.push({order:o,site,lines,pallets:buildPallets(lines,methodMap)});
+      groups.push({order:o,site,lines,pallets:buildPallets(lines,methodMap,cfg||DEFAULT_PALLET)});
     }
   }
   return{groups,unmatched};
@@ -393,6 +469,12 @@ function ProductForm({adminHash,masters,initial,onSaved,onCancel,onReloadMasters
         </select>
       </div>
     </div>
+    {(()=>{
+      const c=boxCapacity({box_spec:boxSpec,method_ids:methodIds},toMethodMap(masters.methods),palletCfg(masters.settings));
+      return <div style={{fontSize:12,marginTop:-4,marginBottom:12,padding:"8px 10px",borderRadius:7,background:"var(--card-bg)",border:"1px solid var(--card-bd)",color:c.fromSpec?"var(--text)":"#f59e0b"}}>
+        📦 단독 1파렛트 적재량: <b>{capText(c)}</b>{c.fromSpec&&c.canMix&&<span style={{color:"var(--muted)"}}> · 혼적 시 1자리 최대 {c.stack}단</span>}
+      </div>;
+    })()}
 
     <div style={{marginBottom:12}}>
       <div className="ol-label">이미지 표시 색상</div>
@@ -412,6 +494,47 @@ function ProductForm({adminHash,masters,initial,onSaved,onCancel,onReloadMasters
     {showSpecs&&<Modal onClose={()=>setShowSpecs(false)}><BoxSpecManager adminHash={adminHash} masters={masters} onChanged={onReloadMasters} onClose={()=>setShowSpecs(false)} onPick={s=>{setBoxSpec(s);setShowSpecs(false)}}/></Modal>}
     {showSites&&<Modal onClose={()=>setShowSites(false)}><SiteManager adminHash={adminHash} masters={masters} onChanged={onReloadMasters} onClose={()=>setShowSites(false)} onPick={n=>{setSite(n);setShowSites(false)}}/></Modal>}
     {showMethods&&<Modal lg onClose={()=>setShowMethods(false)}><MethodManager adminHash={adminHash} masters={masters} onChanged={onReloadMasters} onClose={()=>setShowMethods(false)}/></Modal>}
+  </>;
+}
+
+function PalletSettings({adminHash,masters,onChanged,onClose}){
+  const cur=palletCfg(masters.settings);
+  const[form,setForm]=useState(cur);
+  const[err,setErr]=useState("");const[busy,setBusy]=useState(false);
+  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+  const fields=[
+    ["pallet_w","파렛트 가로 (mm)"],["pallet_d","파렛트 세로 (mm)"],
+    ["max_height","최대 적재 높이 (mm)"],["pallet_base","파렛트 자체 높이 (mm)"]
+  ];
+  const save=async()=>{
+    const vals={};
+    for(const[k,label]of fields){
+      const v=Number(form[k]);
+      if(!Number.isFinite(v)||v<0||(k!=="pallet_base"&&v<=0)){setErr(label+" 값을 확인하세요");return}
+      vals[k]=v;
+    }
+    if(vals.pallet_base>=vals.max_height){setErr("파렛트 자체 높이는 최대 높이보다 작아야 합니다");return}
+    setBusy(true);setErr("");
+    try{
+      for(const k in vals)if(vals[k]!==cur[k])await rpc("ol_set_setting",{p_admin_hash:adminHash,p_key:k,p_value:vals[k]});
+      await onChanged();onClose();
+    }catch(e){setErr(errMsg(e))}
+    setBusy(false);
+  };
+  return <>
+    <div style={{fontSize:17,fontWeight:700,marginBottom:6}}>⚙ 파렛트 설정</div>
+    <div style={{fontSize:12,color:"var(--muted)",marginBottom:14,lineHeight:1.6}}>
+      제품의 박스규격(가로×세로×높이)과 이 값으로 적재량을 자동 계산합니다.<br/>
+      단수 = (최대 적재 높이 − 파렛트 자체 높이) ÷ 박스 높이. 최대 높이에 파렛트 높이가 <b>포함</b>된 기준이면 파렛트 자체 높이(예: 150)를 넣으세요.
+    </div>
+    <div className="ol-grid">
+      {fields.map(([k,label])=><div key={k}><div className="ol-label">{label}</div><input className="ol-input" type="number" min="0" value={form[k]} onChange={e=>set(k,e.target.value)}/></div>)}
+    </div>
+    {err&&<div className="ol-err">{err}</div>}
+    <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:16}}>
+      <button className="ol-btn ol-btn-secondary" onClick={onClose}>취소</button>
+      <button className="ol-btn ol-btn-primary" onClick={save} disabled={busy}>{busy?"저장 중...":"저장"}</button>
+    </div>
   </>;
 }
 
@@ -546,7 +669,7 @@ function BoxSpecManager({adminHash,masters,onChanged,onClose,onPick}){
 }
 
 function MethodManager({adminHash,masters,onChanged,onClose}){
-  const blank={id:null,name:"",kind:"single",max_boxes:40,cols:3,memo:""};
+  const blank={id:null,name:"",kind:"single",max_boxes:40,cols:3,per_layer:6,memo:""};
   const[form,setForm]=useState(blank);
   const[err,setErr]=useState("");const[busy,setBusy]=useState(false);
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
@@ -555,7 +678,7 @@ function MethodManager({adminHash,masters,onChanged,onClose}){
     setBusy(true);setErr("");
     try{
       await rpc("ol_upsert_method",{p_admin_hash:adminHash,p_id:form.id,p_name:form.name.trim(),p_kind:form.kind,
-        p_max_boxes:parseInt(form.max_boxes,10)||40,p_cols:parseInt(form.cols,10)||3,p_memo:form.memo||""});
+        p_max_boxes:parseInt(form.max_boxes,10)||40,p_cols:parseInt(form.cols,10)||3,p_memo:form.memo||"",p_per_layer:parseInt(form.per_layer,10)||6});
       setForm(blank);await onChanged();
     }catch(e){setErr(errMsg(e))}
     setBusy(false);
@@ -568,16 +691,17 @@ function MethodManager({adminHash,masters,onChanged,onClose}){
   return <>
     <div style={{fontSize:17,fontWeight:700,marginBottom:6}}>🧱 적재방식 관리</div>
     <div style={{fontSize:12,color:"var(--muted)",marginBottom:14,lineHeight:1.6}}>
-      <b>단독</b>: 한 파렛트에 그 제품만 — 최대 박스 수만큼 꽉 채운 파렛트를 만들고, 자투리는 따로 1파렛트.<br/>
-      <b>혼적</b>: 자투리 박스를 다른 혼적 제품과 한 파렛트에 합침 (적재이미지에서 표 형태, 제품 1줄을 <i>칸 수</i>로 나눠 표시).<br/>
+      <b>단독</b>: 한 파렛트에 그 제품만. 적재량은 제품의 <b>박스규격</b>으로 자동 계산 (1층 박스 수 × 단수, ⚙ 파렛트 설정 기준). 꽉 찬 파렛트를 만들고 자투리는 따로 1파렛트.<br/>
+      <b>혼적</b>: 자투리 박스를 다른 혼적 제품과 한 파렛트에 합침. 한 층에 <i>층당 방 수</i>(기본 6)만큼 자리가 있고, 자리마다 한 제품을 그 제품 단수까지 위로 쌓음. 자투리가 6자리 이상 필요하면 혼적 대신 단독 1파렛트. 적재이미지는 자리별 쌓는 박스 수를 표로 표시 (6방·가로 3칸 = 2줄×3칸).<br/>
       제품에 단독+혼적을 같이 선택하면 → 꽉 찬 파렛트는 단독, 남는 박스만 혼적.
     </div>
     <div className="ol-card" style={{padding:12}}>
       <div className="ol-grid" style={{marginBottom:8}}>
         <div><div className="ol-label">이름</div><input className="ol-input" value={form.name} onChange={e=>set("name",e.target.value)} placeholder="예: 단독 40박스"/></div>
         <div><div className="ol-label">유형</div><select className="ol-input" value={form.kind} onChange={e=>set("kind",e.target.value)}><option value="single">단독</option><option value="mixed">혼적</option></select></div>
-        <div><div className="ol-label">파렛트당 최대 박스</div><input className="ol-input" type="number" min="1" value={form.max_boxes} onChange={e=>set("max_boxes",e.target.value)}/></div>
-        {form.kind==="mixed"&&<div><div className="ol-label">이미지 칸 수</div><input className="ol-input" type="number" min="1" max="8" value={form.cols} onChange={e=>set("cols",e.target.value)}/></div>}
+        <div><div className="ol-label">규격 없을 때 최대 박스</div><input className="ol-input" type="number" min="1" value={form.max_boxes} onChange={e=>set("max_boxes",e.target.value)}/></div>
+        {form.kind==="mixed"&&<div><div className="ol-label">층당 박스 수 (방)</div><input className="ol-input" type="number" min="1" max="12" value={form.per_layer} onChange={e=>set("per_layer",e.target.value)}/></div>}
+        {form.kind==="mixed"&&<div><div className="ol-label">이미지 가로 칸 수</div><input className="ol-input" type="number" min="1" max="6" value={form.cols} onChange={e=>set("cols",e.target.value)}/></div>}
       </div>
       <input className="ol-input" value={form.memo} onChange={e=>set("memo",e.target.value)} placeholder="메모 (선택)" style={{marginBottom:8}}/>
       <div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
@@ -586,12 +710,12 @@ function MethodManager({adminHash,masters,onChanged,onClose}){
       </div>
     </div>
     {err&&<div className="ol-err">{err}</div>}
-    <div className="ol-scroll"><table className="ol-table"><thead><tr><th>이름</th><th>유형</th><th className="right">최대 박스</th><th className="right">칸 수</th><th className="right">사용 제품</th><th>메모</th><th></th></tr></thead><tbody>
+    <div className="ol-scroll"><table className="ol-table"><thead><tr><th>이름</th><th>유형</th><th className="right">규격 없을 때</th><th className="right">층당 방</th><th className="right">사용 제품</th><th>메모</th><th></th></tr></thead><tbody>
       {masters.methods.map(m=><tr key={m.id}>
         <td style={{fontWeight:600}}>{m.name}</td>
         <td><span className={"ol-pill "+m.kind}>{m.kind==="mixed"?"혼적":"단독"}</span></td>
         <td className="right">{m.max_boxes}</td>
-        <td className="right">{m.kind==="mixed"?m.cols:"–"}</td>
+        <td className="right">{m.kind==="mixed"?`${m.per_layer||6}방 (가로 ${m.cols})`:"–"}</td>
         <td className="right">{masters.products.filter(p=>(p.method_ids||[]).map(Number).includes(Number(m.id))).length}</td>
         <td style={{fontSize:12,color:"var(--muted)"}}>{m.memo}</td>
         <td className="right" style={{whiteSpace:"nowrap"}}>
@@ -609,7 +733,8 @@ function ProductsTab({adminHash,masters,reloadMasters}){
   const[siteF,setSiteF]=useState("all");
   const[editing,setEditing]=useState(null); // null | {} | product
   const[modal,setModal]=useState(""); // specs | methods
-  const methodMap=useMemo(()=>Object.fromEntries(masters.methods.map(m=>[Number(m.id),m])),[masters.methods]);
+  const methodMap=useMemo(()=>toMethodMap(masters.methods),[masters.methods]);
+  const cfg=useMemo(()=>palletCfg(masters.settings),[masters.settings]);
   const sites=useMemo(()=>[...new Set(masters.products.map(p=>(p.site||"").trim()||NO_SITE))].sort(),[masters.products]);
   const list=useMemo(()=>{
     const s=q.trim().toLowerCase();
@@ -628,6 +753,7 @@ function ProductsTab({adminHash,masters,reloadMasters}){
   return <>
     <div className="ol-toolbar">
       <button className="ol-btn ol-btn-primary" onClick={()=>setEditing({})}>+ 제품 추가</button>
+      <button className="ol-btn ol-btn-secondary" onClick={()=>setModal("pallet")}>⚙ 파렛트 설정</button>
       <button className="ol-btn ol-btn-secondary" onClick={()=>setModal("sites")}>🏭 생산지점 관리</button>
       <button className="ol-btn ol-btn-secondary" onClick={()=>setModal("specs")}>📐 박스규격 관리</button>
       <button className="ol-btn ol-btn-secondary" onClick={()=>setModal("methods")}>🧱 적재방식 관리</button>
@@ -639,8 +765,8 @@ function ProductsTab({adminHash,masters,reloadMasters}){
     </div>
     {masters.products.length===0?<Empty emoji="📦" text="등록된 제품이 없습니다. '+ 제품 추가'로 시작하세요."/>:
     list.length===0?<Empty emoji="🔍" text="검색 결과가 없습니다"/>:
-    <div className="ol-scroll"><table className="ol-table" style={{minWidth:900}}>
-      <thead><tr><th>제품코드</th><th>제품명</th><th>이미지용 이름</th><th className="right">입수</th><th>적재방식</th><th>생산지점</th><th>박스규격</th><th></th></tr></thead>
+    <div className="ol-scroll"><table className="ol-table" style={{minWidth:1080}}>
+      <thead><tr><th>제품코드</th><th>제품명</th><th>이미지용 이름</th><th className="right">입수</th><th>적재방식</th><th>생산지점</th><th>박스규격</th><th>단독 1파렛트 적재량</th><th></th></tr></thead>
       <tbody>{list.map(p=><tr key={p.id}>
         <td style={{fontFamily:"monospace",fontSize:12}}>{p.code}</td>
         <td>{p.name}</td>
@@ -650,6 +776,8 @@ function ProductsTab({adminHash,masters,reloadMasters}){
           {!(p.method_ids||[]).length&&<span style={{fontSize:11,color:"#f59e0b"}}>미지정 (기본 {DEFAULT_CAP}박스 단독)</span>}</td>
         <td>{p.site||<span style={{color:"var(--dimmer)"}}>–</span>}</td>
         <td style={{fontSize:12}}>{specLabel(p.box_spec,masters.box_specs)||"–"}</td>
+        <td style={{fontSize:12,whiteSpace:"nowrap"}}>{(()=>{const c=boxCapacity(p,methodMap,cfg);
+          return <span style={{color:c.fromSpec?"var(--text)":"#f59e0b",fontWeight:c.fromSpec?700:500}}>{capText(c)}{c.fromSpec&&c.canMix&&<span style={{color:"var(--muted)",fontWeight:400}}> · 혼적 1자리 {c.stack}단</span>}</span>})()}</td>
         <td className="right" style={{whiteSpace:"nowrap"}}>
           <button className="ol-btn ol-btn-secondary ol-btn-sm" style={{marginRight:4}} onClick={()=>setEditing(p)}>수정</button>
           <button className="ol-btn ol-btn-danger ol-btn-sm" onClick={()=>del(p)}>삭제</button>
@@ -658,6 +786,7 @@ function ProductsTab({adminHash,masters,reloadMasters}){
     </table></div>}
 
     {editing&&<Modal onClose={()=>setEditing(null)}><ProductForm adminHash={adminHash} masters={masters} initial={editing} onReloadMasters={reloadMasters} onCancel={()=>setEditing(null)} onSaved={async()=>{setEditing(null);await reloadMasters()}}/></Modal>}
+    {modal==="pallet"&&<Modal onClose={()=>setModal("")}><PalletSettings adminHash={adminHash} masters={masters} onChanged={reloadMasters} onClose={()=>setModal("")}/></Modal>}
     {modal==="sites"&&<Modal onClose={()=>setModal("")}><SiteManager adminHash={adminHash} masters={masters} onChanged={reloadMasters} onClose={()=>setModal("")}/></Modal>}
     {modal==="specs"&&<Modal onClose={()=>setModal("")}><BoxSpecManager adminHash={adminHash} masters={masters} onChanged={reloadMasters} onClose={()=>setModal("")}/></Modal>}
     {modal==="methods"&&<Modal lg onClose={()=>setModal("")}><MethodManager adminHash={adminHash} masters={masters} onChanged={reloadMasters} onClose={()=>setModal("")}/></Modal>}
@@ -967,6 +1096,24 @@ function groupSinglePallets(pallets){
   }
   return out;
 }
+// 혼적 파렛트 한 층의 자리(방)를 제품들에 배분 → 자리마다 쌓을 박스 수
+// 각 제품은 단수 한도 안에 들어가는 최소 자리(need)부터, 남는 자리는 가장 높이(mm) 쌓이는 제품에 하나씩
+// 예: 6방, 10박스+10박스 → 3자리씩, 3·3·4 / 3·3·4
+function layoutMixed(lines,slots){
+  const alloc=lines.map(l=>Math.max(1,l.need||1));
+  let free=slots-alloc.reduce((a,b)=>a+b,0);
+  const h=i=>Math.ceil(lines[i].count/alloc[i])*(lines[i].h||1);
+  while(free>0){
+    let best=-1;
+    for(let i=0;i<lines.length;i++)if(lines[i].count>alloc[i]&&(best<0||h(i)>h(best)))best=i;
+    if(best<0)break;
+    alloc[best]++;free--;
+  }
+  const cells=[];
+  lines.forEach((ln,i)=>splitCols(ln.count,alloc[i]).forEach(n=>cells.push({ln,n})));
+  while(cells.length<slots)cells.push(null);
+  return cells;
+}
 function splitCols(n,cols){
   const base=Math.floor(n/cols),extra=n%cols;
   return Array.from({length:cols},(_,j)=>base+(j>=cols-extra?1:0));
@@ -996,11 +1143,13 @@ function LoadImage({group,date,prefix,refCb}){
       {mixed.length>0&&<div style={{display:"flex",flexDirection:"column",gap:24}}>
         {mixed.map(p=>{
           const cols=Math.max(1,p.cols||3);
+          const cells=layoutMixed(p.lines,Math.max(p.slots||6,p.lines.length));
+          const rows=[];for(let i=0;i<cells.length;i+=cols)rows.push(cells.slice(i,i+cols));
           return <table key={p.no} style={{borderCollapse:"collapse"}}><tbody>
-            {p.lines.map((ln,ri)=><tr key={ri}>
-              {splitCols(ln.count,cols).map((n,ci)=><td key={ci} style={{border:"1.5px solid #333",width:132,height:128,textAlign:"center",verticalAlign:"middle",position:"relative",color:ln.product.color,fontWeight:800,fontSize:17,lineHeight:1.35,padding:4}}>
+            {rows.map((row,ri)=><tr key={ri}>
+              {row.map((c,ci)=><td key={ci} style={{border:"1.5px solid #333",width:132,height:128,textAlign:"center",verticalAlign:"middle",position:"relative",color:c?c.ln.product.color:"#111",fontWeight:800,fontSize:17,lineHeight:1.35,padding:4}}>
                 {ri===0&&ci===0&&<div style={{position:"absolute",top:6,left:10,color:"#111",fontSize:16,fontWeight:800}}>{total}-{p.no}</div>}
-                {n>0&&<><div>{imgName(ln.product)}</div><div>{n}</div></>}
+                {c&&c.n>0&&<><div>{imgName(c.ln.product)}</div><div>{c.n}</div></>}
               </td>)}
             </tr>)}
           </tbody></table>;
@@ -1052,8 +1201,8 @@ function ListsTab({masters,dates,selDate,setSelDate,orders,loadingOrders}){
   useEffect(()=>lsSet("ol-prefix",prefix),[prefix]);
 
   const prodMap=useMemo(()=>Object.fromEntries(masters.products.map(p=>[p.code,p])),[masters.products]);
-  const methodMap=useMemo(()=>Object.fromEntries(masters.methods.map(m=>[Number(m.id),{...m,max_boxes:Number(m.max_boxes),cols:Number(m.cols)}])),[masters.methods]);
-  const{groups,unmatched}=useMemo(()=>buildSiteGroups(orders,prodMap,methodMap),[orders,prodMap,methodMap]);
+  const methodMap=useMemo(()=>toMethodMap(masters.methods),[masters.methods]);
+  const{groups,unmatched}=useMemo(()=>buildSiteGroups(orders,prodMap,methodMap,palletCfg(masters.settings)),[orders,prodMap,methodMap,masters.settings]);
   const sites=useMemo(()=>[...new Set(groups.map(g=>g.site))].sort(),[groups]);
   useEffect(()=>{if(sites.length&&!sites.includes(site))setSite(sites[0])},[sites]);
   const siteGroups=groups.filter(g=>g.site===site);
@@ -1100,7 +1249,7 @@ function App(){
   const adminHash="";
   const loggedIn=true;
   const[tab,setTab]=useState(getTabFromHash());
-  const[masters,setMasters]=useState({products:[],box_specs:[],methods:[],sites:[]});
+  const[masters,setMasters]=useState({products:[],box_specs:[],methods:[],sites:[],settings:{}});
   const[mastersErr,setMastersErr]=useState("");
   const[dates,setDates]=useState([]);
   const[selDate,setSelDate]=useState("");
@@ -1115,7 +1264,7 @@ function App(){
   const reloadMasters=useCallback(async()=>{
     try{
       const d=await rpc("ol_list_masters",{p_admin_hash:adminHash});
-      setMasters({products:d?.products||[],box_specs:d?.box_specs||[],methods:d?.methods||[],sites:d?.sites||[]});
+      setMasters({products:d?.products||[],box_specs:d?.box_specs||[],methods:d?.methods||[],sites:d?.sites||[],settings:d?.settings||{}});
       setMastersErr("");
     }catch(e){setMastersErr(errMsg(e))}
   },[adminHash]);

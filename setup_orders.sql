@@ -25,9 +25,12 @@ CREATE TABLE IF NOT EXISTS ol_load_methods (
   kind        TEXT NOT NULL DEFAULT 'single' CHECK (kind IN ('single','mixed')),
   max_boxes   INT  NOT NULL DEFAULT 40 CHECK (max_boxes > 0),
   cols        INT  NOT NULL DEFAULT 3 CHECK (cols > 0),
+  per_layer   INT  NOT NULL DEFAULT 6 CHECK (per_layer > 0),
   memo        TEXT DEFAULT '',
   created_at  TIMESTAMPTZ DEFAULT now()
 );
+-- 혼적 층당 박스 수(방) — 2026-10-13 추가. 한 층에 6자리, 자리마다 박스를 위로 쌓음
+ALTER TABLE ol_load_methods ADD COLUMN IF NOT EXISTS per_layer INT NOT NULL DEFAULT 6;
 
 -- ── 제품 리스트 ──
 CREATE TABLE IF NOT EXISTS ol_products (
@@ -80,6 +83,18 @@ ALTER TABLE ol_order_items  ENABLE ROW LEVEL SECURITY;
 
 -- ── 생산지점 (2026-10-13 추가 — 제품 등록 시 드롭다운) ──
 -- 제품은 ol_products.site에 지점 이름(text)을 그대로 저장
+-- ── 파렛트 설정 (2026-10-13 추가) ──
+-- pallet_w / pallet_d: 파렛트 가로·세로(mm), max_height: 최대 적재 높이(mm), pallet_base: 파렛트 자체 높이(mm, 최대 높이에서 차감)
+CREATE TABLE IF NOT EXISTS ol_settings (
+  key         TEXT PRIMARY KEY,
+  value       JSONB NOT NULL,
+  updated_at  TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE ol_settings ENABLE ROW LEVEL SECURITY;
+INSERT INTO ol_settings (key, value) VALUES
+  ('pallet_w', '1100'), ('pallet_d', '1100'), ('max_height', '1700'), ('pallet_base', '0')
+ON CONFLICT (key) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS ol_sites (
   id          BIGSERIAL PRIMARY KEY,
   name        TEXT NOT NULL UNIQUE,
@@ -110,7 +125,8 @@ BEGIN
     'products', (SELECT COALESCE(json_agg(row_to_json(p) ORDER BY p.site, p.code), '[]'::json) FROM ol_products p),
     'box_specs', (SELECT COALESCE(json_agg(row_to_json(b) ORDER BY b.spec), '[]'::json) FROM ol_box_specs b),
     'methods', (SELECT COALESCE(json_agg(row_to_json(m) ORDER BY m.id), '[]'::json) FROM ol_load_methods m),
-    'sites', (SELECT COALESCE(json_agg(row_to_json(s) ORDER BY s.name), '[]'::json) FROM ol_sites s)
+    'sites', (SELECT COALESCE(json_agg(row_to_json(s) ORDER BY s.name), '[]'::json) FROM ol_sites s),
+    'settings', (SELECT COALESCE(json_object_agg(key, value), '{}'::json) FROM ol_settings)
   );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -149,6 +165,16 @@ RETURNS VOID AS $$
 BEGIN
   -- 인증 없음 (2026-10-13: 비밀번호 없이 접근 허용)
   DELETE FROM ol_products WHERE id = p_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ── 파렛트 설정 ──
+CREATE OR REPLACE FUNCTION ol_set_setting(p_admin_hash TEXT, p_key TEXT, p_value JSONB)
+RETURNS VOID AS $$
+BEGIN
+  IF COALESCE(TRIM(p_key),'') = '' THEN RAISE EXCEPTION 'key_required'; END IF;
+  INSERT INTO ol_settings (key, value, updated_at) VALUES (TRIM(p_key), p_value, now())
+  ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
@@ -207,20 +233,24 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ── 적재 방식 ──
+DROP FUNCTION IF EXISTS ol_upsert_method(TEXT, BIGINT, TEXT, TEXT, INT, INT, TEXT);
 CREATE OR REPLACE FUNCTION ol_upsert_method(
-  p_admin_hash TEXT, p_id BIGINT, p_name TEXT, p_kind TEXT, p_max_boxes INT, p_cols INT, p_memo TEXT
+  p_admin_hash TEXT, p_id BIGINT, p_name TEXT, p_kind TEXT, p_max_boxes INT, p_cols INT, p_memo TEXT,
+  p_per_layer INT DEFAULT 6
 ) RETURNS BIGINT AS $$
 DECLARE v_id BIGINT;
 BEGIN
   -- 인증 없음 (2026-10-13: 비밀번호 없이 접근 허용)
   IF COALESCE(TRIM(p_name),'') = '' THEN RAISE EXCEPTION 'name_required'; END IF;
   IF p_id IS NULL THEN
-    INSERT INTO ol_load_methods (name, kind, max_boxes, cols, memo)
-    VALUES (TRIM(p_name), COALESCE(p_kind,'single'), GREATEST(COALESCE(p_max_boxes,40),1), GREATEST(COALESCE(p_cols,3),1), COALESCE(p_memo,''))
+    INSERT INTO ol_load_methods (name, kind, max_boxes, cols, memo, per_layer)
+    VALUES (TRIM(p_name), COALESCE(p_kind,'single'), GREATEST(COALESCE(p_max_boxes,40),1), GREATEST(COALESCE(p_cols,3),1), COALESCE(p_memo,''),
+            GREATEST(COALESCE(p_per_layer,6),1))
     RETURNING id INTO v_id;
   ELSE
     UPDATE ol_load_methods SET name = TRIM(p_name), kind = COALESCE(p_kind,'single'),
-      max_boxes = GREATEST(COALESCE(p_max_boxes,40),1), cols = GREATEST(COALESCE(p_cols,3),1), memo = COALESCE(p_memo,'')
+      max_boxes = GREATEST(COALESCE(p_max_boxes,40),1), cols = GREATEST(COALESCE(p_cols,3),1), memo = COALESCE(p_memo,''),
+      per_layer = GREATEST(COALESCE(p_per_layer,6),1)
     WHERE id = p_id RETURNING id INTO v_id;
   END IF;
   RETURN v_id;
