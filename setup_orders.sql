@@ -10,8 +10,11 @@
 CREATE TABLE IF NOT EXISTS ol_box_specs (
   id          BIGSERIAL PRIMARY KEY,
   spec        TEXT NOT NULL UNIQUE,
+  name        TEXT DEFAULT '',
   created_at  TIMESTAMPTZ DEFAULT now()
 );
+-- 규격명 (2026-10-13 추가 — 기존 테이블 마이그레이션)
+ALTER TABLE ol_box_specs ADD COLUMN IF NOT EXISTS name TEXT DEFAULT '';
 
 -- ── 적재 방식 ──
 -- kind: single(단독 파렛트) / mixed(혼적 — 자투리 박스를 다른 제품과 한 파렛트에)
@@ -75,6 +78,19 @@ ALTER TABLE ol_products     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ol_orders       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ol_order_items  ENABLE ROW LEVEL SECURITY;
 
+-- ── 생산지점 (2026-10-13 추가 — 제품 등록 시 드롭다운) ──
+-- 제품은 ol_products.site에 지점 이름(text)을 그대로 저장
+CREATE TABLE IF NOT EXISTS ol_sites (
+  id          BIGSERIAL PRIMARY KEY,
+  name        TEXT NOT NULL UNIQUE,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE ol_sites ENABLE ROW LEVEL SECURITY;
+-- 이미 제품에 입력된 지점들을 목록으로 옮김
+INSERT INTO ol_sites (name)
+SELECT DISTINCT TRIM(site) FROM ol_products WHERE COALESCE(TRIM(site),'') <> ''
+ON CONFLICT (name) DO NOTHING;
+
 -- 기본 적재방식 시드 (비어 있을 때만)
 INSERT INTO ol_load_methods (name, kind, max_boxes, cols, memo)
 SELECT * FROM (VALUES
@@ -93,7 +109,8 @@ BEGIN
   RETURN json_build_object(
     'products', (SELECT COALESCE(json_agg(row_to_json(p) ORDER BY p.site, p.code), '[]'::json) FROM ol_products p),
     'box_specs', (SELECT COALESCE(json_agg(row_to_json(b) ORDER BY b.spec), '[]'::json) FROM ol_box_specs b),
-    'methods', (SELECT COALESCE(json_agg(row_to_json(m) ORDER BY m.id), '[]'::json) FROM ol_load_methods m)
+    'methods', (SELECT COALESCE(json_agg(row_to_json(m) ORDER BY m.id), '[]'::json) FROM ol_load_methods m),
+    'sites', (SELECT COALESCE(json_agg(row_to_json(s) ORDER BY s.name), '[]'::json) FROM ol_sites s)
   );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -135,13 +152,49 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+-- ── 생산지점 ──
+CREATE OR REPLACE FUNCTION ol_add_site(p_admin_hash TEXT, p_name TEXT)
+RETURNS VOID AS $$
+BEGIN
+  IF COALESCE(TRIM(p_name),'') = '' THEN RAISE EXCEPTION 'name_required'; END IF;
+  INSERT INTO ol_sites (name) VALUES (TRIM(p_name)) ON CONFLICT (name) DO NOTHING;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 이름 변경 시 그 지점을 쓰던 제품들도 함께 변경
+CREATE OR REPLACE FUNCTION ol_rename_site(p_admin_hash TEXT, p_id BIGINT, p_name TEXT)
+RETURNS VOID AS $$
+DECLARE v_old TEXT;
+BEGIN
+  IF COALESCE(TRIM(p_name),'') = '' THEN RAISE EXCEPTION 'name_required'; END IF;
+  SELECT name INTO v_old FROM ol_sites WHERE id = p_id;
+  IF v_old IS NULL THEN RETURN; END IF;
+  IF EXISTS (SELECT 1 FROM ol_sites WHERE name = TRIM(p_name) AND id <> p_id) THEN
+    RAISE EXCEPTION 'site_exists';
+  END IF;
+  UPDATE ol_sites SET name = TRIM(p_name) WHERE id = p_id;
+  UPDATE ol_products SET site = TRIM(p_name), updated_at = now() WHERE TRIM(site) = v_old;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 삭제해도 제품에 입력된 지점 값은 유지 (목록에서만 빠짐)
+CREATE OR REPLACE FUNCTION ol_delete_site(p_admin_hash TEXT, p_id BIGINT)
+RETURNS VOID AS $$
+BEGIN
+  DELETE FROM ol_sites WHERE id = p_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 -- ── 박스 규격 ──
-CREATE OR REPLACE FUNCTION ol_add_box_spec(p_admin_hash TEXT, p_spec TEXT)
+-- 같은 규격(가로×세로×높이)이 이미 있으면 규격명만 갱신 → 규격명 수정에도 사용
+DROP FUNCTION IF EXISTS ol_add_box_spec(TEXT, TEXT);
+CREATE OR REPLACE FUNCTION ol_add_box_spec(p_admin_hash TEXT, p_spec TEXT, p_name TEXT DEFAULT '')
 RETURNS VOID AS $$
 BEGIN
   -- 인증 없음 (2026-10-13: 비밀번호 없이 접근 허용)
   IF COALESCE(TRIM(p_spec),'') = '' THEN RAISE EXCEPTION 'spec_required'; END IF;
-  INSERT INTO ol_box_specs (spec) VALUES (TRIM(p_spec)) ON CONFLICT (spec) DO NOTHING;
+  INSERT INTO ol_box_specs (spec, name) VALUES (TRIM(p_spec), COALESCE(TRIM(p_name),''))
+  ON CONFLICT (spec) DO UPDATE SET name = EXCLUDED.name;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
