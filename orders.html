@@ -1136,10 +1136,13 @@ function imgEditKey(group){return `img:${group.order.order_no}:${group.site}`}
 function imageSig(group){return group.pallets.map(p=>p.kind[0]+p.lines.map(l=>l.product.code+":"+l.count).join(",")).join("|")}
 
 // 더블클릭으로 글씨 수정 (Enter 저장 · Shift+Enter 줄바꿈 · Esc 취소)
-function EditText({id,value,edit,texts,onText,style}){
+// base: 기본 글씨 크기(px) · ed.size[id]: 개별 크기 · ed.scale: 전체 배율(%)
+function EditText({id,value,base,edit,ed,onText,selected,onSelect,style}){
   const[active,setActive]=useState(false);
   const ref=useRef(null);
+  const texts=ed.text;
   const shown=texts&&texts[id]!=null?texts[id]:String(value);
+  const px=Math.round((ed.size?.[id]??base)*(ed.scale||100)/100);
   useEffect(()=>{
     if(!active||!ref.current)return;
     ref.current.focus();
@@ -1152,16 +1155,17 @@ function EditText({id,value,edit,texts,onText,style}){
     setActive(false);
     if(t!==shown)onText(id,t===String(value)?null:t);
   };
-  return <div key={shown+(active?"#":"")} ref={ref}
+  return <div key={shown+(active?"#":"")} ref={ref} data-tid={id} data-base={base}
     contentEditable={active} suppressContentEditableWarning
-    title={edit&&!active?"더블클릭해서 글씨 수정":undefined}
+    title={edit&&!active?"클릭: 선택(크기 조절) · 더블클릭: 글씨 수정":undefined}
+    onClick={()=>{if(edit&&onSelect)onSelect(id)}}
     onDoubleClick={e=>{if(edit){e.stopPropagation();setActive(true)}}}
     onBlur={()=>{if(active)commit()}}
     onKeyDown={e=>{
       if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();ref.current.blur()}
       if(e.key==="Escape"){e.preventDefault();setActive(false)}
     }}
-    style={{...style,whiteSpace:"pre-wrap",outline:active?"2px solid #06b6d4":"none",cursor:active?"text":undefined,userSelect:active?"text":undefined,minWidth:active?20:undefined,minHeight:edit&&!shown?"1em":undefined}}
+    style={{...style,fontSize:px,whiteSpace:"pre-wrap",outline:active?"2px solid #06b6d4":(edit&&selected?"2px solid #f59e0b":"none"),outlineOffset:1,cursor:active?"text":undefined,userSelect:active?"text":undefined,minWidth:active?20:undefined,minHeight:edit&&!shown?"1em":undefined}}
   >{shown}</div>;
 }
 
@@ -1203,29 +1207,29 @@ function DragBlock({id,edit,pos,onMove,style,children}){
   </div>;
 }
 
-function LoadImage({group,date,prefix,refCb,edit,ed,onMove,onText}){
+function LoadImage({group,date,prefix,refCb,edit,ed,onMove,onText,sel,onSelect}){
   const pallets=group.pallets;
   const total=pallets.length;
   const singles=groupSinglePallets(pallets);
   const mixed=pallets.filter(p=>p.kind==="mixed");
   const font="'Pretendard','Apple SD Gothic Neo','Malgun Gothic',sans-serif";
-  const T=(id,value,style)=><EditText id={id} value={value} edit={edit} texts={ed.text} onText={onText} style={style}/>;
+  const T=(id,value,base,style)=><EditText id={id} value={value} base={base} edit={edit} ed={ed} onText={onText} selected={sel===id} onSelect={onSelect} style={style}/>;
   const D=(id,style,children)=><DragBlock key={id} id={id} edit={edit} pos={ed.pos} onMove={onMove} style={style}>{children}</DragBlock>;
   return <div ref={refCb} style={{width:920,background:"#ffffff",color:"#111",padding:"34px 40px 40px",boxSizing:"border-box",fontFamily:font,overflow:"hidden"}}>
     {D("hd",{display:"flex",alignItems:"baseline",gap:40,justifyContent:"center",marginBottom:6},<>
-      {T("title",`${prefix} ${fmtMd(date)}일 (${dowOf(date)}) 적재리스트`,{fontSize:28,fontWeight:800})}
-      {T("total",`총${total}파렛`,{fontSize:46,fontWeight:900})}
+      {T("title",`${prefix} ${fmtMd(date)}일 (${dowOf(date)}) 적재리스트`,28,{fontWeight:800})}
+      {T("total",`총${total}파렛`,46,{fontWeight:900})}
     </>)}
-    {D("sub",{textAlign:"center",fontSize:13,color:"#666",marginBottom:26},
-      T("sub",`${group.site} · ${group.order.center} · 발주 ${group.order.order_no}`,{}))}
+    {D("sub",{textAlign:"center",color:"#666",marginBottom:26},
+      T("sub",`${group.site} · ${group.order.center} · 발주 ${group.order.order_no}`,13))}
     <div style={{display:"flex",gap:30,alignItems:"flex-start"}}>
       <div style={{flex:1,display:"grid",gridTemplateColumns:"1fr 1fr",rowGap:34,columnGap:20}}>
         {singles.map(s=>{
           const k="s"+s.from;
-          return D(k,{textAlign:"center",color:s.product.color,fontWeight:800,fontSize:21,lineHeight:1.5},<>
-            {T(k+".l",`${total}/${s.from}${s.to>s.from?`-${s.to}`:""}`)}
-            {T(k+".n",imgName(s.product))}
-            {T(k+".q",`${s.count}개 / ${s.n}파렛`)}
+          return D(k,{textAlign:"center",color:s.product.color,fontWeight:800,lineHeight:1.5},<>
+            {T(k+".l",`${total}/${s.from}${s.to>s.from?`-${s.to}`:""}`,21)}
+            {T(k+".n",imgName(s.product),21)}
+            {T(k+".q",`${s.count}개 / ${s.n}파렛`,21)}
           </>);
         })}
       </div>
@@ -1240,9 +1244,9 @@ function LoadImage({group,date,prefix,refCb,edit,ed,onMove,onText}){
               {rows.map((row,ri)=><tr key={ri}>
                 {row.map((c,ci)=>{
                   const ck=`${k}.c${ri*cols+ci}`;
-                  return <td key={ci} style={{border:"1.5px solid #333",width:132,height:128,textAlign:"center",verticalAlign:"middle",position:"relative",color:c?c.ln.product.color:"#111",fontWeight:800,fontSize:17,lineHeight:1.35,padding:4}}>
-                    {ri===0&&ci===0&&<div style={{position:"absolute",top:6,left:10,color:"#111",fontSize:16,fontWeight:800}}>{T(k+".label",`${total}-${p.no}`)}</div>}
-                    {c&&c.n>0&&<>{T(ck+".n",imgName(c.ln.product))}{T(ck+".c",String(c.n))}</>}
+                  return <td key={ci} style={{border:"1.5px solid #333",width:132,height:128,textAlign:"center",verticalAlign:"middle",position:"relative",color:c?c.ln.product.color:"#111",fontWeight:800,lineHeight:1.35,padding:4}}>
+                    {ri===0&&ci===0&&<div style={{position:"absolute",top:6,left:10,color:"#111",fontWeight:800}}>{T(k+".label",`${total}-${p.no}`,16)}</div>}
+                    {c&&c.n>0&&<>{T(ck+".n",imgName(c.ln.product),17)}{T(ck+".c",String(c.n),17)}</>}
                   </td>;
                 })}
               </tr>)}
@@ -1257,16 +1261,20 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
   const key=imgEditKey(group);
   const sig=imageSig(group);
   const stored=imgEditCache.has(key)?imgEditCache.get(key):masters.settings?.[key];
-  const fresh=()=>stored&&stored.sig===sig?{sig,pos:stored.pos||{},text:stored.text||{}}:{sig,pos:{},text:{}};
+  const blank={sig,pos:{},text:{},size:{},scale:100};
+  const fresh=()=>stored&&stored.sig===sig?{...blank,pos:stored.pos||{},text:stored.text||{},size:stored.size||{},scale:stored.scale||100}:blank;
   const[ed,setEd]=useState(fresh);
   const edRef=useRef(ed);
   useEffect(()=>{const v=fresh();setEd(v);edRef.current=v},[key,sig]);
   const[edit,setEdit]=useState(false);
+  const[sel,setSel]=useState(null); // 크기 조절할 선택된 글씨 id
+  useEffect(()=>{if(!edit)setSel(null)},[edit]);
   const[status,setStatus]=useState("");
   const[saving,setSaving]=useState(false);
   const elRef=useRef(null);
-  const staleDropped=!!stored&&stored.sig!==sig&&(Object.keys(stored.pos||{}).length+Object.keys(stored.text||{}).length>0);
-  const edited=Object.keys(ed.pos).length+Object.keys(ed.text).length>0;
+  const countEdits=v=>Object.keys(v.pos||{}).length+Object.keys(v.text||{}).length+Object.keys(v.size||{}).length+((v.scale||100)!==100?1:0);
+  const staleDropped=!!stored&&stored.sig!==sig&&countEdits(stored)>0;
+  const edited=countEdits(ed)>0;
 
   const persist=async next=>{
     edRef.current=next;setEd(next);imgEditCache.set(key,next);
@@ -1280,7 +1288,27 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
     if(t==null)delete text[id];else text[id]=t;
     persist({...edRef.current,text});
   };
-  const reset=()=>{if(confirm("이 적재이미지의 위치·글씨 수정을 모두 되돌릴까요?"))persist({sig,pos:{},text:{}})};
+  const reset=()=>{if(confirm("이 적재이미지의 위치·글씨·크기 수정을 모두 되돌릴까요?")){setSel(null);persist(blank)}};
+
+  // 글씨 크기: 선택한 글씨 개별(px) / 전체 배율(%)
+  const selBase=()=>{const el=elRef.current?.querySelector(`[data-tid="${CSS.escape(sel)}"]`);return el?Number(el.dataset.base):null};
+  const selPx=sel?(ed.size?.[sel]??selBase()):null;
+  const changeSize=delta=>{
+    if(!sel)return;
+    const cur=edRef.current.size?.[sel]??selBase();
+    if(cur==null)return;
+    const next=Math.min(120,Math.max(8,cur+delta));
+    persist({...edRef.current,size:{...edRef.current.size,[sel]:next}});
+  };
+  const resetSize=()=>{
+    if(!sel)return;
+    const size={...edRef.current.size};delete size[sel];
+    persist({...edRef.current,size});
+  };
+  const changeScale=delta=>{
+    const next=Math.min(200,Math.max(50,(edRef.current.scale||100)+delta));
+    persist({...edRef.current,scale:next});
+  };
 
   // 용지 선택 (A4/A3 × 가로/세로) — 마지막 선택 기억
   const[paper,setPaper]=useState(()=>{const v=lsGet("ol-paper","A4-l");return PAPER_SIZES[v]?v:"A4-l"});
@@ -1335,9 +1363,22 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
       <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>saveImage("pdf")} disabled={saving}>📄 PDF</button>
       {status&&<span style={{fontSize:12,color:status.startsWith("⚠")?"#ef4444":"var(--muted)"}}>{status}</span>}
     </div>
-    {edit&&<div style={{fontSize:12,color:"var(--muted)",marginBottom:8}}>점선 상자를 <b>끌어서</b> 위치 이동 · 글씨를 <b>더블클릭</b>해서 수정 (Enter 저장, Shift+Enter 줄바꿈, Esc 취소, 비우면 글씨 숨김) · 수정 내용은 자동 저장</div>}
+    {edit&&<div className="ol-toolbar" style={{marginBottom:8,padding:"8px 10px",background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:8,fontSize:12}}>
+      <span style={{color:"var(--muted)"}}>선택한 글씨</span>
+      <button className="ol-btn ol-btn-secondary ol-btn-sm" disabled={!sel} onClick={()=>changeSize(-2)}>A−</button>
+      <b style={{minWidth:44,textAlign:"center"}}>{sel&&selPx!=null?`${selPx}px`:"–"}</b>
+      {sel&&selPx!=null&&(ed.scale||100)!==100&&<span style={{color:"var(--muted)"}}>(전체 배율 적용 시 {Math.round(selPx*(ed.scale||100)/100)}px)</span>}
+      <button className="ol-btn ol-btn-secondary ol-btn-sm" disabled={!sel} onClick={()=>changeSize(2)}>A+</button>
+      <button className="ol-btn ol-btn-secondary ol-btn-sm" disabled={!sel||ed.size?.[sel]==null} onClick={resetSize}>기본</button>
+      <span style={{width:1,height:20,background:"var(--card-bd)",margin:"0 6px"}}/>
+      <span style={{color:"var(--muted)"}}>전체 글씨</span>
+      <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>changeScale(-10)}>A−</button>
+      <b style={{minWidth:44,textAlign:"center"}}>{ed.scale||100}%</b>
+      <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>changeScale(10)}>A+</button>
+    </div>}
+    {edit&&<div style={{fontSize:12,color:"var(--muted)",marginBottom:8}}>점선 상자를 <b>끌어서</b> 위치 이동 · 글씨를 <b>클릭</b>하면 선택(주황 테두리) 후 크기 조절 · <b>더블클릭</b>하면 글씨 수정 (Enter 저장, Shift+Enter 줄바꿈, Esc 취소, 비우면 글씨 숨김) · 수정 내용은 자동 저장</div>}
     {staleDropped&&<div className="ol-warn" style={{padding:"8px 12px",fontSize:12}}>발주 내용이 바뀌어 파렛트 구성이 달라졌습니다. 이전에 수정한 위치·글씨는 적용하지 않았습니다.</div>}
-    <div className="ol-img-wrap"><LoadImage group={group} date={date} prefix={prefix} refCb={el=>{elRef.current=el}} edit={edit} ed={ed} onMove={onMove} onText={onText}/></div>
+    <div className="ol-img-wrap"><LoadImage group={group} date={date} prefix={prefix} refCb={el=>{elRef.current=el}} edit={edit} ed={ed} onMove={onMove} onText={onText} sel={sel} onSelect={setSel}/></div>
   </div>;
 }
 
