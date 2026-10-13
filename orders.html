@@ -1189,7 +1189,27 @@ function imageSig(group){return group.pallets.map(p=>p.kind[0]+p.lines.map(l=>l.
 
 // 더블클릭으로 글씨 수정 (Enter 저장 · Shift+Enter 줄바꿈 · Esc 취소)
 // base: 기본 글씨 크기(px) · ed.size[id]: 개별 크기 · ed.scale: 전체 배율(%)
-function EditText({id,value,base,edit,ed,onText,selected,onSelect,style}){
+// 크기 조절 드래그 (오른쪽·아래로 끌면 커짐) — items:[{id,base}] 를 같은 비율로, 놓을 때 저장
+function startScaleDrag(e,el,items,onLive,onCommit){
+  if(!el||!items.length)return;
+  e.stopPropagation();e.preventDefault();
+  const h0=Math.max(10,el.getBoundingClientRect().height),sx=e.clientX,sy=e.clientY;
+  let last=null;
+  const move=ev=>{
+    const d=((ev.clientX-sx)+(ev.clientY-sy))/2;
+    const k=Math.max(0.2,(h0+d)/h0);
+    last={};items.forEach(it=>{last[it.id]=Math.min(120,Math.max(8,Math.round(it.base*k)))});
+    onLive(last);
+  };
+  const up=()=>{
+    window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);window.removeEventListener("pointercancel",up);
+    onLive({});if(last)onCommit(last);
+  };
+  window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);window.addEventListener("pointercancel",up);
+}
+const HANDLE_STYLE={position:"absolute",width:11,height:11,background:"#06b6d4",border:"1.5px solid #fff",borderRadius:2,boxShadow:"0 0 0 1px #06b6d4",cursor:"nwse-resize",touchAction:"none",zIndex:6};
+
+function EditText({id,value,base,edit,ed,onText,selected,onSelect,onLiveSize,onCommitSize,style}){
   const[active,setActive]=useState(false);
   const ref=useRef(null);
   const texts=ed.text;
@@ -1217,32 +1237,61 @@ function EditText({id,value,base,edit,ed,onText,selected,onSelect,style}){
       if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();ref.current.blur()}
       if(e.key==="Escape"){e.preventDefault();setActive(false)}
     }}
-    style={{...style,fontSize:px,whiteSpace:"pre-wrap",outline:active?"2px solid #06b6d4":(edit&&selected?"2px solid #f59e0b":"none"),outlineOffset:1,cursor:active?"text":undefined,userSelect:active?"text":undefined,minWidth:active?20:undefined,minHeight:edit&&!shown?"1em":undefined}}
-  >{shown}</div>;
+    style={{width:"fit-content",maxWidth:"100%",marginLeft:"auto",marginRight:"auto",...style,position:"relative",fontSize:px,whiteSpace:"pre-wrap",outline:active?"2px solid #06b6d4":(edit&&selected?"2px solid #f59e0b":"none"),outlineOffset:1,cursor:active?"text":undefined,userSelect:active?"text":undefined,minWidth:active?20:undefined,minHeight:edit&&!shown?"1em":undefined}}
+  >{shown}{edit&&selected&&!active&&onCommitSize&&<span contentEditable={false} title="끌어서 글씨 크기 조절"
+      onPointerDown={e=>startScaleDrag(e,ref.current,[{id,base:ed.size?.[id]??base}],onLiveSize,onCommitSize)}
+      style={{...HANDLE_STYLE,right:-7,bottom:-7}}/>}</div>;
 }
 
 // 편집 모드에서 끌어서 위치 이동 (원래 자리 기준 상대 이동량 dx/dy 저장)
-function DragBlock({id,edit,pos,onMove,style,children}){
+// 다른 블록의 왼쪽·가운데·오른쪽 / 위·가운데·아래 선, 이미지 가로 중앙에 SNAP_PX 이내로 오면 붙고 안내선 표시 (Alt 누르면 끔)
+// 오른쪽 아래 핸들을 끌면 블록 안 글씨 전체 크기 조절
+const SNAP_PX=6;
+function snapTo(lines,targets){
+  let best=null;
+  for(const a of lines)for(const t of targets){const d=t-a;if(Math.abs(d)<=SNAP_PX&&(!best||Math.abs(d)<Math.abs(best.d)))best={d,t}}
+  return best;
+}
+function DragBlock({id,edit,pos,onMove,onGuides,sizes,onLiveSize,onCommitSize,style,children}){
   const base=pos[id]||{dx:0,dy:0};
   const[drag,setDrag]=useState(null);
   const cur=drag?{dx:base.dx+drag.x,dy:base.dy+drag.y}:base;
+  const elRef=useRef(null);
   // 포인터 캡처를 쓰면 더블클릭이 글씨까지 안 내려가므로 window 이벤트로 추적
   const dragRef=useRef(null);
   const down=e=>{
     if(!edit||e.button>0||e.target.isContentEditable)return;
     if(e.pointerType==="mouse")e.preventDefault();
-    dragRef.current={sx:e.clientX,sy:e.clientY,x:0,y:0};
+    const el=elRef.current,root=el.closest("[data-imgroot]");
+    const r=el.getBoundingClientRect(),rr=root.getBoundingClientRect();
+    const vx=[rr.left+rr.width/2],hy=[];
+    root.querySelectorAll("[data-bid]").forEach(o=>{
+      if(o===el)return;
+      const b=o.getBoundingClientRect();
+      vx.push(b.left,b.left+b.width/2,b.right);hy.push(b.top,b.top+b.height/2,b.bottom);
+    });
+    dragRef.current={sx:e.clientX,sy:e.clientY,x:0,y:0,r,rr,vx,hy};
     setDrag(dragRef.current);
   };
   useEffect(()=>{
     if(!drag)return;
     const move=e=>{
       const d=dragRef.current;if(!d)return;
-      dragRef.current={...d,x:e.clientX-d.sx,y:e.clientY-d.sy};
+      let x=e.clientX-d.sx,y=e.clientY-d.sy;
+      let g=null;
+      if(!e.altKey){
+        const L=d.r.left+x,T=d.r.top+y,W=d.r.width,H=d.r.height;
+        const sx=snapTo([L,L+W/2,L+W],d.vx),sy=snapTo([T,T+H/2,T+H],d.hy);
+        if(sx)x+=sx.d;
+        if(sy)y+=sy.d;
+        if(sx||sy)g={v:sx?sx.t-d.rr.left:null,h:sy?sy.t-d.rr.top:null};
+      }
+      onGuides&&onGuides(g);
+      dragRef.current={...d,x,y};
       setDrag(dragRef.current);
     };
     const up=()=>{
-      const d=dragRef.current;dragRef.current=null;setDrag(null);
+      const d=dragRef.current;dragRef.current=null;setDrag(null);onGuides&&onGuides(null);
       if(d&&(Math.abs(d.x)>2||Math.abs(d.y)>2))onMove(id,{dx:Math.round(base.dx+d.x),dy:Math.round(base.dy+d.y)});
     };
     window.addEventListener("pointermove",move);
@@ -1250,27 +1299,38 @@ function DragBlock({id,edit,pos,onMove,style,children}){
     window.addEventListener("pointercancel",up);
     return()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);window.removeEventListener("pointercancel",up)};
   },[!!drag]);
-  return <div onPointerDown={down}
-    style={{...style,position:"relative",left:cur.dx,top:cur.dy,
+  const resizeDown=e=>{
+    const el=elRef.current;
+    const items=[...el.querySelectorAll("[data-tid]")].map(t=>({id:t.dataset.tid,base:sizes?.[t.dataset.tid]??Number(t.dataset.base)}));
+    startScaleDrag(e,el,items,onLiveSize,onCommitSize);
+  };
+  // 상자는 내용(글씨) 크기만큼만 — 좌우 auto 마진으로 원래처럼 가운데 정렬
+  return <div ref={elRef} data-bid={id} onPointerDown={down}
+    style={{width:"fit-content",maxWidth:"100%",marginLeft:"auto",marginRight:"auto",...style,position:"relative",left:cur.dx,top:cur.dy,
       cursor:edit?(drag?"grabbing":"grab"):undefined,
       outline:edit?"1px dashed rgba(6,182,212,0.8)":"none",outlineOffset:4,
       touchAction:edit?"none":undefined,userSelect:edit?"none":undefined,zIndex:drag?5:undefined}}>
     {children}
+    {edit&&onCommitSize&&<span title="끌어서 블록 글씨 전체 크기 조절" onPointerDown={resizeDown} style={{...HANDLE_STYLE,right:-10,bottom:-10}}/>}
   </div>;
 }
 
-function LoadImage({group,date,prefix,refCb,edit,ed,onMove,onText,sel,onSelect}){
+function LoadImage({group,date,prefix,refCb,edit,ed:edSaved,live,onMove,onText,sel,onSelect,onLiveSize,onCommitSize}){
+  const[guides,setGuides]=useState(null);
+  const ed=live&&Object.keys(live).length?{...edSaved,size:{...edSaved.size,...live}}:edSaved;
   const pallets=group.pallets;
   const total=pallets.length;
   const singles=groupSinglePallets(pallets);
   const mixed=pallets.filter(p=>p.kind==="mixed");
   const font="'Pretendard','Apple SD Gothic Neo','Malgun Gothic',sans-serif";
-  const T=(id,value,base,style)=><EditText id={id} value={value} base={base} edit={edit} ed={ed} onText={onText} selected={sel===id} onSelect={onSelect} style={style}/>;
-  const D=(id,style,children)=><DragBlock key={id} id={id} edit={edit} pos={ed.pos} onMove={onMove} style={style}>{children}</DragBlock>;
-  return <div ref={refCb} style={{width:920,background:"#ffffff",color:"#111",padding:"34px 40px 40px",boxSizing:"border-box",fontFamily:font,overflow:"hidden"}}>
+  const T=(id,value,base,style)=><EditText id={id} value={value} base={base} edit={edit} ed={ed} onText={onText} selected={sel===id} onSelect={onSelect} onLiveSize={onLiveSize} onCommitSize={onCommitSize} style={style}/>;
+  const D=(id,style,children)=><DragBlock key={id} id={id} edit={edit} pos={ed.pos} onMove={onMove} onGuides={setGuides} sizes={edSaved.size} onLiveSize={onLiveSize} onCommitSize={onCommitSize} style={style}>{children}</DragBlock>;
+  return <div ref={refCb} data-imgroot="1" style={{position:"relative",width:920,background:"#ffffff",color:"#111",padding:"34px 40px 40px",boxSizing:"border-box",fontFamily:font,overflow:"hidden"}}>
+    {edit&&guides?.v!=null&&<div style={{position:"absolute",left:guides.v,top:0,bottom:0,width:0,borderLeft:"1px solid #ec4899",zIndex:20,pointerEvents:"none"}}/>}
+    {edit&&guides?.h!=null&&<div style={{position:"absolute",top:guides.h,left:0,right:0,height:0,borderTop:"1px solid #ec4899",zIndex:20,pointerEvents:"none"}}/>}
     {D("hd",{display:"flex",alignItems:"baseline",gap:40,justifyContent:"center",marginBottom:6},<>
-      {T("title",`${prefix} ${fmtMd(date)}일 (${dowOf(date)}) 적재리스트`,28,{fontWeight:800})}
-      {T("total",`총${total}파렛`,46,{fontWeight:900})}
+      {T("title",`${prefix} ${fmtMd(date)}일 (${dowOf(date)}) 적재리스트`,28,{fontWeight:800,marginLeft:0,marginRight:0})}
+      {T("total",`총${total}파렛`,46,{fontWeight:900,marginLeft:0,marginRight:0})}
     </>)}
     {D("sub",{textAlign:"center",color:"#666",marginBottom:26},
       T("sub",`${group.site} · ${group.order.center} · 발주 ${group.order.order_no}`,13))}
@@ -1357,6 +1417,9 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
     const size={...edRef.current.size};delete size[sel];
     persist({...edRef.current,size});
   };
+  // 드래그 크기 조절: 끄는 동안 live 로 미리보기, 놓으면 저장
+  const[live,setLive]=useState({});
+  const commitSizes=map=>persist({...edRef.current,size:{...edRef.current.size,...map}});
   const changeScale=delta=>{
     const next=Math.min(200,Math.max(50,(edRef.current.scale||100)+delta));
     persist({...edRef.current,scale:next});
@@ -1365,6 +1428,8 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
   // 용지 선택 (A4/A3 × 가로/세로) — 마지막 선택 기억
   const[paper,setPaper]=useState(()=>{const v=lsGet("ol-paper","A4-l");return PAPER_SIZES[v]?v:"A4-l"});
   useEffect(()=>lsSet("ol-paper",paper),[paper]);
+  const[fitPaper,setFitPaper]=useState(()=>lsGet("ol-fit-paper","1")!=="0");
+  useEffect(()=>lsSet("ol-fit-paper",fitPaper?"1":"0"),[fitPaper]);
 
   // 이미지를 용지 크기(300dpi) 캔버스 가운데에 여백 두고 맞춰 넣음 → PNG 또는 PDF
   const saveImage=async format=>{
@@ -1376,16 +1441,30 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
       const pxW=Math.round(ps.w/25.4*300),pxH=Math.round(ps.h/25.4*300);
       const margin=Math.round(PAPER_MARGIN_MM/25.4*300);
       const el=elRef.current;
-      const scale=Math.min(5,Math.max(2,Math.ceil((pxW-2*margin)/el.offsetWidth)));
+      // 용지 맞춤: 글씨(블록)가 있는 범위만 잘라서 용지에 꽉 차게 확대 → 빈 공간 줄고 글씨가 용지 크기에 맞게 커짐
+      let crop={x:0,y:0,w:el.offsetWidth,h:el.offsetHeight};
+      if(fitPaper){
+        const er=el.getBoundingClientRect();
+        let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+        el.querySelectorAll("[data-bid]").forEach(b=>{const r=b.getBoundingClientRect();if(!r.width||!r.height)return;x0=Math.min(x0,r.left);y0=Math.min(y0,r.top);x1=Math.max(x1,r.right);y1=Math.max(y1,r.bottom)});
+        if(x1>x0&&y1>y0){
+          const pad=6;
+          const cx=Math.max(0,x0-er.left-pad),cy=Math.max(0,y0-er.top-pad);
+          crop={x:cx,y:cy,w:Math.min(el.offsetWidth,x1-er.left+pad)-cx,h:Math.min(el.offsetHeight,y1-er.top+pad)-cy};
+        }
+      }
+      const fitRatio=Math.min((pxW-2*margin)/crop.w,(pxH-2*margin)/crop.h);
+      const scale=Math.min(8,Math.max(2,Math.ceil(fitRatio)));
       const shot=await html2canvas(el,{scale,backgroundColor:"#ffffff"});
       const page=document.createElement("canvas");
       page.width=pxW;page.height=pxH;
       const ctx=page.getContext("2d");
       ctx.fillStyle="#ffffff";ctx.fillRect(0,0,pxW,pxH);
-      const fit=Math.min((pxW-2*margin)/shot.width,(pxH-2*margin)/shot.height);
-      const dw=shot.width*fit,dh=shot.height*fit;
+      const sw=crop.w*scale,sh=crop.h*scale;
+      const fit=Math.min((pxW-2*margin)/sw,(pxH-2*margin)/sh);
+      const dw=sw*fit,dh=sh*fit;
       ctx.imageSmoothingQuality="high";
-      ctx.drawImage(shot,(pxW-dw)/2,(pxH-dh)/2,dw,dh);
+      ctx.drawImage(shot,crop.x*scale,crop.y*scale,sw,sh,(pxW-dw)/2,(pxH-dh)/2,dw,dh);
       const base=`적재리스트_${date}_${group.site}_${group.order.order_no}_${ps.label.replace(" ","")}`.replace(/[\\/:*?"<>|]/g,"_");
       if(format==="pdf"){
         const{jsPDF}=window.jspdf;
@@ -1411,6 +1490,9 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
       <select className="ol-input" style={{width:"auto",padding:"5px 8px",fontSize:12}} value={paper} onChange={e=>setPaper(e.target.value)} title="저장 용지 크기">
         {Object.entries(PAPER_SIZES).map(([k,v])=><option key={k} value={k}>{v.label} ({v.w}×{v.h}mm)</option>)}
       </select>
+      <label style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:12,cursor:"pointer"}} title="글씨가 있는 범위만 잘라 용지에 꽉 차게 확대">
+        <input type="checkbox" checked={fitPaper} onChange={e=>setFitPaper(e.target.checked)}/>용지에 맞춰 확대
+      </label>
       <button className="ol-btn ol-btn-primary ol-btn-sm" onClick={()=>saveImage("png")} disabled={saving}>{saving?"저장 중...":"📷 PNG"}</button>
       <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>saveImage("pdf")} disabled={saving}>📄 PDF</button>
       {status&&<span style={{fontSize:12,color:status.startsWith("⚠")?"#ef4444":"var(--muted)"}}>{status}</span>}
@@ -1428,9 +1510,9 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
       <b style={{minWidth:44,textAlign:"center"}}>{ed.scale||100}%</b>
       <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>changeScale(10)}>A+</button>
     </div>}
-    {edit&&<div style={{fontSize:12,color:"var(--muted)",marginBottom:8}}>점선 상자를 <b>끌어서</b> 위치 이동 · 글씨를 <b>클릭</b>하면 선택(주황 테두리) 후 크기 조절 · <b>더블클릭</b>하면 글씨 수정 (Enter 저장, Shift+Enter 줄바꿈, Esc 취소, 비우면 글씨 숨김) · 수정 내용은 자동 저장</div>}
+    {edit&&<div style={{fontSize:12,color:"var(--muted)",marginBottom:8}}>점선 상자를 <b>끌어서</b> 위치 이동(옆 블록과 줄이 맞으면 분홍 안내선과 함께 붙음, <b>Alt</b> 누르고 끌면 자유 이동) · 상자 오른쪽 아래 <b style={{color:"#06b6d4"}}>■</b>을 끌면 블록 글씨 전체 크기 조절 · 글씨를 <b>클릭</b>하면 선택(주황 테두리) → 글씨 모서리 ■을 끌거나 A−/A+로 크기 조절 · <b>더블클릭</b>하면 글씨 수정 (Enter 저장, Shift+Enter 줄바꿈, Esc 취소, 비우면 글씨 숨김) · 수정 내용은 자동 저장</div>}
     {staleDropped&&<div className="ol-warn" style={{padding:"8px 12px",fontSize:12}}>발주 내용이 바뀌어 파렛트 구성이 달라졌습니다. 이전에 수정한 위치·글씨는 적용하지 않았습니다.</div>}
-    <div className="ol-img-wrap"><LoadImage group={group} date={date} prefix={prefix} refCb={el=>{elRef.current=el}} edit={edit} ed={ed} onMove={onMove} onText={onText} sel={sel} onSelect={setSel}/></div>
+    <div className="ol-img-wrap"><LoadImage group={group} date={date} prefix={prefix} refCb={el=>{elRef.current=el}} edit={edit} ed={ed} live={live} onMove={onMove} onText={onText} sel={sel} onSelect={setSel} onLiveSize={setLive} onCommitSize={commitSizes}/></div>
   </div>;
 }
 
