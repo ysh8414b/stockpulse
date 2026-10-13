@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>자동 리스트 생성기 — STOCKPULSE</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <!-- xlsx-js-style: SheetJS 0.18.5 포크 — 읽기 + 스타일(테두리/폰트/채우기) 포함 쓰기 -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+  <script src="shared.js"></script>
+  <style>
+    .ol-shell{max-width:1200px;margin:0 auto;padding:20px 32px 60px;box-sizing:border-box}
+    .ol-header{display:flex;align-items:center;justify-content:space-between;padding:20px 32px;max-width:1200px;margin:0 auto;box-sizing:border-box;gap:10px;flex-wrap:wrap}
+    .ol-tabs{display:flex;gap:4px;border-bottom:1px solid var(--div2);margin-bottom:20px;overflow-x:auto}
+    .ol-tab{padding:10px 18px;border:none;background:none;color:var(--muted);font-size:14px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;font-family:inherit;white-space:nowrap}
+    .ol-tab:hover{color:var(--text)}
+    .ol-tab.active{color:var(--text);border-bottom-color:#06b6d4}
+    .ol-subtabs{display:flex;gap:0;border:1px solid var(--card-bd);border-radius:8px;overflow:hidden;width:max-content;max-width:100%}
+    .ol-subtabs button{padding:8px 16px;border:none;background:var(--card-bg);color:var(--muted);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+    .ol-subtabs button.on{background:rgba(6,182,212,0.14);color:#06b6d4}
+    .ol-table{width:100%;border-collapse:collapse;font-size:13px}
+    .ol-table th{text-align:left;padding:9px 10px;font-size:12px;font-weight:600;color:var(--muted);border-bottom:1px solid var(--div2);background:var(--card-bg);white-space:nowrap}
+    .ol-table td{padding:9px 10px;border-bottom:1px solid var(--div);vertical-align:middle}
+    .ol-table tr:hover td{background:var(--hover)}
+    .ol-table .right{text-align:right}
+    .ol-table .center{text-align:center}
+    .ol-scroll{overflow-x:auto}
+    .ol-input{width:100%;padding:8px 12px;border-radius:7px;border:1px solid var(--inp-bd);background:var(--inp-bg);color:var(--text);font-size:13px;outline:none;font-family:inherit;box-sizing:border-box}
+    .ol-input:focus{border-color:rgba(6,182,212,0.45)}
+    .ol-btn{padding:8px 16px;border-radius:7px;border:none;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s;white-space:nowrap}
+    .ol-btn:disabled{opacity:.5;cursor:not-allowed}
+    .ol-btn-primary{background:linear-gradient(135deg,#06b6d4,#8b5cf6);color:#fff}
+    .ol-btn-secondary{background:var(--card-bg);border:1px solid var(--card-bd);color:var(--text)}
+    .ol-btn-secondary:hover{background:var(--card-hbg)}
+    .ol-btn-danger{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.25);color:#ef4444}
+    .ol-btn-sm{padding:5px 10px;font-size:12px}
+    .ol-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+    .ol-chips{display:flex;gap:4px;flex-wrap:wrap}
+    .ol-chips button{padding:6px 12px;border-radius:6px;border:1px solid var(--card-bd);background:var(--card-bg);color:var(--muted);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
+    .ol-chips button.on{background:rgba(6,182,212,0.12);border-color:rgba(6,182,212,0.45);color:#06b6d4}
+    .ol-chips button.warn{border-color:rgba(239,68,68,0.4);color:#ef4444}
+    .ol-chips button.warn.on{background:rgba(239,68,68,0.12)}
+    .ol-pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:var(--card-bg);border:1px solid var(--card-bd);color:var(--muted);margin:1px 3px 1px 0;white-space:nowrap}
+    .ol-pill.mixed{background:rgba(245,158,11,0.12);border-color:rgba(245,158,11,0.35);color:#d97706}
+    .ol-pill.single{background:rgba(6,182,212,0.1);border-color:rgba(6,182,212,0.35);color:#0891b2}
+    .ol-card{background:var(--card-bg);border:1px solid var(--card-bd);border-radius:10px;padding:16px;margin-bottom:14px}
+    .ol-label{font-size:12px;color:var(--muted);margin-bottom:4px;font-weight:500}
+    .ol-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:12px}
+    .ol-modal-bg{position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px;box-sizing:border-box}
+    .ol-modal{background:var(--bg);border:1px solid var(--card-bd);border-radius:12px;padding:24px;width:100%;max-width:620px;max-height:90vh;overflow:auto;box-sizing:border-box}
+    .ol-modal-lg{max-width:820px}
+    .ol-empty{padding:50px 20px;text-align:center;color:var(--muted);font-size:13px}
+    .ol-err{color:#ef4444;font-size:12px;margin-top:6px}
+    .ol-warn{background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.35);border-left:4px solid #ef4444;border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:13px;color:var(--text)}
+    .ol-warn b{color:#ef4444}
+    .ol-ok{background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.3);border-left:4px solid #22c55e;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:13px}
+    .ol-layout{display:grid;grid-template-columns:230px 1fr;gap:16px;align-items:start}
+    .ol-datelist{position:sticky;top:12px;background:var(--card-bg);border:1px solid var(--card-bd);border-radius:10px;padding:8px;max-height:75vh;overflow:auto}
+    .ol-dateitem{display:flex;justify-content:space-between;align-items:center;padding:9px 10px;border-radius:7px;cursor:pointer;font-size:13px;border:1px solid transparent}
+    .ol-dateitem:hover{background:var(--hover)}
+    .ol-dateitem.on{border-color:rgba(6,182,212,0.5);background:rgba(6,182,212,0.08);font-weight:700}
+    .ol-dateitem .past{color:var(--dimmer)}
+    .ol-check{display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--card-bd);border-radius:7px;cursor:pointer;font-size:13px;user-select:none}
+    .ol-check.on{border-color:rgba(6,182,212,0.5);background:rgba(6,182,212,0.08)}
+    .ol-swatch{width:24px;height:24px;border-radius:6px;cursor:pointer;border:2px solid transparent;box-sizing:border-box}
+    .ol-swatch.on{border-color:var(--text)}
+    .ol-sheet{background:#fff;color:#111;border:1px solid #cbd5e1;border-radius:6px;padding:12px;margin-bottom:12px;font-size:12px;overflow-x:auto}
+    .ol-sheet table{border-collapse:collapse;width:100%;min-width:640px}
+    .ol-sheet td,.ol-sheet th{padding:5px 8px}
+    .ol-sheet .grid td,.ol-sheet .grid th{border:1px solid #333;text-align:center}
+    .ol-sheet .ttl{background:#ffff00;font-size:18px;font-weight:900;text-align:center;padding:8px}
+    .ol-img-wrap{overflow-x:auto;border:1px solid var(--card-bd);border-radius:8px;margin-bottom:10px}
+    @media (max-width:900px){
+      .ol-layout{grid-template-columns:1fr}
+      .ol-datelist{position:static;max-height:220px}
+    }
+    @media (max-width:600px){
+      .ol-shell{padding:16px 16px 50px}
+      .ol-header{padding:16px}
+      .ol-modal{padding:18px}
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useEffect,useCallback,useMemo,useRef}=React;
+
+// ═══════════════════════════════════════════
+// 공통 헬퍼
+// ═══════════════════════════════════════════
+async function rpc(name,body){
+  const r=await fetch(SB_URL+"/rest/v1/rpc/"+name,{
+    method:"POST",
+    headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},
+    body:JSON.stringify(body||{})
+  });
+  if(!r.ok){let msg="";try{msg=await r.text()}catch(e){msg=String(r.status)}throw new Error(msg||String(r.status))}
+  const txt=await r.text();
+  if(!txt)return null;
+  try{return JSON.parse(txt)}catch(e){return txt}
+}
+function errMsg(e){
+  const s=String(e?.message||e||"");
+  if(s.includes("unauthorized"))return "Supabase에서 최신 setup_orders.sql을 다시 실행하세요 (비밀번호 없는 버전).";
+  if(s.includes("Could not find the function")||s.includes("PGRST202"))return "Supabase에 setup_orders.sql이 실행되지 않았습니다.";
+  if(s.includes("duplicate key")&&s.includes("ol_products"))return "이미 등록된 제품코드입니다.";
+  if(s.includes("code_name_required"))return "제품코드와 제품명은 필수입니다.";
+  return "오류: "+s.slice(0,120);
+}
+
+const DOW=["일","월","화","수","목","금","토"];
+function fmtYmd(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")}
+function parseYmd(s){const[y,m,d]=String(s).slice(0,10).split("-").map(Number);return new Date(y,m-1,d)}
+function todayYmd(){return fmtYmd(new Date())}
+function addDays(s,n){const d=parseYmd(s);d.setDate(d.getDate()+n);return fmtYmd(d)}
+function dowOf(s){return DOW[parseYmd(s).getDay()]}
+function fmtMd(s){const d=parseYmd(s);return (d.getMonth()+1)+"/"+d.getDate()}
+// 엑셀 셀 값 → YYYY-MM-DD (문자열 "2026/10/14 00:00:00", Date, 엑셀 serial 모두)
+function toYmd(v){
+  if(v==null||v==="")return "";
+  if(v instanceof Date){
+    if(isNaN(v.getTime()))return "";
+    // SheetJS Date는 자정이 전날 23:59:xx로 오는 경우가 있어 몇 분 보정
+    return fmtYmd(new Date(v.getTime()+10*60000));
+  }
+  if(typeof v==="number"&&v>20000&&v<80000){
+    return new Date(Math.round((v-25569)*86400000)).toISOString().slice(0,10);
+  }
+  const m=String(v).trim().match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
+  return m?`${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`:"";
+}
+function toNum(v){
+  if(typeof v==="number")return v;
+  const n=parseFloat(String(v??"").replace(/,/g,"").trim());
+  return isNaN(n)?0:n;
+}
+function fmtNum(n){return Number(n||0).toLocaleString("ko-KR",{maximumFractionDigits:2})}
+function excelSerial(ymd){
+  const[y,m,d]=ymd.split("-").map(Number);
+  return (Date.UTC(y,m-1,d)-Date.UTC(1899,11,30))/86400000;
+}
+function lsGet(k,def){try{const v=localStorage.getItem(k);return v==null?def:v}catch(e){return def}}
+function lsSet(k,v){try{localStorage.setItem(k,v)}catch(e){}}
+
+const NO_SITE="(지점 미지정)";
+const COLOR_PRESETS=["#0ea5e9","#dc2626","#7e22ce","#16a34a","#ea580c","#1d4ed8","#db2777","#ca8a04","#0f766e","#111827"];
+
+function Loader(){return <div style={{textAlign:"center",padding:"60px 0"}}><div className="loader"></div></div>}
+function Empty({emoji,text}){return <div className="ol-empty"><div style={{fontSize:32,marginBottom:8,opacity:.7}}>{emoji||"📭"}</div>{text}</div>}
+function Modal({children,onClose,lg}){
+  return <div className="ol-modal-bg" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}>
+    <div className={"ol-modal"+(lg?" ol-modal-lg":"")}>{children}</div>
+  </div>;
+}
+
+// ═══════════════════════════════════════════
+// 발주서 엑셀 파싱
+// 고정 셀(C5 업체명, C10 발주번호, F13 입고예정일시, C13 물류센터) 우선,
+// 비어 있으면 라벨 검색으로 fallback
+// ═══════════════════════════════════════════
+function parseOrderWorkbook(buf,fileName){
+  const wb=XLSX.read(buf,{type:"array",cellDates:true});
+  const out=[];
+  for(const sn of wb.SheetNames){
+    const ws=wb.Sheets[sn];
+    if(!ws||!ws["!ref"])continue;
+    const rng=XLSX.utils.decode_range(ws["!ref"]);
+    const at=(r,c)=>{const cell=ws[XLSX.utils.encode_cell({r,c})];return cell?cell.v:""};
+    const a1=addr=>{const cell=ws[addr];return cell?cell.v:""};
+    const norm=s=>String(s??"").replace(/\s/g,"");
+    const findRight=label=>{
+      for(let r=rng.s.r;r<=Math.min(rng.e.r,30);r++)for(let c=rng.s.c;c<=rng.e.c;c++){
+        if(norm(at(r,c))===label){
+          for(let k=c+1;k<=Math.min(c+6,rng.e.c);k++){const v=at(r,k);if(String(v).trim()!=="")return v}
+        }
+      }
+      return "";
+    };
+
+    const vendorRaw=String(a1("C5")||findRight("거래처명")||"").trim();
+    const vendor=vendorRaw.replace(/^\s*\[[^\]]*\]\s*/,"").trim();
+    let orderNo=String(a1("C10")||findRight("발주번호")||"").trim();
+    if(!orderNo){const m=String(a1("A1")).match(/No\.?\s*(\d+)/i);if(m)orderNo=m[1]}
+    const dueDate=toYmd(a1("F13"));
+    const center=String(a1("C13")||"").trim();
+    const centerAddr=String(a1("D13")||"").trim();
+    const orderType=String(a1("C11")||findRight("발주구분")||"").trim();
+
+    // 상품 표 헤더 행 찾기 ("상품코드")
+    let hr=-1,codeCol=1,nameCol=2,qtyCol=6,dateCol=20,centerCol=5;
+    for(let r=rng.s.r;r<=rng.e.r&&hr<0;r++)for(let c=rng.s.c;c<=rng.e.c;c++){
+      if(norm(at(r,c))==="상품코드"){hr=r;break}
+    }
+    if(hr>=0){
+      for(let c=rng.s.c;c<=rng.e.c;c++){
+        const h=norm(at(hr,c));
+        if(h==="상품코드")codeCol=c;
+        else if(h.startsWith("상품명"))nameCol=c;
+        else if(h==="발주수량")qtyCol=c;
+        else if(h==="물류센터")centerCol=c;
+        else if(h.includes("제조")||h.includes("유통"))dateCol=c;
+      }
+    }
+    const items=[];
+    if(hr>=0){
+      for(let r=hr+1;r<=rng.e.r;r++){
+        const first=norm(at(r,0));
+        if(first==="합계"||first.startsWith("4."))break;
+        const code=String(at(r,codeCol)).trim();
+        if(!/^\d{3,}$/.test(code))continue;
+        items.push({
+          line_no:toNum(at(r,0))||items.length+1,
+          code,
+          name:String(at(r,nameCol)).trim(),
+          qty:toNum(at(r,qtyCol)),
+          center:String(at(r,centerCol)).trim(),
+          mfg_date:toYmd(at(r,dateCol))||null,
+          expiry_date:toYmd(at(r+1,dateCol))||null
+        });
+      }
+    }
+    if(!orderNo&&!items.length)continue;
+    out.push({
+      fileName,sheetName:sn,orderNo,vendor,dueDate,
+      center:center||items[0]?.center||"",centerAddr,orderType,items
+    });
+  }
+  return out;
+}
+
+// ═══════════════════════════════════════════
+// 파렛트 계산
+//  - 단독(single) 방식: 파렛트당 최대 박스(여러 개 선택 시 가장 큰 값)로 꽉 채운 파렛트 생성
+//  - 남은 자투리 박스: 혼적(mixed) 방식이 있으면 혼적 풀로, 없으면 단독 파렛트 1개
+//  - 혼적 풀: 순서대로 혼적 최대 박스까지 채워 한 파렛트에 여러 제품
+// ═══════════════════════════════════════════
+const DEFAULT_CAP=40;
+function productMethods(p,methodMap){
+  const ids=Array.isArray(p?.method_ids)?p.method_ids:[];
+  const ms=ids.map(id=>methodMap[id]).filter(Boolean);
+  return{single:ms.filter(m=>m.kind==="single"),mixed:ms.filter(m=>m.kind==="mixed")};
+}
+function enrichLine(item,p){
+  const per=Math.max(1,Number(p?.per_box)||1);
+  const exact=Number(item.qty||0)/per;
+  const boxes=Math.ceil(exact-1e-9);
+  return{item,product:p,per,boxes,partial:Math.abs(exact-Math.round(exact))>1e-9};
+}
+function buildPallets(lines,methodMap){
+  const singles=[],pool=[];
+  for(const ln of lines){
+    if(ln.boxes<=0)continue;
+    const{single,mixed}=productMethods(ln.product,methodMap);
+    const cap=single.length?Math.max(...single.map(m=>m.max_boxes)):mixed.length?Math.min(...mixed.map(m=>m.max_boxes)):DEFAULT_CAP;
+    const full=Math.floor(ln.boxes/cap),rem=ln.boxes%cap;
+    for(let i=0;i<full;i++)singles.push({kind:"single",lines:[{...ln,count:cap}]});
+    if(rem>0){
+      if(mixed.length)pool.push({...ln,count:rem,mixCap:Math.min(...mixed.map(m=>m.max_boxes)),cols:Math.max(...mixed.map(m=>m.cols||3))});
+      else singles.push({kind:"single",lines:[{...ln,count:rem}]});
+    }
+  }
+  const mixedPallets=[];
+  let cur=null;
+  for(const e of pool){
+    let left=e.count;
+    while(left>0){
+      if(!cur||cur.used>=cur.cap){cur={kind:"mixed",cap:e.mixCap,cols:e.cols,used:0,lines:[]};mixedPallets.push(cur)}
+      const take=Math.min(left,cur.cap-cur.used);
+      const prev=cur.lines.find(l=>l.product.code===e.product.code);
+      if(prev)prev.count+=take;else cur.lines.push({...e,count:take});
+      cur.cols=Math.max(cur.cols,e.cols);
+      cur.used+=take;left-=take;
+    }
+  }
+  // 혼적 풀에 한 제품만 남았으면 단독 파렛트로 취급
+  const all=singles.concat(mixedPallets.map(p=>p.lines.length===1?{kind:"single",lines:p.lines}:p));
+  return all.map((p,i)=>({...p,no:i+1,total:all.length,boxes:p.lines.reduce((s,l)=>s+l.count,0)}));
+}
+
+// 날짜의 발주서들 → [{order, site, lines, pallets}] (생산지점별로 분리)
+function buildSiteGroups(orders,prodMap,methodMap){
+  const groups=[],unmatched=[];
+  for(const o of orders){
+    const bySite=new Map();
+    for(const it of (o.items||[])){
+      const p=prodMap[it.code];
+      if(!p){unmatched.push({order:o,item:it});continue}
+      const site=(p.site||"").trim()||NO_SITE;
+      if(!bySite.has(site))bySite.set(site,[]);
+      bySite.get(site).push(enrichLine(it,p));
+    }
+    for(const[site,lines]of bySite){
+      groups.push({order:o,site,lines,pallets:buildPallets(lines,methodMap)});
+    }
+  }
+  return{groups,unmatched};
+}
+
+// ═══════════════════════════════════════════
+// 제품 리스트 탭
+// ═══════════════════════════════════════════
+function ProductForm({adminHash,masters,initial,onSaved,onCancel,onReloadMasters}){
+  const isEdit=!!initial?.id;
+  const[code,setCode]=useState(initial?.code||"");
+  const[name,setName]=useState(initial?.name||"");
+  const[imageName,setImageName]=useState(initial?.image_name||"");
+  const[perBox,setPerBox]=useState(initial?.per_box??"");
+  const[methodIds,setMethodIds]=useState(Array.isArray(initial?.method_ids)?initial.method_ids.map(Number):[]);
+  const[site,setSite]=useState(initial?.site||"");
+  const[boxSpec,setBoxSpec]=useState(initial?.box_spec||"");
+  const[color,setColor]=useState(initial?.color||COLOR_PRESETS[0]);
+  const[err,setErr]=useState("");
+  const[saving,setSaving]=useState(false);
+  const[showSpecs,setShowSpecs]=useState(false);
+  const[showMethods,setShowMethods]=useState(false);
+
+  const sites=useMemo(()=>[...new Set(masters.products.map(p=>(p.site||"").trim()).filter(Boolean))].sort(),[masters.products]);
+  const toggleMethod=id=>setMethodIds(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);
+
+  const save=async()=>{
+    if(!code.trim()||!name.trim()){setErr("제품코드와 제품명은 필수입니다");return}
+    const per=parseInt(perBox,10);
+    if(!per||per<1){setErr("입수량은 1 이상의 숫자로 입력하세요");return}
+    setSaving(true);setErr("");
+    try{
+      await rpc("ol_upsert_product",{
+        p_admin_hash:adminHash,p_id:initial?.id||null,p_code:code.trim(),p_name:name.trim(),
+        p_image_name:imageName.trim(),p_per_box:per,p_method_ids:methodIds,
+        p_site:site.trim(),p_box_spec:boxSpec,p_color:color
+      });
+      onSaved();
+    }catch(e){setErr(errMsg(e))}
+    setSaving(false);
+  };
+
+  return <>
+    <div style={{fontSize:17,fontWeight:700,marginBottom:16}}>{isEdit?"✏ 제품 수정":"+ 제품 추가"}</div>
+    <div className="ol-grid">
+      <div><div className="ol-label">제품코드 *</div><input className="ol-input" value={code} onChange={e=>setCode(e.target.value)} placeholder="예: 65657585"/></div>
+      <div><div className="ol-label">입수량 * (박스당 개수)</div><input className="ol-input" type="number" min="1" value={perBox} onChange={e=>setPerBox(e.target.value)} placeholder="예: 8"/></div>
+    </div>
+    <div style={{marginBottom:12}}><div className="ol-label">제품명 *</div><input className="ol-input" value={name} onChange={e=>setName(e.target.value)} placeholder="발주서/부착리스트에 표시될 이름"/></div>
+    <div style={{marginBottom:12}}><div className="ol-label">이미지용 제품명 (적재이미지에 표시)</div><input className="ol-input" value={imageName} onChange={e=>setImageName(e.target.value)} placeholder="예: 삼겹구이용"/></div>
+
+    <div style={{marginBottom:12}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div className="ol-label">적재방식 (다중 선택)</div>
+        <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setShowMethods(true)}>🧱 적재방식 관리</button>
+      </div>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:4}}>
+        {masters.methods.length===0&&<span style={{fontSize:12,color:"var(--muted)"}}>등록된 적재방식이 없습니다 — 관리 버튼으로 추가하세요</span>}
+        {masters.methods.map(m=>{
+          const on=methodIds.includes(Number(m.id));
+          return <label key={m.id} className={"ol-check"+(on?" on":"")}>
+            <input type="checkbox" checked={on} onChange={()=>toggleMethod(Number(m.id))}/>
+            <span>{m.name}</span>
+            <span className={"ol-pill "+m.kind}>{m.kind==="mixed"?"혼적":"단독"} {m.max_boxes}</span>
+          </label>;
+        })}
+      </div>
+    </div>
+
+    <div className="ol-grid">
+      <div>
+        <div className="ol-label">생산지점</div>
+        <input className="ol-input" list="ol-site-list" value={site} onChange={e=>setSite(e.target.value)} placeholder="예: 군포공장"/>
+        <datalist id="ol-site-list">{sites.map(s=><option key={s} value={s}/>)}</datalist>
+      </div>
+      <div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div className="ol-label">박스규격 (가로×세로×높이)</div>
+          <button className="ol-btn ol-btn-secondary ol-btn-sm" style={{padding:"2px 8px",marginBottom:3}} onClick={()=>setShowSpecs(true)}>관리</button>
+        </div>
+        <select className="ol-input" value={boxSpec} onChange={e=>setBoxSpec(e.target.value)}>
+          <option value="">— 선택 안 함 —</option>
+          {masters.box_specs.map(b=><option key={b.id} value={b.spec}>{b.spec}</option>)}
+          {boxSpec&&!masters.box_specs.some(b=>b.spec===boxSpec)&&<option value={boxSpec}>{boxSpec} (삭제된 규격)</option>}
+        </select>
+      </div>
+    </div>
+
+    <div style={{marginBottom:12}}>
+      <div className="ol-label">이미지 표시 색상</div>
+      <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+        {COLOR_PRESETS.map(c=><div key={c} className={"ol-swatch"+(color.toLowerCase()===c?" on":"")} style={{background:c}} onClick={()=>setColor(c)} title={c}/>)}
+        <input type="color" value={color} onChange={e=>setColor(e.target.value)} style={{width:36,height:28,border:"none",background:"none",cursor:"pointer"}}/>
+        <span style={{marginLeft:6,fontWeight:800,color,fontSize:15}}>{imageName||name||"미리보기"}</span>
+      </div>
+    </div>
+
+    {err&&<div className="ol-err">{err}</div>}
+    <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:16}}>
+      <button className="ol-btn ol-btn-secondary" onClick={onCancel}>취소</button>
+      <button className="ol-btn ol-btn-primary" onClick={save} disabled={saving}>{saving?"저장 중...":"저장"}</button>
+    </div>
+
+    {showSpecs&&<Modal onClose={()=>setShowSpecs(false)}><BoxSpecManager adminHash={adminHash} masters={masters} onChanged={onReloadMasters} onClose={()=>setShowSpecs(false)} onPick={s=>{setBoxSpec(s);setShowSpecs(false)}}/></Modal>}
+    {showMethods&&<Modal lg onClose={()=>setShowMethods(false)}><MethodManager adminHash={adminHash} masters={masters} onChanged={onReloadMasters} onClose={()=>setShowMethods(false)}/></Modal>}
+  </>;
+}
+
+function BoxSpecManager({adminHash,masters,onChanged,onClose,onPick}){
+  const[w,setW]=useState("");const[d,setD]=useState("");const[h,setH]=useState("");
+  const[err,setErr]=useState("");const[busy,setBusy]=useState(false);
+  const add=async()=>{
+    if(!w||!d||!h){setErr("가로·세로·높이를 모두 입력하세요");return}
+    const spec=`${w}×${d}×${h}`;
+    setBusy(true);setErr("");
+    try{await rpc("ol_add_box_spec",{p_admin_hash:adminHash,p_spec:spec});setW("");setD("");setH("");await onChanged();if(onPick)onPick(spec)}
+    catch(e){setErr(errMsg(e))}
+    setBusy(false);
+  };
+  const del=async b=>{
+    const used=masters.products.filter(p=>p.box_spec===b.spec).length;
+    if(!confirm(`'${b.spec}' 규격을 삭제할까요?`+(used?`\n(이 규격을 쓰는 제품 ${used}개는 값이 유지됩니다)`:"")))return;
+    try{await rpc("ol_delete_box_spec",{p_admin_hash:adminHash,p_id:b.id});await onChanged()}catch(e){setErr(errMsg(e))}
+  };
+  return <>
+    <div style={{fontSize:17,fontWeight:700,marginBottom:14}}>📐 박스규격 관리</div>
+    <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
+      <input className="ol-input" style={{width:90}} type="number" placeholder="가로" value={w} onChange={e=>setW(e.target.value)}/>×
+      <input className="ol-input" style={{width:90}} type="number" placeholder="세로" value={d} onChange={e=>setD(e.target.value)}/>×
+      <input className="ol-input" style={{width:90}} type="number" placeholder="높이" value={h} onChange={e=>setH(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()}/>
+      <button className="ol-btn ol-btn-primary ol-btn-sm" onClick={add} disabled={busy}>+ 추가</button>
+    </div>
+    <div style={{fontSize:11,color:"var(--muted)",marginBottom:12}}>단위는 자유(mm 권장). 추가하면 드롭박스에 바로 나타납니다.</div>
+    {err&&<div className="ol-err">{err}</div>}
+    {masters.box_specs.length===0?<Empty emoji="📦" text="등록된 박스규격이 없습니다"/>:
+    <table className="ol-table"><thead><tr><th>규격</th><th className="right">사용 제품</th><th></th></tr></thead><tbody>
+      {masters.box_specs.map(b=><tr key={b.id}>
+        <td style={{fontWeight:600}}>{b.spec}</td>
+        <td className="right">{masters.products.filter(p=>p.box_spec===b.spec).length}</td>
+        <td className="right">{onPick&&<button className="ol-btn ol-btn-secondary ol-btn-sm" style={{marginRight:4}} onClick={()=>onPick(b.spec)}>선택</button>}<button className="ol-btn ol-btn-danger ol-btn-sm" onClick={()=>del(b)}>삭제</button></td>
+      </tr>)}
+    </tbody></table>}
+    <div style={{textAlign:"right",marginTop:14}}><button className="ol-btn ol-btn-secondary" onClick={onClose}>닫기</button></div>
+  </>;
+}
+
+function MethodManager({adminHash,masters,onChanged,onClose}){
+  const blank={id:null,name:"",kind:"single",max_boxes:40,cols:3,memo:""};
+  const[form,setForm]=useState(blank);
+  const[err,setErr]=useState("");const[busy,setBusy]=useState(false);
+  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+  const save=async()=>{
+    if(!form.name.trim()){setErr("이름을 입력하세요");return}
+    setBusy(true);setErr("");
+    try{
+      await rpc("ol_upsert_method",{p_admin_hash:adminHash,p_id:form.id,p_name:form.name.trim(),p_kind:form.kind,
+        p_max_boxes:parseInt(form.max_boxes,10)||40,p_cols:parseInt(form.cols,10)||3,p_memo:form.memo||""});
+      setForm(blank);await onChanged();
+    }catch(e){setErr(errMsg(e))}
+    setBusy(false);
+  };
+  const del=async m=>{
+    const used=masters.products.filter(p=>(p.method_ids||[]).map(Number).includes(Number(m.id))).length;
+    if(!confirm(`'${m.name}' 적재방식을 삭제할까요?`+(used?`\n이 방식을 쓰는 제품 ${used}개에서도 해제됩니다.`:"")))return;
+    try{await rpc("ol_delete_method",{p_admin_hash:adminHash,p_id:m.id});await onChanged()}catch(e){setErr(errMsg(e))}
+  };
+  return <>
+    <div style={{fontSize:17,fontWeight:700,marginBottom:6}}>🧱 적재방식 관리</div>
+    <div style={{fontSize:12,color:"var(--muted)",marginBottom:14,lineHeight:1.6}}>
+      <b>단독</b>: 한 파렛트에 그 제품만 — 최대 박스 수만큼 꽉 채운 파렛트를 만들고, 자투리는 따로 1파렛트.<br/>
+      <b>혼적</b>: 자투리 박스를 다른 혼적 제품과 한 파렛트에 합침 (적재이미지에서 표 형태, 제품 1줄을 <i>칸 수</i>로 나눠 표시).<br/>
+      제품에 단독+혼적을 같이 선택하면 → 꽉 찬 파렛트는 단독, 남는 박스만 혼적.
+    </div>
+    <div className="ol-card" style={{padding:12}}>
+      <div className="ol-grid" style={{marginBottom:8}}>
+        <div><div className="ol-label">이름</div><input className="ol-input" value={form.name} onChange={e=>set("name",e.target.value)} placeholder="예: 단독 40박스"/></div>
+        <div><div className="ol-label">유형</div><select className="ol-input" value={form.kind} onChange={e=>set("kind",e.target.value)}><option value="single">단독</option><option value="mixed">혼적</option></select></div>
+        <div><div className="ol-label">파렛트당 최대 박스</div><input className="ol-input" type="number" min="1" value={form.max_boxes} onChange={e=>set("max_boxes",e.target.value)}/></div>
+        {form.kind==="mixed"&&<div><div className="ol-label">이미지 칸 수</div><input className="ol-input" type="number" min="1" max="8" value={form.cols} onChange={e=>set("cols",e.target.value)}/></div>}
+      </div>
+      <input className="ol-input" value={form.memo} onChange={e=>set("memo",e.target.value)} placeholder="메모 (선택)" style={{marginBottom:8}}/>
+      <div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
+        {form.id&&<button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setForm(blank)}>취소</button>}
+        <button className="ol-btn ol-btn-primary ol-btn-sm" onClick={save} disabled={busy}>{form.id?"수정 저장":"+ 추가"}</button>
+      </div>
+    </div>
+    {err&&<div className="ol-err">{err}</div>}
+    <div className="ol-scroll"><table className="ol-table"><thead><tr><th>이름</th><th>유형</th><th className="right">최대 박스</th><th className="right">칸 수</th><th className="right">사용 제품</th><th>메모</th><th></th></tr></thead><tbody>
+      {masters.methods.map(m=><tr key={m.id}>
+        <td style={{fontWeight:600}}>{m.name}</td>
+        <td><span className={"ol-pill "+m.kind}>{m.kind==="mixed"?"혼적":"단독"}</span></td>
+        <td className="right">{m.max_boxes}</td>
+        <td className="right">{m.kind==="mixed"?m.cols:"–"}</td>
+        <td className="right">{masters.products.filter(p=>(p.method_ids||[]).map(Number).includes(Number(m.id))).length}</td>
+        <td style={{fontSize:12,color:"var(--muted)"}}>{m.memo}</td>
+        <td className="right" style={{whiteSpace:"nowrap"}}>
+          <button className="ol-btn ol-btn-secondary ol-btn-sm" style={{marginRight:4}} onClick={()=>setForm({...m,memo:m.memo||""})}>수정</button>
+          <button className="ol-btn ol-btn-danger ol-btn-sm" onClick={()=>del(m)}>삭제</button>
+        </td>
+      </tr>)}
+    </tbody></table></div>
+    <div style={{textAlign:"right",marginTop:14}}><button className="ol-btn ol-btn-secondary" onClick={onClose}>닫기</button></div>
+  </>;
+}
+
+function ProductsTab({adminHash,masters,reloadMasters}){
+  const[q,setQ]=useState("");
+  const[siteF,setSiteF]=useState("all");
+  const[editing,setEditing]=useState(null); // null | {} | product
+  const[modal,setModal]=useState(""); // specs | methods
+  const methodMap=useMemo(()=>Object.fromEntries(masters.methods.map(m=>[Number(m.id),m])),[masters.methods]);
+  const sites=useMemo(()=>[...new Set(masters.products.map(p=>(p.site||"").trim()||NO_SITE))].sort(),[masters.products]);
+  const list=useMemo(()=>{
+    const s=q.trim().toLowerCase();
+    return masters.products.filter(p=>{
+      if(siteF!=="all"&&((p.site||"").trim()||NO_SITE)!==siteF)return false;
+      if(!s)return true;
+      return [p.code,p.name,p.image_name].some(x=>String(x||"").toLowerCase().includes(s));
+    });
+  },[masters.products,q,siteF]);
+
+  const del=async p=>{
+    if(!confirm(`'${p.name}' (${p.code}) 제품을 삭제할까요?`))return;
+    try{await rpc("ol_delete_product",{p_admin_hash:adminHash,p_id:p.id});await reloadMasters()}catch(e){alert(errMsg(e))}
+  };
+
+  return <>
+    <div className="ol-toolbar">
+      <button className="ol-btn ol-btn-primary" onClick={()=>setEditing({})}>+ 제품 추가</button>
+      <button className="ol-btn ol-btn-secondary" onClick={()=>setModal("specs")}>📐 박스규격 관리</button>
+      <button className="ol-btn ol-btn-secondary" onClick={()=>setModal("methods")}>🧱 적재방식 관리</button>
+      <input className="ol-input" style={{maxWidth:260,marginLeft:"auto"}} placeholder="코드·제품명 검색" value={q} onChange={e=>setQ(e.target.value)}/>
+    </div>
+    <div className="ol-chips" style={{marginBottom:12}}>
+      <button className={siteF==="all"?"on":""} onClick={()=>setSiteF("all")}>전체 {masters.products.length}</button>
+      {sites.map(s=><button key={s} className={siteF===s?"on":""} onClick={()=>setSiteF(s)}>🏭 {s} {masters.products.filter(p=>((p.site||"").trim()||NO_SITE)===s).length}</button>)}
+    </div>
+    {masters.products.length===0?<Empty emoji="📦" text="등록된 제품이 없습니다. '+ 제품 추가'로 시작하세요."/>:
+    list.length===0?<Empty emoji="🔍" text="검색 결과가 없습니다"/>:
+    <div className="ol-scroll"><table className="ol-table" style={{minWidth:900}}>
+      <thead><tr><th>제품코드</th><th>제품명</th><th>이미지용 이름</th><th className="right">입수</th><th>적재방식</th><th>생산지점</th><th>박스규격</th><th></th></tr></thead>
+      <tbody>{list.map(p=><tr key={p.id}>
+        <td style={{fontFamily:"monospace",fontSize:12}}>{p.code}</td>
+        <td>{p.name}</td>
+        <td><span style={{display:"inline-block",width:10,height:10,borderRadius:3,background:p.color,marginRight:6,verticalAlign:"middle"}}/><b style={{color:p.color}}>{p.image_name||"–"}</b></td>
+        <td className="right">{p.per_box}</td>
+        <td>{(p.method_ids||[]).map(id=>methodMap[Number(id)]).filter(Boolean).map(m=><span key={m.id} className={"ol-pill "+m.kind}>{m.name}</span>)}
+          {!(p.method_ids||[]).length&&<span style={{fontSize:11,color:"#f59e0b"}}>미지정 (기본 {DEFAULT_CAP}박스 단독)</span>}</td>
+        <td>{p.site||<span style={{color:"var(--dimmer)"}}>–</span>}</td>
+        <td style={{fontSize:12}}>{p.box_spec||"–"}</td>
+        <td className="right" style={{whiteSpace:"nowrap"}}>
+          <button className="ol-btn ol-btn-secondary ol-btn-sm" style={{marginRight:4}} onClick={()=>setEditing(p)}>수정</button>
+          <button className="ol-btn ol-btn-danger ol-btn-sm" onClick={()=>del(p)}>삭제</button>
+        </td>
+      </tr>)}</tbody>
+    </table></div>}
+
+    {editing&&<Modal onClose={()=>setEditing(null)}><ProductForm adminHash={adminHash} masters={masters} initial={editing} onReloadMasters={reloadMasters} onCancel={()=>setEditing(null)} onSaved={async()=>{setEditing(null);await reloadMasters()}}/></Modal>}
+    {modal==="specs"&&<Modal onClose={()=>setModal("")}><BoxSpecManager adminHash={adminHash} masters={masters} onChanged={reloadMasters} onClose={()=>setModal("")}/></Modal>}
+    {modal==="methods"&&<Modal lg onClose={()=>setModal("")}><MethodManager adminHash={adminHash} masters={masters} onChanged={reloadMasters} onClose={()=>setModal("")}/></Modal>}
+  </>;
+}
+
+// ═══════════════════════════════════════════
+// 날짜 목록 (발주서 / 발주리스트 공용)
+// ═══════════════════════════════════════════
+function DateList({dates,selected,onSelect}){
+  const today=todayYmd();
+  if(!dates.length)return <div className="ol-datelist"><div style={{fontSize:12,color:"var(--muted)",padding:10}}>업로드된 발주서가 없습니다</div></div>;
+  return <div className="ol-datelist">
+    <div style={{fontSize:11,color:"var(--muted)",padding:"4px 10px 8px",fontWeight:600}}>입고예정일</div>
+    {dates.map(d=><div key={d.due_date} className={"ol-dateitem"+(selected===d.due_date?" on":"")} onClick={()=>onSelect(d.due_date)}>
+      <span className={d.due_date<today?"past":""}>{d.due_date} ({dowOf(d.due_date)}){d.due_date===today&&<span style={{color:"#06b6d4",marginLeft:4}}>오늘</span>}</span>
+      <span className="ol-pill">{d.order_count}건</span>
+    </div>)}
+  </div>;
+}
+
+// ═══════════════════════════════════════════
+// 발주서 탭
+// ═══════════════════════════════════════════
+function UnmatchedBanner({unmatched,onRegister}){
+  if(!unmatched.length)return null;
+  const byCode=new Map();
+  for(const u of unmatched){
+    const k=u.item.code;
+    if(!byCode.has(k))byCode.set(k,{code:k,name:u.item.name,orders:new Set(),qty:0});
+    const e=byCode.get(k);e.orders.add(u.order.order_no||u.order.orderNo);e.qty+=Number(u.item.qty||0);
+  }
+  return <div className="ol-warn">
+    <div style={{fontWeight:800,marginBottom:6}}>⚠ 제품리스트에 없는 상품코드 <b>{byCode.size}개</b> — 생산지점을 알 수 없어 부착리스트·적재이미지에서 <b>제외</b>됩니다</div>
+    {[...byCode.values()].map(e=><div key={e.code} style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",padding:"4px 0",borderTop:"1px dashed rgba(239,68,68,0.25)"}}>
+      <b style={{fontFamily:"monospace"}}>{e.code}</b>
+      <span style={{flex:1,minWidth:200}}>{e.name}</span>
+      <span style={{fontSize:12,color:"var(--muted)"}}>수량 {fmtNum(e.qty)} · 발주 {[...e.orders].join(", ")}</span>
+      {onRegister&&<button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>onRegister(e.code,e.name)}>+ 제품 등록</button>}
+    </div>)}
+  </div>;
+}
+
+function OrdersTab({adminHash,masters,reloadMasters,dates,reloadDates,selDate,setSelDate,orders,reloadOrders,loadingOrders}){
+  const[siteF,setSiteF]=useState("all");
+  const[busy,setBusy]=useState(false);
+  const[result,setResult]=useState(null); // 업로드 결과 모달
+  const[quickAdd,setQuickAdd]=useState(null);
+  const fileRef=useRef(null);
+  const prodMap=useMemo(()=>Object.fromEntries(masters.products.map(p=>[p.code,p])),[masters.products]);
+  const siteOf=code=>{const p=prodMap[code];return p?((p.site||"").trim()||NO_SITE):null};
+
+  const unmatched=useMemo(()=>{
+    const out=[];
+    for(const o of orders)for(const it of (o.items||[]))if(!prodMap[it.code])out.push({order:o,item:it});
+    return out;
+  },[orders,prodMap]);
+  const sites=useMemo(()=>{
+    const s=new Set();
+    for(const o of orders)for(const it of (o.items||[])){const x=siteOf(it.code);if(x)s.add(x)}
+    return [...s].sort();
+  },[orders,prodMap]);
+
+  const handleFiles=async files=>{
+    if(!files||!files.length)return;
+    setBusy(true);
+    const report=[];
+    let lastDate="";
+    for(const f of files){
+      try{
+        const buf=await f.arrayBuffer();
+        const parsed=parseOrderWorkbook(buf,f.name);
+        if(!parsed.length){report.push({file:f.name,ok:false,msg:"발주서 형식을 찾지 못했습니다 (상품코드 표 없음)"});continue}
+        for(const o of parsed){
+          if(!o.orderNo){report.push({file:f.name,ok:false,msg:"발주번호(C10)를 찾지 못했습니다"});continue}
+          if(!o.dueDate){report.push({file:f.name,ok:false,msg:`발주 ${o.orderNo}: 입고예정일시(F13)를 읽지 못했습니다`});continue}
+          if(!o.items.length){report.push({file:f.name,ok:false,msg:`발주 ${o.orderNo}: 상품이 없습니다`});continue}
+          const res=await rpc("ol_save_order",{
+            p_admin_hash:adminHash,p_order_no:o.orderNo,p_vendor:o.vendor,p_center:o.center,p_center_addr:o.centerAddr,
+            p_due_date:o.dueDate,p_order_type:o.orderType,p_file_name:f.name,
+            p_items:o.items.map(({center,...it})=>it)
+          });
+          const missing=o.items.filter(it=>!prodMap[it.code]);
+          report.push({file:f.name,ok:true,orderNo:o.orderNo,dueDate:o.dueDate,vendor:o.vendor,center:o.center,count:o.items.length,replaced:!!res?.replaced,missing});
+          lastDate=o.dueDate;
+        }
+      }catch(e){report.push({file:f.name,ok:false,msg:errMsg(e)})}
+    }
+    setBusy(false);
+    if(fileRef.current)fileRef.current.value="";
+    await reloadDates();
+    if(lastDate)setSelDate(lastDate);
+    await reloadOrders(lastDate||selDate);
+    setResult(report);
+  };
+
+  const delOrder=async o=>{
+    if(!confirm(`발주서 ${o.order_no} (${o.center}, 입고 ${o.due_date})를 삭제할까요?\n품목 ${o.items.length}건이 함께 삭제됩니다.`))return;
+    try{
+      await rpc("ol_delete_order",{p_admin_hash:adminHash,p_id:o.id});
+      await reloadDates();await reloadOrders(selDate);
+    }catch(e){alert(errMsg(e))}
+  };
+
+  const visibleOrders=orders.map(o=>{
+    const items=(o.items||[]).filter(it=>{
+      if(siteF==="all")return true;
+      const s=siteOf(it.code);
+      if(siteF==="__none")return !s;
+      return s===siteF;
+    });
+    return{o,items};
+  }).filter(x=>x.items.length>0);
+
+  const totalMissing=result?result.reduce((s,r)=>s+(r.missing?.length||0),0):0;
+
+  return <>
+    <div className="ol-toolbar">
+      <button className="ol-btn ol-btn-primary" onClick={()=>fileRef.current?.click()} disabled={busy}>{busy?"업로드 중...":"📁 발주서 업로드"}</button>
+      <input ref={fileRef} type="file" accept=".xlsx,.xls" multiple style={{display:"none"}} onChange={e=>handleFiles([...e.target.files])}/>
+      <span style={{fontSize:12,color:"var(--muted)"}}>여러 파일 동시 선택 가능 · 같은 발주번호를 다시 올리면 덮어씁니다</span>
+    </div>
+
+    <div className="ol-layout">
+      <DateList dates={dates} selected={selDate} onSelect={setSelDate}/>
+      <div style={{minWidth:0}}>
+        {!selDate?<Empty emoji="📄" text="발주서를 업로드하세요"/>:loadingOrders?<Loader/>:<>
+          <div style={{fontSize:18,fontWeight:800,marginBottom:10}}>{selDate} ({dowOf(selDate)}) 입고 · 발주서 {orders.length}건</div>
+          <UnmatchedBanner unmatched={unmatched} onRegister={(code,name)=>setQuickAdd({code,name})}/>
+          <div className="ol-chips" style={{marginBottom:12}}>
+            <button className={siteF==="all"?"on":""} onClick={()=>setSiteF("all")}>전체</button>
+            {sites.map(s=><button key={s} className={siteF===s?"on":""} onClick={()=>setSiteF(s)}>🏭 {s}</button>)}
+            {unmatched.length>0&&<button className={"warn"+(siteF==="__none"?" on":"")} onClick={()=>setSiteF("__none")}>⚠ 미등록 {unmatched.length}</button>}
+          </div>
+          {visibleOrders.length===0?<Empty emoji="📭" text="해당 조건의 발주서가 없습니다"/>:
+          visibleOrders.map(({o,items})=><div key={o.id} className="ol-card">
+            <div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap",marginBottom:10}}>
+              <div>
+                <div style={{fontSize:15,fontWeight:800}}>발주 {o.order_no} <span className="ol-pill">{o.order_type||"발주"}</span></div>
+                <div style={{fontSize:12,color:"var(--muted)",marginTop:3}}>
+                  {o.vendor} · 센터 <b style={{color:"var(--text)"}}>{o.center||"–"}</b> · 입고 {o.due_date} ({dowOf(o.due_date)}) · 📎 {o.file_name}
+                </div>
+              </div>
+              <button className="ol-btn ol-btn-danger ol-btn-sm" onClick={()=>delOrder(o)}>🗑 발주서 삭제</button>
+            </div>
+            <div className="ol-scroll"><table className="ol-table" style={{minWidth:720}}>
+              <thead><tr><th>No</th><th>상품코드</th><th>상품명</th><th className="right">발주수량</th><th className="right">박스</th><th>생산지점</th><th>소비기한</th></tr></thead>
+              <tbody>{items.map(it=>{
+                const p=prodMap[it.code];
+                const ln=p?enrichLine(it,p):null;
+                return <tr key={it.id} style={p?null:{background:"rgba(239,68,68,0.06)"}}>
+                  <td>{it.line_no}</td>
+                  <td style={{fontFamily:"monospace",fontSize:12}}>{it.code}</td>
+                  <td>{it.name}</td>
+                  <td className="right">{fmtNum(it.qty)}</td>
+                  <td className="right">{ln?<>{ln.boxes}{ln.partial&&<span title={`입수 ${ln.per}로 나누어떨어지지 않음 — 올림`} style={{color:"#f59e0b",marginLeft:3}}>⚠</span>}</>:"–"}</td>
+                  <td>{p?<span style={{fontWeight:600}}>{(p.site||"").trim()||NO_SITE}</span>:<b style={{color:"#ef4444"}}>⚠ 제품리스트 미등록</b>}</td>
+                  <td style={{fontSize:12}}>{it.expiry_date||"–"}</td>
+                </tr>;
+              })}</tbody>
+            </table></div>
+          </div>)}
+        </>}
+      </div>
+    </div>
+
+    {result&&<Modal lg onClose={()=>setResult(null)}>
+      <div style={{fontSize:17,fontWeight:700,marginBottom:12}}>📥 업로드 결과</div>
+      {totalMissing>0&&<div className="ol-warn" style={{fontSize:14}}>⚠ <b>제품리스트에 없는 상품코드가 {totalMissing}건</b> 있습니다. 등록하기 전까지 부착리스트·적재이미지에서 빠집니다.</div>}
+      {result.map((r,i)=>r.ok?<div key={i} className="ol-ok">
+        ✅ <b>{r.orderNo}</b> {r.replaced&&<span className="ol-pill mixed">덮어씀</span>} — 입고 {r.dueDate} · {r.center} · 품목 {r.count}건 <span style={{color:"var(--muted)",fontSize:12}}>({r.file})</span>
+        {r.missing.length>0&&<div style={{marginTop:6}}>{r.missing.map(m=><div key={m.code} style={{color:"#ef4444",fontSize:13}}>⚠ 미등록: <b style={{fontFamily:"monospace"}}>{m.code}</b> {m.name}</div>)}</div>}
+      </div>:<div key={i} className="ol-warn">❌ {r.file}: {r.msg}</div>)}
+      <div style={{textAlign:"right",marginTop:12}}><button className="ol-btn ol-btn-primary" onClick={()=>setResult(null)}>확인</button></div>
+    </Modal>}
+
+    {quickAdd&&<Modal onClose={()=>setQuickAdd(null)}><ProductForm adminHash={adminHash} masters={masters} initial={{code:quickAdd.code,name:quickAdd.name}} onReloadMasters={reloadMasters} onCancel={()=>setQuickAdd(null)} onSaved={async()=>{setQuickAdd(null);await reloadMasters()}}/></Modal>}
+  </>;
+}
+
+// ═══════════════════════════════════════════
+// 부착리스트 (엑셀 템플릿과 동일 구조 — 파렛트 1개 = 시트 1개)
+// ═══════════════════════════════════════════
+function expiryOf(ln,dueDate){return ln.item.expiry_date?String(ln.item.expiry_date).slice(0,10):addDays(dueDate,6)}
+
+function AttachSheetPreview({group,pallet,prefix}){
+  const o=group.order;
+  return <div className="ol-sheet">
+    <div className="ttl">{prefix} 파렛트 적재리스트 (신선)</div>
+    <table style={{margin:"8px 0"}}><tbody>
+      <tr><td style={{fontSize:20,fontWeight:900,width:120}}>{pallet.total}</td><td></td><td style={{fontWeight:700,textAlign:"right"}}>총 박스 수량</td><td style={{fontWeight:900,fontSize:16}}>{pallet.boxes}</td></tr>
+      <tr><td style={{fontWeight:700}}>입고예정일자</td><td>{o.due_date}</td><td style={{fontWeight:700,textAlign:"right"}}>납품센터명</td><td>( {o.center}(신선) 센터 )</td></tr>
+      <tr><td style={{fontWeight:700}}>업체명</td><td>{o.vendor}</td><td style={{fontWeight:700,textAlign:"right"}}>발주센터명</td><td>( {o.center}센터 )</td></tr>
+      <tr><td style={{fontWeight:700}}>발주번호</td><td style={{fontWeight:800}}>{o.order_no}</td><td></td><td></td></tr>
+    </tbody></table>
+    <table className="grid">
+      <thead><tr><th>NO</th><th>SKU NO</th><th>SKU NAME</th><th>BOX 수량</th><th>수량</th><th>소비기한</th></tr></thead>
+      <tbody>{pallet.lines.map((ln,i)=><tr key={i}>
+        <td>{i+1}</td><td>{ln.item.code}</td><td style={{textAlign:"left"}}>{ln.item.name}</td>
+        <td style={{fontWeight:700}}>{ln.count}</td><td>{ln.count*ln.per}</td><td>{expiryOf(ln,o.due_date)}</td>
+      </tr>)}</tbody>
+    </table>
+  </div>;
+}
+
+// xlsx-js-style 스타일
+const XS_TITLE={font:{name:"Pretendard",sz:30,bold:true},fill:{patternType:"solid",fgColor:{rgb:"FFFF00"}},alignment:{horizontal:"center",vertical:"center"}};
+const XS_INFO_LABEL={font:{name:"Pretendard",sz:16,bold:true},alignment:{horizontal:"left",vertical:"center"}};
+const XS_INFO_VAL={font:{name:"Pretendard",sz:16,bold:true},alignment:{horizontal:"left",vertical:"center"}};
+const XS_BIG={font:{name:"Pretendard",sz:26,bold:true},alignment:{horizontal:"left",vertical:"center"}};
+const XS_THIN={style:"thin",color:{rgb:"000000"}};
+const XS_BORDER={top:XS_THIN,bottom:XS_THIN,left:XS_THIN,right:XS_THIN};
+const XS_HEAD={font:{name:"Pretendard",sz:20,bold:true},alignment:{horizontal:"center",vertical:"center"},border:XS_BORDER};
+const XS_CELL={font:{name:"Pretendard",sz:15},alignment:{horizontal:"center",vertical:"center",wrapText:true},border:XS_BORDER};
+
+function buildPalletSheet(group,pallet,prefix){
+  const o=group.order;
+  const ws={};
+  const put=(addr,cell)=>{ws[addr]=cell};
+  const s=(v,st)=>({t:typeof v==="number"?"n":"s",v,s:st});
+  const lastRow=9+pallet.lines.length-1;
+  put("A1",s(`${prefix} 파렛트 적재리스트 (신선)`,XS_TITLE));
+  ["B1","C1","D1","E1","F1"].forEach(a=>put(a,s("",XS_TITLE)));
+  put("A3",s(pallet.total,XS_BIG));
+  put("D3",s("총 박스 수량",XS_INFO_LABEL));
+  put("E3",{t:"n",v:pallet.boxes,f:`SUM(D9:D${Math.max(lastRow,9)})`,s:XS_BIG});
+  put("A4",s("입고예정일자",XS_INFO_LABEL));
+  put("B4",{t:"n",v:excelSerial(String(o.due_date).slice(0,10)),z:"yyyy-mm-dd",s:{...XS_INFO_VAL,numFmt:"yyyy-mm-dd"}});
+  put("D4",s("납품센터명",XS_INFO_LABEL));
+  put("E4",s(`( ${o.center}(신선) 센터 )`,XS_INFO_VAL));
+  put("A5",s("업체명",XS_INFO_LABEL));
+  put("B5",s(o.vendor||"",XS_INFO_VAL));
+  put("D5",s("발주센터명",XS_INFO_LABEL));
+  put("E5",s(`( ${o.center}센터 )`,XS_INFO_VAL));
+  put("A6",s("발주번호",XS_INFO_LABEL));
+  const ono=/^\d+$/.test(o.order_no)?Number(o.order_no):o.order_no;
+  put("B6",s(ono,{...XS_BIG,font:{...XS_BIG.font,sz:28}}));
+  ["NO","SKU NO","SKU NAME","BOX 수량","수량","소비기한"].forEach((h,i)=>put(XLSX.utils.encode_cell({r:7,c:i}),s(h,XS_HEAD)));
+  pallet.lines.forEach((ln,i)=>{
+    const r=8+i,R=r+1;
+    const code=/^\d+$/.test(ln.item.code)?Number(ln.item.code):ln.item.code;
+    put(`A${R}`,s(i+1,XS_CELL));
+    put(`B${R}`,s(code,XS_CELL));
+    put(`C${R}`,s(ln.item.name,XS_CELL));
+    put(`D${R}`,s(ln.count,XS_CELL));
+    put(`E${R}`,{t:"n",v:ln.count*ln.per,f:`D${R}*${ln.per}`,s:XS_CELL});
+    put(`F${R}`,{t:"n",v:excelSerial(expiryOf(ln,String(o.due_date).slice(0,10))),z:"yyyy-mm-dd",s:{...XS_CELL,numFmt:"yyyy-mm-dd"}});
+  });
+  ws["!ref"]=`A1:F${Math.max(lastRow,9)}`;
+  ws["!merges"]=[
+    {s:{r:0,c:0},e:{r:0,c:5}},
+    {s:{r:3,c:4},e:{r:3,c:5}},
+    {s:{r:4,c:4},e:{r:4,c:5}},
+    {s:{r:5,c:1},e:{r:5,c:2}}
+  ];
+  ws["!cols"]=[{wch:17},{wch:16.5},{wch:79},{wch:17.5},{wch:11.7},{wch:17}];
+  const rows=[{hpt:70},{hpt:25},{hpt:28},{hpt:28},{hpt:28},{hpt:48},{hpt:25},{hpt:34.5}];
+  pallet.lines.forEach(()=>rows.push({hpt:34.5}));
+  ws["!rows"]=rows;
+  ws["!pageSetup"]={orientation:"landscape"};
+  return ws;
+}
+
+function downloadAttachXlsx(groups,site,date,prefix){
+  const wb=XLSX.utils.book_new();
+  const multi=groups.length>1;
+  groups.forEach((g,gi)=>{
+    g.pallets.forEach(p=>{
+      const name=(multi?`${gi+1}-${p.no}`:String(p.no)).slice(0,31);
+      XLSX.utils.book_append_sheet(wb,buildPalletSheet(g,p,prefix),name);
+    });
+  });
+  const safe=s=>String(s).replace(/[\\/:*?"<>|]/g,"_");
+  XLSX.writeFile(wb,`부착리스트_${date}_${safe(site)}.xlsx`);
+}
+
+function AttachListView({groups,site,date,prefix}){
+  const total=groups.reduce((s,g)=>s+g.pallets.length,0);
+  return <>
+    <div className="ol-toolbar">
+      <button className="ol-btn ol-btn-primary" onClick={()=>downloadAttachXlsx(groups,site,date,prefix)} disabled={!total}>📥 부착리스트 엑셀 다운로드 ({total}시트)</button>
+      <span style={{fontSize:12,color:"var(--muted)"}}>파렛트 1개 = 시트 1개 · 소비기한은 발주서의 유통(소비)기한, 없으면 입고일+6일</span>
+    </div>
+    {groups.map(g=><div key={g.order.id+g.site} style={{marginBottom:18}}>
+      <div style={{fontWeight:800,margin:"6px 0 8px"}}>📄 발주 {g.order.order_no} · {g.order.center} · {g.pallets.length}파렛트</div>
+      {g.lines.some(l=>l.partial)&&<div className="ol-warn" style={{padding:"8px 12px"}}>⚠ 입수량으로 나누어떨어지지 않는 품목이 있어 박스 수를 올림했습니다: {g.lines.filter(l=>l.partial).map(l=>`${l.item.name} (${fmtNum(l.item.qty)}÷${l.per})`).join(", ")}</div>}
+      {g.pallets.map(p=><div key={p.no}>
+        <div style={{fontSize:12,color:"var(--muted)",margin:"0 0 4px"}}>시트 {groups.length>1?`${groups.indexOf(g)+1}-`:""}{p.no} · {p.kind==="mixed"?"혼적":"단독"} · {p.boxes}박스</div>
+        <AttachSheetPreview group={g} pallet={p} prefix={prefix}/>
+      </div>)}
+    </div>)}
+  </>;
+}
+
+// ═══════════════════════════════════════════
+// 적재 이미지
+// ═══════════════════════════════════════════
+// 연속된 같은 제품·같은 박스수 단독 파렛트 묶기 → "7/3-4 · 40개 / 2파렛"
+function groupSinglePallets(pallets){
+  const out=[];
+  for(const p of pallets){
+    if(p.kind!=="single")continue;
+    const ln=p.lines[0];
+    const last=out[out.length-1];
+    if(last&&last.code===ln.product.code&&last.count===ln.count&&last.to===p.no-1){last.to=p.no;last.n++}
+    else out.push({code:ln.product.code,product:ln.product,count:ln.count,from:p.no,to:p.no,n:1});
+  }
+  return out;
+}
+function splitCols(n,cols){
+  const base=Math.floor(n/cols),extra=n%cols;
+  return Array.from({length:cols},(_,j)=>base+(j>=cols-extra?1:0));
+}
+const imgName=p=>p.image_name||p.name;
+
+function LoadImage({group,date,prefix,refCb}){
+  const pallets=group.pallets;
+  const total=pallets.length;
+  const singles=groupSinglePallets(pallets);
+  const mixed=pallets.filter(p=>p.kind==="mixed");
+  const font="'Pretendard','Apple SD Gothic Neo','Malgun Gothic',sans-serif";
+  return <div ref={refCb} style={{width:920,background:"#ffffff",color:"#111",padding:"34px 40px 40px",boxSizing:"border-box",fontFamily:font}}>
+    <div style={{display:"flex",alignItems:"baseline",gap:40,justifyContent:"center",marginBottom:6}}>
+      <div style={{fontSize:28,fontWeight:800}}>{prefix} {fmtMd(date)}일 ({dowOf(date)}) 적재리스트</div>
+      <div style={{fontSize:46,fontWeight:900}}>총{total}파렛</div>
+    </div>
+    <div style={{textAlign:"center",fontSize:13,color:"#666",marginBottom:26}}>{group.site} · {group.order.center} · 발주 {group.order.order_no}</div>
+    <div style={{display:"flex",gap:30,alignItems:"flex-start"}}>
+      <div style={{flex:1,display:"grid",gridTemplateColumns:"1fr 1fr",rowGap:34,columnGap:20}}>
+        {singles.map((s,i)=><div key={i} style={{textAlign:"center",color:s.product.color,fontWeight:800,fontSize:21,lineHeight:1.5}}>
+          <div>{total}/{s.from}{s.to>s.from?`-${s.to}`:""}</div>
+          <div>{imgName(s.product)}</div>
+          <div>{s.count}개 / {s.n}파렛</div>
+        </div>)}
+      </div>
+      {mixed.length>0&&<div style={{display:"flex",flexDirection:"column",gap:24}}>
+        {mixed.map(p=>{
+          const cols=Math.max(1,p.cols||3);
+          return <table key={p.no} style={{borderCollapse:"collapse"}}><tbody>
+            {p.lines.map((ln,ri)=><tr key={ri}>
+              {splitCols(ln.count,cols).map((n,ci)=><td key={ci} style={{border:"1.5px solid #333",width:132,height:128,textAlign:"center",verticalAlign:"middle",position:"relative",color:ln.product.color,fontWeight:800,fontSize:17,lineHeight:1.35,padding:4}}>
+                {ri===0&&ci===0&&<div style={{position:"absolute",top:6,left:10,color:"#111",fontSize:16,fontWeight:800}}>{total}-{p.no}</div>}
+                {n>0&&<><div>{imgName(ln.product)}</div><div>{n}</div></>}
+              </td>)}
+            </tr>)}
+          </tbody></table>;
+        })}
+      </div>}
+    </div>
+  </div>;
+}
+
+function LoadImageView({groups,date,prefix}){
+  const refs=useRef({});
+  const[saving,setSaving]=useState("");
+  const save=async g=>{
+    const key=g.order.id+"|"+g.site;
+    const el=refs.current[key];
+    if(!el)return;
+    setSaving(key);
+    try{
+      const canvas=await html2canvas(el,{scale:2,backgroundColor:"#ffffff"});
+      const a=document.createElement("a");
+      a.href=canvas.toDataURL("image/png");
+      a.download=`적재리스트_${date}_${g.site}_${g.order.order_no}.png`.replace(/[\\/:*?"<>|]/g,"_");
+      a.click();
+    }catch(e){alert("이미지 저장 실패: "+e.message)}
+    setSaving("");
+  };
+  return <>
+    {groups.map(g=>{
+      const key=g.order.id+"|"+g.site;
+      return <div key={key} style={{marginBottom:22}}>
+        <div className="ol-toolbar" style={{marginBottom:8}}>
+          <b>📄 발주 {g.order.order_no} · {g.order.center}</b>
+          <button className="ol-btn ol-btn-primary ol-btn-sm" onClick={()=>save(g)} disabled={saving===key}>{saving===key?"저장 중...":"📷 PNG 저장"}</button>
+        </div>
+        <div className="ol-img-wrap"><LoadImage group={g} date={date} prefix={prefix} refCb={el=>{refs.current[key]=el}}/></div>
+      </div>;
+    })}
+  </>;
+}
+
+// ═══════════════════════════════════════════
+// 발주리스트 탭 (부착리스트 / 적재이미지 — 생산지점별)
+// ═══════════════════════════════════════════
+function ListsTab({masters,dates,selDate,setSelDate,orders,loadingOrders}){
+  const[sub,setSub]=useState(()=>lsGet("ol-list-sub","attach")==="image"?"image":"attach");
+  const[site,setSite]=useState("");
+  const[prefix,setPrefix]=useState(()=>lsGet("ol-prefix","쿠팡"));
+  useEffect(()=>lsSet("ol-list-sub",sub),[sub]);
+  useEffect(()=>lsSet("ol-prefix",prefix),[prefix]);
+
+  const prodMap=useMemo(()=>Object.fromEntries(masters.products.map(p=>[p.code,p])),[masters.products]);
+  const methodMap=useMemo(()=>Object.fromEntries(masters.methods.map(m=>[Number(m.id),{...m,max_boxes:Number(m.max_boxes),cols:Number(m.cols)}])),[masters.methods]);
+  const{groups,unmatched}=useMemo(()=>buildSiteGroups(orders,prodMap,methodMap),[orders,prodMap,methodMap]);
+  const sites=useMemo(()=>[...new Set(groups.map(g=>g.site))].sort(),[groups]);
+  useEffect(()=>{if(sites.length&&!sites.includes(site))setSite(sites[0])},[sites]);
+  const siteGroups=groups.filter(g=>g.site===site);
+
+  return <div className="ol-layout">
+    <DateList dates={dates} selected={selDate} onSelect={setSelDate}/>
+    <div style={{minWidth:0}}>
+      {!selDate?<Empty emoji="📄" text="발주서 탭에서 발주서를 먼저 업로드하세요"/>:loadingOrders?<Loader/>:<>
+        <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",marginBottom:12}}>
+          <div style={{fontSize:18,fontWeight:800}}>{selDate} ({dowOf(selDate)}) 입고</div>
+          <div className="ol-subtabs">
+            <button className={sub==="attach"?"on":""} onClick={()=>setSub("attach")}>🏷 부착리스트</button>
+            <button className={sub==="image"?"on":""} onClick={()=>setSub("image")}>🖼 적재이미지</button>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginLeft:"auto"}}>
+            <span style={{fontSize:12,color:"var(--muted)"}}>제목 머리말</span>
+            <input className="ol-input" style={{width:110}} value={prefix} onChange={e=>setPrefix(e.target.value)}/>
+          </div>
+        </div>
+        <UnmatchedBanner unmatched={unmatched}/>
+        {sites.length===0?<Empty emoji="🏭" text="이 날짜에 제품리스트와 매칭되는 품목이 없습니다"/>:<>
+          <div className="ol-chips" style={{marginBottom:14}}>
+            {sites.map(s=>{
+              const n=groups.filter(g=>g.site===s).reduce((a,g)=>a+g.pallets.length,0);
+              return <button key={s} className={site===s?"on":""} onClick={()=>setSite(s)}>🏭 {s} · {n}파렛</button>;
+            })}
+          </div>
+          {sub==="attach"?<AttachListView groups={siteGroups} site={site} date={selDate} prefix={prefix}/>:<LoadImageView groups={siteGroups} date={selDate} prefix={prefix}/>}
+        </>}
+      </>}
+    </div>
+  </div>;
+}
+
+// ═══════════════════════════════════════════
+// App
+// ═══════════════════════════════════════════
+const VALID_TABS=["products","orders","lists"];
+function getTabFromHash(){const h=(window.location.hash||"").replace("#","");return VALID_TABS.includes(h)?h:"orders"}
+
+function App(){
+  const[theme,setTheme]=useState(getStoredTheme());
+  // 비밀번호 없이 접근 (RPC는 p_admin_hash를 무시)
+  const adminHash="";
+  const loggedIn=true;
+  const[tab,setTab]=useState(getTabFromHash());
+  const[masters,setMasters]=useState({products:[],box_specs:[],methods:[]});
+  const[mastersErr,setMastersErr]=useState("");
+  const[dates,setDates]=useState([]);
+  const[selDate,setSelDate]=useState("");
+  const[orders,setOrders]=useState([]);
+  const[loadingOrders,setLoadingOrders]=useState(false);
+
+  useEffect(()=>{applyTheme(theme)},[theme]);
+  const toggleTheme=()=>{const t=theme==="dark"?"light":"dark";setTheme(t);setStoredTheme(t)};
+  useEffect(()=>{const h="#"+tab;if(window.location.hash!==h)history.replaceState(null,"",h)},[tab]);
+  useEffect(()=>{const fn=()=>setTab(getTabFromHash());window.addEventListener("hashchange",fn);return()=>window.removeEventListener("hashchange",fn)},[]);
+
+  const reloadMasters=useCallback(async()=>{
+    try{
+      const d=await rpc("ol_list_masters",{p_admin_hash:adminHash});
+      setMasters({products:d?.products||[],box_specs:d?.box_specs||[],methods:d?.methods||[]});
+      setMastersErr("");
+    }catch(e){setMastersErr(errMsg(e))}
+  },[adminHash]);
+  const reloadDates=useCallback(async()=>{
+    try{
+      const d=await rpc("ol_list_due_dates",{p_admin_hash:adminHash});
+      const list=Array.isArray(d)?d.map(x=>({...x,due_date:String(x.due_date).slice(0,10)})):[];
+      setDates(list);
+      return list;
+    }catch(e){setMastersErr(errMsg(e));return []}
+  },[adminHash]);
+  const reloadOrders=useCallback(async date=>{
+    if(!date){setOrders([]);return}
+    setLoadingOrders(true);
+    try{
+      const d=await rpc("ol_list_orders",{p_admin_hash:adminHash,p_from:date,p_to:date});
+      setOrders((Array.isArray(d)?d:[]).map(o=>({...o,due_date:String(o.due_date).slice(0,10)})));
+    }catch(e){setOrders([]);setMastersErr(errMsg(e))}
+    setLoadingOrders(false);
+  },[adminHash]);
+
+  // 로그인 후 초기 로드: 오늘 이후 가장 가까운 입고일, 없으면 최신
+  useEffect(()=>{
+    if(!loggedIn)return;
+    reloadMasters();
+    (async()=>{
+      const list=await reloadDates();
+      if(!list.length)return;
+      const today=todayYmd();
+      const upcoming=list.filter(d=>d.due_date>=today).sort((a,b)=>a.due_date<b.due_date?-1:1)[0];
+      setSelDate((upcoming||list[0]).due_date);
+    })();
+  },[loggedIn]);
+  useEffect(()=>{if(loggedIn)reloadOrders(selDate)},[selDate,loggedIn]);
+
+  const shared={adminHash,masters,reloadMasters,dates,reloadDates,selDate,setSelDate,orders,reloadOrders,loadingOrders};
+
+  return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column"}}>
+    <header className="ol-header">
+      <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+        <a href="aps.html" style={{fontSize:14,fontWeight:700,color:"var(--text)",textDecoration:"none"}}>← APS</a>
+        <span style={{fontSize:13,color:"var(--muted)"}}>|</span>
+        <span style={{fontSize:18}}>🚚</span>
+        <span style={{fontWeight:700,fontSize:15}}>자동 리스트 생성기</span>
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <button onClick={toggleTheme} style={{background:"none",border:"none",fontSize:20,cursor:"pointer"}}>{theme==="dark"?"☀️":"🌙"}</button>
+      </div>
+    </header>
+    <div className="ol-shell" style={{flex:1,width:"100%"}}>
+      {<>
+        <div className="ol-tabs">
+          <button className={"ol-tab"+(tab==="products"?" active":"")} onClick={()=>setTab("products")}>📦 제품리스트</button>
+          <button className={"ol-tab"+(tab==="orders"?" active":"")} onClick={()=>setTab("orders")}>📄 발주서</button>
+          <button className={"ol-tab"+(tab==="lists"?" active":"")} onClick={()=>setTab("lists")}>🗂 발주리스트</button>
+        </div>
+        {mastersErr&&<div className="ol-warn">{mastersErr}</div>}
+        {tab==="products"&&<ProductsTab {...shared}/>}
+        {tab==="orders"&&<OrdersTab {...shared}/>}
+        {tab==="lists"&&<ListsTab {...shared}/>}
+      </>}
+    </div>
+    <footer style={{borderTop:"1px solid var(--div2)",maxWidth:1200,margin:"0 auto",padding:"14px 32px",color:"var(--dimmer)",fontSize:12,width:"100%",boxSizing:"border-box",textAlign:"center"}}>
+      STOCKPULSE · 자동 리스트 생성기
+    </footer>
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
