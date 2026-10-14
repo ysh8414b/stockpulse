@@ -1086,7 +1086,7 @@ function OrdersTab({adminHash,masters,reloadMasters,dates,reloadDates,selDate,se
     <div className="ol-toolbar">
       <button className="ol-btn ol-btn-primary" onClick={()=>fileRef.current?.click()} disabled={busy}>{busy?"업로드 중...":"📁 발주서 업로드"}</button>
       <input ref={fileRef} type="file" accept=".xlsx,.xls" multiple style={{display:"none"}} onChange={e=>handleFiles([...e.target.files])}/>
-      <span style={{fontSize:12,color:"var(--muted)"}}>여러 파일 동시 선택 가능 · 같은 발주번호를 다시 올리면 덮어씁니다</span>
+      <span style={{fontSize:12,color:"var(--muted)"}}>여러 파일 동시 선택 가능 · 같은 발주번호를 다시 올리면 덮어씁니다 · 입고예정일 기준 1달 지난 발주서는 자동 삭제</span>
     </div>
 
     <div className="ol-layout">
