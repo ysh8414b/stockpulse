@@ -247,7 +247,7 @@ function parseOrderWorkbook(buf,fileName){
 //          자투리(혼적 1파렛트 최대 이하)는 모두 혼적 풀로 → 최소 파렛트 수로 합치고 파렛트끼리 고르게(pourBalanced)
 // ═══════════════════════════════════════════
 const DEFAULT_CAP=40;
-const DEFAULT_PALLET={pallet_w:1100,pallet_d:1100,max_height:1700,pallet_base:0};
+const DEFAULT_PALLET={pallet_w:1100,pallet_d:1100,max_height:1700,pallet_base:0,mix_layers:6};
 function palletCfg(settings){
   const c={...DEFAULT_PALLET};
   for(const k in c){const v=Number(settings?.[k]);if(Number.isFinite(v)&&v>=0)c[k]=v}
@@ -311,9 +311,9 @@ function boxCapacity(p,methodMap,cfg){
   const canMix=mixed.length>0;
   // 용량은 항상 적재방식의 최대 박스 — 규격은 1단 박스 수 계산에만 사용
   const cap=single.length?Math.max(...single.map(m=>m.max_boxes)):mixed.length?Math.min(...mixed.map(m=>m.max_boxes)):DEFAULT_CAP;
-  // 혼적 1자리에 쌓는 최대 박스 = 혼적 방식 최대 박스 ÷ 층당 방(6) (예: 30 ÷ 6 = 5)
-  const mixCap=mixed.length?Math.min(...mixed.map(m=>m.max_boxes)):cap;
-  const stack=Math.max(1,Math.floor(mixCap/slots));
+  // 혼적 1자리에 쌓는 최대 박스 = 파렛트 설정의 '혼적 최대 단수'(기본 6) — 모든 제품 공통
+  // (예전엔 혼적 방식 최대 박스 ÷ 6이라 30박스 방식 제품 하나가 섞이면 혼적 전체가 5단으로 묶였음)
+  const stack=Math.max(1,Math.floor(Number(cfg?.mix_layers)||6));
   const dims=parseSpec(p?.box_spec);
   const perLayer=dims?layerCount(cfg.pallet_w,cfg.pallet_d,dims.w,dims.d):0;
   if(perLayer>0){
@@ -683,7 +683,7 @@ function PalletSettings({adminHash,masters,onChanged,onClose}){
   const[err,setErr]=useState("");const[busy,setBusy]=useState(false);
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
   const fields=[
-    ["pallet_w","파렛트 가로 (mm)"],["pallet_d","파렛트 세로 (mm)"]
+    ["pallet_w","파렛트 가로 (mm)"],["pallet_d","파렛트 세로 (mm)"],["mix_layers","혼적 최대 단수 (1자리에 쌓는 박스)"]
   ];
   const save=async()=>{
     const vals={};
@@ -703,7 +703,8 @@ function PalletSettings({adminHash,masters,onChanged,onClose}){
     <div style={{fontSize:17,fontWeight:700,marginBottom:6}}>⚙ 파렛트 설정</div>
     <div style={{fontSize:12,color:"var(--muted)",marginBottom:14,lineHeight:1.6}}>
       제품의 박스규격(가로×세로)과 이 파렛트 크기로 <b>1단에 몇 박스</b> 깔리는지만 계산합니다.<br/>
-      파렛트 1개에 싣는 최대 박스 수는 <b>적재방식의 '최대 박스'</b>로 정해집니다.
+      단독 파렛트 1개에 싣는 최대 박스 수는 <b>적재방식의 '최대 박스'</b>로 정해집니다.<br/>
+      혼적 파렛트는 한 층 6자리에 각각 <b>혼적 최대 단수</b>까지 쌓습니다 (6단이면 1파렛트 최대 36박스).
     </div>
     <div className="ol-grid">
       {fields.map(([k,label])=><div key={k}><div className="ol-label">{label}</div><input className="ol-input" type="number" min="0" value={form[k]} onChange={e=>set(k,e.target.value)}/></div>)}
