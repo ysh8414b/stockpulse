@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS ol_products (
   updated_at  TIMESTAMPTZ DEFAULT now()
 );
 
+-- 양념 (2026-10-14 추가) — 간장/고추장 등. 같은 양념끼리 우선 혼적, 빈 값 = 양념 없음
+ALTER TABLE ol_products ADD COLUMN IF NOT EXISTS sauce TEXT DEFAULT '';
+
 -- ── 발주서 헤더 ──
 CREATE TABLE IF NOT EXISTS ol_orders (
   id          BIGSERIAL PRIMARY KEY,
@@ -132,9 +135,12 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ── 제품 ──
+-- 2026-10-14: p_sauce(양념) 추가 → 기존 10인자 버전 삭제
+DROP FUNCTION IF EXISTS ol_upsert_product(TEXT, BIGINT, TEXT, TEXT, TEXT, INT, JSONB, TEXT, TEXT, TEXT);
 CREATE OR REPLACE FUNCTION ol_upsert_product(
   p_admin_hash TEXT, p_id BIGINT, p_code TEXT, p_name TEXT, p_image_name TEXT,
-  p_per_box INT, p_method_ids JSONB, p_site TEXT, p_box_spec TEXT, p_color TEXT
+  p_per_box INT, p_method_ids JSONB, p_site TEXT, p_box_spec TEXT, p_color TEXT,
+  p_sauce TEXT DEFAULT ''
 ) RETURNS BIGINT AS $$
 DECLARE v_id BIGINT;
 BEGIN
@@ -143,15 +149,17 @@ BEGIN
     RAISE EXCEPTION 'code_name_required';
   END IF;
   IF p_id IS NULL THEN
-    INSERT INTO ol_products (code, name, image_name, per_box, method_ids, site, box_spec, color)
+    INSERT INTO ol_products (code, name, image_name, per_box, method_ids, site, box_spec, color, sauce)
     VALUES (TRIM(p_code), TRIM(p_name), COALESCE(p_image_name,''), GREATEST(COALESCE(p_per_box,1),1),
-            COALESCE(p_method_ids,'[]'::jsonb), COALESCE(TRIM(p_site),''), COALESCE(p_box_spec,''), COALESCE(p_color,'#1d4ed8'))
+            COALESCE(p_method_ids,'[]'::jsonb), COALESCE(TRIM(p_site),''), COALESCE(p_box_spec,''), COALESCE(p_color,'#1d4ed8'),
+            COALESCE(TRIM(p_sauce),''))
     RETURNING id INTO v_id;
   ELSE
     UPDATE ol_products SET
       code = TRIM(p_code), name = TRIM(p_name), image_name = COALESCE(p_image_name,''),
       per_box = GREATEST(COALESCE(p_per_box,1),1), method_ids = COALESCE(p_method_ids,'[]'::jsonb),
       site = COALESCE(TRIM(p_site),''), box_spec = COALESCE(p_box_spec,''), color = COALESCE(p_color,'#1d4ed8'),
+      sauce = COALESCE(TRIM(p_sauce),''),
       updated_at = now()
     WHERE id = p_id
     RETURNING id INTO v_id;

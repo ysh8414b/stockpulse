@@ -336,10 +336,21 @@ function capText(c){
   if(c.fromSpec)return c.cap<c.perLayer?`최대 ${c.cap}박스 · 1단 ${c.perLayer}박스 (1단도 안 참)`:`최대 ${c.cap}박스 · 1단 ${c.perLayer}박스 × ${c.layers}단${c.rem?` + ${c.rem}박스`:""}`;
   return c.badSpec?`최대 ${c.cap}박스 · 규격이 파렛트에 안 맞음`:`최대 ${c.cap}박스 · 규격 없음`;
 }
+// 양념 — 같은 양념끼리 우선 혼적. 정렬: 없음 → 간장 → 고추장 … (가나다)
+const sauceOf=x=>((x?.product||x)?.sauce||"").trim();
+const sauceCmp=(a,b)=>a===b?0:!a?-1:!b?1:a.localeCompare(b,"ko");
+// 한 묶음 안 서로 다른 양념 수 − 1 (양념 없는 제품은 어느 쪽과도 섞여도 됨)
+const sauceConflict=keys=>Math.max(0,new Set(keys.filter(Boolean)).size-1);
+// 묶음마다의 합 (0 = 간장·고추장 등이 한 파렛트에 섞이지 않음)
+function sauceMixOf(bins,groups){
+  if(!groups)return 0;
+  return bins.reduce((a,b)=>a+sauceConflict(b.map(x=>groups[x.i])),0);
+}
+
 // 수량들을 bins개 묶음에 고르게 붓기 — 묶음 크기는 ⌊합÷bins⌋ 또는 ⌈합÷bins⌉
 // 어느 묶음을 +1로 할지 × 붓는 순서(6개 이하면 전 순열)를 시험해 한 항목이 두 묶음으로 나뉘는 경우 최소화
 // 반환: [[{i,n}], ...] (i = counts 인덱스, 붓는 순서대로)
-function pourBalanced(counts,bins){
+function pourBalanced(counts,bins,groups){
   const N=counts.reduce((a,b)=>a+b,0),S=Math.max(1,bins);
   const lo=Math.floor(N/S),k=N%S;
   const combos=[];
@@ -368,19 +379,20 @@ function pourBalanced(counts,bins){
       if(parts.length>1)splits+=parts.length-1;
       out.push(parts);
     }
-    return{bins:out,splits};
+    return{bins:out,splits,mix:sauceMixOf(out,groups)};
   };
+  // 양념이 섞이는 묶음 최소 → 나뉨 최소
   let best=null;
   outer:for(const order of perms)for(const hiSet of combos){
     const r=pour(order,hiSet);
-    if(!best||r.splits<best.splits){best=r;if(r.splits===0)break outer}
+    if(!best||r.mix<best.mix||r.mix===best.mix&&r.splits<best.splits){best=r;if(r.splits===0&&r.mix===0)break outer}
   }
   return best.bins;
 }
 
 // 자투리를 n개 파렛트(각 최대 cap)에 제품을 나누지 않고 통째로 배정 — 가능한 배정 중
-// ① 상품 1개 소량(cap 절반 미만) 파렛트가 적은 것 ② 상품 1개짜리 파렛트가 적은 것 ③ 파렛트끼리 수량 차이가 작은 것. 불가능하면 null
-function packWhole(counts,n,cap){
+// ⓐ 양념이 섞이는 파렛트 적은 것 ① 상품 1개 소량(cap 절반 미만) 파렛트가 적은 것 ② 상품 1개짜리 파렛트가 적은 것 ③ 파렛트끼리 수량 차이가 작은 것. 불가능하면 null
+function packWhole(counts,n,cap,groups){
   const order=counts.map((_,i)=>i).sort((a,b)=>counts[b]-counts[a]);
   const load=Array(n).fill(0),items=Array.from({length:n},()=>[]);
   let best=null,steps=0;
@@ -388,7 +400,7 @@ function packWhole(counts,n,cap){
   (function dfs(k){
     if(++steps>300000)return;
     if(k===order.length){
-      const sc=[items.filter((b,j)=>b.length===1&&load[j]<cap/2).length,items.filter(b=>b.length===1).length,Math.max(...load)-Math.min(...load)];
+      const sc=[sauceMixOf(items.map(b=>b.map(i=>({i}))),groups),items.filter((b,j)=>b.length===1&&load[j]<cap/2).length,items.filter(b=>b.length===1).length,Math.max(...load)-Math.min(...load)];
       if(!best||less(sc,best.sc))best={sc,bins:items.map(b=>b.map(i=>({i,n:counts[i]})))};
       return;
     }
@@ -405,34 +417,35 @@ function packWhole(counts,n,cap){
 }
 // 혼적 풀 → 최소 파렛트 수(⌈합 ÷ 혼적 1파렛트 최대⌉)로 합침
 // 후보 두 가지 — 제품을 통째로 배정(packWhole) / 고르게 나눔(pourBalanced, 나뉘는 제품 최소화) — 중
-// ⓪ 제품을 나눴을 때 1자리(stack)도 안 되는 자투리 조각(예: 25+1의 1) 적은 것
+// ⓪ 제품을 나눴을 때 1자리(stack)도 안 되는 자투리 조각(예: 25+1의 1) 적은 것 ⓐ 양념이 섞이는 파렛트 적은 것
 // ① 상품 1개 소량 파렛트(cap 절반 미만) 적은 것 ② 두 파렛트에 나뉜 제품 적은 것 ③ 파렛트 수량 차이 작은 것
-function binScore(bins,cap,stack){
+function binScore(bins,cap,stack,groups){
   const loads=bins.map(b=>b.reduce((a,x)=>a+x.n,0));
   const ids=new Set(bins.flatMap(b=>b.map(x=>x.i)));
   const occ={};bins.forEach(b=>new Set(b.map(x=>x.i)).forEach(i=>{occ[i]=(occ[i]||0)+1}));
   const tinyPieces=bins.reduce((a,b)=>a+b.filter(x=>occ[x.i]>1&&x.n<stack).length,0);
-  return[tinyPieces,bins.filter((b,j)=>new Set(b.map(x=>x.i)).size===1&&loads[j]<cap/2).length,
+  return[tinyPieces,sauceMixOf(bins,groups),bins.filter((b,j)=>new Set(b.map(x=>x.i)).size===1&&loads[j]<cap/2).length,
     bins.reduce((a,b)=>a+new Set(b.map(x=>x.i)).size,0)-ids.size,
     Math.max(...loads)-Math.min(...loads)];
 }
 function lexLess(x,y){for(let i=0;i<x.length;i++)if(x[i]!==y[i])return x[i]<y[i];return false}
 function mergePool(pool){
   if(!pool.length)return[];
+  pool=[...pool].sort((x,y)=>sauceCmp(sauceOf(x),sauceOf(y))||x.item.line_no-y.item.line_no); // 같은 양념끼리 붙여서 시작
   const slots=Math.min(...pool.map(e=>e.slots)),cols=Math.max(...pool.map(e=>e.cols));
   const cap=Math.max(1,Math.min(...pool.map(e=>e.stack))*slots);
   const total=pool.reduce((a,e)=>a+e.count,0);
   const out=[];
-  const counts=pool.map(e=>e.count),n=Math.ceil(total/cap);
-  const whole=packWhole(counts,n,cap),poured=pourBalanced(counts,n);
+  const counts=pool.map(e=>e.count),n=Math.ceil(total/cap),groups=pool.map(sauceOf);
+  const whole=packWhole(counts,n,cap,groups),poured=pourBalanced(counts,n,groups);
   const stack=Math.max(1,Math.floor(cap/slots));
-  const chosen=whole&&!lexLess(binScore(poured,cap,stack),binScore(whole,cap,stack))?whole:poured;
+  const chosen=whole&&!lexLess(binScore(poured,cap,stack,groups),binScore(whole,cap,stack,groups))?whole:poured;
   for(const b of chosen){
     if(!b.length)continue;
     const by=new Map();
     for(const{i,n}of b)by.set(i,(by.get(i)||0)+n);
     const lines=[...by].map(([i,n])=>({...pool[i],count:n,need:Math.ceil(n/pool[i].stack)}));
-    lines.sort((x,y)=>x.item.line_no-y.item.line_no); // 혼적 파렛트 안에서는 발주서 순서대로
+    lines.sort((x,y)=>sauceCmp(sauceOf(x),sauceOf(y))||x.item.line_no-y.item.line_no); // 혼적 파렛트 안: 양념별 → 발주서 순서
     out.push(lines.length===1?{kind:"single",lines}:{kind:"mixed",slots,cols,lines});
   }
   return out;
@@ -456,20 +469,22 @@ function buildPallets(lines,methodMap,cfg){
   const asSingle=e=>({kind:"single",lines:[{...e,capInfo:e.capInfo}]});
   const optA=big.map(asSingle).concat(mergePool(small));
   const optB=big.length&&small.length?mergePool(big.concat(small)):null;
-  // 비교: 파렛트 수 → 1자리도 안 되는 나뉜 조각 수 → 상품 1개 소량 파렛트 수 → 두 파렛트 이상에 나뉜 제품 수 → (소량 파렛트 중 최소 수량이 큰 쪽)
+  // 비교: 파렛트 수 → 1자리도 안 되는 나뉜 조각 수 → 양념 섞인 파렛트 수 → 상품 1개 소량 파렛트 수 → 두 파렛트 이상에 나뉜 제품 수 → (소량 파렛트 중 최소 수량이 큰 쪽)
   const score=list=>{
     const smallOnes=list.filter(p=>p.kind==="single"&&p.lines[0].count<p.lines[0].stack*p.lines[0].slots/2);
     const occ=list.reduce((a,p)=>a+p.lines.length,0),uniq=new Set(list.flatMap(p=>p.lines.map(l=>l.product.code))).size;
     const per={};list.forEach(p=>p.lines.forEach(l=>{per[l.product.code]=(per[l.product.code]||0)+1}));
     const tinyPieces=list.reduce((a,p)=>a+p.lines.filter(l=>per[l.product.code]>1&&l.count<l.stack).length,0);
-    return[list.length,tinyPieces,smallOnes.length,occ-uniq,-Math.min(Infinity,...smallOnes.map(p=>p.lines[0].count))];
+    const sauceMix=list.reduce((a,p)=>a+sauceConflict(p.lines.map(sauceOf)),0);
+    return[list.length,tinyPieces,sauceMix,smallOnes.length,occ-uniq,-Math.min(Infinity,...smallOnes.map(p=>p.lines[0].count))];
   };
   const better=(x,y)=>lexLess(score(x),score(y));
   const merged=optB&&better(optB,optA)?optB:optA;
   // 단독 파렛트 먼저(발주서 순서 → 같은 제품은 많은 것부터), 혼적은 뒤로
   const sgl=singles.concat(merged.filter(p=>p.kind==="single"))
     .sort((x,y)=>x.lines[0].item.line_no-y.lines[0].item.line_no||y.lines[0].count-x.lines[0].count);
-  const all=sgl.concat(merged.filter(p=>p.kind==="mixed"));
+  const mixedSorted=merged.filter(p=>p.kind==="mixed").sort((x,y)=>sauceCmp(sauceOf(x.lines[0]),sauceOf(y.lines[0]))); // 혼적은 양념별로 이어서
+  const all=sgl.concat(mixedSorted);
   return all.map((p,i)=>({...p,no:i+1,total:all.length,boxes:p.lines.reduce((s,l)=>s+l.count,0)}));
 }
 
@@ -541,6 +556,8 @@ function ProductForm({adminHash,masters,initial,onSaved,onCancel,onReloadMasters
   const[site,setSite]=useState(initial?.site||"");
   const[boxSpec,setBoxSpec]=useState(initial?.box_spec||"");
   const[color,setColor]=useState(initial?.color||COLOR_PRESETS[0]);
+  const[sauce,setSauce]=useState(initial?.sauce||"");
+  const sauceOptions=[...new Set(["간장","고추장",...masters.products.map(x=>(x.sauce||"").trim()).filter(Boolean)])];
   const[err,setErr]=useState("");
   const[saving,setSaving]=useState(false);
   const[showSpecs,setShowSpecs]=useState(false);
@@ -556,11 +573,18 @@ function ProductForm({adminHash,masters,initial,onSaved,onCancel,onReloadMasters
     if(!per||per<1){setErr("입수량은 1 이상의 숫자로 입력하세요");return}
     setSaving(true);setErr("");
     try{
-      await rpc("ol_upsert_product",{
+      const args={
         p_admin_hash:adminHash,p_id:initial?.id||null,p_code:code.trim(),p_name:name.trim(),
         p_image_name:imageName.trim(),p_per_box:per,p_method_ids:methodIds,
         p_site:site.trim(),p_box_spec:boxSpec,p_color:color
-      });
+      };
+      try{await rpc("ol_upsert_product",{...args,p_sauce:sauce.trim()})}
+      catch(e){
+        // setup_orders_sauce.sql 실행 전이면 양념 없이 저장하고 안내
+        if(!/function|PGRST202|schema cache/i.test(String(e?.message||e)))throw e;
+        await rpc("ol_upsert_product",args);
+        if(sauce.trim())alert("제품은 저장했지만 양념은 저장되지 않았습니다.\nSupabase SQL Editor에서 setup_orders_sauce.sql 을 1회 실행해 주세요.");
+      }
       onSaved();
     }catch(e){setErr(errMsg(e))}
     setSaving(false);
@@ -623,6 +647,14 @@ function ProductForm({adminHash,masters,initial,onSaved,onCancel,onReloadMasters
         📦 단독 1파렛트 적재량: <b>{capText(c)}</b>{c.fromSpec&&c.canMix&&<span style={{color:"var(--muted)"}}> · 혼적 시 1자리 최대 {c.stack}단</span>}
       </div>;
     })()}
+
+    <div style={{marginBottom:12}}>
+      <div className="ol-label">양념 (같은 양념끼리 우선 혼적)</div>
+      <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginTop:4}}>
+        {["",...sauceOptions].map(o=><button key={o||"none"} type="button" className={"ol-btn ol-btn-sm "+(sauce.trim()===o?"ol-btn-primary":"ol-btn-secondary")} onClick={()=>setSauce(o)}>{o||"없음"}</button>)}
+        <input className="ol-input" style={{width:140}} value={sauce} onChange={e=>setSauce(e.target.value)} placeholder="직접 입력"/>
+      </div>
+    </div>
 
     <div style={{marginBottom:12}}>
       <div className="ol-label">이미지 표시 색상</div>
@@ -912,7 +944,7 @@ function ProductsTab({adminHash,masters,reloadMasters}){
     {masters.products.length===0?<Empty emoji="📦" text="등록된 제품이 없습니다. '+ 제품 추가'로 시작하세요."/>:
     list.length===0?<Empty emoji="🔍" text="검색 결과가 없습니다"/>:
     <div className="ol-scroll"><table className="ol-table" style={{minWidth:1080}}>
-      <thead><tr><th>제품코드</th><th>제품명</th><th>이미지용 이름</th><th className="right">입수</th><th>적재방식</th><th>생산지점</th><th>박스규격</th><th>단독 1파렛트 적재량</th><th></th></tr></thead>
+      <thead><tr><th>제품코드</th><th>제품명</th><th>이미지용 이름</th><th className="right">입수</th><th>적재방식</th><th>생산지점</th><th>양념</th><th>박스규격</th><th>단독 1파렛트 적재량</th><th></th></tr></thead>
       <tbody>{list.map(p=><tr key={p.id}>
         <td style={{fontFamily:"monospace",fontSize:12}}>{p.code}</td>
         <td>{p.name}</td>
@@ -921,6 +953,7 @@ function ProductsTab({adminHash,masters,reloadMasters}){
         <td>{(p.method_ids||[]).map(id=>methodMap[Number(id)]).filter(Boolean).map(m=><span key={m.id} className={"ol-pill "+m.kind}>{m.name}</span>)}
           {!(p.method_ids||[]).length&&<span style={{fontSize:11,color:"#f59e0b"}}>미지정 (기본 {DEFAULT_CAP}박스 단독)</span>}</td>
         <td>{p.site||<span style={{color:"var(--dimmer)"}}>–</span>}</td>
+        <td>{(p.sauce||"").trim()?<span className="ol-pill">{p.sauce}</span>:<span style={{color:"var(--dimmer)"}}>–</span>}</td>
         <td style={{fontSize:12}}>{specLabel(p.box_spec,masters.box_specs)||"–"}</td>
         <td style={{fontSize:12,whiteSpace:"nowrap"}}>{(()=>{const c=boxCapacity(p,methodMap,cfg);
           return <span style={{color:c.fromSpec?"var(--text)":"#f59e0b",fontWeight:c.fromSpec?700:500}}>{capText(c)}{c.fromSpec&&c.canMix&&<span style={{color:"var(--muted)",fontWeight:400}}> · 혼적 1자리 {c.stack}단</span>}</span>})()}</td>
