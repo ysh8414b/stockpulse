@@ -1185,8 +1185,11 @@ function OrdersTab({adminHash,masters,reloadMasters,dates,reloadDates,selDate,se
 // ═══════════════════════════════════════════
 // 부착리스트 (엑셀 템플릿과 동일 구조 — 파렛트 1개 = 시트 1개)
 // ═══════════════════════════════════════════
-// 소비기한 = 발주서의 유통(소비)기한, 없으면 빈칸
-function expiryOf(ln){return ln.item.expiry_date?String(ln.item.expiry_date).slice(0,10):""}
+// 소비기한 = 발주서의 유통(소비)기한, 없으면 빈칸 · 냉동 제품은 항상 빈칸
+function expiryOf(ln){
+  if(storageOf(ln.product)==="frozen")return "";
+  return ln.item.expiry_date?String(ln.item.expiry_date).slice(0,10):"";
+}
 
 function AttachSheetPreview({group,pallet,prefix,color}){
   const o=group.order;
