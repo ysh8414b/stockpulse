@@ -1149,7 +1149,8 @@ function OrdersTab({adminHash,masters,reloadMasters,dates,reloadDates,selDate,se
 // ═══════════════════════════════════════════
 // 부착리스트 (엑셀 템플릿과 동일 구조 — 파렛트 1개 = 시트 1개)
 // ═══════════════════════════════════════════
-function expiryOf(ln,dueDate){return ln.item.expiry_date?String(ln.item.expiry_date).slice(0,10):addDays(dueDate,6)}
+// 소비기한 = 발주서의 유통(소비)기한, 없으면 빈칸
+function expiryOf(ln){return ln.item.expiry_date?String(ln.item.expiry_date).slice(0,10):""}
 
 function AttachSheetPreview({group,pallet,prefix,color}){
   const o=group.order;
@@ -1165,7 +1166,7 @@ function AttachSheetPreview({group,pallet,prefix,color}){
       <thead><tr><th>NO</th><th>SKU NO</th><th>SKU NAME</th><th>BOX 수량</th><th>수량</th><th>소비기한</th></tr></thead>
       <tbody>{pallet.lines.map((ln,i)=><tr key={i}>
         <td>{i+1}</td><td>{ln.item.code}</td><td style={{textAlign:"left"}}>{ln.item.name}</td>
-        <td style={{fontWeight:700}}>{ln.count}</td><td>{ln.count*ln.per}</td><td>{expiryOf(ln,o.due_date)}</td>
+        <td style={{fontWeight:700}}>{ln.count}</td><td>{ln.count*ln.per}</td><td>{expiryOf(ln)}</td>
       </tr>)}</tbody>
     </table>
   </div>;
@@ -1215,7 +1216,8 @@ function buildPalletSheet(group,pallet,prefix,color){
     put(`C${R}`,s(ln.item.name,XS_CELL));
     put(`D${R}`,s(ln.count,XS_CELL));
     put(`E${R}`,{t:"n",v:ln.count*ln.per,f:`D${R}*${ln.per}`,s:XS_CELL});
-    put(`F${R}`,{t:"n",v:excelSerial(expiryOf(ln,String(o.due_date).slice(0,10))),z:"yyyy-mm-dd",s:{...XS_CELL,numFmt:"yyyy-mm-dd"}});
+    const exp=expiryOf(ln);
+    put(`F${R}`,exp?{t:"n",v:excelSerial(exp),z:"yyyy-mm-dd",s:{...XS_CELL,numFmt:"yyyy-mm-dd"}}:s("",XS_CELL));
   });
   ws["!ref"]=`A1:F${Math.max(lastRow,9)}`;
   ws["!merges"]=[
@@ -1252,7 +1254,7 @@ function AttachListView({groups,site,date,prefix,vendorColors,onVendorColor}){
   return <>
     <div className="ol-toolbar">
       <button className="ol-btn ol-btn-primary" onClick={()=>downloadAttachXlsx(groups,site,date,prefix,colorOf)} disabled={!total}>📥 부착리스트 엑셀 다운로드 ({total}시트)</button>
-      <span style={{fontSize:12,color:"var(--muted)"}}>파렛트 1개 = 시트 1개 · 소비기한은 발주서의 유통(소비)기한, 없으면 입고일+6일</span>
+      <span style={{fontSize:12,color:"var(--muted)"}}>파렛트 1개 = 시트 1개 · 소비기한은 발주서의 유통(소비)기한, 없으면 빈칸</span>
     </div>
     {vendors.length>0&&<div className="ol-toolbar" style={{fontSize:12}}>
       <span style={{color:"var(--muted)"}}>업체별 제목 색</span>
