@@ -14,6 +14,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <!-- xlsx-js-style: SheetJS 0.18.5 포크 — 읽기 + 스타일(테두리/폰트/채우기) 포함 쓰기 -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="shared.js"></script>
   <style>
     .ol-shell{max-width:1200px;margin:0 auto;padding:20px 32px 60px;box-sizing:border-box}
@@ -165,6 +166,27 @@ function Modal({children,onClose,lg}){
 
 // ═══════════════════════════════════════════
 // 발주서 엑셀 파싱
+// 압축파일(.zip) → 안의 엑셀 파일 목록 [{name, read()}] (하위 폴더·압축 안의 압축 포함)
+// 윈도우에서 만든 zip은 한글 파일명이 CP949라 UTF-8로 안 읽히면 EUC-KR로 다시 읽음
+function decodeZipName(bytes){
+  bytes=bytes instanceof Uint8Array?bytes:new Uint8Array(bytes);
+  try{return new TextDecoder("utf-8",{fatal:true}).decode(bytes)}
+  catch(e){try{return new TextDecoder("euc-kr").decode(bytes)}catch(e2){return String.fromCharCode(...bytes)}}
+}
+async function unzipOrderFiles(buf,zipName,depth=0){
+  if(!window.JSZip)throw new Error("압축 해제 라이브러리를 불러오지 못했습니다");
+  const zip=await JSZip.loadAsync(buf,{decodeFileName:decodeZipName});
+  const out=[];
+  for(const e of Object.values(zip.files)){
+    if(e.dir)continue;
+    const base=e.name.split("/").pop();
+    if(/^__MACOSX\//.test(e.name)||base.startsWith("~$")||base.startsWith("."))continue; // 맥 메타·엑셀 임시파일 제외
+    const label=zipName+" › "+base;
+    if(/\.(xlsx|xls)$/i.test(base))out.push({name:label,read:()=>e.async("arraybuffer")});
+    else if(/\.zip$/i.test(base)&&depth<2)out.push(...await unzipOrderFiles(await e.async("arraybuffer"),label,depth+1));
+  }
+  return out.sort((a,b)=>a.name.localeCompare(b.name,"ko",{numeric:true}));
+}
 // 고정 셀(C5 업체명, C10 발주번호, F13 입고예정일시, C13 물류센터) 우선,
 // 비어 있으면 라벨 검색으로 fallback
 // ═══════════════════════════════════════════
@@ -1070,9 +1092,20 @@ function OrdersTab({adminHash,masters,reloadMasters,dates,reloadDates,selDate,se
     setBusy(true);
     const report=[];
     let lastDate="";
+    // 압축파일(.zip)은 안의 엑셀을 꺼내서 하나씩 처리
+    const entries=[];
     for(const f of files){
       try{
-        const buf=await f.arrayBuffer();
+        if(/\.zip$/i.test(f.name)){
+          const inner=await unzipOrderFiles(await f.arrayBuffer(),f.name);
+          if(!inner.length)report.push({file:f.name,ok:false,msg:"압축파일 안에 엑셀(.xlsx/.xls)이 없습니다"});
+          entries.push(...inner);
+        }else entries.push({name:f.name,read:()=>f.arrayBuffer()});
+      }catch(e){report.push({file:f.name,ok:false,msg:"압축파일을 열지 못했습니다: "+errMsg(e)})}
+    }
+    for(const f of entries){
+      try{
+        const buf=await f.read();
         const parsed=parseOrderWorkbook(buf,f.name);
         if(!parsed.length){report.push({file:f.name,ok:false,msg:"발주서 형식을 찾지 못했습니다 (상품코드 표 없음)"});continue}
         for(const o of parsed){
@@ -1121,8 +1154,8 @@ function OrdersTab({adminHash,masters,reloadMasters,dates,reloadDates,selDate,se
   return <>
     <div className="ol-toolbar">
       <button className="ol-btn ol-btn-primary" onClick={()=>fileRef.current?.click()} disabled={busy}>{busy?"업로드 중...":"📁 발주서 업로드"}</button>
-      <input ref={fileRef} type="file" accept=".xlsx,.xls" multiple style={{display:"none"}} onChange={e=>handleFiles([...e.target.files])}/>
-      <span style={{fontSize:12,color:"var(--muted)"}}>여러 파일 동시 선택 가능 · 같은 발주번호를 다시 올리면 덮어씁니다 · 입고예정일 기준 1달 지난 발주서는 자동 삭제</span>
+      <input ref={fileRef} type="file" accept=".xlsx,.xls,.zip" multiple style={{display:"none"}} onChange={e=>handleFiles([...e.target.files])}/>
+      <span style={{fontSize:12,color:"var(--muted)"}}>여러 파일 동시 선택 가능 · 압축파일(.zip)도 가능 · 같은 발주번호를 다시 올리면 덮어씁니다 · 입고예정일 기준 1달 지난 발주서는 자동 삭제</span>
     </div>
 
     <div className="ol-layout">
