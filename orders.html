@@ -522,7 +522,9 @@ function mergeOrders(list){
 // 날짜의 발주서들 → [{order, orders, vendor, site, lines, pallets}]
 // 입고일(이미 날짜별 조회) + 업체명 + 센터가 같으면 발주번호가 달라도 한 리스트로 합쳐 적재 (추가 발주 대응)
 // 같은 상품코드·같은 소비기한은 수량을 합쳐 한 줄로 → 파렛트를 같이 채움. 그 안에서 생산지점별로 분리
-function buildSiteGroups(orders,prodMap,methodMap,cfg){
+// opts.separate: 추가 발주 — 발주번호가 달라도 합치지 않고 발주서마다 따로 적재·번호
+function buildSiteGroups(orders,prodMap,methodMap,cfg,opts){
+  const sep=!!opts?.separate;
   const buckets=new Map(),unmatched=[];
   const sorted=[...orders].sort((a,b)=>String(a.order_no).localeCompare(String(b.order_no),undefined,{numeric:true}));
   for(const o of sorted){
@@ -531,9 +533,9 @@ function buildSiteGroups(orders,prodMap,methodMap,cfg){
       const p=prodMap[it.code];
       if(!p){unmatched.push({order:o,item:it});continue}
       const site=(p.site||"").trim()||NO_SITE,storage=storageOf(p);
-      const key=vendor+"\u0001"+center+"\u0001"+storage+"\u0001"+site;
+      const key=(sep?o.id+"\u0001":"")+vendor+"\u0001"+center+"\u0001"+storage+"\u0001"+site;
       let b=buckets.get(key);
-      if(!b){b={vendor,center,storage,site,orders:[],items:new Map()};buckets.set(key,b)}
+      if(!b){b={vendor,center,storage,site,orderKey:sep?String(o.id):"",orders:[],items:new Map()};buckets.set(key,b)}
       if(!b.orders.includes(o))b.orders.push(o);
       const ik=it.code+"|"+(it.expiry_date||"");
       const cur=b.items.get(ik);
@@ -545,15 +547,15 @@ function buildSiteGroups(orders,prodMap,methodMap,cfg){
     .sort((a,b)=>a.vendor.localeCompare(b.vendor)||a.center.localeCompare(b.center)||a.storage.localeCompare(b.storage)||a.site.localeCompare(b.site,"ko",{numeric:true}))
     .map(b=>{
       const lines=[...b.items.values()].map(e=>enrichLine(e.item,e.product));
-      return{order:mergeOrders(b.orders),orders:b.orders,vendor:b.vendor,center:b.center,storage:b.storage,site:b.site,lines,pallets:buildPallets(lines,methodMap,cfg||DEFAULT_PALLET)};
+      return{order:mergeOrders(b.orders),orders:b.orders,vendor:b.vendor,center:b.center,storage:b.storage,orderKey:b.orderKey,site:b.site,lines,pallets:buildPallets(lines,methodMap,cfg||DEFAULT_PALLET)};
     });
   // 같은 생산지점에 냉장·냉동이 함께 있으면 표시·편집 키를 구분
-  const siteKey=g=>g.vendor+"\u0001"+g.center+"\u0001"+g.site;
+  const siteKey=g=>g.orderKey+"\u0001"+g.vendor+"\u0001"+g.center+"\u0001"+g.site;
   const siteCount={};for(const g of groups)siteCount[siteKey(g)]=(siteCount[siteKey(g)]||0)+1;
   for(const g of groups)g.splitStorage=siteCount[siteKey(g)]>1;
   // 같은 업체·센터·보관(냉장/냉동)인데 생산지점이 다르면 적재는 따로, 파렛트 번호는 이어서 (예: 3층 22-1~10, 4층 22-11~22)
   const byVendor=new Map();
-  for(const g of groups){const k=g.vendor+"\u0001"+g.center+"\u0001"+g.storage;if(!byVendor.has(k))byVendor.set(k,[]);byVendor.get(k).push(g)}
+  for(const g of groups){const k=g.orderKey+"\u0001"+g.vendor+"\u0001"+g.center+"\u0001"+g.storage;if(!byVendor.has(k))byVendor.set(k,[]);byVendor.get(k).push(g)}
   for(const list of byVendor.values()){
     if(list.length<2)continue;
     const total=list.reduce((a,g)=>a+g.pallets.length,0);
@@ -1067,7 +1069,7 @@ function UnmatchedBanner({unmatched,onRegister}){
   </div>;
 }
 
-function OrdersTab({adminHash,masters,reloadMasters,dates,reloadDates,selDate,setSelDate,orders,reloadOrders,loadingOrders}){
+function OrdersTab({adminHash,masters,reloadMasters,dates,reloadDates,selDate,setSelDate,orders,reloadOrders,loadingOrders,extra}){
   const[siteF,setSiteF]=useState("all");
   const[busy,setBusy]=useState(false);
   const[result,setResult]=useState(null); // 업로드 결과 모달
@@ -1112,13 +1114,21 @@ function OrdersTab({adminHash,masters,reloadMasters,dates,reloadDates,selDate,se
           if(!o.orderNo){report.push({file:f.name,ok:false,msg:"발주번호(C10)를 찾지 못했습니다"});continue}
           if(!o.dueDate){report.push({file:f.name,ok:false,msg:`발주 ${o.orderNo}: 입고예정일시(F13)를 읽지 못했습니다`});continue}
           if(!o.items.length){report.push({file:f.name,ok:false,msg:`발주 ${o.orderNo}: 상품이 없습니다`});continue}
-          const res=await rpc("ol_save_order",{
+          const saveArgs={
             p_admin_hash:adminHash,p_order_no:o.orderNo,p_vendor:o.vendor,p_center:o.center,p_center_addr:o.centerAddr,
             p_due_date:o.dueDate,p_order_type:o.orderType,p_file_name:f.name,
             p_items:o.items.map(({center,...it})=>it)
-          });
+          };
+          let res;
+          try{res=await rpc("ol_save_order",{...saveArgs,p_is_extra:!!extra})}
+          catch(e){
+            // setup_orders_extra.sql 실행 전: 일반 발주는 예전 방식으로 저장, 추가 발주는 저장 불가 안내
+            if(!/function|PGRST202|schema cache/i.test(String(e?.message||e)))throw e;
+            if(extra)throw new Error("추가 발주를 쓰려면 Supabase SQL Editor에서 setup_orders_extra.sql 을 1회 실행해 주세요");
+            res=await rpc("ol_save_order",saveArgs);
+          }
           const missing=o.items.filter(it=>!prodMap[it.code]);
-          report.push({file:f.name,ok:true,orderNo:o.orderNo,dueDate:o.dueDate,vendor:o.vendor,center:o.center,count:o.items.length,replaced:!!res?.replaced,missing});
+          report.push({file:f.name,ok:true,orderNo:o.orderNo,dueDate:o.dueDate,vendor:o.vendor,center:o.center,count:o.items.length,replaced:!!res?.replaced,moved:!!res?.moved,missing});
           lastDate=o.dueDate;
         }
       }catch(e){report.push({file:f.name,ok:false,msg:errMsg(e)})}
@@ -1153,7 +1163,7 @@ function OrdersTab({adminHash,masters,reloadMasters,dates,reloadDates,selDate,se
 
   return <>
     <div className="ol-toolbar">
-      <button className="ol-btn ol-btn-primary" onClick={()=>fileRef.current?.click()} disabled={busy}>{busy?"업로드 중...":"📁 발주서 업로드"}</button>
+      <button className="ol-btn ol-btn-primary" onClick={()=>fileRef.current?.click()} disabled={busy}>{busy?"업로드 중...":extra?"📁 추가 발주서 업로드":"📁 발주서 업로드"}</button>
       <input ref={fileRef} type="file" accept=".xlsx,.xls,.zip" multiple style={{display:"none"}} onChange={e=>handleFiles([...e.target.files])}/>
       <span style={{fontSize:12,color:"var(--muted)"}}>여러 파일 동시 선택 가능 · 압축파일(.zip)도 가능 · 같은 발주번호를 다시 올리면 덮어씁니다 · 입고예정일 기준 1달 지난 발주서는 자동 삭제</span>
     </div>
@@ -1161,8 +1171,8 @@ function OrdersTab({adminHash,masters,reloadMasters,dates,reloadDates,selDate,se
     <div className="ol-layout">
       <DateList dates={dates} selected={selDate} onSelect={setSelDate}/>
       <div style={{minWidth:0}}>
-        {!selDate?<Empty emoji="📄" text="발주서를 업로드하세요"/>:loadingOrders?<Loader/>:<>
-          <div style={{fontSize:18,fontWeight:800,marginBottom:10}}>{selDate} ({dowOf(selDate)}) 입고 · 발주서 {orders.length}건</div>
+        {!selDate?<Empty emoji="📄" text={extra?"추가 발주서를 업로드하세요 — 기존 발주리스트와 섞이지 않고 따로 적재됩니다":"발주서를 업로드하세요"}/>:loadingOrders?<Loader/>:<>
+          <div style={{fontSize:18,fontWeight:800,marginBottom:10}}>{selDate} ({dowOf(selDate)}) 입고 · {extra?"추가 ":""}발주서 {orders.length}건</div>
           <UnmatchedBanner unmatched={unmatched} onRegister={(code,name)=>setQuickAdd({code,name})}/>
           <div className="ol-chips" style={{marginBottom:12}}>
             <button className={siteF==="all"?"on":""} onClick={()=>setSiteF("all")}>전체</button>
@@ -1205,7 +1215,7 @@ function OrdersTab({adminHash,masters,reloadMasters,dates,reloadDates,selDate,se
       <div style={{fontSize:17,fontWeight:700,marginBottom:12}}>📥 업로드 결과</div>
       {totalMissing>0&&<div className="ol-warn" style={{fontSize:14}}>⚠ <b>제품리스트에 없는 상품코드가 {totalMissing}건</b> 있습니다. 등록하기 전까지 부착리스트·적재이미지에서 빠집니다.</div>}
       {result.map((r,i)=>r.ok?<div key={i} className="ol-ok">
-        ✅ <b>{r.orderNo}</b> {r.replaced&&<span className="ol-pill mixed">덮어씀</span>} — 입고 {r.dueDate} · {r.center} · 품목 {r.count}건 <span style={{color:"var(--muted)",fontSize:12}}>({r.file})</span>
+        ✅ <b>{r.orderNo}</b> {r.moved?<span className="ol-pill mixed">{extra?"일반 발주 → 추가 발주로 옮김":"추가 발주 → 일반 발주로 옮김"}</span>:r.replaced&&<span className="ol-pill mixed">덮어씀</span>} — 입고 {r.dueDate} · {r.center} · 품목 {r.count}건 <span style={{color:"var(--muted)",fontSize:12}}>({r.file})</span>
         {r.missing.length>0&&<div style={{marginTop:6}}>{r.missing.map(m=><div key={m.code} style={{color:"#ef4444",fontSize:13}}>⚠ 미등록: <b style={{fontFamily:"monospace"}}>{m.code}</b> {m.name}</div>)}</div>}
       </div>:<div key={i} className="ol-warn">❌ {r.file}: {r.msg}</div>)}
       <div style={{textAlign:"right",marginTop:12}}><button className="ol-btn ol-btn-primary" onClick={()=>setResult(null)}>확인</button></div>
@@ -1825,7 +1835,7 @@ function LoadImageView({groups,date,prefix,adminHash,masters}){
 // ═══════════════════════════════════════════
 // 발주리스트 탭 (부착리스트 / 적재이미지 — 생산지점별)
 // ═══════════════════════════════════════════
-function ListsTab({adminHash,masters,reloadMasters,dates,selDate,setSelDate,orders,loadingOrders}){
+function ListsTab({adminHash,masters,reloadMasters,dates,selDate,setSelDate,orders,loadingOrders,extra}){
   const[sub,setSub]=useState(()=>lsGet("ol-list-sub","attach")==="image"?"image":"attach");
   const[site,setSite]=useState("");
   const[prefix,setPrefix]=useState(()=>lsGet("ol-prefix","쿠팡"));
@@ -1834,7 +1844,7 @@ function ListsTab({adminHash,masters,reloadMasters,dates,selDate,setSelDate,orde
 
   const prodMap=useMemo(()=>Object.fromEntries(masters.products.map(p=>[p.code,p])),[masters.products]);
   const methodMap=useMemo(()=>toMethodMap(masters.methods),[masters.methods]);
-  const{groups,unmatched}=useMemo(()=>buildSiteGroups(orders,prodMap,methodMap,palletCfg(masters.settings)),[orders,prodMap,methodMap,masters.settings]);
+  const{groups,unmatched}=useMemo(()=>buildSiteGroups(orders,prodMap,methodMap,palletCfg(masters.settings),{separate:extra}),[orders,prodMap,methodMap,masters.settings,extra]);
   const sites=useMemo(()=>[...new Set(groups.map(g=>g.site))].sort(),[groups]);
   useEffect(()=>{if(sites.length&&!sites.includes(site))setSite(sites[0])},[sites]);
   const siteGroups=groups.filter(g=>g.site===site);
@@ -1852,9 +1862,9 @@ function ListsTab({adminHash,masters,reloadMasters,dates,selDate,setSelDate,orde
   return <div className="ol-layout">
     <DateList dates={dates} selected={selDate} onSelect={setSelDate}/>
     <div style={{minWidth:0}}>
-      {!selDate?<Empty emoji="📄" text="발주서 탭에서 발주서를 먼저 업로드하세요"/>:loadingOrders?<Loader/>:<>
+      {!selDate?<Empty emoji="📄" text={extra?"추가 발주서를 먼저 업로드하세요":"발주서 탭에서 발주서를 먼저 업로드하세요"}/>:loadingOrders?<Loader/>:<>
         <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",marginBottom:12}}>
-          <div style={{fontSize:18,fontWeight:800}}>{selDate} ({dowOf(selDate)}) 입고</div>
+          <div style={{fontSize:18,fontWeight:800}}>{selDate} ({dowOf(selDate)}) 입고{extra&&<span className="ol-pill mixed" style={{marginLeft:8,verticalAlign:"middle"}}>추가 발주</span>}</div>
           <div className="ol-subtabs">
             <button className={sub==="attach"?"on":""} onClick={()=>setSub("attach")}>🏷 부착리스트</button>
             <button className={sub==="image"?"on":""} onClick={()=>setSub("image")}>🖼 적재이미지</button>
@@ -1882,7 +1892,52 @@ function ListsTab({adminHash,masters,reloadMasters,dates,selDate,setSelDate,orde
 // ═══════════════════════════════════════════
 // App
 // ═══════════════════════════════════════════
-const VALID_TABS=["products","orders","lists"];
+// 입고일 목록 + 선택일 발주서 — 일반 발주(extra=false) / 추가 발주(extra=true) 따로 관리
+function useOrderData(adminHash,extra,onErr){
+  const[dates,setDates]=useState([]);
+  const[selDate,setSelDate]=useState("");
+  const[orders,setOrders]=useState([]);
+  const[loadingOrders,setLoadingOrders]=useState(false);
+  // setup_orders_extra.sql 실행 전이면 p_extra 없이 호출(일반 발주만) / 추가 발주는 빈 목록
+  const call=async(name,args)=>{
+    try{return await rpc(name,{...args,p_extra:extra})}
+    catch(e){
+      if(!/function|PGRST202|schema cache/i.test(String(e?.message||e)))throw e;
+      return extra?[]:await rpc(name,args);
+    }
+  };
+  const reloadDates=useCallback(async()=>{
+    try{
+      const d=await call("ol_list_due_dates",{p_admin_hash:adminHash});
+      const list=Array.isArray(d)?d.map(x=>({...x,due_date:String(x.due_date).slice(0,10)})):[];
+      setDates(list);
+      return list;
+    }catch(e){onErr(errMsg(e));return []}
+  },[adminHash,extra]);
+  const reloadOrders=useCallback(async date=>{
+    if(!date){setOrders([]);return}
+    setLoadingOrders(true);
+    try{
+      const d=await call("ol_list_orders",{p_admin_hash:adminHash,p_from:date,p_to:date});
+      setOrders((Array.isArray(d)?d:[]).map(o=>({...o,due_date:String(o.due_date).slice(0,10)})));
+    }catch(e){setOrders([]);onErr(errMsg(e))}
+    setLoadingOrders(false);
+  },[adminHash,extra]);
+  // 초기 로드: 오늘 이후 가장 가까운 입고일, 없으면 최신
+  useEffect(()=>{
+    (async()=>{
+      const list=await reloadDates();
+      if(!list.length)return;
+      const today=todayYmd();
+      const upcoming=list.filter(d=>d.due_date>=today).sort((a,b)=>a.due_date<b.due_date?-1:1)[0];
+      setSelDate((upcoming||list[0]).due_date);
+    })();
+  },[reloadDates]);
+  useEffect(()=>{reloadOrders(selDate)},[selDate,reloadOrders]);
+  return{dates,reloadDates,selDate,setSelDate,orders,reloadOrders,loadingOrders};
+}
+
+const VALID_TABS=["products","orders","lists","extra"];
 function getTabFromHash(){const h=(window.location.hash||"").replace("#","");return VALID_TABS.includes(h)?h:"orders"}
 
 function App(){
@@ -1893,10 +1948,6 @@ function App(){
   const[tab,setTab]=useState(getTabFromHash());
   const[masters,setMasters]=useState({products:[],box_specs:[],methods:[],sites:[],settings:{}});
   const[mastersErr,setMastersErr]=useState("");
-  const[dates,setDates]=useState([]);
-  const[selDate,setSelDate]=useState("");
-  const[orders,setOrders]=useState([]);
-  const[loadingOrders,setLoadingOrders]=useState(false);
 
   useEffect(()=>{applyTheme(theme)},[theme]);
   const toggleTheme=()=>{const t=theme==="dark"?"light":"dark";setTheme(t);setStoredTheme(t)};
@@ -1910,39 +1961,22 @@ function App(){
       setMastersErr("");
     }catch(e){setMastersErr(errMsg(e))}
   },[adminHash]);
-  const reloadDates=useCallback(async()=>{
-    try{
-      const d=await rpc("ol_list_due_dates",{p_admin_hash:adminHash});
-      const list=Array.isArray(d)?d.map(x=>({...x,due_date:String(x.due_date).slice(0,10)})):[];
-      setDates(list);
-      return list;
-    }catch(e){setMastersErr(errMsg(e));return []}
-  },[adminHash]);
-  const reloadOrders=useCallback(async date=>{
-    if(!date){setOrders([]);return}
-    setLoadingOrders(true);
-    try{
-      const d=await rpc("ol_list_orders",{p_admin_hash:adminHash,p_from:date,p_to:date});
-      setOrders((Array.isArray(d)?d:[]).map(o=>({...o,due_date:String(o.due_date).slice(0,10)})));
-    }catch(e){setOrders([]);setMastersErr(errMsg(e))}
-    setLoadingOrders(false);
-  },[adminHash]);
+  useEffect(()=>{if(loggedIn)reloadMasters()},[loggedIn]);
+  const main=useOrderData(adminHash,false,setMastersErr);
+  const extraData=useOrderData(adminHash,true,setMastersErr);
+  const[extraSub,setExtraSub]=useState(()=>lsGet("ol-extra-sub","orders")==="lists"?"lists":"orders");
+  useEffect(()=>lsSet("ol-extra-sub",extraSub),[extraSub]);
 
-  // 로그인 후 초기 로드: 오늘 이후 가장 가까운 입고일, 없으면 최신
+  // 탭을 옮기면 그 탭 데이터 새로 읽기 (다른 탭에서 같은 발주번호를 올려 옮겨졌을 수 있음)
+  const firstTab=useRef(true);
   useEffect(()=>{
-    if(!loggedIn)return;
-    reloadMasters();
-    (async()=>{
-      const list=await reloadDates();
-      if(!list.length)return;
-      const today=todayYmd();
-      const upcoming=list.filter(d=>d.due_date>=today).sort((a,b)=>a.due_date<b.due_date?-1:1)[0];
-      setSelDate((upcoming||list[0]).due_date);
-    })();
-  },[loggedIn]);
-  useEffect(()=>{if(loggedIn)reloadOrders(selDate)},[selDate,loggedIn]);
+    if(firstTab.current){firstTab.current=false;return}
+    const d=tab==="extra"?extraData:tab==="products"?null:main;
+    if(d){d.reloadDates();d.reloadOrders(d.selDate)}
+  },[tab]);
 
-  const shared={adminHash,masters,reloadMasters,dates,reloadDates,selDate,setSelDate,orders,reloadOrders,loadingOrders};
+  const shared={adminHash,masters,reloadMasters,...main};
+  const sharedExtra={adminHash,masters,reloadMasters,...extraData,extra:true};
 
   return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column"}}>
     <header className="ol-header">
@@ -1962,11 +1996,22 @@ function App(){
           <button className={"ol-tab"+(tab==="products"?" active":"")} onClick={()=>setTab("products")}>📦 제품리스트</button>
           <button className={"ol-tab"+(tab==="orders"?" active":"")} onClick={()=>setTab("orders")}>📄 발주서</button>
           <button className={"ol-tab"+(tab==="lists"?" active":"")} onClick={()=>setTab("lists")}>🗂 발주리스트</button>
+          <button className={"ol-tab"+(tab==="extra"?" active":"")} onClick={()=>setTab("extra")}>➕ 추가 발주</button>
         </div>
         {mastersErr&&<div className="ol-warn">{mastersErr}</div>}
         {tab==="products"&&<ProductsTab {...shared}/>}
         {tab==="orders"&&<OrdersTab {...shared}/>}
         {tab==="lists"&&<ListsTab {...shared}/>}
+        {tab==="extra"&&<>
+          <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",marginBottom:12}}>
+            <div className="ol-subtabs">
+              <button className={extraSub==="orders"?"on":""} onClick={()=>setExtraSub("orders")}>📄 추가 발주서</button>
+              <button className={extraSub==="lists"?"on":""} onClick={()=>setExtraSub("lists")}>🗂 추가 발주리스트</button>
+            </div>
+            <span style={{fontSize:12,color:"var(--muted)"}}>작업이 끝난 뒤 들어온 발주서는 여기에 올리세요 — 기존 발주리스트와 섞이지 않고, 발주서마다 따로 적재됩니다</span>
+          </div>
+          {extraSub==="orders"?<OrdersTab {...sharedExtra}/>:<ListsTab {...sharedExtra}/>}
+        </>}
       </>}
     </div>
     <footer style={{borderTop:"1px solid var(--div2)",maxWidth:1200,margin:"0 auto",padding:"14px 32px",color:"var(--dimmer)",fontSize:12,width:"100%",boxSizing:"border-box",textAlign:"center"}}>
