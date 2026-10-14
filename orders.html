@@ -242,11 +242,9 @@ function parseOrderWorkbook(buf,fileName){
 // 파렛트 계산
 //  - 단독 1파렛트 용량 = 적재방식의 '최대 박스' (항상 이 값 — 박스규격으로 늘거나 줄지 않음)
 //  - 박스규격(가로×세로)은 1단에 몇 박스 깔리는지 계산하는 데만 사용 (파렛트 바닥에 가장 많이 까는 배치, 회전 허용)
-//          단수 = ⌊최대 박스 ÷ 1단 박스 수⌋ (혼적 1자리에 쌓는 높이로 사용)
-//  - 혼적: 1층 = 6방(자리). 자리마다 한 제품을 위로 쌓음(그 제품 단수까지)
-//          자투리를 담는 데 필요한 자리 = ⌈자투리 ÷ 단수⌉, 6방 미만일 때만 혼적으로 보내고
-//          자리 수 큰 것부터 기존 혼적 파렛트 빈자리에 채움(First-Fit Decreasing)
-//  - 박스규격이 없거나 파렛트에 안 들어가면 단수 = ⌊최대 박스 ÷ 6⌋
+//          단수 = ⌊최대 박스 ÷ 1단 박스 수⌋ (표시용)
+//  - 혼적: 1층 = 6방(자리). 1자리 최대 = 혼적 방식 최대 박스 ÷ 6 (예: 30 → 5)
+//          자투리(혼적 1파렛트 최대 이하)는 모두 혼적 풀로 → 최소 파렛트 수로 합치고 파렛트끼리 고르게(pourBalanced)
 // ═══════════════════════════════════════════
 const DEFAULT_CAP=40;
 const DEFAULT_PALLET={pallet_w:1100,pallet_d:1100,max_height:1700,pallet_base:0};
@@ -313,13 +311,16 @@ function boxCapacity(p,methodMap,cfg){
   const canMix=mixed.length>0;
   // 용량은 항상 적재방식의 최대 박스 — 규격은 1단 박스 수 계산에만 사용
   const cap=single.length?Math.max(...single.map(m=>m.max_boxes)):mixed.length?Math.min(...mixed.map(m=>m.max_boxes)):DEFAULT_CAP;
+  // 혼적 1자리에 쌓는 최대 박스 = 혼적 방식 최대 박스 ÷ 층당 방(6) (예: 30 ÷ 6 = 5)
+  const mixCap=mixed.length?Math.min(...mixed.map(m=>m.max_boxes)):cap;
+  const stack=Math.max(1,Math.floor(mixCap/slots));
   const dims=parseSpec(p?.box_spec);
   const perLayer=dims?layerCount(cfg.pallet_w,cfg.pallet_d,dims.w,dims.d):0;
   if(perLayer>0){
     const layers=Math.max(1,Math.floor(cap/perLayer));
-    return{fromSpec:true,dims,layers,perLayer,cap,rem:cap%perLayer,stack:layers,slots,cols,canMix};
+    return{fromSpec:true,dims,layers,perLayer,cap,rem:cap%perLayer,stack,slots,cols,canMix};
   }
-  return{fromSpec:false,badSpec:!!dims,dims,layers:null,perLayer:null,cap,stack:Math.max(1,Math.floor(cap/slots)),slots,cols,canMix};
+  return{fromSpec:false,badSpec:!!dims,dims,layers:null,perLayer:null,cap,stack,slots,cols,canMix};
 }
 function enrichLine(item,p){
   const per=Math.max(1,Number(p?.per_box)||1);
@@ -335,33 +336,140 @@ function capText(c){
   if(c.fromSpec)return c.cap<c.perLayer?`최대 ${c.cap}박스 · 1단 ${c.perLayer}박스 (1단도 안 참)`:`최대 ${c.cap}박스 · 1단 ${c.perLayer}박스 × ${c.layers}단${c.rem?` + ${c.rem}박스`:""}`;
   return c.badSpec?`최대 ${c.cap}박스 · 규격이 파렛트에 안 맞음`:`최대 ${c.cap}박스 · 규격 없음`;
 }
+// 수량들을 bins개 묶음에 고르게 붓기 — 묶음 크기는 ⌊합÷bins⌋ 또는 ⌈합÷bins⌉
+// 어느 묶음을 +1로 할지 × 붓는 순서(6개 이하면 전 순열)를 시험해 한 항목이 두 묶음으로 나뉘는 경우 최소화
+// 반환: [[{i,n}], ...] (i = counts 인덱스, 붓는 순서대로)
+function pourBalanced(counts,bins){
+  const N=counts.reduce((a,b)=>a+b,0),S=Math.max(1,bins);
+  const lo=Math.floor(N/S),k=N%S;
+  const combos=[];
+  (function pick(start,left,acc){
+    if(combos.length>2000)return;
+    if(left===0){combos.push(new Set(acc));return}
+    for(let i=start;i<=S-left;i++)pick(i+1,left-1,[...acc,i]);
+  })(0,k,[]);
+  const idx=counts.map((_,i)=>i);
+  const perms=[];
+  if(counts.length<=6){
+    (function perm(arr,rest){
+      if(!rest.length){perms.push(arr);return}
+      rest.forEach((v,i)=>perm([...arr,v],rest.filter((_,j)=>j!==i)));
+    })([],idx);
+  }else{perms.push(idx);perms.push([...idx].sort((a,b)=>counts[b]-counts[a]))}
+  const pour=(order,hiSet)=>{
+    const out=[];let splits=0,pi=0,left=order.length?counts[order[0]]:0;
+    for(let si=0;si<S;si++){
+      let room=lo+(hiSet.has(si)?1:0);const parts=[];
+      while(room>0&&pi<order.length){
+        const take=Math.min(room,left);
+        if(take>0){parts.push({i:order[pi],n:take});room-=take;left-=take}
+        if(left===0){pi++;left=pi<order.length?counts[order[pi]]:0}
+      }
+      if(parts.length>1)splits+=parts.length-1;
+      out.push(parts);
+    }
+    return{bins:out,splits};
+  };
+  let best=null;
+  outer:for(const order of perms)for(const hiSet of combos){
+    const r=pour(order,hiSet);
+    if(!best||r.splits<best.splits){best=r;if(r.splits===0)break outer}
+  }
+  return best.bins;
+}
+
+// 자투리를 n개 파렛트(각 최대 cap)에 제품을 나누지 않고 통째로 배정 — 가능한 배정 중
+// ① 상품 1개 소량(cap 절반 미만) 파렛트가 적은 것 ② 상품 1개짜리 파렛트가 적은 것 ③ 파렛트끼리 수량 차이가 작은 것. 불가능하면 null
+function packWhole(counts,n,cap){
+  const order=counts.map((_,i)=>i).sort((a,b)=>counts[b]-counts[a]);
+  const load=Array(n).fill(0),items=Array.from({length:n},()=>[]);
+  let best=null,steps=0;
+  const less=(x,y)=>{for(let i=0;i<x.length;i++)if(x[i]!==y[i])return x[i]<y[i];return false};
+  (function dfs(k){
+    if(++steps>300000)return;
+    if(k===order.length){
+      const sc=[items.filter((b,j)=>b.length===1&&load[j]<cap/2).length,items.filter(b=>b.length===1).length,Math.max(...load)-Math.min(...load)];
+      if(!best||less(sc,best.sc))best={sc,bins:items.map(b=>b.map(i=>({i,n:counts[i]})))};
+      return;
+    }
+    const i=order[k];let triedEmpty=false;
+    for(let b=0;b<n;b++){
+      if(load[b]+counts[i]>cap)continue;
+      if(!items[b].length){if(triedEmpty)continue;triedEmpty=true} // 빈 파렛트끼리는 같은 경우
+      items[b].push(i);load[b]+=counts[i];
+      dfs(k+1);
+      items[b].pop();load[b]-=counts[i];
+    }
+  })(0);
+  return best?best.bins:null;
+}
+// 혼적 풀 → 최소 파렛트 수(⌈합 ÷ 혼적 1파렛트 최대⌉)로 합침
+// 후보 두 가지 — 제품을 통째로 배정(packWhole) / 고르게 나눔(pourBalanced, 나뉘는 제품 최소화) — 중
+// ⓪ 제품을 나눴을 때 1자리(stack)도 안 되는 자투리 조각(예: 25+1의 1) 적은 것
+// ① 상품 1개 소량 파렛트(cap 절반 미만) 적은 것 ② 두 파렛트에 나뉜 제품 적은 것 ③ 파렛트 수량 차이 작은 것
+function binScore(bins,cap,stack){
+  const loads=bins.map(b=>b.reduce((a,x)=>a+x.n,0));
+  const ids=new Set(bins.flatMap(b=>b.map(x=>x.i)));
+  const occ={};bins.forEach(b=>new Set(b.map(x=>x.i)).forEach(i=>{occ[i]=(occ[i]||0)+1}));
+  const tinyPieces=bins.reduce((a,b)=>a+b.filter(x=>occ[x.i]>1&&x.n<stack).length,0);
+  return[tinyPieces,bins.filter((b,j)=>new Set(b.map(x=>x.i)).size===1&&loads[j]<cap/2).length,
+    bins.reduce((a,b)=>a+new Set(b.map(x=>x.i)).size,0)-ids.size,
+    Math.max(...loads)-Math.min(...loads)];
+}
+function lexLess(x,y){for(let i=0;i<x.length;i++)if(x[i]!==y[i])return x[i]<y[i];return false}
+function mergePool(pool){
+  if(!pool.length)return[];
+  const slots=Math.min(...pool.map(e=>e.slots)),cols=Math.max(...pool.map(e=>e.cols));
+  const cap=Math.max(1,Math.min(...pool.map(e=>e.stack))*slots);
+  const total=pool.reduce((a,e)=>a+e.count,0);
+  const out=[];
+  const counts=pool.map(e=>e.count),n=Math.ceil(total/cap);
+  const whole=packWhole(counts,n,cap),poured=pourBalanced(counts,n);
+  const stack=Math.max(1,Math.floor(cap/slots));
+  const chosen=whole&&!lexLess(binScore(poured,cap,stack),binScore(whole,cap,stack))?whole:poured;
+  for(const b of chosen){
+    if(!b.length)continue;
+    const by=new Map();
+    for(const{i,n}of b)by.set(i,(by.get(i)||0)+n);
+    const lines=[...by].map(([i,n])=>({...pool[i],count:n,need:Math.ceil(n/pool[i].stack)}));
+    lines.sort((x,y)=>x.item.line_no-y.item.line_no); // 혼적 파렛트 안에서는 발주서 순서대로
+    out.push(lines.length===1?{kind:"single",lines}:{kind:"mixed",slots,cols,lines});
+  }
+  return out;
+}
 function buildPallets(lines,methodMap,cfg){
-  const singles=[],pool=[];
+  const singles=[],small=[],big=[];
   for(const ln of lines){
     if(ln.boxes<=0)continue;
     const c=boxCapacity(ln.product,methodMap,cfg);
     const full=Math.floor(ln.boxes/c.cap),rem=ln.boxes%c.cap;
     for(let i=0;i<full;i++)singles.push({kind:"single",lines:[{...ln,count:c.cap,capInfo:c}]});
     if(rem>0){
-      const need=Math.ceil(rem/c.stack);
-      if(c.canMix&&need<c.slots)pool.push({...ln,count:rem,need,stack:c.stack,h:c.dims?.h||1,slots:c.slots,cols:c.cols,capInfo:c});
-      else singles.push({kind:"single",lines:[{...ln,count:rem,capInfo:c}]});
+      const e={...ln,count:rem,stack:c.stack,h:c.dims?.h||1,slots:c.slots,cols:c.cols,capInfo:c};
+      if(!c.canMix)singles.push({kind:"single",lines:[{...ln,count:rem,capInfo:c}]});
+      else if(rem<=c.stack*c.slots)small.push(e); // 혼적 1파렛트에 들어가는 자투리
+      else big.push(e);                           // 혼적 1파렛트보다 큰 자투리
     }
   }
-  // 자리 많이 차지하는 제품부터, 들어갈 수 있는 첫 혼적 파렛트에
-  const mixedPallets=[];
-  const sorted=pool.map((e,i)=>({e,i})).sort((x,y)=>y.e.need-x.e.need||x.i-y.i).map(x=>x.e);
-  for(const e of sorted){
-    let p=mixedPallets.find(m=>m.slots-m.usedSlots>=e.need&&e.need<=e.slots);
-    if(!p){p={kind:"mixed",slots:e.slots,cols:e.cols,usedSlots:0,lines:[]};mixedPallets.push(p)}
-    p.lines.push(e);
-    p.usedSlots+=e.need;
-    p.slots=Math.min(p.slots,e.slots);
-    p.cols=Math.max(p.cols,e.cols);
-  }
-  // 혼적 파렛트 안에서는 발주서 순서대로 표시
-  for(const p of mixedPallets)p.lines.sort((a,b)=>a.item.line_no-b.item.line_no);
-  const all=singles.concat(mixedPallets.map(p=>p.lines.length===1?{kind:"single",lines:p.lines}:p));
+  // 두 가지를 비교: (가) 큰 자투리는 단독 + 작은 자투리만 혼적 / (나) 큰 자투리까지 모두 혼적
+  // 파렛트 수가 적은 쪽 → 같으면 '상품 1개 소량 파렛트'(혼적 1파렛트 최대의 절반 미만)가 적은 쪽 → 같으면 그런 파렛트 중 가장 작은 게 큰 쪽
+  const asSingle=e=>({kind:"single",lines:[{...e,capInfo:e.capInfo}]});
+  const optA=big.map(asSingle).concat(mergePool(small));
+  const optB=big.length&&small.length?mergePool(big.concat(small)):null;
+  // 비교: 파렛트 수 → 1자리도 안 되는 나뉜 조각 수 → 상품 1개 소량 파렛트 수 → 두 파렛트 이상에 나뉜 제품 수 → (소량 파렛트 중 최소 수량이 큰 쪽)
+  const score=list=>{
+    const smallOnes=list.filter(p=>p.kind==="single"&&p.lines[0].count<p.lines[0].stack*p.lines[0].slots/2);
+    const occ=list.reduce((a,p)=>a+p.lines.length,0),uniq=new Set(list.flatMap(p=>p.lines.map(l=>l.product.code))).size;
+    const per={};list.forEach(p=>p.lines.forEach(l=>{per[l.product.code]=(per[l.product.code]||0)+1}));
+    const tinyPieces=list.reduce((a,p)=>a+p.lines.filter(l=>per[l.product.code]>1&&l.count<l.stack).length,0);
+    return[list.length,tinyPieces,smallOnes.length,occ-uniq,-Math.min(Infinity,...smallOnes.map(p=>p.lines[0].count))];
+  };
+  const better=(x,y)=>lexLess(score(x),score(y));
+  const merged=optB&&better(optB,optA)?optB:optA;
+  // 단독 파렛트 먼저(발주서 순서 → 같은 제품은 많은 것부터), 혼적은 뒤로
+  const sgl=singles.concat(merged.filter(p=>p.kind==="single"))
+    .sort((x,y)=>x.lines[0].item.line_no-y.lines[0].item.line_no||y.lines[0].count-x.lines[0].count);
+  const all=sgl.concat(merged.filter(p=>p.kind==="mixed"));
   return all.map((p,i)=>({...p,no:i+1,total:all.length,boxes:p.lines.reduce((s,l)=>s+l.count,0)}));
 }
 
@@ -1150,27 +1258,25 @@ function groupSinglePallets(pallets){
   }
   return out;
 }
-// 혼적 파렛트 한 층의 자리(방)를 제품들에 배분 → 자리마다 쌓을 박스 수
-// 각 제품은 단수 한도 안에 들어가는 최소 자리(need)부터, 남는 자리는 가장 높이(mm) 쌓이는 제품에 하나씩
-// 예: 6방, 10박스+10박스 → 3자리씩, 3·3·4 / 3·3·4
+// 혼적 파렛트 한 층의 자리(방)에 박스를 고르게 배분 → 자리마다 [{ln,n}] (아래→위)
+// 모든 자리 높이를 ⌊전체÷자리⌋ 또는 ⌈전체÷자리⌉로 맞춤 (예: 26박스·6방 → 4·4·4·4·5·5, 555551 같은 낮은 자리 없음)
+// 어느 자리를 높게 할지 + 제품 순서를 모두 시험해 한 자리에 두 제품이 섞이는 경우를 최소화
+//   예: 10+10 → 4·3·3 / 4·3·3 (안 섞임) · 25+1 → 마지막 자리에 25박스 제품 4 + 1박스 제품 1
+const _mixedCache=new Map();
 function layoutMixed(lines,slots){
-  const alloc=lines.map(l=>Math.max(1,l.need||1));
-  let free=slots-alloc.reduce((a,b)=>a+b,0);
-  const h=i=>Math.ceil(lines[i].count/alloc[i])*(lines[i].h||1);
-  while(free>0){
-    let best=-1;
-    for(let i=0;i<lines.length;i++)if(lines[i].count>alloc[i]&&(best<0||h(i)>h(best)))best=i;
-    if(best<0)break;
-    alloc[best]++;free--;
-  }
-  const cells=[];
-  lines.forEach((ln,i)=>splitCols(ln.count,alloc[i]).forEach(n=>cells.push({ln,n})));
-  while(cells.length<slots)cells.push(null);
+  const ck=slots+"|"+lines.map(l=>l.product.code+":"+l.count+":"+l.item.line_no).join(",");
+  const hit=_mixedCache.get(ck);
+  if(hit&&hit.lines.length===lines.length&&hit.lines.every((l,i)=>l===lines[i]))return hit.cells;
+  const cells=layoutMixedCalc(lines,slots);
+  _mixedCache.set(ck,{lines,cells});
   return cells;
 }
-function splitCols(n,cols){
-  const base=Math.floor(n/cols),extra=n%cols;
-  return Array.from({length:cols},(_,j)=>base+(j>=cols-extra?1:0));
+function layoutMixedCalc(lines,slots){
+  return pourBalanced(lines.map(l=>l.count),Math.max(1,slots)).map(b=>{
+    if(!b.length)return null;
+    const parts=b.map(({i,n})=>({ln:lines[i],n}));
+    return{parts,ln:parts[0].ln,n:parts.reduce((a,x)=>a+x.n,0)};
+  });
 }
 const imgName=p=>p.image_name||p.name;
 
@@ -1330,6 +1436,10 @@ function LoadImage({group,date,prefix,refCb,edit,ed:edSaved,live,onMove,onText,s
   return <div ref={refCb} data-imgroot="1" style={{position:"relative",width:920,background:"#ffffff",color:"#111",padding:"34px 40px 40px",boxSizing:"border-box",fontFamily:font,overflow:"hidden"}}>
     {edit&&guides?.v!=null&&<div style={{position:"absolute",left:guides.v,top:0,bottom:0,width:0,borderLeft:"1px solid #ec4899",zIndex:20,pointerEvents:"none"}}/>}
     {edit&&guides?.h!=null&&<div style={{position:"absolute",top:guides.h,left:0,right:0,height:0,borderTop:"1px solid #ec4899",zIndex:20,pointerEvents:"none"}}/>}
+    {/* 추가한 글씨: 이미지 가운데쯤에서 시작, 끌어서 위치 이동 (블록 id = x…, 글씨 id = x….t) */}
+    {(ed.extra||[]).map(x=><div key={x.id} style={{position:"absolute",left:0,right:0,top:"45%",pointerEvents:"none",zIndex:4}}>
+      {D(x.id,{pointerEvents:"auto"},T(x.id+".t","새 글씨",24,{fontWeight:800,color:x.color||"#111111"}))}
+    </div>)}
     {/* 소제목(생산지점·센터·발주번호)은 제목줄(제목 + 총 파렛 수) 왼쪽 밑에 붙여 함께 이동 */}
     {D("hd",{display:"flex",flexDirection:"column",alignItems:"flex-start",marginBottom:26},<>
       <div style={{display:"flex",alignItems:"baseline",gap:40}}>
@@ -1360,9 +1470,16 @@ function LoadImage({group,date,prefix,refCb,edit,ed:edSaved,live,onMove,onText,s
               {rows.map((row,ri)=><tr key={ri}>
                 {row.map((c,ci)=>{
                   const ck=`${k}.c${ri*cols+ci}`;
+                  // 한 자리에 두 제품이 섞이면 위쪽 제품부터 위에 표시 (글씨 id: 첫 제품 .n/.c, 다음 .p1.n/.p1.c …)
+                  const parts=c?[...c.parts].map((x,pi)=>({...x,pi})).reverse():[];
                   return <td key={ci} style={{border:"1.5px solid #333",width:132,height:128,textAlign:"center",verticalAlign:"middle",position:"relative",color:c?c.ln.product.color:"#111",fontWeight:800,lineHeight:1.35,padding:4}}>
                     {ri===0&&ci===0&&<div style={{position:"absolute",top:6,left:10,color:"#111",fontWeight:800}}>{T(k+".label",`${total}-${p.no}`,16)}</div>}
-                    {c&&c.n>0&&<>{T(ck+".n",imgName(c.ln.product),17)}{T(ck+".c",String(c.n),17)}</>}
+                    {parts.map((x,j)=>{
+                      const pk=x.pi===0?ck:`${ck}.p${x.pi}`;
+                      return <div key={x.pi} style={{color:x.ln.product.color,borderTop:j>0?"1px dashed #999":undefined,paddingTop:j>0?2:0,marginTop:j>0?2:0}}>
+                        {T(pk+".n",imgName(x.ln.product),parts.length>1?14:17)}{T(pk+".c",String(x.n),parts.length>1?14:17)}
+                      </div>;
+                    })}
                   </td>;
                 })}
               </tr>)}
@@ -1392,8 +1509,8 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
   const key=imgEditKey(group);
   const sig=imageSig(group);
   const stored=imgEditCache.has(key)?imgEditCache.get(key):masters.settings?.[key];
-  const blank={sig,pos:{},text:{},size:{},scale:100};
-  const fresh=()=>stored&&stored.sig===sig?{...blank,pos:stored.pos||{},text:stored.text||{},size:stored.size||{},scale:stored.scale||100}:blank;
+  const blank={sig,pos:{},text:{},size:{},scale:100,extra:[]};
+  const fresh=()=>stored&&stored.sig===sig?{...blank,pos:stored.pos||{},text:stored.text||{},size:stored.size||{},scale:stored.scale||100,extra:stored.extra||[]}:blank;
   const[ed,setEd]=useState(fresh);
   const edRef=useRef(ed);
   useEffect(()=>{const v=fresh();setEd(v);edRef.current=v},[key,sig]);
@@ -1403,7 +1520,7 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
   const[status,setStatus]=useState("");
   const[saving,setSaving]=useState(false);
   const elRef=useRef(null);
-  const countEdits=v=>Object.keys(v.pos||{}).length+Object.keys(v.text||{}).length+Object.keys(v.size||{}).length+((v.scale||100)!==100?1:0);
+  const countEdits=v=>Object.keys(v.pos||{}).length+Object.keys(v.text||{}).length+Object.keys(v.size||{}).length+((v.scale||100)!==100?1:0)+(v.extra||[]).length;
   const staleDropped=!!stored&&stored.sig!==sig&&countEdits(stored)>0;
   const edited=countEdits(ed)>0;
 
@@ -1415,10 +1532,26 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
   };
   const onMove=(id,p)=>persist({...edRef.current,pos:{...edRef.current.pos,[id]:p}});
   const onText=(id,t)=>{
+    // 추가한 글씨를 비우면 글씨 자체를 삭제
+    if(/^x[^.]*\.t$/.test(id)&&t===""){removeExtra(id.slice(0,-2));return}
     const text={...edRef.current.text};
     if(t==null)delete text[id];else text[id]=t;
     persist({...edRef.current,text});
   };
+  // 글씨 추가 / 삭제 / 색
+  const addExtra=()=>{
+    const id="x"+Date.now().toString(36);
+    persist({...edRef.current,extra:[...(edRef.current.extra||[]),{id,color:"#111111"}]});
+    setSel(id+".t");
+  };
+  const removeExtra=bid=>{
+    const cur=edRef.current;
+    const strip=o=>{const n={...(o||{})};delete n[bid];delete n[bid+".t"];return n};
+    persist({...cur,extra:(cur.extra||[]).filter(x=>x.id!==bid),pos:strip(cur.pos),text:strip(cur.text),size:strip(cur.size)});
+    setSel(null);
+  };
+  const setExtraColor=(bid,color)=>persist({...edRef.current,extra:(edRef.current.extra||[]).map(x=>x.id===bid?{...x,color}:x)});
+  const selExtra=sel&&/^x[^.]*\.t$/.test(sel)?(ed.extra||[]).find(x=>x.id+".t"===sel):null;
   // 원래대로: 브라우저 confirm() 창이 안 뜨는 환경이 있어 화면 안에서 한 번 더 확인
   const[askReset,setAskReset]=useState(false);
   const reset=()=>{setAskReset(false);setSel(null);persist(blank)};
@@ -1546,6 +1679,14 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
       <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>changeScale(-10)}>A−</button>
       <b style={{minWidth:44,textAlign:"center"}}>{ed.scale||100}%</b>
       <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>changeScale(10)}>A+</button>
+      <span style={{width:1,height:20,background:"var(--card-bd)",margin:"0 6px"}}/>
+      <button className="ol-btn ol-btn-primary ol-btn-sm" onClick={addExtra}>＋ 글씨 추가</button>
+      {selExtra&&<>
+        <span style={{color:"var(--muted)"}}>색</span>
+        {COLOR_PRESETS.map(c=><button key={c} title={c} onClick={()=>setExtraColor(selExtra.id,c)}
+          style={{width:18,height:18,borderRadius:4,border:(selExtra.color||"#111111")===c?"2px solid #f59e0b":"1px solid #888",background:c,cursor:"pointer",padding:0}}/>)}
+        <button className="ol-btn ol-btn-secondary ol-btn-sm" style={{color:"#ef4444"}} onClick={()=>removeExtra(selExtra.id)}>🗑 글씨 삭제</button>
+      </>}
     </div>}
     {edit&&<div style={{fontSize:12,color:"var(--muted)",marginBottom:8}}>점선 상자를 <b>끌어서</b> 위치 이동(옆 블록과 줄이 맞으면 분홍 안내선과 함께 붙음, <b>Alt</b> 누르고 끌면 자유 이동) · 상자 오른쪽 아래 <b style={{color:"#06b6d4"}}>■</b>을 끌면 블록 글씨 전체 크기 조절 · 글씨를 <b>클릭</b>하면 선택(주황 테두리) → 글씨 모서리 ■을 끌거나 A−/A+로 크기 조절 · <b>더블클릭</b>하면 글씨 수정 (Enter 저장, Shift+Enter 줄바꿈, Esc 취소, 비우면 글씨 숨김) · 수정 내용은 자동 저장</div>}
     {staleDropped&&<div className="ol-warn" style={{padding:"8px 12px",fontSize:12}}>발주 내용이 바뀌어 파렛트 구성이 달라졌습니다. 이전에 수정한 위치·글씨는 적용하지 않았습니다.</div>}
