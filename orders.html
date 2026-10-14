@@ -1206,7 +1206,7 @@ function buildPalletSheet(group,pallet,prefix,color){
   put("E5",s(`( ${o.center}센터 )`,XS_INFO_VAL));
   put("A6",s("발주번호",XS_INFO_LABEL));
   const ono=/^\d+$/.test(o.order_no)?Number(o.order_no):o.order_no;
-  put("B6",s(ono,{...XS_BIG,font:{...XS_BIG.font,sz:28}}));
+  put("B6",s(ono,XS_INFO_VAL)); // 2026-10-14: 28pt → 다른 정보 칸과 같은 16pt
   ["NO","SKU NO","SKU NAME","BOX 수량","수량","소비기한"].forEach((h,i)=>put(XLSX.utils.encode_cell({r:7,c:i}),s(h,XS_HEAD)));
   pallet.lines.forEach((ln,i)=>{
     const r=8+i,R=r+1;
@@ -1227,7 +1227,7 @@ function buildPalletSheet(group,pallet,prefix,color){
     {s:{r:5,c:1},e:{r:5,c:2}}
   ];
   ws["!cols"]=[{wch:17},{wch:16.5},{wch:79},{wch:17.5},{wch:11.7},{wch:17}];
-  const rows=[{hpt:70},{hpt:25},{hpt:28},{hpt:28},{hpt:28},{hpt:48},{hpt:25},{hpt:34.5}];
+  const rows=[{hpt:70},{hpt:25},{hpt:28},{hpt:28},{hpt:28},{hpt:28},{hpt:25},{hpt:34.5}];
   pallet.lines.forEach(()=>rows.push({hpt:34.5}));
   ws["!rows"]=rows;
   ws["!pageSetup"]={orientation:"landscape"};
