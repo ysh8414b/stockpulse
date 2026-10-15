@@ -392,7 +392,13 @@ function pourBalanced(counts,bins,groups){
       if(!rest.length){perms.push(arr);return}
       rest.forEach((v,i)=>perm([...arr,v],rest.filter((_,j)=>j!==i)));
     })([],idx);
-  }else{perms.push(idx);perms.push([...idx].sort((a,b)=>counts[b]-counts[a]))}
+  }else{
+    // 7개 이상은 전 순열 대신 정렬 순서 + 고정 시드 섞기 400가지 (결과가 매번 같도록)
+    perms.push(idx);perms.push([...idx].sort((a,b)=>counts[b]-counts[a]));perms.push([...idx].sort((a,b)=>counts[a]-counts[b]));
+    let seed=12345;const rnd=()=>(seed=(seed*1103515245+12345)%2147483648)/2147483648;
+    const tries=Math.min(400,Math.floor(20000/Math.max(1,combos.length))); // 묶음이 많으면 시도 수 줄임 (계산 시간 제한)
+    for(let t=0;t<tries;t++){const a=[...idx];for(let i=a.length-1;i>0;i--){const j=Math.floor(rnd()*(i+1));[a[i],a[j]]=[a[j],a[i]]}perms.push(a)}
+  }
   const pour=(order,hiSet)=>{
     const out=[];let splits=0,pi=0,left=order.length?counts[order[0]]:0;
     for(let si=0;si<S;si++){
@@ -1474,7 +1480,8 @@ function imageSig(group){
   const ps=group.pallets,first=ps[0]?.no||1,total=ps[0]?.total||ps.length;
   // 다른 생산지점과 번호를 이어 쓰면 번호 정보도 포함 (블록 id가 번호 기준이라 번호가 바뀌면 이전 편집 무시)
   const numbering=first!==1||total!==ps.length?`#${first}/${total}|`:"";
-  return numbering+ps.map(p=>p.kind[0]+p.lines.map(l=>l.product.code+":"+l.count).join(",")).join("|");
+  // 제품 수가 자리 수보다 많은 혼적은 2026-10-15부터 자리 배치가 바뀌어(자리 늘림 → 한 자리에 여러 제품) 예전 편집 무시
+  return numbering+ps.map(p=>p.kind[0]+p.lines.map(l=>l.product.code+":"+l.count).join(",")+(p.kind==="mixed"&&p.lines.length>(p.slots||6)?"~s":"")).join("|");
 }
 
 // 더블클릭으로 글씨 수정 (Enter 저장 · Shift+Enter 줄바꿈 · Esc 취소)
@@ -1542,7 +1549,8 @@ function snapTo(lines,targets){
   for(const a of lines)for(const t of targets){const d=t-a;if(Math.abs(d)<=SNAP_PX&&(!best||Math.abs(d)<Math.abs(best.d)))best={d,t}}
   return best;
 }
-function DragBlock({id,edit,pos,onMove,onGuides,sizes,onLiveSize,onCommitSize,style,children}){
+// inner: 다른 블록 안의 작은 블록(혼적 칸 글씨) — 누르면 바깥 블록은 안 움직임, 옅은 점선·크기 핸들 없음
+function DragBlock({id,edit,pos,onMove,onGuides,sizes,onLiveSize,onCommitSize,inner,style,children}){
   const base=pos[id]||{dx:0,dy:0};
   const[drag,setDrag]=useState(null);
   // 용지 화면은 축소/확대(transform)되어 보이므로 화면 이동량 ÷ z = 실제 이동량
@@ -1552,12 +1560,13 @@ function DragBlock({id,edit,pos,onMove,onGuides,sizes,onLiveSize,onCommitSize,st
   const dragRef=useRef(null);
   const down=e=>{
     if(!edit||e.button>0||e.target.isContentEditable)return;
+    e.stopPropagation(); // 안쪽 블록을 잡으면 그 블록만 이동
     if(e.pointerType==="mouse")e.preventDefault();
     const el=elRef.current,root=el.closest("[data-imgroot]");
     const r=el.getBoundingClientRect(),rr=root.getBoundingClientRect();
     const vx=[rr.left+rr.width/2],hy=[];
     root.querySelectorAll("[data-bid]").forEach(o=>{
-      if(o===el)return;
+      if(o===el||el.contains(o)||o.contains(el))return; // 자기 자신·안쪽·바깥 블록은 기준선 제외
       const b=o.getBoundingClientRect();
       vx.push(b.left,b.left+b.width/2,b.right);hy.push(b.top,b.top+b.height/2,b.bottom);
     });
@@ -1600,10 +1609,10 @@ function DragBlock({id,edit,pos,onMove,onGuides,sizes,onLiveSize,onCommitSize,st
   return <div ref={elRef} data-bid={id} onPointerDown={down}
     style={{width:"fit-content",maxWidth:"100%",marginLeft:"auto",marginRight:"auto",...style,position:"relative",left:cur.dx,top:cur.dy,
       cursor:edit?(drag?"grabbing":"grab"):undefined,
-      outline:edit?"1px dashed rgba(6,182,212,0.8)":"none",outlineOffset:4,
+      outline:edit?(inner?"1px dashed rgba(6,182,212,0.4)":"1px dashed rgba(6,182,212,0.8)"):"none",outlineOffset:inner?1:4,
       touchAction:edit?"none":undefined,userSelect:edit?"none":undefined,zIndex:drag?5:undefined}}>
     {children}
-    {edit&&onCommitSize&&<span title="끌어서 블록 글씨 전체 크기 조절" onPointerDown={resizeDown} style={{...HANDLE_STYLE,right:-10,bottom:-10}}/>}
+    {edit&&onCommitSize&&!inner&&<span title="끌어서 블록 글씨 전체 크기 조절" onPointerDown={resizeDown} style={{...HANDLE_STYLE,right:-10,bottom:-10}}/>}
   </div>;
 }
 
@@ -1616,7 +1625,7 @@ function LoadImage({group,date,prefix,refCb,edit,ed:edSaved,live,onMove,onText,s
   const mixed=pallets.filter(p=>p.kind==="mixed");
   const font="'Pretendard','Apple SD Gothic Neo','Malgun Gothic',sans-serif";
   const T=(id,value,base,style)=><EditText id={id} value={value} base={base} edit={edit} ed={ed} onText={onText} selected={sel===id} onSelect={onSelect} onLiveSize={onLiveSize} onCommitSize={onCommitSize} style={style}/>;
-  const D=(id,style,children)=><DragBlock key={id} id={id} edit={edit} pos={ed.pos} onMove={onMove} onGuides={setGuides} sizes={edSaved.size} onLiveSize={onLiveSize} onCommitSize={onCommitSize} style={style}>{children}</DragBlock>;
+  const D=(id,style,children,inner)=><DragBlock key={id} id={id} edit={edit} pos={ed.pos} onMove={onMove} onGuides={setGuides} sizes={edSaved.size} onLiveSize={onLiveSize} onCommitSize={onCommitSize} inner={inner} style={style}>{children}</DragBlock>;
   return <div ref={refCb} data-imgroot="1" style={{position:"relative",width:920,background:"#ffffff",color:"#111",padding:"34px 40px 40px",boxSizing:"border-box",fontFamily:font,overflow:"hidden"}}>
     {edit&&guides?.v!=null&&<div style={{position:"absolute",left:guides.v,top:0,bottom:0,width:0,borderLeft:"1px solid #ec4899",zIndex:20,pointerEvents:"none"}}/>}
     {edit&&guides?.h!=null&&<div style={{position:"absolute",top:guides.h,left:0,right:0,height:0,borderTop:"1px solid #ec4899",zIndex:20,pointerEvents:"none"}}/>}
@@ -1647,7 +1656,8 @@ function LoadImage({group,date,prefix,refCb,edit,ed:edSaved,live,onMove,onText,s
         {mixed.map(p=>{
           const k="m"+p.no;
           const cols=Math.max(1,p.cols||3);
-          const cells=layoutMixed(p.lines,Math.max(p.slots||6,p.lines.length));
+          // 자리 수는 항상 층당 방 수(6) — 제품이 더 많으면 한 자리에 여러 제품을 나눠 쌓음 (예전엔 자리를 늘려 3번째 줄이 생기며 깨졌음)
+          const cells=layoutMixed(p.lines,Math.max(1,p.slots||6));
           const rows=[];for(let i=0;i<cells.length;i+=cols)rows.push(cells.slice(i,i+cols));
           return D(k,{},
             <table style={{borderCollapse:"collapse"}}><tbody>
@@ -1657,11 +1667,16 @@ function LoadImage({group,date,prefix,refCb,edit,ed:edSaved,live,onMove,onText,s
                   // 한 자리에 두 제품이 섞이면 위쪽 제품부터 위에 표시 (글씨 id: 첫 제품 .n/.c, 다음 .p1.n/.p1.c …)
                   const parts=c?[...c.parts].map((x,pi)=>({...x,pi})).reverse():[];
                   return <td key={ci} style={{border:"1.5px solid #333",width:132,height:128,textAlign:"center",verticalAlign:"middle",position:"relative",color:c?c.ln.product.color:"#111",fontWeight:800,lineHeight:1.35,padding:4}}>
-                    {ri===0&&ci===0&&<div style={{position:"absolute",top:6,left:10,color:"#111",fontWeight:800}}>{T(k+".label",`${total}-${p.no}`,16)}</div>}
+                    {ri===0&&ci===0&&<div style={{position:"absolute",top:6,left:10,color:"#111",fontWeight:800,zIndex:1}}>{D(k+".lb",{marginLeft:0,marginRight:0},T(k+".label",`${total}-${p.no}`,16),true)}</div>}
                     {parts.map((x,j)=>{
                       const pk=x.pi===0?ck:`${ck}.p${x.pi}`;
-                      return <div key={x.pi} style={{color:x.ln.product.color,borderTop:j>0?"1px dashed #999":undefined,paddingTop:j>0?2:0,marginTop:j>0?2:0}}>
-                        {T(pk+".n",imgName(x.ln.product),parts.length>1?14:17)}{T(pk+".c",String(x.n),parts.length>1?14:17)}
+                      // 제품이 3개 이상 섞인 자리는 글씨를 줄이고 이름·수량을 한 줄로
+                      const many=parts.length>=3,fs=parts.length>=4?11:many?12:parts.length===2?14:17;
+                      // 칸 안 제품 글씨(이름+수량)는 따로 끌어서 이동 가능 (블록 id = 글씨 id 앞부분 + ".m")
+                      return <div key={x.pi} style={{color:x.ln.product.color,marginTop:j>0?4:0}}>
+                        {D(pk+".m",many?{display:"flex",flexWrap:"wrap",justifyContent:"center",alignItems:"baseline",columnGap:4}:{},<>
+                          {T(pk+".n",imgName(x.ln.product),fs,many?{marginLeft:0,marginRight:0}:undefined)}{T(pk+".c",String(x.n),fs,many?{marginLeft:0,marginRight:0}:undefined)}
+                        </>,true)}
                       </div>;
                     })}
                   </td>;
