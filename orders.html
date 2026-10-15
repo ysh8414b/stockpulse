@@ -1162,6 +1162,30 @@ function OrdersTab({adminHash,masters,reloadMasters,dates,reloadDates,selDate,se
     setResult(report);
   };
 
+  // 수량 편집 — 발주서 카드 하나씩. qtyEdit = {orderId, vals:{품목id: 입력값}}
+  const[qtyEdit,setQtyEdit]=useState(null);
+  const[qtySaving,setQtySaving]=useState(false);
+  const startQtyEdit=o=>setQtyEdit({orderId:o.id,vals:Object.fromEntries((o.items||[]).map(it=>[it.id,String(Number(it.qty||0))]))});
+  const saveQtyEdit=async o=>{
+    const changes=[];
+    for(const it of (o.items||[])){
+      const raw=qtyEdit.vals[it.id];
+      if(raw==null)continue;
+      const v=Number(String(raw).replace(/,/g,"").trim());
+      if(String(raw).trim()===""||!Number.isFinite(v)||v<0){alert(`'${it.name}' 수량이 올바르지 않습니다`);return}
+      if(v!==Number(it.qty||0))changes.push({id:it.id,qty:v});
+    }
+    if(!changes.length){setQtyEdit(null);return}
+    setQtySaving(true);
+    try{
+      await rpc("ol_update_order_items",{p_admin_hash:adminHash,p_order_id:o.id,p_items:changes});
+      setQtyEdit(null);await reloadOrders(selDate);
+    }catch(e){
+      alert(/function|PGRST202|schema cache/i.test(String(e?.message||e))?"수량 편집을 쓰려면 Supabase SQL Editor에서 setup_orders_qtyedit.sql 을 1회 실행해 주세요.":errMsg(e));
+    }
+    setQtySaving(false);
+  };
+
   const delOrder=async o=>{
     if(!confirm(`발주서 ${o.order_no} (${o.center}, 입고 ${o.due_date})를 삭제할까요?\n품목 ${o.items.length}건이 함께 삭제됩니다.`))return;
     try{
@@ -1209,18 +1233,34 @@ function OrdersTab({adminHash,masters,reloadMasters,dates,reloadDates,selDate,se
                   {o.vendor} · 센터 <b style={{color:"var(--text)"}}>{o.center||"–"}</b> · 입고 {o.due_date} ({dowOf(o.due_date)}) · 📎 {o.file_name}
                 </div>
               </div>
-              <button className="ol-btn ol-btn-danger ol-btn-sm" onClick={()=>delOrder(o)}>🗑 발주서 삭제</button>
+              <div style={{display:"flex",gap:6,alignItems:"flex-start"}}>
+                {qtyEdit?.orderId===o.id?<>
+                  <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setQtyEdit(null)} disabled={qtySaving}>취소</button>
+                  <button className="ol-btn ol-btn-primary ol-btn-sm" onClick={()=>saveQtyEdit(o)} disabled={qtySaving}>{qtySaving?"저장 중...":"💾 수량 저장"}</button>
+                </>:<button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>startQtyEdit(o)} disabled={!!qtyEdit}>✏ 수량 편집</button>}
+                <button className="ol-btn ol-btn-danger ol-btn-sm" onClick={()=>delOrder(o)} disabled={qtyEdit?.orderId===o.id}>🗑 발주서 삭제</button>
+              </div>
             </div>
+            {qtyEdit?.orderId===o.id&&<div style={{fontSize:12,color:"var(--muted)",marginBottom:8}}>발주수량을 고친 뒤 💾 수량 저장 — 박스 수·부착리스트·적재이미지에 바로 반영됩니다. 원래 수량은 따로 기억해 표시합니다 (같은 발주서를 다시 업로드하면 원래대로).</div>}
             <div className="ol-scroll"><table className="ol-table" style={{minWidth:720}}>
               <thead><tr><th>No</th><th>상품코드</th><th>상품명</th><th className="right">발주수량</th><th className="right">박스</th><th>생산지점</th><th>소비기한</th></tr></thead>
               <tbody>{items.map(it=>{
                 const p=prodMap[it.code];
-                const ln=p?enrichLine(it,p):null;
+                const editing=qtyEdit?.orderId===o.id;
+                const raw=editing?qtyEdit.vals[it.id]:null;
+                const liveQty=editing&&raw!=null&&String(raw).trim()!==""&&Number.isFinite(Number(String(raw).replace(/,/g,"")))?Number(String(raw).replace(/,/g,"")):Number(it.qty||0);
+                const ln=p?enrichLine({...it,qty:liveQty},p):null;
+                const edited=it.orig_qty!=null&&Number(it.orig_qty)!==Number(it.qty);
                 return <tr key={it.id} style={p?null:{background:"rgba(239,68,68,0.06)"}}>
                   <td>{it.line_no}</td>
                   <td style={{fontFamily:"monospace",fontSize:12}}>{it.code}</td>
                   <td>{it.name}</td>
-                  <td className="right">{fmtNum(it.qty)}</td>
+                  <td className="right">{editing?
+                    <input className="ol-input" type="number" min="0" inputMode="numeric" value={raw??""} style={{width:96,textAlign:"right",padding:"4px 8px"}}
+                      onChange={e=>{const v=e.target.value;setQtyEdit(q=>({...q,vals:{...q.vals,[it.id]:v}}))}}
+                      onKeyDown={e=>{if(e.key==="Enter")saveQtyEdit(o);else if(e.key==="Escape")setQtyEdit(null)}}/>
+                    :edited?<span title={`원래 발주수량 ${fmtNum(it.orig_qty)} → 편집함`}><b style={{color:"#f59e0b"}}>{fmtNum(it.qty)}</b><div style={{fontSize:11,color:"var(--muted)",textDecoration:"line-through"}}>{fmtNum(it.orig_qty)}</div></span>
+                    :fmtNum(it.qty)}</td>
                   <td className="right">{ln?<>{ln.boxes}{ln.partial&&<span title={`입수 ${ln.per}로 나누어떨어지지 않음 — 올림`} style={{color:"#f59e0b",marginLeft:3}}>⚠</span>}</>:"–"}</td>
                   <td>{p?<span style={{fontWeight:600}}>{(p.site||"").trim()||NO_SITE}</span>:<b style={{color:"#ef4444"}}>⚠ 제품리스트 미등록</b>}</td>
                   <td style={{fontSize:12}}>{it.expiry_date||"–"}</td>

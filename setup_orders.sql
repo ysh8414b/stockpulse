@@ -79,6 +79,8 @@ CREATE TABLE IF NOT EXISTS ol_order_items (
 );
 CREATE INDEX IF NOT EXISTS idx_ol_items_order ON ol_order_items (order_id, line_no);
 CREATE INDEX IF NOT EXISTS idx_ol_items_code ON ol_order_items (code);
+-- 수량 편집 전 원래 수량 (2026-10-15, NULL = 편집 안 함)
+ALTER TABLE ol_order_items ADD COLUMN IF NOT EXISTS orig_qty NUMERIC;
 
 ALTER TABLE ol_box_specs    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ol_load_methods ENABLE ROW LEVEL SECURITY;
@@ -338,7 +340,7 @@ BEGIN
       'center_addr', o.center_addr, 'due_date', o.due_date, 'order_type', o.order_type,
       'file_name', o.file_name, 'created_at', o.created_at, 'is_extra', o.is_extra,
       'items', (SELECT COALESCE(json_agg(json_build_object(
-          'id', i.id, 'line_no', i.line_no, 'code', i.code, 'name', i.name, 'qty', i.qty,
+          'id', i.id, 'line_no', i.line_no, 'code', i.code, 'name', i.name, 'qty', i.qty, 'orig_qty', i.orig_qty,
           'mfg_date', i.mfg_date, 'expiry_date', i.expiry_date
         ) ORDER BY i.line_no, i.id), '[]'::json) FROM ol_order_items i WHERE i.order_id = o.id)
     ) ORDER BY o.due_date DESC, o.created_at), '[]'::json)
@@ -408,5 +410,25 @@ RETURNS VOID AS $$
 BEGIN
   -- 인증 없음 (2026-10-13: 비밀번호 없이 접근 허용)
   DELETE FROM ol_orders WHERE id = p_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 품목 수량 일괄 수정 — p_items: [{"id":123,"qty":560}, ...]
+-- 원래 수량으로 되돌리면 orig_qty도 지움
+CREATE OR REPLACE FUNCTION ol_update_order_items(p_admin_hash TEXT, p_order_id BIGINT, p_items JSONB)
+RETURNS INT AS $$
+DECLARE v_n INT := 0; r JSONB; v_qty NUMERIC;
+BEGIN
+  -- 인증 없음 (2026-10-13: 비밀번호 없이 접근 허용)
+  FOR r IN SELECT * FROM jsonb_array_elements(COALESCE(p_items,'[]'::jsonb)) LOOP
+    v_qty := (r->>'qty')::NUMERIC;
+    IF v_qty IS NULL OR v_qty < 0 THEN RAISE EXCEPTION 'invalid_qty'; END IF;
+    UPDATE ol_order_items
+      SET orig_qty = CASE WHEN COALESCE(orig_qty, qty) = v_qty THEN NULL ELSE COALESCE(orig_qty, qty) END,
+          qty = v_qty
+      WHERE id = (r->>'id')::BIGINT AND order_id = p_order_id AND qty IS DISTINCT FROM v_qty;
+    IF FOUND THEN v_n := v_n + 1; END IF;
+  END LOOP;
+  RETURN v_n;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;

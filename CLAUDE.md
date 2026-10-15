@@ -1382,6 +1382,10 @@
   - App: `useOrderData(adminHash, extra, onErr)` 훅으로 입고일/선택일/발주서 상태를 일반·추가 따로 관리, 탭 이동 시 해당 데이터 재조회. 해시 `#extra`, 안에 서브탭 📄 추가 발주서(`OrdersTab extra`) / 🗂 추가 발주리스트(`ListsTab extra`) — 기존 컴포넌트 재사용, 서브탭 localStorage `ol-extra-sub`
   - 추가 발주는 `buildSiteGroups(..., {separate:true})` → 같은 업체·센터라도 **발주번호끼리 합치지 않고** 발주서마다 따로 적재·번호(`orderKey`=order id를 버킷·번호 연결 키 앞에). 같은 발주서의 다른 생산지점끼리는 번호 연결 유지
   - SQL 실행 전: 일반 탭은 `p_extra` 없이 재호출로 기존대로 동작(콘솔 404는 정상), 추가 발주 업로드는 "setup_orders_extra.sql 실행 필요" 오류
+- **발주서 수량 편집 (2026-10-15 추가)**: 📄 발주서(➕ 추가 발주서 포함) 카드마다 "✏ 수량 편집" → 발주수량 칸이 입력칸으로 바뀌고 박스 수가 실시간 재계산 → "💾 수량 저장"(Enter 저장 / Esc 취소, 한 번에 카드 하나만 편집). 바뀐 품목만 `ol_update_order_items(hash, order_id, items JSONB [{id,qty}])` RPC로 일괄 저장 → 발주리스트(부착리스트·적재이미지)에 바로 반영
+  - `ol_order_items.orig_qty`(NUMERIC NULL) — 처음 편집 전 원래 수량 보관, 원래 값으로 되돌리면 NULL. `ol_list_orders` 응답에 `orig_qty` 추가. 편집된 품목은 주황 굵은 수량 + 원래 수량 취소선 표시. 같은 발주번호를 다시 업로드하면 품목이 새로 들어가 편집 초기화
+  - 마이그레이션 `setup_orders_qtyedit.sql`(setup_orders.sql에도 반영). 실행 전 저장 시 안내 alert
+  - 수량이 바뀌면 파렛트 구성(sig)이 바뀌어 해당 적재이미지의 기존 위치·글씨 편집은 무시됨
 - **발주서 압축파일 업로드 (2026-10-14 추가)**: `jszip@3.10.1`(cdnjs) 추가. 업로드 input `accept`에 `.zip`, `handleFiles`가 `.zip`이면 `unzipOrderFiles()`로 안의 `.xlsx/.xls`를 꺼내 기존 파싱 흐름으로 처리(하위 폴더·압축 안의 압축 2단계까지, `__MACOSX`·`~$` 임시파일·숨김파일 제외, 파일명 순 정렬). 윈도우 zip의 CP949 한글 파일명은 `decodeZipName`이 UTF-8 실패 시 EUC-KR로 디코딩. 결과/`file_name`은 `압축.zip › 파일.xlsx`로 표기. 엑셀 없는 압축은 결과 모달에 오류
 - **제품 냉장/냉동 구분 (2026-10-14 추가)**: `ol_products.storage`('chilled' 기본 | 'frozen') + `ol_upsert_product` 12번째 인자 `p_storage`(기존 11인자 DROP). 마이그레이션 `setup_orders_storage.sql`(setup_orders.sql에도 반영) — 컬럼을 처음 만들 때만 생산지점 이름에 '냉동'이 들어간 기존 제품을 frozen으로 초기화. 제품 폼에 "보관" 버튼(🧊 냉장 / ❄ 냉동), 제품표에 보관 열. SQL 실행 전이면 냉장/냉동 없이 저장(냉동 선택 시 안내 alert, 양념 fallback과 체인)
   - `buildSiteGroups` 버킷 키에 storage 추가 → 같은 생산지점이라도 냉장·냉동은 별도 그룹(별도 적재). 파렛트 번호 연결도 업체+센터+**보관** 단위(냉장끼리, 냉동끼리 합계). 정렬: 업체 → 센터 → 보관(chilled → frozen) → 생산지점
