@@ -1712,7 +1712,10 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
   const fresh=()=>stored&&stored.sig===sig?{...blank,pos:stored.pos||{},text:stored.text||{},size:stored.size||{},scale:stored.scale||100,extra:stored.extra||[]}:blank;
   const[ed,setEd]=useState(fresh);
   const edRef=useRef(ed);
-  useEffect(()=>{const v=fresh();setEd(v);edRef.current=v},[key,sig]);
+  // 되돌리기/다시 실행 기록 (이 화면에서 한 편집만, 최대 100단계 — 새로고침하면 초기화)
+  const undoRef=useRef([]),redoRef=useRef([]);
+  const[histTick,setHistTick]=useState(0);
+  useEffect(()=>{const v=fresh();setEd(v);edRef.current=v;undoRef.current=[];redoRef.current=[];setHistTick(t=>t+1)},[key,sig]);
   const[edit,setEdit]=useState(false);
   const[sel,setSel]=useState(null); // 크기 조절할 선택된 글씨 id
   useEffect(()=>{if(!edit)setSel(null)},[edit]);
@@ -1723,7 +1726,11 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
   const staleDropped=!!stored&&stored.sig!==sig&&countEdits(stored)>0;
   const edited=countEdits(ed)>0;
 
-  const persist=async next=>{
+  const persist=async(next,fromHistory)=>{
+    if(!fromHistory){
+      undoRef.current=[...undoRef.current,edRef.current].slice(-100);
+      redoRef.current=[];setHistTick(t=>t+1);
+    }
     edRef.current=next;setEd(next);imgEditCache.set(key,next);
     setStatus("저장 중…");
     try{await rpc("ol_set_setting",{p_admin_hash:adminHash,p_key:key,p_value:next});setStatus("✓ 저장됨")}
@@ -1737,6 +1744,35 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
     if(t==null)delete text[id];else text[id]=t;
     persist({...edRef.current,text});
   };
+  const undo=()=>{
+    if(!undoRef.current.length)return;
+    const prev=undoRef.current[undoRef.current.length-1];
+    undoRef.current=undoRef.current.slice(0,-1);
+    redoRef.current=[...redoRef.current,edRef.current];
+    setHistTick(t=>t+1);setSel(null);persist(prev,true);
+  };
+  const redo=()=>{
+    if(!redoRef.current.length)return;
+    const next=redoRef.current[redoRef.current.length-1];
+    redoRef.current=redoRef.current.slice(0,-1);
+    undoRef.current=[...undoRef.current,edRef.current];
+    setHistTick(t=>t+1);setSel(null);persist(next,true);
+  };
+  // 편집 중 Ctrl+Z 되돌리기 / Ctrl+Y·Ctrl+Shift+Z 다시 실행 (글씨 입력 중에는 브라우저 기본 동작)
+  const histKeys=useRef(null);histKeys.current={undo,redo};
+  useEffect(()=>{
+    if(!edit)return;
+    const onKey=e=>{
+      if(!(e.ctrlKey||e.metaKey)||e.altKey)return;
+      const t=e.target;
+      if(t&&(t.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)))return;
+      const k=e.key.toLowerCase();
+      if(k==="z"&&!e.shiftKey){e.preventDefault();histKeys.current.undo()}
+      else if(k==="y"||(k==="z"&&e.shiftKey)){e.preventDefault();histKeys.current.redo()}
+    };
+    window.addEventListener("keydown",onKey);
+    return()=>window.removeEventListener("keydown",onKey);
+  },[edit]);
   // 글씨 추가 / 삭제 / 색
   const addExtra=()=>{
     const id="x"+Date.now().toString(36);
@@ -1850,6 +1886,10 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
     <div className="ol-toolbar" style={{marginBottom:8}}>
       <b>📄 {group.vendor||"(업체명 없음)"} · 발주 {group.order.order_no} · {group.order.center}{group.orders.length>1?` (발주서 ${group.orders.length}건 합침)`:""}</b>
       <button className={"ol-btn ol-btn-sm "+(edit?"ol-btn-primary":"ol-btn-secondary")} onClick={e=>{e.currentTarget.blur();setEdit(v=>!v)}}>{edit?"✓ 편집 끝내기":"✏ 편집"}</button>
+      {edit&&<>
+        <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={e=>{e.currentTarget.blur();undo()}} disabled={!undoRef.current.length} title="되돌리기 (Ctrl+Z)">↶ 되돌리기</button>
+        <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={e=>{e.currentTarget.blur();redo()}} disabled={!redoRef.current.length} title="다시 실행 (Ctrl+Y / Ctrl+Shift+Z)">↷ 다시</button>
+      </>}
       {edited&&!askReset&&<button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setAskReset(true)} title="이동·글씨 수정·크기 조절을 모두 지우고 처음 모양으로">↺ 원래대로</button>}
       {edited&&askReset&&<span style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12,padding:"3px 8px",border:"1px solid #ef4444",borderRadius:6}}>
         위치·글씨·크기 수정을 모두 되돌릴까요?
