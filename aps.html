@@ -3000,13 +3000,23 @@ function kstDayStartMs(dateStr){return new Date(dateStr+"T00:00:00+09:00").getTi
 const QUARTER_MS=15*60*1000;
 function ceilQuarter(ms){return Math.ceil(ms/QUARTER_MS)*QUARTER_MS}
 
+// targetDay 다음 날부터 생산 요일만 세어 n번째 날 (n=0이면 targetDay)
+function nthProdDayAfter(targetDay,n,prodDays){
+  const set=new Set((Array.isArray(prodDays)&&prodDays.length?prodDays:[1,2,3,4,5]).map(Number));
+  let d=targetDay,cnt=0,guard=0;
+  while(cnt<n&&guard<400){d=addDays(d,1);guard++;if(set.has(isoDowOf(d)))cnt++}
+  return d;
+}
+
 function computeAutoPlan({targetDay,items,lines,plans,invProducts,dowMap,rateByItem,settings,opts}){
   const today=todayStr();
   const lead=Math.max(0,parseInt(opts.lead)||0);
-  const cover=Math.max(lead+1,parseInt(opts.cover)||1);
+  const cover=Math.max(1,parseInt(opts.cover)||1);
   const changeoverMs=Math.max(0,Number(opts.changeoverMin)||0)*60000;
   const coverEnd=addDays(targetDay,cover-1);
-  const triggerEnd=addDays(targetDay,lead);
+  // "소진 N일 전" = 생산 요일 기준 N일 (금요일 + 2일 = 월·화, 주말은 건너뜀)
+  const triggerEnd=nthProdDayAfter(targetDay,lead,opts.prodDays);
+  const simEnd=coverEnd>triggerEnd?coverEnd:triggerEnd;
   const autoLineIds=new Set(lines.filter(l=>l.auto_plan).map(l=>l.id));
   const stockByCode={};(invProducts||[]).forEach(p=>{if(p.code)stockByCode[p.code]=Number(p.box||0)});
 
@@ -3036,22 +3046,26 @@ function computeAutoPlan({targetDay,items,lines,plans,invProducts,dowMap,rateByI
 
     // 오늘부터 하루씩 재고 시뮬레이션 (새 생산 없이)
     const stockNow=stockByCode[it.code];
-    let stock=stockNow,startStock=null,firstShort=null,demandCover=0,incomingCover=0;
-    for(let d=today;d<=coverEnd;d=addDays(d,1)){
+    let stock=stockNow,startStock=null,firstShort=null;
+    const endStock={}; // 선택일 이후 날짜별 하루 끝 예상 재고 (새 생산 없이)
+    for(let d=today;d<=simEnd;d=addDays(d,1)){
       if(d===targetDay)startStock=stock;
-      const inc=incoming[d]||0;
-      stock+=inc-f(d);
-      if(d>=targetDay){demandCover+=f(d);incomingCover+=inc}
+      stock+=(incoming[d]||0)-f(d);
+      if(d>=targetDay)endStock[d]=stock;
       if(firstShort===null&&stock<floor)firstShort=d;
       if(d<targetDay&&stock<0)stock=0; // 지나간 품절은 이월하지 않음 (못 판 수요)
     }
     const avgDaily=fc.slice(1).reduce((a,b)=>a+(Number(b)||0),0)/7;
     const base={item:it,stockNow,startStock,firstShort,avgDaily,floor,eligible,targetDemand:f(targetDay)};
     if(firstShort===null||firstShort>triggerEnd){
-      skipped.push({...base,reason:firstShort?`재고 충분 (${fmtMD(firstShort)} 소진 예상)`:`${fmtMD(coverEnd)}까지 재고 충분`,kind:"enough"});
+      skipped.push({...base,reason:firstShort?`재고 충분 (${fmtMD(firstShort)}에 ${floor>0?"안전재고 미달":"소진"} 예상)`:`${fmtMD(simEnd)}까지 재고 충분`,kind:"enough"});
       continue;
     }
-    const need=Math.ceil(floor+demandCover-startStock-incomingCover);
+    // 생산량 = 선택일 ~ max(생산 분량 마지막 날, 부족 시작일) 동안 매일 재고가 바닥 이상이 되도록 하는 최소량
+    const qtyEnd=firstShort>coverEnd?firstShort:coverEnd;
+    let need=0;
+    for(let d=targetDay;d<=qtyEnd;d=addDays(d,1))need=Math.max(need,floor-(endStock[d]??0));
+    need=Math.ceil(need);
     if(need<=0){skipped.push({...base,reason:"기존 계획으로 충분",kind:"enough"});continue}
     const rs=rateByItem[it.id];
     const rate=rs?.rate>0?rs.rate:(Number(it.units_per_hour)>0?Number(it.units_per_hour):0);
@@ -3108,10 +3122,10 @@ function computeAutoPlan({targetDay,items,lines,plans,invProducts,dowMap,rateByI
 
 function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLinesChanged,onCreated,onCancel}){
   const[opts,setOpts]=useState(()=>{
-    const def={lead:2,cover:5,useSafety:false,changeoverMin:0,weeks:8};
-    try{return {...def,...JSON.parse(localStorage.getItem("aps-autoplan-opts")||"{}")}}catch(e){return def}
+    const def={lead:2,cover:5,useSafety:true,changeoverMin:0,weeks:8,prodDays:[1,2,3,4,5]};
+    try{return {...def,...JSON.parse(localStorage.getItem("aps-autoplan-opts-v2")||"{}")}}catch(e){return def}
   });
-  useEffect(()=>{try{localStorage.setItem("aps-autoplan-opts",JSON.stringify(opts))}catch(e){}},[opts]);
+  useEffect(()=>{try{localStorage.setItem("aps-autoplan-opts-v2",JSON.stringify(opts))}catch(e){}},[opts]);
   const setOpt=(k,v)=>setOpts(o=>({...o,[k]:v}));
   const[dow,setDow]=useState(null);       // {start,end,map:{code:[_,월..일]}}
   const[rates,setRates]=useState({});
@@ -3155,6 +3169,8 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
   },[adminHash,opts.weeks]);
 
   const isPast=dayStr<todayStr();
+  const autoTriggerEnd=nthProdDayAfter(dayStr,Math.max(0,parseInt(opts.lead)||0),opts.prodDays);
+  const notProdDay=!(opts.prodDays||[1,2,3,4,5]).includes(isoDowOf(dayStr));
   const result=useMemo(()=>{
     if(!dow||isPast)return null;
     return computeAutoPlan({targetDay:dayStr,items,lines:localLines,plans,invProducts:invData?.products||[],dowMap:dow.map,rateByItem:rates,settings,opts});
@@ -3205,17 +3221,25 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
         <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={onCancel}>✕</button>
       </div>
       <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.6,marginBottom:12}}>
-        재고시트 재고 − 요일별 평균 매출 + 기존 계획으로 하루씩 재고를 예측합니다. <b>{dayStr}부터 {opts.lead}일 뒤까지</b> 재고가 {opts.useSafety?"안전재고":"0"} 아래로 떨어질 제품을 이날 생산하고, 이날부터 <b>{opts.cover}일치 수요</b>를 채우는 양을 만듭니다. 시간은 📈 통계 탭의 실제 생산 속도(없으면 품목의 시간당 생산량)로 계산합니다.
+        재고시트 재고 − 요일별 평균 매출 + 기존 계획으로 하루씩 재고를 예측합니다. <b>{fmtMD(addDays(dayStr,1))}~{fmtMD(autoTriggerEnd)}(생산일 {opts.lead}일)</b> 안에 재고가 {opts.useSafety?"안전재고":"0"} 아래로 떨어질 제품을 이날 생산하고, 이날부터 <b>{opts.cover}일치</b>(부족일이 더 뒤면 그날까지) 재고가 {opts.useSafety?"안전재고":"0"} 이상 유지되는 양을 만듭니다. 시간은 📈 통계 탭의 실제 생산 속도(없으면 품목의 시간당 생산량)로 계산합니다.
       </div>
 
       <div style={{display:"flex",flexWrap:"wrap",gap:"8px 16px",alignItems:"center",padding:"10px 12px",border:"1px solid var(--div2)",borderRadius:8,marginBottom:10,fontSize:12}}>
-        <label style={{display:"flex",alignItems:"center",gap:6}}>소진 {numIn("lead",{min:0,max:14})}일 전부터 생산</label>
+        <label style={{display:"flex",alignItems:"center",gap:6}}>부족 {numIn("lead",{min:0,max:14})}생산일 전부터 생산</label>
         <label style={{display:"flex",alignItems:"center",gap:6}}>생산 분량 {numIn("cover",{min:1,max:30})}일치</label>
         <label style={{display:"flex",alignItems:"center",gap:6}}>제품 전환 {numIn("changeoverMin",{min:0,max:240,step:5})}분</label>
         <label style={{display:"flex",alignItems:"center",gap:6}}>매출 기준 최근 {numIn("weeks",{min:1,max:52})}주</label>
         <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
-          <input type="checkbox" checked={!!opts.useSafety} onChange={e=>setOpt("useSafety",e.target.checked)}/> 안전재고를 바닥으로
+          <input type="checkbox" checked={!!opts.useSafety} onChange={e=>setOpt("useSafety",e.target.checked)}/> 안전재고 밑으로 떨어지면 부족
         </label>
+        <span style={{display:"flex",alignItems:"center",gap:4}}>
+          생산 요일
+          {DOW_LABEL.map((lb,i)=>{
+            const dw=i+1,on=(opts.prodDays||[]).includes(dw);
+            return <button key={dw} type="button" onClick={()=>setOpt("prodDays",on?(opts.prodDays||[]).filter(x=>x!==dw):[...(opts.prodDays||[]),dw].sort())}
+              style={{width:26,height:24,borderRadius:6,fontSize:11,fontWeight:700,cursor:"pointer",border:"1px solid "+(on?"#06b6d4":"var(--div2)"),background:on?"rgba(6,182,212,0.15)":"transparent",color:on?"#06b6d4":"var(--muted)"}}>{lb}</button>;
+          })}
+        </span>
       </div>
 
       <div style={{display:"flex",flexWrap:"wrap",gap:6,alignItems:"center",marginBottom:10,fontSize:12}}>
@@ -3234,6 +3258,7 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
         재고시트: {sheetDate?`${sheetDate} 저장`:"없음"}{sheetDate&&sheetDate<todayStr()?" ⚠ 오늘 이전 재고":""}
         {dow&&<> · 매출: {dow.start?`${dow.start} ~ ${dow.end}`:"데이터 없음"}</>}
         {" · "}근무 {settings.work_start_hour}시~{settings.work_end_hour}시{getLunch(settings)?` (점심 ${getLunch(settings).label} 제외)`:""}
+        {notProdDay&&<span style={{color:"#f59e0b",fontWeight:700}}> · ⚠ 선택한 날은 생산 요일이 아닙니다</span>}
       </div>
 
       {loadErr?<div className="aps-err">{loadErr}</div>:
@@ -3251,7 +3276,7 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
                 <th>품목</th>
                 <th className="right">현재 재고</th>
                 <th className="right hide-mobile">하루 평균 판매</th>
-                <th className="center">소진 예상</th>
+                <th className="center" title="재고가 바닥(안전재고 또는 0) 밑으로 떨어지는 첫날">부족 예상</th>
                 <th className="right">생산 수량</th>
                 <th className="center">라인</th>
                 <th className="center">시간</th>
