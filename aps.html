@@ -5235,6 +5235,148 @@ function fmtSalesNum(n,digits){
   return Number(n).toLocaleString("ko-KR",{minimumFractionDigits:d,maximumFractionDigits:d});
 }
 
+// ─── 매출 요일 평균 기준 주수 (🤖 자동 생성 옵션과 공유) ───
+function loadAutoPlanWeeks(){
+  try{const o=JSON.parse(localStorage.getItem("aps-autoplan-opts-v2")||"{}");const w=parseInt(o.weeks);return w>0?w:8}catch(e){return 8}
+}
+function saveAutoPlanWeeks(w){
+  try{
+    const o=JSON.parse(localStorage.getItem("aps-autoplan-opts-v2")||"{}");
+    o.weeks=w;localStorage.setItem("aps-autoplan-opts-v2",JSON.stringify(o));
+  }catch(e){}
+}
+function dowLabelOf(dateStr){return DOW_LABEL[isoDowOf(dateStr)-1]}
+const V11_MSG="Supabase에서 setup_aps_v11.sql 을 먼저 실행해주세요.";
+function isMissingFn(e,name){const m=String(e?.message||e);return m.includes(name)||m.includes("PGRST202")||m.includes("Could not find the function")}
+
+// 상품 하나의 주×요일 매출 표 + 요일 평균 (자동 생성이 쓰는 값과 같은 산식)
+function SalesDowGrid({adminHash,code,weeks}){
+  const[data,setData]=useState(null);
+  const[err,setErr]=useState("");
+  useEffect(()=>{
+    let cancelled=false;setData(null);setErr("");
+    rpc("aps_get_sales_by_code",{p_admin_hash:adminHash,p_code:code,p_weeks:weeks})
+      .then(d=>{if(!cancelled)setData(d||{})})
+      .catch(e=>{if(!cancelled)setErr(isMissingFn(e,"aps_get_sales_by_code")?V11_MSG:"불러오기 실패: "+String(e.message||e).slice(0,100))});
+    return()=>{cancelled=true};
+  },[adminHash,code,weeks]);
+  if(err)return <div className="aps-err" style={{margin:0}}>{err}</div>;
+  if(!data)return <div style={{fontSize:12,color:"var(--muted)",padding:6}}>불러오는 중…</div>;
+  if(!data.start)return <div style={{fontSize:12,color:"var(--muted)"}}>매출 데이터가 없습니다.</div>;
+  const uploaded=new Set(data.uploaded_dates||[]);
+  const qtyBy={};(data.rows||[]).forEach(r=>{qtyBy[r.date]=Number(r.qty)||0});
+  // 주(월요일 시작) 목록: 최신 주가 위
+  const weeksArr=[];
+  for(let mon=kstMonday(data.end);mon>=kstMonday(data.start);mon=addDays(mon,-7)){
+    let any=false;for(let i=0;i<7;i++)if(uploaded.has(addDays(mon,i)))any=true;
+    if(any)weeksArr.push(mon); // 매출 파일이 하나도 없는 주는 숨김
+  }
+  const sum=[0,0,0,0,0,0,0],cnt=[0,0,0,0,0,0,0];
+  weeksArr.forEach(mon=>{for(let i=0;i<7;i++){const d=addDays(mon,i);if(d<data.start||d>data.end||!uploaded.has(d))continue;sum[i]+=qtyBy[d]||0;cnt[i]++}});
+  const cell={padding:"5px 8px",textAlign:"right",borderTop:"1px solid var(--div)",fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"};
+  return <div>
+    <div style={{fontSize:11,color:"var(--muted)",marginBottom:6}}>
+      {data.start} ~ {data.end} (최근 {weeks}주) · 요일 평균 = 그 요일 판매 합계 ÷ 매출이 올라온 그 요일 수 · <b>–</b> = 그날 매출 파일 없음(평균에서 제외), <b>0</b> = 올라왔지만 안 팔림
+    </div>
+    <div style={{overflow:"auto"}}>
+      <table style={{borderCollapse:"collapse",fontSize:12,minWidth:520}}>
+        <thead><tr>
+          <th style={{...cell,textAlign:"left",borderTop:"none",color:"var(--muted)",fontWeight:600}}>주 (월요일)</th>
+          {DOW_LABEL.map((lb,i)=><th key={i} style={{...cell,borderTop:"none",color:i===6?"#ef4444":i===5?"#3b82f6":"var(--muted)",fontWeight:600}}>{lb}</th>)}
+          <th style={{...cell,borderTop:"none",color:"var(--muted)",fontWeight:600}}>주 합계</th>
+        </tr></thead>
+        <tbody>
+          {weeksArr.map(mon=>{
+            let wk=0;
+            return <tr key={mon}>
+              <td style={{...cell,textAlign:"left",color:"var(--text-sub)"}}>{fmtMD(mon)}</td>
+              {DOW_LABEL.map((_,i)=>{
+                const d=addDays(mon,i);
+                if(d<data.start||d>data.end||!uploaded.has(d))return <td key={i} style={{...cell,color:"var(--dimmer)"}} title={d}>–</td>;
+                const q=qtyBy[d]||0;wk+=q;
+                return <td key={i} style={{...cell,color:q>0?"var(--text)":"var(--muted)"}} title={d}>{fmtSalesNum(Math.round(q*10)/10)}</td>;
+              })}
+              <td style={{...cell,fontWeight:600}}>{fmtSalesNum(Math.round(wk*10)/10)}</td>
+            </tr>;
+          })}
+          <tr>
+            <td style={{...cell,textAlign:"left",fontWeight:700,color:"#06b6d4",borderTop:"2px solid var(--div2)"}}>요일 평균</td>
+            {DOW_LABEL.map((_,i)=><td key={i} style={{...cell,fontWeight:700,color:"#06b6d4",borderTop:"2px solid var(--div2)"}}>
+              {cnt[i]?fmtSalesNum(Math.round(sum[i]/cnt[i]*10)/10):"–"}
+              <div style={{fontSize:9,fontWeight:500,color:"var(--muted)"}}>{cnt[i]}일</div>
+            </td>)}
+            <td style={{...cell,borderTop:"2px solid var(--div2)"}}></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>;
+}
+
+// 업로드된 날짜 목록 + 날짜 클릭 시 그날 상품별 매출
+function SalesDatesView({adminHash,refreshKey}){
+  const[dates,setDates]=useState(null);
+  const[err,setErr]=useState("");
+  const[open,setOpen]=useState(null);
+  const[detail,setDetail]=useState({});
+  useEffect(()=>{
+    let cancelled=false;setErr("");
+    rpc("aps_get_sales_dates",{p_admin_hash:adminHash,p_days:365})
+      .then(d=>{if(!cancelled)setDates(Array.isArray(d)?d:[])})
+      .catch(e=>{if(!cancelled){setDates([]);setErr(isMissingFn(e,"aps_get_sales_dates")?V11_MSG:"불러오기 실패: "+String(e.message||e).slice(0,100))}});
+    return()=>{cancelled=true};
+  },[adminHash,refreshKey]);
+  const toggle=async(d)=>{
+    if(open===d){setOpen(null);return}
+    setOpen(d);
+    if(!detail[d]){
+      try{const r=await rpc("aps_get_sales_by_date",{p_admin_hash:adminHash,p_date:d});setDetail(m=>({...m,[d]:r||[]}))}
+      catch(e){setDetail(m=>({...m,[d]:[]}))}
+    }
+  };
+  if(err)return <div className="aps-err">{err}</div>;
+  if(!dates)return <Loader/>;
+  if(dates.length===0)return <Empty emoji="📅" text="업로드된 매출 날짜가 없습니다"/>;
+  // 최근 날짜부터, 주(월요일) 단위로 구분선
+  let lastMon=null;
+  return <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8}}>
+    <table className="aps-table">
+      <thead><tr>
+        <th style={{width:150}}>매출일자</th>
+        <th className="right" style={{width:110}}>상품 수</th>
+        <th className="right" style={{width:130}}>총 판매(박스)</th>
+        <th></th>
+      </tr></thead>
+      <tbody>
+        {dates.map(d=>{
+          const mon=kstMonday(d.date);
+          const newWeek=lastMon!==null&&mon!==lastMon;lastMon=mon;
+          const dw=isoDowOf(d.date);
+          return <React.Fragment key={d.date}>
+            <tr onClick={()=>toggle(d.date)} style={{cursor:"pointer",borderTop:newWeek?"2px solid var(--div2)":undefined}}>
+              <td style={{fontWeight:600}}>
+                <span style={{display:"inline-block",width:12,color:"var(--muted)"}}>{open===d.date?"▾":"▸"}</span>
+                {d.date} <span style={{color:dw===7?"#ef4444":dw===6?"#3b82f6":"var(--muted)",fontWeight:700}}>({dowLabelOf(d.date)})</span>
+              </td>
+              <td className="right">{fmtSalesNum(d.codes)}</td>
+              <td className="right" style={{fontWeight:700}}>{fmtSalesNum(Math.round(Number(d.qty)*10)/10)}</td>
+              <td></td>
+            </tr>
+            {open===d.date&&<tr><td colSpan={4} style={{background:"var(--card-bg)",padding:"8px 14px"}}>
+              {!detail[d.date]?<div style={{fontSize:12,color:"var(--muted)"}}>불러오는 중…</div>:
+               <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                 {detail[d.date].map(r=><span key={r.code} style={{fontSize:12,padding:"3px 8px",border:"1px solid var(--div2)",borderRadius:6}}>
+                   {r.name||r.code} <b style={{color:"#06b6d4"}}>{fmtSalesNum(Math.round(Number(r.qty)*10)/10)}</b>
+                 </span>)}
+               </div>}
+            </td></tr>}
+          </React.Fragment>;
+        })}
+      </tbody>
+    </table>
+  </div>;
+}
+
 function SalesTab({adminHash}){
   const[busy,setBusy]=useState(false);
   const[err,setErr]=useState("");
@@ -5246,6 +5388,11 @@ function SalesTab({adminHash}){
   const[matchedOnly,setMatchedOnly]=useState(false); // 재고시트 매칭만
   const[sortKey,setSortKey]=useState("avg");         // avg | code | shortage | stock
   const[inv,setInv]=useState(()=>loadStoredInventory());
+  const[salesView,setSalesView]=useState(()=>{try{return localStorage.getItem("aps-sales-view")==="date"?"date":"item"}catch(e){return "item"}});
+  useEffect(()=>{try{localStorage.setItem("aps-sales-view",salesView)}catch(e){}},[salesView]);
+  const[expanded,setExpanded]=useState(null);   // 주×요일 표를 펼친 상품코드
+  const[dowWeeks,setDowWeeks]=useState(()=>loadAutoPlanWeeks());
+  const[refreshKey,setRefreshKey]=useState(0);
 
   // 재고시트(localStorage) 변경 구독
   useEffect(()=>{
@@ -5285,6 +5432,7 @@ function SalesTab({adminHash}){
       ]);
       setMeta(m||null);
       setStats(Array.isArray(s)?s:[]);
+      setRefreshKey(k=>k+1);
     }catch(e){setErr("로딩 실패: "+(e.message||e))}
     finally{setBusy(false)}
   }
@@ -5460,6 +5608,22 @@ function SalesTab({adminHash}){
       </div>
     </div>
 
+    {/* 보기 전환 */}
+    <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:10}}>
+      <div className="aps-view-toggle">
+        <button className={salesView==="item"?"on":""} onClick={()=>setSalesView("item")}>📦 상품별</button>
+        <button className={salesView==="date"?"on":""} onClick={()=>setSalesView("date")}>📅 날짜별</button>
+      </div>
+      {salesView==="item"&&<span style={{fontSize:12,color:"var(--muted)",display:"flex",alignItems:"center",gap:6}}>
+        상품을 누르면 주×요일 매출표가 열립니다 · 요일 평균 기준
+        <select className="aps-input" value={dowWeeks} onChange={e=>{const w=parseInt(e.target.value);setDowWeeks(w);saveAutoPlanWeeks(w)}} style={{width:96,padding:"4px 8px"}}>
+          {[...new Set([2,4,8,12,dowWeeks])].sort((a,b)=>a-b).map(w=><option key={w} value={w}>최근 {w}주</option>)}
+        </select>
+        <span style={{fontSize:11}}>(🤖 자동 생성과 같은 설정)</span>
+      </span>}
+    </div>
+
+    {salesView==="date"?<SalesDatesView adminHash={adminHash} refreshKey={refreshKey}/>:<>
     {/* 필터 / 정렬 툴바 */}
     <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:10}}>
       <div style={{display:"flex",gap:4,alignItems:"center"}}>
@@ -5522,8 +5686,9 @@ function SalesTab({adminHash}){
               }else{
                 statusEl=<span style={{fontSize:11,fontWeight:700,color:"#22c55e",background:"rgba(34,197,94,0.12)",padding:"3px 7px",borderRadius:4}}>정상</span>;
               }
-              return <tr key={x.code}>
-                <td className="center" style={{color:"var(--muted)",fontSize:11}}>{i+1}</td>
+              const isOpen=expanded===x.code;
+              return <React.Fragment key={x.code}><tr onClick={()=>setExpanded(isOpen?null:x.code)} style={{cursor:"pointer"}}>
+                <td className="center" style={{color:"var(--muted)",fontSize:11}}>{isOpen?"▾":"▸"} {i+1}</td>
                 <td style={{fontFamily:"monospace",fontSize:12}}>{x.code}</td>
                 <td>
                   <div style={{fontWeight:600}}>{x.displayName||<span style={{color:"var(--muted)"}}>(이름 없음)</span>}</div>
@@ -5534,12 +5699,18 @@ function SalesTab({adminHash}){
                 <td className="right" style={{fontWeight:700,fontSize:13,color:"#06b6d4"}}>{fmtSalesNum(Math.round(avg))}</td>
                 <td className="right" style={{fontSize:12}}>{hasStock?fmtSalesNum(Math.round(x.currentStock)):<span style={{color:"var(--muted)"}}>—</span>}</td>
                 <td className="center">{statusEl}</td>
-              </tr>;
+              </tr>
+              {isOpen&&<tr><td colSpan={8} style={{background:"var(--card-bg)",padding:"10px 14px"}}>
+                <SalesDowGrid adminHash={adminHash} code={x.code} weeks={dowWeeks}/>
+              </td></tr>}
+              </React.Fragment>;
             })}
           </tbody>
         </table>
       </div>
     }
+
+    </>}
 
     <div style={{marginTop:14,padding:"10px 14px",background:"var(--card-bg)",borderRadius:6,fontSize:11,color:"var(--muted)",lineHeight:1.6}}>
       <div><strong>💡 사용법</strong></div>
@@ -5553,6 +5724,7 @@ function SalesTab({adminHash}){
       <div>4. <b>현재재고</b>는 📋 재고 시트 탭에서 업로드한 박스 수와 자동 연동</div>
       <div>5. 매출 업로드 시 <b>📦 품목/BOM 탭의 안전재고</b>도 최근 4주 평균값으로 자동 갱신 (수동 트리거: 💰 안전재고 동기화 버튼)</div>
       <div>6. 1년 초과 데이터는 🗑 365일 정리 버튼으로 일괄 삭제</div>
+      <div>7. <b>📅 날짜별</b>: 업로드된 매출 날짜와 그날 상품별 판매. <b>상품 행 클릭</b>: 최근 N주 주×요일 표 + 요일 평균 (예: 지난주 월 40, 이번주 월 20 → 월요일 평균 30). 🤖 자동 생성은 이 요일 평균으로 재고를 예측합니다</div>
     </div>
   </div>;
 }
