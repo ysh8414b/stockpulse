@@ -333,9 +333,10 @@ function boxCapacity(p,methodMap,cfg){
   const canMix=mixed.length>0;
   // 용량은 항상 적재방식의 최대 박스 — 규격은 1단 박스 수 계산에만 사용
   const cap=single.length?Math.max(...single.map(m=>m.max_boxes)):mixed.length?Math.min(...mixed.map(m=>m.max_boxes)):DEFAULT_CAP;
-  // 혼적 1자리에 쌓는 최대 박스 = 파렛트 설정의 '혼적 최대 단수'(기본 6) — 모든 제품 공통
-  // (예전엔 혼적 방식 최대 박스 ÷ 6이라 30박스 방식 제품 하나가 섞이면 혼적 전체가 5단으로 묶였음)
-  const stack=Math.max(1,Math.floor(Number(cfg?.mix_layers)||6));
+  // 혼적 1자리에 쌓는 최대 박스 = 혼적 방식의 '1자리 최대 단수'(여러 개면 가장 낮은 것)
+  // 비어 있으면 파렛트 설정의 '혼적 최대 단수'(기본 6) — 박스가 높아 6단까지 못 쌓는 제품은 4단 방식 등을 지정
+  const layerSet=mixed.map(m=>m.mix_layers).filter(v=>v>0);
+  const stack=Math.max(1,Math.floor(layerSet.length?Math.min(...layerSet):Number(cfg?.mix_layers)||6));
   const dims=parseSpec(p?.box_spec);
   const perLayer=dims?layerCount(cfg.pallet_w,cfg.pallet_d,dims.w,dims.d):0;
   if(perLayer>0){
@@ -351,7 +352,7 @@ function enrichLine(item,p){
   return{item,product:p,per,boxes,partial:Math.abs(exact-Math.round(exact))>1e-9};
 }
 function toMethodMap(methods){
-  return Object.fromEntries((methods||[]).map(m=>[Number(m.id),{...m,max_boxes:Number(m.max_boxes)||DEFAULT_CAP,cols:Number(m.cols)||3,per_layer:Number(m.per_layer)||6}]));
+  return Object.fromEntries((methods||[]).map(m=>[Number(m.id),{...m,max_boxes:Number(m.max_boxes)||DEFAULT_CAP,cols:Number(m.cols)||3,per_layer:Number(m.per_layer)||6,mix_layers:Number(m.mix_layers)>0?Math.floor(Number(m.mix_layers)):null}]));
 }
 // 적재량 설명 문구
 function capText(c){
@@ -454,7 +455,16 @@ function binScore(bins,cap,stack,groups){
     Math.max(...loads)-Math.min(...loads)];
 }
 function lexLess(x,y){for(let i=0;i<x.length;i++)if(x[i]!==y[i])return x[i]<y[i];return false}
+// 1자리 단수가 다른 제품이 섞인 풀 — (가) 전부 한 풀(가장 낮은 단수에 맞춤) / (나) 단수별로 따로 혼적 중 나은 쪽
 function mergePool(pool){
+  if(!pool.length)return[];
+  const stacks=[...new Set(pool.map(e=>e.stack))];
+  if(stacks.length<2)return mergePoolOne(pool);
+  const all=mergePoolOne(pool);
+  const split=stacks.sort((a,b)=>b-a).flatMap(st=>mergePoolOne(pool.filter(e=>e.stack===st)));
+  return lexLess(palletScore(split),palletScore(all))?split:all;
+}
+function mergePoolOne(pool){
   if(!pool.length)return[];
   pool=[...pool].sort((x,y)=>sauceCmp(sauceOf(x),sauceOf(y))||x.item.line_no-y.item.line_no); // 같은 양념끼리 붙여서 시작
   const slots=Math.min(...pool.map(e=>e.slots)),cols=Math.max(...pool.map(e=>e.cols));
@@ -474,6 +484,15 @@ function mergePool(pool){
     out.push(lines.length===1?{kind:"single",lines}:{kind:"mixed",slots,cols,lines});
   }
   return out;
+}
+// 파렛트 목록 비교 점수 (작을수록 좋음)
+function palletScore(list){
+  const smallOnes=list.filter(p=>p.kind==="single"&&p.lines[0].count<p.lines[0].stack*p.lines[0].slots/2);
+  const occ=list.reduce((a,p)=>a+p.lines.length,0),uniq=new Set(list.flatMap(p=>p.lines.map(l=>l.product.code))).size;
+  const per={};list.forEach(p=>p.lines.forEach(l=>{per[l.product.code]=(per[l.product.code]||0)+1}));
+  const tinyPieces=list.reduce((a,p)=>a+p.lines.filter(l=>per[l.product.code]>1&&l.count<l.stack).length,0);
+  const sauceMix=list.reduce((a,p)=>a+sauceConflict(p.lines.map(sauceOf)),0);
+  return[list.length,tinyPieces,sauceMix,smallOnes.length,occ-uniq,-Math.min(Infinity,...smallOnes.map(p=>p.lines[0].count))];
 }
 function buildPallets(lines,methodMap,cfg){
   const singles=[],small=[],big=[];
@@ -495,15 +514,7 @@ function buildPallets(lines,methodMap,cfg){
   const optA=big.map(asSingle).concat(mergePool(small));
   const optB=big.length&&small.length?mergePool(big.concat(small)):null;
   // 비교: 파렛트 수 → 1자리도 안 되는 나뉜 조각 수 → 양념 섞인 파렛트 수 → 상품 1개 소량 파렛트 수 → 두 파렛트 이상에 나뉜 제품 수 → (소량 파렛트 중 최소 수량이 큰 쪽)
-  const score=list=>{
-    const smallOnes=list.filter(p=>p.kind==="single"&&p.lines[0].count<p.lines[0].stack*p.lines[0].slots/2);
-    const occ=list.reduce((a,p)=>a+p.lines.length,0),uniq=new Set(list.flatMap(p=>p.lines.map(l=>l.product.code))).size;
-    const per={};list.forEach(p=>p.lines.forEach(l=>{per[l.product.code]=(per[l.product.code]||0)+1}));
-    const tinyPieces=list.reduce((a,p)=>a+p.lines.filter(l=>per[l.product.code]>1&&l.count<l.stack).length,0);
-    const sauceMix=list.reduce((a,p)=>a+sauceConflict(p.lines.map(sauceOf)),0);
-    return[list.length,tinyPieces,sauceMix,smallOnes.length,occ-uniq,-Math.min(Infinity,...smallOnes.map(p=>p.lines[0].count))];
-  };
-  const better=(x,y)=>lexLess(score(x),score(y));
+  const better=(x,y)=>lexLess(palletScore(x),palletScore(y));
   const merged=optB&&better(optB,optA)?optB:optA;
   // 단독 파렛트 먼저(발주서 순서 → 같은 제품은 많은 것부터), 혼적은 뒤로
   const sgl=singles.concat(merged.filter(p=>p.kind==="single"))
@@ -906,7 +917,8 @@ function BoxSpecManager({adminHash,masters,onChanged,onClose,onPick}){
 }
 
 function MethodManager({adminHash,masters,onChanged,onClose}){
-  const blank={id:null,name:"",kind:"single",max_boxes:40,cols:3,per_layer:6,memo:""};
+  const blank={id:null,name:"",kind:"single",max_boxes:40,cols:3,per_layer:6,mix_layers:"",memo:""};
+  const defLayers=Math.max(1,Math.floor(palletCfg(masters.settings).mix_layers||6));
   const[form,setForm]=useState(blank);
   const[err,setErr]=useState("");const[busy,setBusy]=useState(false);
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
@@ -914,8 +926,16 @@ function MethodManager({adminHash,masters,onChanged,onClose}){
     if(!form.name.trim()){setErr("이름을 입력하세요");return}
     setBusy(true);setErr("");
     try{
-      await rpc("ol_upsert_method",{p_admin_hash:adminHash,p_id:form.id,p_name:form.name.trim(),p_kind:form.kind,
-        p_max_boxes:parseInt(form.max_boxes,10)||40,p_cols:parseInt(form.cols,10)||3,p_memo:form.memo||"",p_per_layer:parseInt(form.per_layer,10)||6});
+      const args={p_admin_hash:adminHash,p_id:form.id,p_name:form.name.trim(),p_kind:form.kind,
+        p_max_boxes:parseInt(form.max_boxes,10)||40,p_cols:parseInt(form.cols,10)||3,p_memo:form.memo||"",p_per_layer:parseInt(form.per_layer,10)||6};
+      const ml=form.kind==="mixed"?parseInt(form.mix_layers,10):NaN;
+      try{await rpc("ol_upsert_method",{...args,p_mix_layers:ml>0?ml:null})}
+      catch(e){
+        // setup_orders_mixlayers.sql 실행 전이면 단수 없이 저장하고 안내
+        if(!/function|PGRST202|schema cache/i.test(String(e?.message||e)))throw e;
+        await rpc("ol_upsert_method",args);
+        if(ml>0)alert("적재방식은 저장했지만 1자리 최대 단수는 저장되지 않았습니다.\nSupabase SQL Editor에서 setup_orders_mixlayers.sql 을 1회 실행해 주세요.");
+      }
       setForm(blank);await onChanged();
     }catch(e){setErr(errMsg(e))}
     setBusy(false);
@@ -929,7 +949,7 @@ function MethodManager({adminHash,masters,onChanged,onClose}){
     <div style={{fontSize:17,fontWeight:700,marginBottom:6}}>🧱 적재방식 관리</div>
     <div style={{fontSize:12,color:"var(--muted)",marginBottom:14,lineHeight:1.6}}>
       <b>단독</b>: 한 파렛트에 그 제품만. 적재량은 제품의 <b>박스규격</b>으로 자동 계산 (1층 박스 수 × 단수, ⚙ 파렛트 설정 기준). 꽉 찬 파렛트를 만들고 자투리는 따로 1파렛트.<br/>
-      <b>혼적</b>: 자투리 박스를 다른 혼적 제품과 한 파렛트에 합침. 한 층에 <i>층당 방 수</i>(기본 6)만큼 자리가 있고, 자리마다 한 제품을 그 제품 단수까지 위로 쌓음. 자투리가 6자리 이상 필요하면 혼적 대신 단독 1파렛트. 적재이미지는 자리별 쌓는 박스 수를 표로 표시 (6방·가로 3칸 = 2줄×3칸).<br/>
+      <b>혼적</b>: 자투리 박스를 다른 혼적 제품과 한 파렛트에 합침. 한 층에 <i>층당 방 수</i>(기본 6)만큼 자리가 있고, 자리마다 위로 <i>1자리 최대 단수</i>까지 쌓음 (박스가 높아 6단까지 못 쌓는 제품은 4단 등 별도 혼적 방식을 만들어 지정 · 비우면 ⚙ 파렛트 설정의 혼적 최대 단수). 단수가 다른 제품이 한 혼적 파렛트에 섞이면 가장 낮은 단수에 맞춤. 자투리가 6자리 이상 필요하면 혼적 대신 단독 1파렛트. 적재이미지는 자리별 쌓는 박스 수를 표로 표시 (6방·가로 3칸 = 2줄×3칸).<br/>
       제품에 단독+혼적을 같이 선택하면 → 꽉 찬 파렛트는 단독, 남는 박스만 혼적.
     </div>
     <div className="ol-card" style={{padding:12}}>
@@ -938,6 +958,7 @@ function MethodManager({adminHash,masters,onChanged,onClose}){
         <div><div className="ol-label">유형</div><select className="ol-input" value={form.kind} onChange={e=>set("kind",e.target.value)}><option value="single">단독</option><option value="mixed">혼적</option></select></div>
         <div><div className="ol-label">최대 박스 (파렛트 1개)</div><input className="ol-input" type="number" min="1" value={form.max_boxes} onChange={e=>set("max_boxes",e.target.value)}/></div>
         {form.kind==="mixed"&&<div><div className="ol-label">층당 박스 수 (방)</div><input className="ol-input" type="number" min="1" max="12" value={form.per_layer} onChange={e=>set("per_layer",e.target.value)}/></div>}
+        {form.kind==="mixed"&&<div><div className="ol-label">1자리 최대 단수 (위로 쌓는 박스)</div><input className="ol-input" type="number" min="1" max="20" value={form.mix_layers??""} onChange={e=>set("mix_layers",e.target.value)} placeholder={`비우면 파렛트 설정 (${defLayers}단)`}/></div>}
         {form.kind==="mixed"&&<div><div className="ol-label">이미지 가로 칸 수</div><input className="ol-input" type="number" min="1" max="6" value={form.cols} onChange={e=>set("cols",e.target.value)}/></div>}
       </div>
       <input className="ol-input" value={form.memo} onChange={e=>set("memo",e.target.value)} placeholder="메모 (선택)" style={{marginBottom:8}}/>
@@ -947,16 +968,16 @@ function MethodManager({adminHash,masters,onChanged,onClose}){
       </div>
     </div>
     {err&&<div className="ol-err">{err}</div>}
-    <div className="ol-scroll"><table className="ol-table"><thead><tr><th>이름</th><th>유형</th><th className="right">최대 박스</th><th className="right">층당 방</th><th className="right">사용 제품</th><th>메모</th><th></th></tr></thead><tbody>
+    <div className="ol-scroll"><table className="ol-table"><thead><tr><th>이름</th><th>유형</th><th className="right">최대 박스</th><th className="right">혼적 구성</th><th className="right">사용 제품</th><th>메모</th><th></th></tr></thead><tbody>
       {masters.methods.map(m=><tr key={m.id}>
         <td style={{fontWeight:600}}>{m.name}</td>
         <td><span className={"ol-pill "+m.kind}>{m.kind==="mixed"?"혼적":"단독"}</span></td>
         <td className="right">{m.max_boxes}</td>
-        <td className="right">{m.kind==="mixed"?`${m.per_layer||6}방 (가로 ${m.cols})`:"–"}</td>
+        <td className="right">{m.kind==="mixed"?`${m.per_layer||6}방 × ${m.mix_layers>0?m.mix_layers:defLayers}단${m.mix_layers>0?"":" (기본)"} · 가로 ${m.cols}`:"–"}</td>
         <td className="right">{masters.products.filter(p=>(p.method_ids||[]).map(Number).includes(Number(m.id))).length}</td>
         <td style={{fontSize:12,color:"var(--muted)"}}>{m.memo}</td>
         <td className="right" style={{whiteSpace:"nowrap"}}>
-          <button className="ol-btn ol-btn-secondary ol-btn-sm" style={{marginRight:4}} onClick={()=>setForm({...m,memo:m.memo||""})}>수정</button>
+          <button className="ol-btn ol-btn-secondary ol-btn-sm" style={{marginRight:4}} onClick={()=>setForm({...m,mix_layers:m.mix_layers??"",memo:m.memo||""})}>수정</button>
           <button className="ol-btn ol-btn-danger ol-btn-sm" onClick={()=>del(m)}>삭제</button>
         </td>
       </tr>)}
