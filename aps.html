@@ -2991,7 +2991,6 @@ function WeekSummaryPanel({weeks,selectedDay,onDayClick,onPlanClick,onExportWeek
 //  → 생산량 = 선택일부터 N일치 수요를 채우는 양
 //  → 자동계획 허용 라인 중 그 품목을 만들 수 있는 라인에, 시간당 생산량으로 시간 배정
 // ═══════════════════════════════════════════
-const AUTO_MEMO="🤖 자동생성";
 function isoDowOf(dateStr){
   const[y,m,d]=dateStr.split("-").map(Number);
   const u=new Date(Date.UTC(y,m-1,d)).getUTCDay();
@@ -3179,7 +3178,7 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
         await rpc("aps_upsert_plan",{
           p_admin_hash:adminHash,p_id:null,p_item_id:r.item.id,p_line_id:r.lineId,p_qty:r.qty,
           p_start_at:new Date(r.startMs).toISOString(),p_end_at:new Date(r.endMs).toISOString(),
-          p_status:"planned",p_memo:AUTO_MEMO+(r.partial?` (시간 부족: 필요 ${r.need})`:"")
+          p_status:"planned",p_memo:r.partial?`시간 부족: 필요 ${r.need}`:""
         });
         ok++;
       }catch(e){fails.push(r.item.name)}
@@ -3295,7 +3294,7 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
       </>}
 
       <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14,alignItems:"center",flexWrap:"wrap"}}>
-        <span style={{fontSize:11,color:"var(--muted)",marginRight:"auto",flex:"1 1 300px"}}>생성된 계획은 메모에 "{AUTO_MEMO}"가 붙고 간트에서 끌어서 시간을 조정할 수 있습니다. 다시 실행해도 이미 만든 계획이 재고 예측에 반영돼 중복되지 않습니다.</span>
+        <span style={{fontSize:11,color:"var(--muted)",marginRight:"auto",flex:"1 1 300px"}}>생성된 계획은 간트에서 끌어서 시간을 조정할 수 있습니다. 다시 실행해도 이미 만든 계획이 재고 예측에 반영돼 중복되지 않습니다.</span>
         <button className="aps-btn aps-btn-secondary" onClick={onCancel} disabled={creating}>취소</button>
         <button className="aps-btn aps-btn-primary" onClick={create} disabled={creating||selected.length===0}>{creating?"생성 중...":`선택 ${selected.length}건 생성`}</button>
       </div>
