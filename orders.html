@@ -2052,154 +2052,157 @@ function runsOf(rows,key){
   return out;
 }
 const shipTitle=(prefix,date)=>`${prefix?prefix+" ":""}${fmtMd(date)} (${dowOf(date)}) 입고`;
-const shipName=r=>`${r.product.name} / ${r.per}ea`;
 const fmtBoxes=n=>Number.isInteger(n)?String(n):String(Math.round(n*100)/100);
 const fmtExp=s=>s?s.replace(/-/g,"/")+" 이후":"";
 
+// 화면·엑셀 공통: 냉장/냉동 섹션 → 생산지점 묶음
+function shipSections(data){
+  const out=[];
+  if(data.chilledSites.length)out.push({key:"chilled",title:"냉장제품",expLabel:"소비기한",groups:data.chilledSites});
+  if(data.frozen.length){
+    const sites=[...new Set(data.frozen.map(r=>r.site))];
+    out.push({key:"frozen",title:"냉동제품",expLabel:"유통기한",groups:sites.map(site=>({site,rows:data.frozen.filter(r=>r.site===site)}))});
+  }
+  return out;
+}
+const SHIP_ACCENT={chilled:{main:"#0e7490",soft:"#ecfeff",x:"0E7490",xs:"E0F7FA"},frozen:{main:"#1d4ed8",soft:"#eff6ff",x:"1D4ED8",xs:"E3ECFD"}};
+const secShort=sec=>sec.title.replace("제품","");
+
 function ShipSheetPreview({data,date,prefix}){
-  const{chilledSites,frozen}=data;
-  const Y={background:"#ffff00"};
-  const td={border:"1px solid #333",padding:"6px 8px",textAlign:"center"};
-  const allChilled=chilledSites.flatMap(s=>s.rows);
-  return <div className="ol-sheet" style={{fontSize:13}}>
-    <div style={{textAlign:"center",fontSize:22,fontWeight:900,padding:"6px 0 10px",borderBottom:"3px double #111",marginBottom:12}}>{shipTitle(prefix,date)}</div>
-    {chilledSites.length>0&&<table style={{marginBottom:18}}><tbody>
-      <tr style={{fontWeight:700,fontSize:15}}>
-        <td colSpan={2} style={{...td,...Y}}>냉장제품</td><td style={{...td,...Y,width:90}}>총 팩수량</td><td style={{...td,...Y,width:80}}>박스수량</td><td style={{...td,...Y,width:70}}>박스</td><td style={{...td,width:150}}>소비기한</td>
-      </tr>
-      {chilledSites.map(s=>{
-        const runs=runsOf(s.rows,r=>r.expiry);
-        return <React.Fragment key={s.site}>
-          {s.rows.map((r,i)=>{
-            const run=runs.find(x=>x.start===i);
-            return <tr key={r.code+r.expiry}>
-              {i===0&&<td rowSpan={s.rows.length} style={{...td,fontSize:18,fontWeight:900,width:70}}>{s.site}</td>}
-              <td style={{...td,fontSize:14,color:r.qty?"#111":"#9ca3af"}}>{shipName(r)}</td>
-              <td style={td}>{r.qty?fmtNum(r.qty):""}</td>
-              <td style={{...td,...Y,fontWeight:800,color:r.partial?"#dc2626":"#111"}} title={r.partial?"입수량으로 나누어떨어지지 않음":""}>{r.qty?fmtBoxes(r.boxes):0}</td>
-              {i===0&&<td rowSpan={s.rows.length} style={{...td,...Y,fontWeight:900,fontSize:16,border:"2px solid #111"}}>{fmtBoxes(sumBy(s.rows,"boxes"))}</td>}
-              {run&&<td rowSpan={run.len} style={{...td,fontWeight:700,border:"2px solid #111"}}>{fmtExp(run.value)}</td>}
-            </tr>;
-          })}
-          <tr style={{fontWeight:700}}><td colSpan={2} style={{...td,...Y}}>{s.site} 합계</td><td style={{...td,...Y}}>{fmtNum(sumBy(s.rows,"qty"))}</td><td style={{...td,...Y,fontWeight:900}}>{fmtBoxes(sumBy(s.rows,"boxes"))}</td><td colSpan={2} style={td}></td></tr>
-        </React.Fragment>;
-      })}
-      {chilledSites.length>1&&<tr style={{fontWeight:900}}><td colSpan={2} style={{...td,...Y}}>냉장 총합계</td><td style={{...td,...Y}}>{fmtNum(sumBy(allChilled,"qty"))}</td><td style={{...td,...Y}}>{fmtBoxes(sumBy(allChilled,"boxes"))}</td><td colSpan={2} style={td}></td></tr>}
-    </tbody></table>}
-    {frozen.length>0&&<table><tbody>
-      <tr style={{fontWeight:700,fontSize:15}}>
-        <td colSpan={2} style={{...td,...Y}}>냉동제품</td><td style={{...td,...Y,width:90}}>총 팩수량</td><td style={{...td,...Y,width:80}}>박스수량</td><td colSpan={2} style={{...td,width:220}}>유통기한</td>
-      </tr>
-      {(()=>{const runs=runsOf(frozen,r=>r.expiry);return frozen.map((r,i)=>{
-        const run=runs.find(x=>x.start===i);
-        return <tr key={r.code+r.expiry}>
-          <td colSpan={2} style={{...td,fontSize:14,color:r.qty?"#111":"#9ca3af"}}>{shipName(r)}</td>
-          <td style={td}>{r.qty?fmtNum(r.qty):""}</td>
-          <td style={{...td,...Y,fontWeight:800,color:r.partial?"#dc2626":"#111"}}>{r.qty?fmtBoxes(r.boxes):0}</td>
-          {run&&<td colSpan={2} rowSpan={run.len} style={{...td,fontWeight:700}}>{fmtExp(run.value)}</td>}
-        </tr>;
-      })})()}
-      <tr style={{fontWeight:900}}><td colSpan={2} style={{...td,...Y}}>합계</td><td style={{...td,...Y}}>{fmtNum(sumBy(frozen,"qty"))}</td><td style={{...td,...Y}}>{fmtBoxes(sumBy(frozen,"boxes"))}</td><td colSpan={2} style={td}></td></tr>
-    </tbody></table>}
+  const secs=shipSections(data);
+  const secRows=sec=>sec.groups.flatMap(g=>g.rows);
+  const total=secs.reduce((a,sec)=>a+sumBy(secRows(sec),"boxes"),0);
+  const cell={padding:"8px 12px",borderBottom:"1px solid #e5e7eb",fontVariantNumeric:"tabular-nums"};
+  const num={...cell,textAlign:"right"};
+  const foot={...cell,borderTop:"2px solid #111",borderBottom:"none"};
+  return <div className="ol-sheet" style={{padding:"22px 24px",fontSize:14,lineHeight:1.4}}>
+    <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:12,flexWrap:"wrap",paddingBottom:12,borderBottom:"2px solid #111",marginBottom:18}}>
+      <div style={{fontSize:24,fontWeight:900,letterSpacing:"-0.5px"}}>{shipTitle(prefix,date)}</div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        {secs.map(sec=><span key={sec.key} style={{padding:"4px 10px",borderRadius:14,background:SHIP_ACCENT[sec.key].soft,color:SHIP_ACCENT[sec.key].main,fontWeight:700,fontSize:13}}>{secShort(sec)} {fmtBoxes(sumBy(secRows(sec),"boxes"))}박스</span>)}
+        <span style={{padding:"4px 10px",borderRadius:14,background:"#111",color:"#fff",fontWeight:700,fontSize:13}}>총 {fmtBoxes(total)}박스</span>
+      </div>
+    </div>
+    {secs.map(sec=>{
+      const ac=SHIP_ACCENT[sec.key];
+      const all=secRows(sec);
+      return <div key={sec.key} style={{marginBottom:26}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+          <span style={{width:5,height:20,borderRadius:3,background:ac.main}}/>
+          <span style={{fontSize:17,fontWeight:800,color:ac.main}}>{sec.title}</span>
+          <span style={{fontSize:12,color:"#6b7280"}}>{all.filter(r=>r.qty>0).length}품목</span>
+        </div>
+        <table style={{minWidth:600,border:"1px solid #e5e7eb"}}>
+          <colgroup><col/><col style={{width:70}}/><col style={{width:100}}/><col style={{width:90}}/><col style={{width:150}}/></colgroup>
+          <thead><tr style={{background:"#f8fafc",color:"#475569",fontSize:12}}>
+            <th style={{...cell,textAlign:"left"}}>제품명</th><th style={{...cell,textAlign:"center"}}>입수</th>
+            <th style={num}>총 팩수량</th><th style={num}>박스수량</th><th style={{...cell,textAlign:"center"}}>{sec.expLabel}</th>
+          </tr></thead>
+          <tbody>
+            {sec.groups.map(g=>{
+              const runs=runsOf(g.rows,r=>r.expiry);
+              return <React.Fragment key={g.site}>
+                <tr style={{background:ac.soft}}>
+                  <td colSpan={3} style={{...cell,fontWeight:800,color:ac.main,fontSize:15}}>🏭 {g.site}<span style={{fontWeight:500,fontSize:12,color:"#6b7280",marginLeft:8}}>{g.rows.filter(r=>r.qty>0).length}품목 · {fmtNum(sumBy(g.rows,"qty"))}팩</span></td>
+                  <td style={{...num,fontWeight:900,fontSize:16,color:ac.main}}>{fmtBoxes(sumBy(g.rows,"boxes"))}</td>
+                  <td style={cell}></td>
+                </tr>
+                {g.rows.map((r,i)=>{
+                  const run=runs.find(x=>x.start===i);
+                  const dim=!r.qty;
+                  return <tr key={r.code+r.expiry} style={{color:dim?"#b6bcc6":"#111"}}>
+                    <td style={{...cell,paddingLeft:24}}>{r.product.name}</td>
+                    <td style={{...cell,textAlign:"center",color:"#6b7280",fontSize:12}}>{r.per}ea</td>
+                    <td style={num}>{r.qty?fmtNum(r.qty):"–"}</td>
+                    <td style={{...num,fontWeight:800,background:dim?"transparent":"#fef9c3",color:r.partial?"#dc2626":dim?"#b6bcc6":"#111"}} title={r.partial?"입수량으로 나누어떨어지지 않음":""}>{r.qty?fmtBoxes(r.boxes):"–"}</td>
+                    {run&&<td rowSpan={run.len} style={{...cell,textAlign:"center",fontWeight:600,fontSize:13,borderLeft:"1px solid #e5e7eb",color:"#111"}}>{fmtExp(run.value)}</td>}
+                  </tr>;
+                })}
+              </React.Fragment>;
+            })}
+            <tr style={{fontWeight:900}}>
+              <td colSpan={2} style={foot}>{secShort(sec)} 합계</td>
+              <td style={{...foot,textAlign:"right"}}>{fmtNum(sumBy(all,"qty"))}</td>
+              <td style={{...foot,textAlign:"right",fontSize:16}}>{fmtBoxes(sumBy(all,"boxes"))}</td>
+              <td style={foot}></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>;
+    })}
   </div>;
 }
 
-// 출고장 엑셀 — 출고리스트.xlsx 서식 (A~F열, 냉장은 생산지점별 묶음, 아래에 냉동)
+// 출고장 엑셀 — 화면과 같은 구성 (A 제품명 · B 입수 · C 총 팩수량 · D 박스수량 · E 소비/유통기한)
 function downloadShipXlsx(data,date,prefix,vendor){
   const F="Pretendard";
-  const B=(l,r,t,b)=>({left:{style:l,color:{rgb:"000000"}},right:{style:r,color:{rgb:"000000"}},top:{style:t,color:{rgb:"000000"}},bottom:{style:b,color:{rgb:"000000"}}});
-  const box=B("thin","thin","thin","thin"),thick=B("thick","thick","thick","thick");
-  const C={horizontal:"center",vertical:"center",wrapText:true};
-  const Y={patternType:"solid",fgColor:{rgb:"FFFF00"}};
-  const st=(sz,bold,fill,border)=>({font:{name:F,sz,bold:!!bold},alignment:C,border:border||box,...(fill?{fill:Y}:{})});
+  const line=(style,rgb)=>({style,color:{rgb:rgb||"D0D5DD"}});
+  const grid={left:line("thin"),right:line("thin"),top:line("thin"),bottom:line("thin")};
   const ws={},merges=[],rowsH=[];
-  const put=(r,c,cell)=>{ws[XLSX.utils.encode_cell({r,c})]=cell};
-  const sv=(v,s)=>({t:typeof v==="number"?"n":"s",v,s});
-  const fill=(r,c1,c2,s)=>{for(let c=c1;c<=c2;c++)if(!ws[XLSX.utils.encode_cell({r,c})])put(r,c,sv("",s))};
-  const merge=(r1,c1,r2,c2)=>{if(r1!==r2||c1!==c2)merges.push({s:{r:r1,c:c1},e:{r:r2,c:c2}})};
-  const A=(r,c)=>XLSX.utils.encode_cell({r,c});
-  const expCell=(v,s)=>v?{t:"n",v:excelSerial(v),z:'yyyy/mm/dd"이후"',s:{...s,numFmt:'yyyy/mm/dd"이후"'}}:sv("",s);
-
-  put(0,0,sv(shipTitle(prefix,date)+(vendor?` · ${vendor}`:""),{font:{name:F,sz:18,bold:true},alignment:C,border:{bottom:{style:"double",color:{rgb:"000000"}}}}));
-  fill(0,1,5,{border:{bottom:{style:"double",color:{rgb:"000000"}}}});fill(1,0,5,{border:{bottom:{style:"double",color:{rgb:"000000"}}}});
-  merge(0,0,1,5);rowsH[0]=rowsH[1]={hpt:30.75};
+  const enc=(r,c)=>XLSX.utils.encode_cell({r,c});
+  const st=o=>{
+    const font={name:F,sz:o.sz||12,bold:!!o.b};if(o.color)font.color={rgb:o.color};
+    const s={font,alignment:{horizontal:o.h||"left",vertical:"center",wrapText:true,indent:o.indent||0},border:o.border||grid};
+    if(o.fill)s.fill={patternType:"solid",fgColor:{rgb:o.fill}};
+    if(o.fmt)s.numFmt=o.fmt;
+    return s;
+  };
+  const put=(r,c,v,s,f)=>{ws[enc(r,c)]=f?{t:"n",v:v||0,f,s}:{t:typeof v==="number"?"n":"s",v:v??"",s}};
+  const span=(r,c1,c2,v,s,f)=>{put(r,c1,v,s,f);for(let c=c1+1;c<=c2;c++)put(r,c,"",s);if(c2>c1)merges.push({s:{r,c:c1},e:{r,c:c2}})};
+  const secs=shipSections(data);
+  const secRows=sec=>sec.groups.flatMap(g=>g.rows);
+  const all=secs.flatMap(secRows);
+  const noBorder={};
+  span(0,0,4,shipTitle(prefix,date)+(vendor?` · ${vendor}`:""),st({sz:20,b:true,border:{bottom:line("medium","111111")}}));
+  rowsH[0]={hpt:36};
+  span(1,0,4,[...secs.map(sec=>`${secShort(sec)} ${fmtBoxes(sumBy(secRows(sec),"boxes"))}박스`),`총 ${fmtBoxes(sumBy(all,"boxes"))}박스`].join("   ·   "),st({sz:12,color:"555555",border:noBorder}));
+  rowsH[1]={hpt:22};
   let r=3;
-  const{chilledSites,frozen}=data;
-  if(chilledSites.length){
-    const hd=st(20,false,true);
-    put(r,0,sv("냉장제품",hd));fill(r,1,1,hd);merge(r,0,r,1);
-    put(r,2,sv("총 팩수량",hd));put(r,3,sv("박스수량",hd));put(r,4,sv("박스",st(20,false,true,thick)));put(r,5,sv("소비기한",st(16,false,false,thick)));
-    rowsH[r]={hpt:39.75};r++;
-    const totalRefs=[];
-    for(const s of chilledSites){
-      const r0=r,n=s.rows.length;
-      s.rows.forEach((x,i)=>{
-        const R=r+1;
-        if(i===0)put(r,0,sv(s.site,st(24,true)));else put(r,0,sv("",st(24,true)));
-        put(r,1,sv(shipName(x),st(18)));
-        put(r,2,x.qty?sv(x.qty,st(18)):sv("",st(18)));
-        put(r,3,{t:"n",v:x.boxes,f:`C${R}/${x.per}`,s:st(18,true,true)});
-        rowsH[r]={hpt:39.75};r++;
+  for(const sec of secs){
+    const ac=SHIP_ACCENT[sec.key];
+    span(r,0,4,sec.title,st({sz:15,b:true,color:"FFFFFF",fill:ac.x,border:noBorder}));rowsH[r]={hpt:28};r++;
+    const hd=h=>st({sz:11,b:true,color:"475569",fill:"F1F5F9",h});
+    put(r,0,"제품명",hd("left"));put(r,1,"입수",hd("center"));put(r,2,"총 팩수량",hd("right"));put(r,3,"박스수량",hd("right"));put(r,4,sec.expLabel,hd("center"));
+    rowsH[r]={hpt:22};r++;
+    const bandRefs=[],qtyRanges=[];
+    for(const g of sec.groups){
+      const band=r,first=r+1,last=r+g.rows.length;
+      span(band,0,2,`${g.site}   (${g.rows.filter(x=>x.qty>0).length}품목 · ${fmtNum(sumBy(g.rows,"qty"))}팩)`,st({sz:13,b:true,color:ac.x,fill:ac.xs}));
+      put(band,3,sumBy(g.rows,"boxes"),st({sz:14,b:true,color:ac.x,fill:ac.xs,h:"right",fmt:"0.##"}),`SUM(D${first+1}:D${last+1})`);
+      put(band,4,"",st({fill:ac.xs}));
+      rowsH[band]={hpt:26};bandRefs.push(band+1);qtyRanges.push(`C${first+1}:C${last+1}`);
+      r++;
+      g.rows.forEach(x=>{
+        const R=r+1,dim=!x.qty;
+        const c=dim?"A0A6B0":undefined;
+        put(r,0,x.product.name,st({sz:12,indent:1,color:c}));
+        put(r,1,`${x.per}ea`,st({sz:11,h:"center",color:"6B7280"}));
+        put(r,2,x.qty||"",st({sz:12,h:"right",fmt:"#,##0",color:c}));
+        put(r,3,x.boxes,st({sz:13,b:true,h:"right",fmt:"0.##",fill:dim?undefined:"FFF4C2",color:x.partial?"DC2626":c}),`C${R}/${x.per}`);
+        rowsH[r]={hpt:22};r++;
       });
-      merge(r0,0,r-1,0);
-      put(r0,4,{t:"n",v:sumBy(s.rows,"boxes"),f:`SUM(D${r0+1}:D${r})`,s:st(20,true,true,thick)});
-      for(let k=r0+1;k<r;k++)put(k,4,sv("",st(20,true,true,thick)));
-      merge(r0,4,r-1,4);
-      for(const run of runsOf(s.rows,x=>x.expiry)){
-        const a=r0+run.start;
-        put(a,5,expCell(run.value,st(16,true,false,thick)));
-        for(let k=a+1;k<a+run.len;k++)put(k,5,sv("",st(16,true,false,thick)));
-        merge(a,5,a+run.len-1,5);
+      for(const run of runsOf(g.rows,x=>x.expiry)){
+        const a=first+run.start,s=st({sz:12,b:true,h:"center",fmt:'yyyy/mm/dd"이후"'});
+        ws[enc(a,4)]=run.value?{t:"n",v:excelSerial(run.value),z:'yyyy/mm/dd"이후"',s}:{t:"s",v:"",s};
+        for(let k=a+1;k<a+run.len;k++)put(k,4,"",s);
+        if(run.len>1)merges.push({s:{r:a,c:4},e:{r:a+run.len-1,c:4}});
       }
-      const ft=st(18,false,true),ftb=st(20,true,true);
-      put(r,0,sv(`${s.site===NO_SITE?"":s.site+" "}합계`,ft));fill(r,1,1,ft);merge(r,0,r,1);
-      put(r,2,{t:"n",v:sumBy(s.rows,"qty"),f:`SUM(C${r0+1}:C${r})`,s:st(20,false,true)});
-      put(r,3,{t:"n",v:sumBy(s.rows,"boxes"),f:`SUM(D${r0+1}:D${r})`,s:ftb});
-      totalRefs.push(r+1);rowsH[r]={hpt:39.75};r++;
     }
-    if(chilledSites.length>1){
-      const all=chilledSites.flatMap(s=>s.rows),ft=st(18,true,true);
-      put(r,0,sv("냉장 총합계",ft));fill(r,1,1,ft);merge(r,0,r,1);
-      put(r,2,{t:"n",v:sumBy(all,"qty"),f:totalRefs.map(x=>"C"+x).join("+"),s:st(20,true,true)});
-      put(r,3,{t:"n",v:sumBy(all,"boxes"),f:totalRefs.map(x=>"D"+x).join("+"),s:st(20,true,true)});
-      rowsH[r]={hpt:39.75};r++;
-    }
-    r++;
+    const top={...grid,top:line("medium","111111")};
+    span(r,0,1,`${secShort(sec)} 합계`,st({sz:13,b:true,border:top}));
+    put(r,2,sumBy(secRows(sec),"qty"),st({sz:13,b:true,h:"right",fmt:"#,##0",border:top}),`SUM(${qtyRanges.join(",")})`);
+    put(r,3,sumBy(secRows(sec),"boxes"),st({sz:14,b:true,h:"right",fmt:"0.##",border:top}),bandRefs.map(x=>"D"+x).join("+"));
+    put(r,4,"",st({border:top}));
+    rowsH[r]={hpt:26};r+=2;
   }
-  if(frozen.length){
-    const hd=st(20,false,true);
-    put(r,0,sv("냉동제품",hd));fill(r,1,1,hd);merge(r,0,r,1);
-    put(r,2,sv("총 팩수량",hd));put(r,3,sv("박스수량",hd));put(r,4,sv("유통기한",st(18)));fill(r,5,5,st(18));merge(r,4,r,5);
-    rowsH[r]={hpt:39.75};r++;
-    const r0=r;
-    frozen.forEach(x=>{
-      const R=r+1;
-      put(r,0,sv(shipName(x),st(18)));fill(r,1,1,st(18));merge(r,0,r,1);
-      put(r,2,x.qty?sv(x.qty,st(18)):sv("",st(18)));
-      put(r,3,{t:"n",v:x.boxes,f:`C${R}/${x.per}`,s:st(18,true,true)});
-      rowsH[r]={hpt:39.75};r++;
-    });
-    for(const run of runsOf(frozen,x=>x.expiry)){
-      const a=r0+run.start,s=st(18,true);
-      put(a,4,expCell(run.value,s));fill(a,5,5,s);
-      for(let k=a+1;k<a+run.len;k++)fill(k,4,5,s);
-      merge(a,4,a+run.len-1,5);
-    }
-    const ft=st(18,false,true);
-    put(r,0,sv("합계",ft));fill(r,1,1,ft);merge(r,0,r,1);
-    put(r,2,{t:"n",v:sumBy(frozen,"qty"),f:`SUM(C${r0+1}:C${r})`,s:st(20,false,true)});
-    put(r,3,{t:"n",v:sumBy(frozen,"boxes"),f:`SUM(D${r0+1}:D${r})`,s:st(20,true,true)});
-    put(r,4,sv("",st(18)));fill(r,5,5,st(18));merge(r,4,r,5);
-    rowsH[r]={hpt:39.75};r++;
-  }
-  ws["!ref"]=`A1:F${Math.max(r,2)}`;
+  ws["!ref"]=`A1:E${Math.max(r,2)}`;
   ws["!merges"]=merges;
-  ws["!cols"]=[{wch:11.14},{wch:84.29},{wch:19.14},{wch:16.57},{wch:11.43},{wch:26.43}];
+  ws["!cols"]=[{wch:52},{wch:8},{wch:13},{wch:12},{wch:19}];
   ws["!rows"]=rowsH;
   ws["!pageSetup"]={orientation:"portrait"};
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,"출고장");
-  const safe=s=>String(s).replace(/[\\/:*?"<>|]/g,"_");
+  const safe=x=>String(x).replace(/[\\/:*?"<>|]/g,"_");
   XLSX.writeFile(wb,`출고리스트_${date}${vendor?"_"+safe(vendor):""}.xlsx`);
 }
 
