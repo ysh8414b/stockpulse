@@ -2006,6 +2006,266 @@ function ListsTab({adminHash,masters,reloadMasters,dates,selDate,setSelDate,orde
 }
 
 // ═══════════════════════════════════════════
+// 출고장 탭 — 입고일 하루치 발주서를 냉장(생산지점별) / 냉동으로 나눠 제품별 팩·박스 수량 정리
+//  - 업체·센터·발주번호가 달라도 같은 제품은 합침 (같은 제품이라도 소비기한이 다르면 따로 줄)
+//  - 냉장 소비기한 = 발주서의 유통(소비)기한 · 냉동 유통기한 = 발주서 값, 없으면 입고일 + N일(기본 182)
+// ═══════════════════════════════════════════
+const siteCmp=(a,b)=>a===NO_SITE?1:b===NO_SITE?-1:a.localeCompare(b,"ko",{numeric:true});
+function buildShipList(orders,prodMap,products,opts){
+  const{vendor,showAll,frozenDays}=opts;
+  const rows=new Map(),unmatched=[];
+  const sorted=[...orders].sort((a,b)=>String(a.order_no).localeCompare(String(b.order_no),undefined,{numeric:true}));
+  for(const o of sorted){
+    if(vendor&&(o.vendor||"").trim()!==vendor)continue;
+    for(const it of (o.items||[])){
+      const p=prodMap[it.code];
+      if(!p){unmatched.push({order:o,item:it});continue}
+      const k=it.code+"|"+(it.expiry_date?String(it.expiry_date).slice(0,10):"");
+      const cur=rows.get(k);
+      if(cur)cur.qty+=Number(it.qty||0);
+      else rows.set(k,{product:p,code:it.code,qty:Number(it.qty||0),expiry:it.expiry_date?String(it.expiry_date).slice(0,10):"",seq:rows.size});
+    }
+  }
+  if(showAll){
+    const has=new Set([...rows.values()].map(r=>r.code));
+    for(const p of products)if(!has.has(p.code))rows.set(p.code+"|",{product:p,code:p.code,qty:0,expiry:"",seq:1e6+rows.size});
+  }
+  const fz=Number(frozenDays);
+  const list=[...rows.values()].map(r=>{
+    const per=Math.max(1,Number(r.product.per_box)||1);
+    const frozen=storageOf(r.product)==="frozen";
+    let expiry=r.expiry;
+    if(frozen&&!expiry&&r.qty>0&&opts.date&&Number.isFinite(fz)&&fz>0)expiry=addDays(opts.date,fz);
+    return{...r,per,boxes:r.qty/per,partial:r.qty%per!==0,frozen,site:(r.product.site||"").trim()||NO_SITE,expiry};
+  });
+  const bySeq=(a,b)=>a.seq-b.seq;
+  const chilledSites=[...new Set(list.filter(r=>!r.frozen).map(r=>r.site))].sort(siteCmp)
+    .map(site=>({site,rows:list.filter(r=>!r.frozen&&r.site===site).sort(bySeq)}));
+  const frozen=list.filter(r=>r.frozen).sort((a,b)=>siteCmp(a.site,b.site)||bySeq(a,b));
+  return{chilledSites,frozen,unmatched};
+}
+const sumBy=(rows,k)=>rows.reduce((s,r)=>s+(r[k]||0),0);
+// 연속된 같은 값끼리 묶기 → [{start, len, value}] (소비기한 칸 병합용)
+function runsOf(rows,key){
+  const out=[];
+  rows.forEach((r,i)=>{const v=key(r),l=out[out.length-1];if(l&&l.value===v)l.len++;else out.push({start:i,len:1,value:v})});
+  return out;
+}
+const shipTitle=(prefix,date)=>`${prefix?prefix+" ":""}${fmtMd(date)} (${dowOf(date)}) 입고`;
+const shipName=r=>`${r.product.name} / ${r.per}ea`;
+const fmtBoxes=n=>Number.isInteger(n)?String(n):String(Math.round(n*100)/100);
+const fmtExp=s=>s?s.replace(/-/g,"/")+" 이후":"";
+
+function ShipSheetPreview({data,date,prefix}){
+  const{chilledSites,frozen}=data;
+  const Y={background:"#ffff00"};
+  const td={border:"1px solid #333",padding:"6px 8px",textAlign:"center"};
+  const allChilled=chilledSites.flatMap(s=>s.rows);
+  return <div className="ol-sheet" style={{fontSize:13}}>
+    <div style={{textAlign:"center",fontSize:22,fontWeight:900,padding:"6px 0 10px",borderBottom:"3px double #111",marginBottom:12}}>{shipTitle(prefix,date)}</div>
+    {chilledSites.length>0&&<table style={{marginBottom:18}}><tbody>
+      <tr style={{fontWeight:700,fontSize:15}}>
+        <td colSpan={2} style={{...td,...Y}}>냉장제품</td><td style={{...td,...Y,width:90}}>총 팩수량</td><td style={{...td,...Y,width:80}}>박스수량</td><td style={{...td,...Y,width:70}}>박스</td><td style={{...td,width:150}}>소비기한</td>
+      </tr>
+      {chilledSites.map(s=>{
+        const runs=runsOf(s.rows,r=>r.expiry);
+        return <React.Fragment key={s.site}>
+          {s.rows.map((r,i)=>{
+            const run=runs.find(x=>x.start===i);
+            return <tr key={r.code+r.expiry}>
+              {i===0&&<td rowSpan={s.rows.length} style={{...td,fontSize:18,fontWeight:900,width:70}}>{s.site}</td>}
+              <td style={{...td,fontSize:14,color:r.qty?"#111":"#9ca3af"}}>{shipName(r)}</td>
+              <td style={td}>{r.qty?fmtNum(r.qty):""}</td>
+              <td style={{...td,...Y,fontWeight:800,color:r.partial?"#dc2626":"#111"}} title={r.partial?"입수량으로 나누어떨어지지 않음":""}>{r.qty?fmtBoxes(r.boxes):0}</td>
+              {i===0&&<td rowSpan={s.rows.length} style={{...td,...Y,fontWeight:900,fontSize:16,border:"2px solid #111"}}>{fmtBoxes(sumBy(s.rows,"boxes"))}</td>}
+              {run&&<td rowSpan={run.len} style={{...td,fontWeight:700,border:"2px solid #111"}}>{fmtExp(run.value)}</td>}
+            </tr>;
+          })}
+          <tr style={{fontWeight:700}}><td colSpan={2} style={{...td,...Y}}>{s.site} 합계</td><td style={{...td,...Y}}>{fmtNum(sumBy(s.rows,"qty"))}</td><td style={{...td,...Y,fontWeight:900}}>{fmtBoxes(sumBy(s.rows,"boxes"))}</td><td colSpan={2} style={td}></td></tr>
+        </React.Fragment>;
+      })}
+      {chilledSites.length>1&&<tr style={{fontWeight:900}}><td colSpan={2} style={{...td,...Y}}>냉장 총합계</td><td style={{...td,...Y}}>{fmtNum(sumBy(allChilled,"qty"))}</td><td style={{...td,...Y}}>{fmtBoxes(sumBy(allChilled,"boxes"))}</td><td colSpan={2} style={td}></td></tr>}
+    </tbody></table>}
+    {frozen.length>0&&<table><tbody>
+      <tr style={{fontWeight:700,fontSize:15}}>
+        <td colSpan={2} style={{...td,...Y}}>냉동제품</td><td style={{...td,...Y,width:90}}>총 팩수량</td><td style={{...td,...Y,width:80}}>박스수량</td><td colSpan={2} style={{...td,width:220}}>유통기한</td>
+      </tr>
+      {(()=>{const runs=runsOf(frozen,r=>r.expiry);return frozen.map((r,i)=>{
+        const run=runs.find(x=>x.start===i);
+        return <tr key={r.code+r.expiry}>
+          <td colSpan={2} style={{...td,fontSize:14,color:r.qty?"#111":"#9ca3af"}}>{shipName(r)}</td>
+          <td style={td}>{r.qty?fmtNum(r.qty):""}</td>
+          <td style={{...td,...Y,fontWeight:800,color:r.partial?"#dc2626":"#111"}}>{r.qty?fmtBoxes(r.boxes):0}</td>
+          {run&&<td colSpan={2} rowSpan={run.len} style={{...td,fontWeight:700}}>{fmtExp(run.value)}</td>}
+        </tr>;
+      })})()}
+      <tr style={{fontWeight:900}}><td colSpan={2} style={{...td,...Y}}>합계</td><td style={{...td,...Y}}>{fmtNum(sumBy(frozen,"qty"))}</td><td style={{...td,...Y}}>{fmtBoxes(sumBy(frozen,"boxes"))}</td><td colSpan={2} style={td}></td></tr>
+    </tbody></table>}
+  </div>;
+}
+
+// 출고장 엑셀 — 출고리스트.xlsx 서식 (A~F열, 냉장은 생산지점별 묶음, 아래에 냉동)
+function downloadShipXlsx(data,date,prefix,vendor){
+  const F="Pretendard";
+  const B=(l,r,t,b)=>({left:{style:l,color:{rgb:"000000"}},right:{style:r,color:{rgb:"000000"}},top:{style:t,color:{rgb:"000000"}},bottom:{style:b,color:{rgb:"000000"}}});
+  const box=B("thin","thin","thin","thin"),thick=B("thick","thick","thick","thick");
+  const C={horizontal:"center",vertical:"center",wrapText:true};
+  const Y={patternType:"solid",fgColor:{rgb:"FFFF00"}};
+  const st=(sz,bold,fill,border)=>({font:{name:F,sz,bold:!!bold},alignment:C,border:border||box,...(fill?{fill:Y}:{})});
+  const ws={},merges=[],rowsH=[];
+  const put=(r,c,cell)=>{ws[XLSX.utils.encode_cell({r,c})]=cell};
+  const sv=(v,s)=>({t:typeof v==="number"?"n":"s",v,s});
+  const fill=(r,c1,c2,s)=>{for(let c=c1;c<=c2;c++)if(!ws[XLSX.utils.encode_cell({r,c})])put(r,c,sv("",s))};
+  const merge=(r1,c1,r2,c2)=>{if(r1!==r2||c1!==c2)merges.push({s:{r:r1,c:c1},e:{r:r2,c:c2}})};
+  const A=(r,c)=>XLSX.utils.encode_cell({r,c});
+  const expCell=(v,s)=>v?{t:"n",v:excelSerial(v),z:'yyyy/mm/dd"이후"',s:{...s,numFmt:'yyyy/mm/dd"이후"'}}:sv("",s);
+
+  put(0,0,sv(shipTitle(prefix,date)+(vendor?` · ${vendor}`:""),{font:{name:F,sz:18,bold:true},alignment:C,border:{bottom:{style:"double",color:{rgb:"000000"}}}}));
+  fill(0,1,5,{border:{bottom:{style:"double",color:{rgb:"000000"}}}});fill(1,0,5,{border:{bottom:{style:"double",color:{rgb:"000000"}}}});
+  merge(0,0,1,5);rowsH[0]=rowsH[1]={hpt:30.75};
+  let r=3;
+  const{chilledSites,frozen}=data;
+  if(chilledSites.length){
+    const hd=st(20,false,true);
+    put(r,0,sv("냉장제품",hd));fill(r,1,1,hd);merge(r,0,r,1);
+    put(r,2,sv("총 팩수량",hd));put(r,3,sv("박스수량",hd));put(r,4,sv("박스",st(20,false,true,thick)));put(r,5,sv("소비기한",st(16,false,false,thick)));
+    rowsH[r]={hpt:39.75};r++;
+    const totalRefs=[];
+    for(const s of chilledSites){
+      const r0=r,n=s.rows.length;
+      s.rows.forEach((x,i)=>{
+        const R=r+1;
+        if(i===0)put(r,0,sv(s.site,st(24,true)));else put(r,0,sv("",st(24,true)));
+        put(r,1,sv(shipName(x),st(18)));
+        put(r,2,x.qty?sv(x.qty,st(18)):sv("",st(18)));
+        put(r,3,{t:"n",v:x.boxes,f:`C${R}/${x.per}`,s:st(18,true,true)});
+        rowsH[r]={hpt:39.75};r++;
+      });
+      merge(r0,0,r-1,0);
+      put(r0,4,{t:"n",v:sumBy(s.rows,"boxes"),f:`SUM(D${r0+1}:D${r})`,s:st(20,true,true,thick)});
+      for(let k=r0+1;k<r;k++)put(k,4,sv("",st(20,true,true,thick)));
+      merge(r0,4,r-1,4);
+      for(const run of runsOf(s.rows,x=>x.expiry)){
+        const a=r0+run.start;
+        put(a,5,expCell(run.value,st(16,true,false,thick)));
+        for(let k=a+1;k<a+run.len;k++)put(k,5,sv("",st(16,true,false,thick)));
+        merge(a,5,a+run.len-1,5);
+      }
+      const ft=st(18,false,true),ftb=st(20,true,true);
+      put(r,0,sv(`${s.site===NO_SITE?"":s.site+" "}합계`,ft));fill(r,1,1,ft);merge(r,0,r,1);
+      put(r,2,{t:"n",v:sumBy(s.rows,"qty"),f:`SUM(C${r0+1}:C${r})`,s:st(20,false,true)});
+      put(r,3,{t:"n",v:sumBy(s.rows,"boxes"),f:`SUM(D${r0+1}:D${r})`,s:ftb});
+      totalRefs.push(r+1);rowsH[r]={hpt:39.75};r++;
+    }
+    if(chilledSites.length>1){
+      const all=chilledSites.flatMap(s=>s.rows),ft=st(18,true,true);
+      put(r,0,sv("냉장 총합계",ft));fill(r,1,1,ft);merge(r,0,r,1);
+      put(r,2,{t:"n",v:sumBy(all,"qty"),f:totalRefs.map(x=>"C"+x).join("+"),s:st(20,true,true)});
+      put(r,3,{t:"n",v:sumBy(all,"boxes"),f:totalRefs.map(x=>"D"+x).join("+"),s:st(20,true,true)});
+      rowsH[r]={hpt:39.75};r++;
+    }
+    r++;
+  }
+  if(frozen.length){
+    const hd=st(20,false,true);
+    put(r,0,sv("냉동제품",hd));fill(r,1,1,hd);merge(r,0,r,1);
+    put(r,2,sv("총 팩수량",hd));put(r,3,sv("박스수량",hd));put(r,4,sv("유통기한",st(18)));fill(r,5,5,st(18));merge(r,4,r,5);
+    rowsH[r]={hpt:39.75};r++;
+    const r0=r;
+    frozen.forEach(x=>{
+      const R=r+1;
+      put(r,0,sv(shipName(x),st(18)));fill(r,1,1,st(18));merge(r,0,r,1);
+      put(r,2,x.qty?sv(x.qty,st(18)):sv("",st(18)));
+      put(r,3,{t:"n",v:x.boxes,f:`C${R}/${x.per}`,s:st(18,true,true)});
+      rowsH[r]={hpt:39.75};r++;
+    });
+    for(const run of runsOf(frozen,x=>x.expiry)){
+      const a=r0+run.start,s=st(18,true);
+      put(a,4,expCell(run.value,s));fill(a,5,5,s);
+      for(let k=a+1;k<a+run.len;k++)fill(k,4,5,s);
+      merge(a,4,a+run.len-1,5);
+    }
+    const ft=st(18,false,true);
+    put(r,0,sv("합계",ft));fill(r,1,1,ft);merge(r,0,r,1);
+    put(r,2,{t:"n",v:sumBy(frozen,"qty"),f:`SUM(C${r0+1}:C${r})`,s:st(20,false,true)});
+    put(r,3,{t:"n",v:sumBy(frozen,"boxes"),f:`SUM(D${r0+1}:D${r})`,s:st(20,true,true)});
+    put(r,4,sv("",st(18)));fill(r,5,5,st(18));merge(r,4,r,5);
+    rowsH[r]={hpt:39.75};r++;
+  }
+  ws["!ref"]=`A1:F${Math.max(r,2)}`;
+  ws["!merges"]=merges;
+  ws["!cols"]=[{wch:11.14},{wch:84.29},{wch:19.14},{wch:16.57},{wch:11.43},{wch:26.43}];
+  ws["!rows"]=rowsH;
+  ws["!pageSetup"]={orientation:"portrait"};
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,"출고장");
+  const safe=s=>String(s).replace(/[\\/:*?"<>|]/g,"_");
+  XLSX.writeFile(wb,`출고리스트_${date}${vendor?"_"+safe(vendor):""}.xlsx`);
+}
+
+function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrders}){
+  const[prefix,setPrefix]=useState(()=>lsGet("ol-prefix","쿠팡"));
+  const[showAll,setShowAll]=useState(()=>lsGet("ol-ship-all","0")==="1");
+  const[withExtra,setWithExtra]=useState(()=>lsGet("ol-ship-extra","1")==="1");
+  const[frozenDays,setFrozenDays]=useState(()=>lsGet("ol-ship-frozen-days","182"));
+  const[vendor,setVendor]=useState("");
+  const[extraOrders,setExtraOrders]=useState([]);
+  useEffect(()=>lsSet("ol-prefix",prefix),[prefix]);
+  useEffect(()=>lsSet("ol-ship-all",showAll?"1":"0"),[showAll]);
+  useEffect(()=>lsSet("ol-ship-extra",withExtra?"1":"0"),[withExtra]);
+  useEffect(()=>lsSet("ol-ship-frozen-days",String(frozenDays)),[frozenDays]);
+  // 같은 입고일의 추가 발주도 함께 (setup_orders_extra.sql 실행 전이면 없음)
+  useEffect(()=>{
+    let alive=true;
+    if(!selDate||!withExtra){setExtraOrders([]);return}
+    rpc("ol_list_orders",{p_admin_hash:adminHash,p_from:selDate,p_to:selDate,p_extra:true})
+      .then(d=>{if(alive)setExtraOrders(Array.isArray(d)?d:[])})
+      .catch(()=>{if(alive)setExtraOrders([])});
+    return()=>{alive=false};
+  },[selDate,withExtra,adminHash]);
+  const allOrders=useMemo(()=>withExtra?[...orders,...extraOrders]:orders,[orders,extraOrders,withExtra]);
+  const vendors=useMemo(()=>[...new Set(allOrders.map(o=>(o.vendor||"").trim()))].sort(),[allOrders]);
+  useEffect(()=>{if(vendor&&!vendors.includes(vendor))setVendor("")},[vendors]);
+  const prodMap=useMemo(()=>Object.fromEntries(masters.products.map(p=>[p.code,p])),[masters.products]);
+  const data=useMemo(()=>buildShipList(allOrders,prodMap,masters.products,{vendor,showAll,frozenDays,date:selDate}),[allOrders,prodMap,masters.products,vendor,showAll,frozenDays,selDate]);
+  const ordered=[...data.chilledSites.flatMap(s=>s.rows),...data.frozen].filter(r=>r.qty>0);
+  const partial=ordered.filter(r=>r.partial);
+
+  return <div className="ol-layout">
+    <DateList dates={dates} selected={selDate} onSelect={setSelDate}/>
+    <div style={{minWidth:0}}>
+      {!selDate?<Empty emoji="📄" text="발주서 탭에서 발주서를 먼저 업로드하세요"/>:loadingOrders?<Loader/>:<>
+        <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",marginBottom:12}}>
+          <div style={{fontSize:18,fontWeight:800}}>{selDate} ({dowOf(selDate)}) 출고장</div>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginLeft:"auto"}}>
+            <span style={{fontSize:12,color:"var(--muted)"}}>제목 머리말</span>
+            <input className="ol-input" style={{width:110}} value={prefix} onChange={e=>setPrefix(e.target.value)}/>
+          </div>
+        </div>
+        <div className="ol-toolbar">
+          <button className="ol-btn ol-btn-primary" onClick={()=>downloadShipXlsx(data,selDate,prefix,vendor)} disabled={!ordered.length}>📥 출고리스트 엑셀 다운로드</button>
+          <label className={"ol-check"+(showAll?" on":"")}><input type="checkbox" checked={showAll} onChange={e=>setShowAll(e.target.checked)}/>발주 없는 제품도 표시</label>
+          <label className={"ol-check"+(withExtra?" on":"")}><input type="checkbox" checked={withExtra} onChange={e=>setWithExtra(e.target.checked)}/>추가 발주 포함{withExtra&&extraOrders.length>0&&` (${extraOrders.length}건)`}</label>
+          <label style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12,color:"var(--muted)"}}>냉동 유통기한 = 입고일 +
+            <input className="ol-input" type="number" min="0" style={{width:70,padding:"5px 8px"}} value={frozenDays} onChange={e=>setFrozenDays(e.target.value)}/>일
+          </label>
+        </div>
+        {vendors.length>1&&<div className="ol-chips" style={{marginBottom:12}}>
+          <button className={!vendor?"on":""} onClick={()=>setVendor("")}>전체 업체</button>
+          {vendors.map(v=><button key={v} className={vendor===v?"on":""} onClick={()=>setVendor(v)}>{v||"(업체명 없음)"}</button>)}
+        </div>}
+        <div style={{fontSize:12,color:"var(--muted)",marginBottom:10}}>
+          발주서 {allOrders.filter(o=>!vendor||(o.vendor||"").trim()===vendor).length}건 · 업체·센터가 달라도 같은 제품은 합쳐서 표시 · 박스수량 = 총 팩수량 ÷ 입수량 · 냉장 소비기한은 발주서의 유통(소비)기한 · 냉동 유통기한은 발주서 값이 없으면 입고일 + {frozenDays||0}일
+        </div>
+        <UnmatchedBanner unmatched={data.unmatched}/>
+        {partial.length>0&&<div className="ol-warn" style={{padding:"8px 12px"}}>⚠ 입수량으로 나누어떨어지지 않는 품목(빨강): {partial.map(r=>`${r.product.name} (${fmtNum(r.qty)}÷${r.per})`).join(", ")}</div>}
+        {!data.chilledSites.length&&!data.frozen.length?<Empty emoji="🚚" text="이 날짜에 제품리스트와 매칭되는 품목이 없습니다"/>:<ShipSheetPreview data={data} date={selDate} prefix={prefix}/>}
+      </>}
+    </div>
+  </div>;
+}
+
+// ═══════════════════════════════════════════
 // App
 // ═══════════════════════════════════════════
 // 입고일 목록 + 선택일 발주서 — 일반 발주(extra=false) / 추가 발주(extra=true) 따로 관리
@@ -2053,7 +2313,7 @@ function useOrderData(adminHash,extra,onErr){
   return{dates,reloadDates,selDate,setSelDate,orders,reloadOrders,loadingOrders};
 }
 
-const VALID_TABS=["products","orders","lists","extra"];
+const VALID_TABS=["products","orders","lists","ship","extra"];
 function getTabFromHash(){const h=(window.location.hash||"").replace("#","");return VALID_TABS.includes(h)?h:"orders"}
 
 function App(){
@@ -2112,12 +2372,14 @@ function App(){
           <button className={"ol-tab"+(tab==="products"?" active":"")} onClick={()=>setTab("products")}>📦 제품리스트</button>
           <button className={"ol-tab"+(tab==="orders"?" active":"")} onClick={()=>setTab("orders")}>📄 발주서</button>
           <button className={"ol-tab"+(tab==="lists"?" active":"")} onClick={()=>setTab("lists")}>🗂 발주리스트</button>
+          <button className={"ol-tab"+(tab==="ship"?" active":"")} onClick={()=>setTab("ship")}>🚚 출고장</button>
           <button className={"ol-tab"+(tab==="extra"?" active":"")} onClick={()=>setTab("extra")}>➕ 추가 발주</button>
         </div>
         {mastersErr&&<div className="ol-warn">{mastersErr}</div>}
         {tab==="products"&&<ProductsTab {...shared}/>}
         {tab==="orders"&&<OrdersTab {...shared}/>}
         {tab==="lists"&&<ListsTab {...shared}/>}
+        {tab==="ship"&&<ShipTab {...shared}/>}
         {tab==="extra"&&<>
           <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",marginBottom:12}}>
             <div className="ol-subtabs">
