@@ -5224,6 +5224,7 @@ function parseSalesWorkbook(buf,packQtyByCode){
   const packMap=packQtyByCode||{};
   const grouped={}; // key = `${date}|${code}` → {date,code,name,qty}
   const fallback={}; // H열(box)로 대체한 상품 {code: name}
+  const convertedNames={}; // I열÷입수량으로 계산한 상품 {code: name}
   let scanned=0, picked=0, converted=0;
   // 헤더 행에서 H·I열 제목 찾기 (업로드 결과 안내용)
   let hHeader="", iHeader="";
@@ -5246,7 +5247,7 @@ function parseSalesWorkbook(buf,packQtyByCode){
     const packQty=packMap[salesCodeKey(codeStr)];
     const kg=salesNum(kgRaw);
     let qty;
-    if(packQty>0&&!isNaN(kg)){qty=kg/packQty;converted++}
+    if(packQty>0&&!isNaN(kg)){qty=kg/packQty;converted++;convertedNames[codeStr]=String(name||"").trim()||codeStr}
     else{
       qty=salesNum(boxRaw);
       if(isNaN(qty))continue;
@@ -5262,7 +5263,7 @@ function parseSalesWorkbook(buf,packQtyByCode){
   }
   // 소수 오차 정리 (소수 3자리)
   const rows=Object.values(grouped).map(g=>({...g,qty:Math.round(g.qty*1000)/1000}));
-  return {rows, scanned, picked, converted, fallback, hHeader, iHeader};
+  return {rows, scanned, picked, converted, fallback, convertedNames, hHeader, iHeader};
 }
 
 const SALES_RANGE_OPTIONS=[
@@ -5383,6 +5384,10 @@ function SalesDatesView({adminHash,refreshKey,onChanged}){
   const[detail,setDetail]=useState({});
   useEffect(()=>{
     let cancelled=false;setErr("");
+    // 업로드·삭제 후(refreshKey 변경) 날짜별 상세 캐시를 비우고, 펼쳐 둔 날짜는 다시 불러옴
+    setDetail({});
+    if(open)rpc("aps_get_sales_by_date",{p_admin_hash:adminHash,p_date:open})
+      .then(r=>{if(!cancelled)setDetail(m=>({...m,[open]:r||[]}))}).catch(()=>{});
     rpc("aps_get_sales_dates",{p_admin_hash:adminHash,p_days:365})
       .then(d=>{if(!cancelled)setDates(Array.isArray(d)?d:[])})
       .catch(e=>{if(!cancelled){setDates([]);setErr(isMissingFn(e,"aps_get_sales_dates")?V11_MSG:"불러오기 실패: "+String(e.message||e).slice(0,100))}});
@@ -5552,7 +5557,9 @@ function SalesTab({adminHash}){
       const fbCodes=Object.keys(parsed.fallback);
       const pqCount=Object.keys(packQtyByCode).length;
       const hdr=parsed.iHeader?` · I열 제목 "${parsed.iHeader}"`:"";
-      setOk(`✓ ${parsed.rows.length}건 업로드 (${minD||"?"} ~ ${maxD||"?"}) · I열÷입수량 ${parsed.converted}행 / H열 ${parsed.scanned-parsed.converted}행 · 입수량 등록 품목 ${pqCount}개${hdr}${syncMsg}`);
+      const convList=Object.values(parsed.convertedNames);
+      const convMsg=convList.length?` (${convList.slice(0,10).join(", ")}${convList.length>10?" 외":""})`:"";
+      setOk(`✓ ${parsed.rows.length}건 업로드 (${minD||"?"} ~ ${maxD||"?"}) · I열÷입수량 ${parsed.converted}행${convMsg} / H열 ${parsed.scanned-parsed.converted}행 · 입수량 등록 품목 ${pqCount}개${hdr}${syncMsg}`);
       if(fbCodes.length){
         const list=fbCodes.slice(0,15).map(c=>`${c} ${parsed.fallback[c]}`).join(", ");
         setErr(`⚠ 입수량이 없는 상품 ${fbCodes.length}개는 H열(box)로 집계했습니다 — 📦 품목 탭에서 입수량을 입력 후 다시 업로드하세요${Object.keys(packQtyByCode).length===0?" (Supabase에서 setup_aps_pack_qty.sql 실행 필요할 수 있음)":""}: ${list}${fbCodes.length>15?" 외":""}`);
