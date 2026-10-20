@@ -1764,7 +1764,7 @@ function InventoryQuickPanel({onClose,onJumpToSheet,adminHash,items,plans}){
       const action=!remote?"no-remote":_invRemoteIsNewer(local,remote)?"apply-remote":"keep-local";
       console.info("[aps-inv-sync] InventoryQuickPanel mount:",{localSaved:local?.savedAt||"",remoteSaved:remote?.savedAt||"",action});
       if(!remote)return;
-      const adoptedTpl=adoptRemoteTemplate(remote,_toTs(local?.savedAt),_toTs(remote?.savedAt));
+      const adoptedTpl=adoptRemoteTemplate(remote);
       if(adoptedTpl)setTemplate(adoptedTpl);
       if(_invRemoteIsNewer(local,remote)){
         applyRemoteInventoryToLocal(remote);
@@ -4581,6 +4581,7 @@ const DEFAULT_PRODUCT_TEMPLATE=[
 const COLOR_LABEL={y:"노랑",o:"주황",b:"파랑",g:"초록",p:"핑크",w:"흰색"};
 const COLOR_PREVIEW={y:"#fff2b3",o:"#fcd5b4",b:"#dbe5f1",g:"#d8e4bc",p:"#f2dcdb",w:"#ffffff"};
 const TEMPLATE_KEY="aps-inv-template";
+const TEMPLATE_AT_KEY="aps-inv-template-at";  // 제품 목록을 마지막으로 편집한 시각(ms) — 재고 시트 저장 시각과 별개
 const INVENTORY_DATA_KEY="aps-inv-data";  // 업로드한 재고 데이터 자동 저장 (생산계획 탭에서 공유)
 
 // ───── 제품 마스터 목록(template) 로컬 저장 ─────
@@ -4593,10 +4594,15 @@ function loadStoredTemplate(){
   }catch(e){}
   return null;  // null = 이 기기에 저장된 목록 없음 (빈 배열과 구분)
 }
-function saveStoredTemplate(tpl){
+function loadStoredTemplateAt(){
+  try{const n=Number(localStorage.getItem(TEMPLATE_AT_KEY));return n>0?n:0}catch(e){return 0}
+}
+// at: 목록 편집 시각(ms). 원격 목록을 받아 저장할 때는 원격의 시각을 그대로 넣음
+function saveStoredTemplate(tpl,at){
   if(!Array.isArray(tpl))return;
   try{
     localStorage.setItem(TEMPLATE_KEY,JSON.stringify(tpl));
+    localStorage.setItem(TEMPLATE_AT_KEY,String(at>0?at:0));
     window.dispatchEvent(new CustomEvent("aps-inv-data-change"));
   }catch(e){}
 }
@@ -4640,6 +4646,7 @@ function _normalizeRemoteInv(r){
     dateLabel:r.dateLabel||"",
     title:r.title||"",
     template:Array.isArray(r.template)?r.template:null,  // 구버전 payload 에는 없음 → null
+    templateAt:_toTs(r.templateAt),                       // 목록 편집 시각 (없으면 0)
     savedAt:r.updated_at||r.savedAt||""
   };
 }
@@ -4673,14 +4680,20 @@ async function saveRemoteInventory(adminHash,patch){
       dateLabel:merged.dateLabel||"",
       title:merged.title||""
     };
-    // 제품 마스터 목록도 함께 저장. payload 는 통째로 교체되므로 빠뜨리면 서버 목록이 지워진다
-    //  → 이 기기에 목록이 없으면 서버의 기존 목록을 그대로 실어서 보존
-    let tpl=Array.isArray(patch&&patch.template)?patch.template:loadStoredTemplate();
-    if(!Array.isArray(tpl)){
-      const cur2=await loadRemoteInventory(adminHash);
-      if(cur2&&Array.isArray(cur2.template))tpl=cur2.template;
+    // 제품 마스터 목록도 함께 저장. payload 는 통째로 교체되므로 빠뜨리면 서버 목록이 지워진다.
+    //  목록은 자체 편집 시각(templateAt)으로만 판단: 목록을 직접 편집한 저장이 아니면
+    //  서버 목록이 이 기기 목록보다 같거나 최신일 때 서버 목록을 그대로 보존 (옛 목록이 덮어쓰는 것 방지)
+    let tpl=null,tplAt=0;
+    if(Array.isArray(patch&&patch.template)){
+      tpl=patch.template;tplAt=patch.templateAt>0?patch.templateAt:loadStoredTemplateAt();
+    }else{
+      const localTpl=loadStoredTemplate(),localAt=loadStoredTemplateAt();
+      const remoteCur=await loadRemoteInventory(adminHash);
+      if(remoteCur&&Array.isArray(remoteCur.template)&&!(localTpl&&localAt>remoteCur.templateAt)){
+        tpl=remoteCur.template;tplAt=remoteCur.templateAt;
+      }else if(localTpl){tpl=localTpl;tplAt=localAt}
     }
-    if(Array.isArray(tpl))payload.template=tpl;
+    if(Array.isArray(tpl)){payload.template=tpl;payload.templateAt=tplAt>0?new Date(tplAt).toISOString():""}
     const updatedAt=await rpc("aps_save_inventory_sheet",{p_admin_hash:adminHash,p_payload:payload});
     // 서버 timestamp 를 로컬 캐시에도 반영 → 다음 비교 시 일관성 유지
     if(typeof updatedAt==="string"&&updatedAt)saveStoredInventory({savedAt:updatedAt});
@@ -4694,13 +4707,13 @@ async function clearRemoteInventory(adminHash){
 }
 // 원격 payload 의 제품 마스터 목록을 이 기기에 반영할지 판단
 //  - 이 기기에 저장된 목록이 없으면(첫 접속·스토리지 초기화) 무조건 채택
-//  - 있으면 원격이 더 최신일 때만 채택
+//  - 있으면 원격 목록의 편집 시각이 더 최신일 때만 채택 (재고 시트 저장 시각과는 무관)
 // 반환: 채택한 목록 배열 | null(유지)
-function adoptRemoteTemplate(remote,localTs,remoteTs){
+function adoptRemoteTemplate(remote){
   if(!remote||!Array.isArray(remote.template))return null;
   const local=loadStoredTemplate();
-  if(local&&!(remoteTs>localTs))return null;
-  saveStoredTemplate(remote.template);
+  if(local&&!(remote.templateAt>loadStoredTemplateAt()))return null;
+  saveStoredTemplate(remote.template,remote.templateAt);
   return remote.template;
 }
 // 원격에서 가져온 데이터로 로컬 캐시 교체 + 이벤트 발행
@@ -4779,7 +4792,7 @@ function InventorySheetTab({adminHash}){
         :(remoteTs>localTs?"apply-remote":(localTs>remoteTs?"push-local":"same"));
       console.info("[aps-inv-sync] InventorySheetTab mount:",{localSaved:stored?.savedAt||"",remoteSaved:remote?.savedAt||"",action});
       // 제품 마스터 목록은 재고 데이터와 별개로 판단 (이 기기에 목록이 없으면 원격 채택)
-      const adoptedTpl=adoptRemoteTemplate(remote,localTs,remoteTs);
+      const adoptedTpl=adoptRemoteTemplate(remote);
       if(adoptedTpl)setTemplate(adoptedTpl);
       if(remote){
         // 원격이 더 새롭거나 로컬이 없으면 원격으로 교체
@@ -4872,7 +4885,11 @@ function InventorySheetTab({adminHash}){
   }
 
   // 제목/날짜 변경 시 저장 (업로드한 데이터가 있을 때만) — 원격은 디바운스
+  //  탭을 열 때(첫 실행)는 저장하지 않음: 열 때마다 오늘 날짜로 저장 시각이 바뀌고
+  //  이 기기의 (오래됐을 수 있는) 데이터를 서버에 다시 올리던 문제 방지
+  const titleEffectMounted=useRef(false);
   useEffect(()=>{
+    if(!titleEffectMounted.current){titleEffectMounted.current=true;return}
     if(products.length===0&&raws.length===0)return;
     saveStoredInventory({title,dateLabel});
     if(!adminHash)return;
@@ -4888,13 +4905,14 @@ function InventorySheetTab({adminHash}){
     if(parsed.length===0){
       if(!confirm("목록이 비어 있습니다. 비운 채로 저장하시겠습니까? (제품 표가 빈 칸으로 표시됩니다)"))return;
     }
+    const at=Date.now();
     setTemplate(parsed);
-    saveStoredTemplate(parsed);
+    saveStoredTemplate(parsed,at);
     setEditing(false);
-    // 다른 기기에서도 같은 목록을 쓰도록 원격에도 반영
+    // 다른 기기에서도 같은 목록을 쓰도록 원격에도 반영 (편집 시각 포함 → 다른 기기의 옛 목록보다 우선)
     if(adminHash){
       setSyncStatus("syncing");
-      saveRemoteInventory(adminHash,{template:parsed}).then(ok=>setSyncStatus(ok?"synced":"error"));
+      saveRemoteInventory(adminHash,{template:parsed,templateAt:at}).then(ok=>setSyncStatus(ok?"synced":"error"));
     }
   }
   function resetTemplate(){
