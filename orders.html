@@ -1480,8 +1480,8 @@ function layoutMixedCalc(lines,slots){
 }
 const imgName=p=>p.image_name||p.name;
 const shipNameOf=p=>(p?.ship_name||"").trim()||p?.name||"";
-// 출고장 제품명 안의 숫자(500, 1.5, 2 등)만 굵고 진하게 → 규격이 눈에 잘 띄게
-const boldDigits=(text,dim)=>String(text).split(/(\d+(?:[.,]\d+)*)/).map((t,i)=>i%2?<b key={i} style={{fontWeight:900,color:dim?"#9ca3af":"#000"}}>{t}</b>:t);
+// 출고장 제품명 안의 숫자 + 바로 뒤 g/kg 단위(500g, 1.5kg, 2 등)만 굵고 진하게 → 규격이 눈에 잘 띄게
+const boldDigits=(text,dim)=>String(text).split(/(\d+(?:[.,]\d+)*(?:\s*(?:kg|g))?)/i).map((t,i)=>i%2?<b key={i} style={{fontWeight:900,color:dim?"#9ca3af":"#000"}}>{t}</b>:t);
 
 // ── 적재이미지 편집 (위치 이동 + 글씨 수정) ──
 // 편집 내용은 ol_settings에 key = "img:{발주번호}:{생산지점}" 로 저장 (PC·모바일 공유)
