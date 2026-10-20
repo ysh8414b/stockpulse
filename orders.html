@@ -2121,9 +2121,9 @@ function ShipSheetPreview({data,date,prefix,print,refCb}){
               <span style={{padding:"4px 12px",borderRadius:16,background:ac.main,color:"#fff",fontWeight:800,fontSize:15}}>{fmtBoxes(sumBy(g.rows,"boxes"))}박스</span>
             </div>
             <table style={{minWidth:600}}>
-              <colgroup><col/><col style={{width:70}}/><col style={{width:100}}/><col style={{width:90}}/><col style={{width:150}}/></colgroup>
+              <colgroup><col/><col style={{width:100}}/><col style={{width:90}}/><col style={{width:150}}/></colgroup>
               <thead><tr style={{background:"#f8fafc",color:"#475569",fontSize:12}}>
-                <th style={{...cell,textAlign:"left"}}>제품명</th><th style={{...cell,textAlign:"center"}}>입수</th>
+                <th style={{...cell,textAlign:"left"}}>제품명</th>
                 <th style={num}>총 팩수량</th><th style={num}>박스수량</th><th style={{...cell,textAlign:"center"}}>{sec.expLabel}</th>
               </tr></thead>
               <tbody>
@@ -2131,8 +2131,7 @@ function ShipSheetPreview({data,date,prefix,print,refCb}){
                   const run=runs.find(x=>x.start===i);
                   const dim=!r.qty;
                   return <tr key={r.code+r.expiry} style={{color:dim?"#b6bcc6":"#111"}}>
-                    <td style={cell}>{shipNameOf(r.product)}</td>
-                    <td style={{...cell,textAlign:"center",color:"#6b7280",fontSize:12}}>{r.per}ea</td>
+                    <td style={cell}>{shipNameOf(r.product)}<span style={{color:dim?"#c7ccd4":"#6b7280",marginLeft:6,whiteSpace:"nowrap"}}>/ {r.per}ea</span></td>
                     <td style={num}>{r.qty?fmtNum(r.qty):"–"}</td>
                     <td style={{...num,fontWeight:800,background:dim?"transparent":"#fef9c3",color:r.partial?"#dc2626":dim?"#b6bcc6":"#111"}} title={r.partial?"입수량으로 나누어떨어지지 않음":""}>{r.qty?fmtBoxes(r.boxes):"–"}</td>
                     {run&&<td rowSpan={run.len} style={{...cell,textAlign:"center",fontWeight:600,fontSize:13,borderLeft:"1px solid #e5e7eb",color:"#111"}}>{fmtExp(run.value)}</td>}
@@ -2151,7 +2150,7 @@ function ShipSheetPreview({data,date,prefix,print,refCb}){
   </div>;
 }
 
-// 출고장 엑셀 — 화면과 같은 구성 (A 제품명 · B 입수 · C 총 팩수량 · D 박스수량 · E 소비/유통기한)
+// 출고장 엑셀 — 화면과 같은 구성 (A 제품명 / 입수 · B 총 팩수량 · C 박스수량 · D 소비/유통기한)
 function downloadShipXlsx(data,date,prefix,vendor){
   const F="Pretendard";
   const line=(style,rgb)=>({style,color:{rgb:rgb||"D0D5DD"}});
@@ -2171,54 +2170,53 @@ function downloadShipXlsx(data,date,prefix,vendor){
   const secRows=sec=>sec.groups.flatMap(g=>g.rows);
   const all=secs.flatMap(secRows);
   const noBorder={};
-  span(0,0,4,shipTitle(prefix,date)+(vendor?` · ${vendor}`:""),st({sz:20,b:true,border:{bottom:line("medium","111111")}}));
+  span(0,0,3,shipTitle(prefix,date)+(vendor?` · ${vendor}`:""),st({sz:20,b:true,border:{bottom:line("medium","111111")}}));
   rowsH[0]={hpt:36};
-  span(1,0,4,[...secs.map(sec=>`${secShort(sec)} ${fmtBoxes(sumBy(secRows(sec),"boxes"))}박스`),`총 ${fmtBoxes(sumBy(all,"boxes"))}박스`].join("   ·   "),st({sz:12,color:"555555",border:noBorder}));
+  span(1,0,3,[...secs.map(sec=>`${secShort(sec)} ${fmtBoxes(sumBy(secRows(sec),"boxes"))}박스`),`총 ${fmtBoxes(sumBy(all,"boxes"))}박스`].join("   ·   "),st({sz:12,color:"555555",border:noBorder}));
   rowsH[1]={hpt:22};
   let r=3;
   for(const sec of secs){
     const ac=SHIP_ACCENT[sec.key];
-    span(r,0,4,sec.title,st({sz:15,b:true,color:"FFFFFF",fill:ac.x,border:noBorder}));rowsH[r]={hpt:28};r++;
+    span(r,0,3,sec.title,st({sz:15,b:true,color:"FFFFFF",fill:ac.x,border:noBorder}));rowsH[r]={hpt:28};r++;
     rowsH[r]={hpt:10};r++; // 섹션 제목과 첫 지점 사이 여백
     const hd=h=>st({sz:11,b:true,color:"475569",fill:"F1F5F9",h});
     const bandRefs=[],qtyRanges=[];
     for(const g of sec.groups){
       const band=r,first=r+2,last=r+1+g.rows.length;
       const bb={left:line("medium",ac.x),right:line("medium",ac.x),top:line("medium",ac.x),bottom:line("thin",ac.x)};
-      span(band,0,2,`${g.site}   (${g.rows.filter(x=>x.qty>0).length}품목 · ${fmtNum(sumBy(g.rows,"qty"))}팩)`,st({sz:16,b:true,color:ac.x,fill:ac.xs,border:bb}));
-      put(band,3,sumBy(g.rows,"boxes"),st({sz:16,b:true,color:"FFFFFF",fill:ac.x,h:"right",fmt:'0.##"박스"',border:bb}),`SUM(D${first+1}:D${last+1})`);
-      put(band,4,"",st({fill:ac.xs,border:bb}));
-      rowsH[band]={hpt:30};bandRefs.push(band+1);qtyRanges.push(`C${first+1}:C${last+1}`);
+      span(band,0,1,`${g.site}   (${g.rows.filter(x=>x.qty>0).length}품목 · ${fmtNum(sumBy(g.rows,"qty"))}팩)`,st({sz:16,b:true,color:ac.x,fill:ac.xs,border:bb}));
+      put(band,2,sumBy(g.rows,"boxes"),st({sz:16,b:true,color:"FFFFFF",fill:ac.x,h:"right",fmt:'0.##"박스"',border:bb}),`SUM(C${first+1}:C${last+1})`);
+      put(band,3,"",st({fill:ac.xs,border:bb}));
+      rowsH[band]={hpt:30};bandRefs.push(band+1);qtyRanges.push(`B${first+1}:B${last+1}`);
       r++;
-      put(r,0,"제품명",hd("left"));put(r,1,"입수",hd("center"));put(r,2,"총 팩수량",hd("right"));put(r,3,"박스수량",hd("right"));put(r,4,sec.expLabel,hd("center"));
+      put(r,0,"제품명",hd("left"));put(r,1,"총 팩수량",hd("right"));put(r,2,"박스수량",hd("right"));put(r,3,sec.expLabel,hd("center"));
       rowsH[r]={hpt:20};r++;
       g.rows.forEach(x=>{
         const R=r+1,dim=!x.qty;
         const c=dim?"A0A6B0":undefined;
-        put(r,0,shipNameOf(x.product),st({sz:12,indent:1,color:c}));
-        put(r,1,`${x.per}ea`,st({sz:11,h:"center",color:"6B7280"}));
-        put(r,2,x.qty||"",st({sz:12,h:"right",fmt:"#,##0",color:c}));
-        put(r,3,x.boxes,st({sz:13,b:true,h:"right",fmt:"0.##",fill:dim?undefined:"FFF4C2",color:x.partial?"DC2626":c}),`C${R}/${x.per}`);
+        put(r,0,`${shipNameOf(x.product)} / ${x.per}ea`,st({sz:12,indent:1,color:c}));
+        put(r,1,x.qty||"",st({sz:12,h:"right",fmt:"#,##0",color:c}));
+        put(r,2,x.boxes,st({sz:13,b:true,h:"right",fmt:"0.##",fill:dim?undefined:"FFF4C2",color:x.partial?"DC2626":c}),`B${R}/${x.per}`);
         rowsH[r]={hpt:22};r++;
       });
       for(const run of runsOf(g.rows,x=>x.expiry)){
         const a=first+run.start,s=st({sz:12,b:true,h:"center",fmt:'yyyy/mm/dd"이후"'});
-        ws[enc(a,4)]=run.value?{t:"n",v:excelSerial(run.value),z:'yyyy/mm/dd"이후"',s}:{t:"s",v:"",s};
-        for(let k=a+1;k<a+run.len;k++)put(k,4,"",s);
-        if(run.len>1)merges.push({s:{r:a,c:4},e:{r:a+run.len-1,c:4}});
+        ws[enc(a,3)]=run.value?{t:"n",v:excelSerial(run.value),z:'yyyy/mm/dd"이후"',s}:{t:"s",v:"",s};
+        for(let k=a+1;k<a+run.len;k++)put(k,3,"",s);
+        if(run.len>1)merges.push({s:{r:a,c:3},e:{r:a+run.len-1,c:3}});
       }
       rowsH[r]={hpt:14};r++; // 지점 사이 빈 줄
     }
     const top={...grid,top:line("medium","111111")};
-    span(r,0,1,`${secShort(sec)} 합계`,st({sz:13,b:true,border:top}));
-    put(r,2,sumBy(secRows(sec),"qty"),st({sz:13,b:true,h:"right",fmt:"#,##0",border:top}),`SUM(${qtyRanges.join(",")})`);
-    put(r,3,sumBy(secRows(sec),"boxes"),st({sz:14,b:true,h:"right",fmt:"0.##",border:top}),bandRefs.map(x=>"D"+x).join("+"));
-    put(r,4,"",st({border:top}));
+    put(r,0,`${secShort(sec)} 합계`,st({sz:13,b:true,border:top}));
+    put(r,1,sumBy(secRows(sec),"qty"),st({sz:13,b:true,h:"right",fmt:"#,##0",border:top}),`SUM(${qtyRanges.join(",")})`);
+    put(r,2,sumBy(secRows(sec),"boxes"),st({sz:14,b:true,h:"right",fmt:"0.##",border:top}),bandRefs.map(x=>"C"+x).join("+"));
+    put(r,3,"",st({border:top}));
     rowsH[r]={hpt:26};r+=2;
   }
-  ws["!ref"]=`A1:E${Math.max(r,2)}`;
+  ws["!ref"]=`A1:D${Math.max(r,2)}`;
   ws["!merges"]=merges;
-  ws["!cols"]=[{wch:52},{wch:8},{wch:13},{wch:12},{wch:19}];
+  ws["!cols"]=[{wch:60},{wch:13},{wch:12},{wch:19}];
   ws["!rows"]=rowsH;
   ws["!pageSetup"]={orientation:"portrait"};
   const wb=XLSX.utils.book_new();
