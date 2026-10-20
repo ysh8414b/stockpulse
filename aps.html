@@ -5339,9 +5339,25 @@ function SalesDowGrid({adminHash,code,weeks}){
 }
 
 // 업로드된 날짜 목록 + 날짜 클릭 시 그날 상품별 매출
-function SalesDatesView({adminHash,refreshKey}){
+function SalesDatesView({adminHash,refreshKey,onChanged}){
   const[dates,setDates]=useState(null);
   const[err,setErr]=useState("");
+  const[askDel,setAskDel]=useState(null);   // 삭제 확인 중인 날짜
+  const[delBusy,setDelBusy]=useState(false);
+  const[delMsg,setDelMsg]=useState("");
+  const deleteDate=async(d)=>{
+    setDelBusy(true);setDelMsg("");
+    try{
+      const r=await rpc("aps_delete_sales_date",{p_admin_hash:adminHash,p_date:d});
+      setDates(list=>(list||[]).filter(x=>x.date!==d));
+      setDetail(m=>{const n={...m};delete n[d];return n});
+      if(open===d)setOpen(null);
+      setDelMsg(`✓ ${d} 매출 ${r?.deleted||0}건 삭제`);
+      if(onChanged)onChanged();
+    }catch(e){
+      setDelMsg(isMissingFn(e,"aps_delete_sales_date")?"⚠ Supabase에서 setup_aps_sales_delete.sql 을 먼저 실행해주세요.":"⚠ 삭제 실패: "+String(e.message||e).slice(0,100));
+    }finally{setDelBusy(false);setAskDel(null)}
+  };
   const[open,setOpen]=useState(null);
   const[detail,setDetail]=useState({});
   useEffect(()=>{
@@ -5364,7 +5380,9 @@ function SalesDatesView({adminHash,refreshKey}){
   if(dates.length===0)return <Empty emoji="📅" text="업로드된 매출 날짜가 없습니다"/>;
   // 최근 날짜부터, 주(월요일) 단위로 구분선
   let lastMon=null;
-  return <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8}}>
+  return <div>
+    {delMsg&&<div style={{fontSize:13,marginBottom:8,color:delMsg.startsWith("✓")?"#22c55e":"#ef4444"}}>{delMsg}</div>}
+    <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8}}>
     <table className="aps-table">
       <thead><tr>
         <th style={{width:150}}>매출일자</th>
@@ -5385,7 +5403,13 @@ function SalesDatesView({adminHash,refreshKey}){
               </td>
               <td className="right">{fmtSalesNum(d.codes)}</td>
               <td className="right" style={{fontWeight:700}}>{fmtSalesNum(Math.round(Number(d.qty)*10)/10)}</td>
-              <td></td>
+              <td className="right" onClick={e=>e.stopPropagation()} style={{whiteSpace:"nowrap"}}>
+                {askDel===d.date?<>
+                  <span style={{fontSize:12,color:"#ef4444",marginRight:6}}>이 날짜 매출을 삭제할까요?</span>
+                  <button className="aps-btn aps-btn-danger aps-btn-sm" disabled={delBusy} onClick={()=>deleteDate(d.date)}>{delBusy?"삭제 중…":"삭제"}</button>
+                  <button className="aps-btn aps-btn-secondary aps-btn-sm" disabled={delBusy} onClick={()=>setAskDel(null)} style={{marginLeft:4}}>취소</button>
+                </>:<button className="aps-btn aps-btn-danger aps-btn-sm" disabled={delBusy} onClick={()=>{setAskDel(d.date);setDelMsg("")}}>🗑 삭제</button>}
+              </td>
             </tr>
             {open===d.date&&<tr><td colSpan={4} style={{background:"var(--card-bg)",padding:"8px 14px"}}>
               {!detail[d.date]?<div style={{fontSize:12,color:"var(--muted)"}}>불러오는 중…</div>:
@@ -5399,6 +5423,7 @@ function SalesDatesView({adminHash,refreshKey}){
         })}
       </tbody>
     </table>
+    </div>
   </div>;
 }
 
@@ -5661,7 +5686,7 @@ function SalesTab({adminHash}){
       </span>}
     </div>
 
-    {salesView==="date"?<SalesDatesView adminHash={adminHash} refreshKey={refreshKey}/>:<>
+    {salesView==="date"?<SalesDatesView adminHash={adminHash} refreshKey={refreshKey} onChanged={loadAll}/>:<>
     {/* 필터 / 정렬 툴바 */}
     <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:10}}>
       <div style={{display:"flex",gap:4,alignItems:"center"}}>

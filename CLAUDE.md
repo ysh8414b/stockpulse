@@ -769,6 +769,12 @@
 - SQL 변경 없음 (`aps_sales_daily.qty`는 NUMERIC). 단위가 박스 그대로라 주평균·안전재고·자동 생성 로직은 그대로
 - **기존 업로드분은 H열 기준**이므로 같은 매출 파일을 다시 업로드하면 날짜 범위가 덮어써져 새 산식으로 바뀜
 
+### APS — 매출 날짜별 삭제 (2026-10-20)
+- 사용자 요청: 💰 매출 탭 📅 날짜별 보기에서 날짜 하나씩 삭제
+- **`setup_aps_sales_delete.sql`** (신규, 1회 실행): `aps_delete_sales_date(p_admin_hash, p_date)` — `aps_assert_admin` 검증 후 `DELETE FROM aps_sales_daily WHERE date = p_date`, 반환 `{deleted, date}`
+- **`SalesDatesView`**: 각 날짜 행 오른쪽에 🗑 삭제 → 그 자리에서 "이 날짜 매출을 삭제할까요? [삭제] [취소]" (앱 내장 브라우저에서 `confirm()`이 안 뜨는 문제 회피). 행 클릭(펼치기)과 충돌 안 하게 `stopPropagation`. 삭제 후 목록에서 제거 + `onChanged`(=`loadAll`)로 상단 요약·상품별 통계 새로고침. SQL 미실행이면 안내 메시지
+- 한계: 삭제해도 📦 품목 안전재고는 자동 재계산되지 않음 → 필요하면 💰 안전재고 동기화 버튼
+
 ### APS — 📊 재고 탭에 재고시트 박스 수 연동 (2026-06-28)
 - 사용자 요청: "재고탭에 재고수량이 재고시트랑 연동되게 해달라"
 - 기존: 📊 재고 탭의 `current_stock`은 `aps_inventory_view`(= `aps_stock_txns` 누적값)만 사용 → 재고시트 업로드 데이터와 완전히 분리됨
