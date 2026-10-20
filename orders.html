@@ -2254,6 +2254,15 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
   // 층별 저장용: 층 하나씩만 담은 출고장 (제목·요약은 그 층 기준)
   const floors=useMemo(()=>shipSections(data).flatMap(sec=>sec.groups.map(g=>({key:sec.key+"|"+g.site,site:g.site,
     data:sec.key==="frozen"?{chilledSites:[],frozen:g.rows,unmatched:[]}:{chilledSites:[g],frozen:[],unmatched:[]}}))),[data]);
+  // 저장할 층 선택 — 해제한 층만 기억(새로 나온 층은 기본 선택)
+  const[offFloors,setOffFloors]=useState(()=>{try{return new Set(JSON.parse(lsGet("ol-ship-off-floors","[]")))}catch(e){return new Set()}});
+  useEffect(()=>lsSet("ol-ship-off-floors",JSON.stringify([...offFloors])),[offFloors]);
+  const toggleFloor=k=>setOffFloors(prev=>{const n=new Set(prev);n.has(k)?n.delete(k):n.add(k);return n});
+  const selFloors=floors.filter(f=>!offFloors.has(f.key));
+  const selData=useMemo(()=>({
+    chilledSites:selFloors.flatMap(f=>f.data.chilledSites),
+    frozen:selFloors.flatMap(f=>f.data.frozen),unmatched:[]
+  }),[floors,offFloors]);
   const save=async kind=>{
     setSaving(kind);setSaveMsg("");
     try{
@@ -2262,11 +2271,11 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
       const base=`출고리스트_${selDate}${vendor?"_"+safe(vendor):""}`;
       if(kind==="all"){await saveShipPng(printRef.current,base);setSaveMsg("한 장으로 저장했습니다")}
       else{
-        for(const f of floors){
+        for(const f of selFloors){
           await saveShipPng(floorRefs.current[f.key],`${base}_${safe(f.site)}`);
           await new Promise(r=>setTimeout(r,300));
         }
-        setSaveMsg(`층별로 ${floors.length}장 저장했습니다`);
+        setSaveMsg(`층별로 ${selFloors.length}장 저장했습니다`);
       }
     }catch(e){setSaveMsg("저장 실패: "+errMsg(e))}
     setSaving("");
@@ -2284,8 +2293,8 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
           </div>
         </div>
         <div className="ol-toolbar">
-          <button className="ol-btn ol-btn-primary" onClick={()=>save("all")} disabled={!ordered.length||!!saving}>{saving==="all"?"저장 중…":"🖼 한 장으로 저장"}</button>
-          <button className="ol-btn ol-btn-secondary" onClick={()=>save("floor")} disabled={!ordered.length||!!saving}>{saving==="floor"?"저장 중…":`🏭 층별로 저장 (${floors.length}장)`}</button>
+          <button className="ol-btn ol-btn-primary" onClick={()=>save("all")} disabled={!selFloors.length||!!saving}>{saving==="all"?"저장 중…":"🖼 한 장으로 저장"}</button>
+          <button className="ol-btn ol-btn-secondary" onClick={()=>save("floor")} disabled={!selFloors.length||!!saving}>{saving==="floor"?"저장 중…":`🏭 층별로 저장 (${selFloors.length}장)`}</button>
           <button className="ol-btn ol-btn-secondary" onClick={()=>downloadShipXlsx(data,selDate,prefix,vendor)} disabled={!ordered.length}>📥 엑셀</button>
           {saveMsg&&<span style={{fontSize:12,color:saveMsg.startsWith("저장 실패")?"#ef4444":"#22c55e"}}>{saveMsg}</span>}
           <label className={"ol-check"+(showAll?" on":"")}><input type="checkbox" checked={showAll} onChange={e=>setShowAll(e.target.checked)}/>발주 없는 제품도 표시</label>
@@ -2294,6 +2303,13 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
             <input className="ol-input" type="number" min="0" style={{width:70,padding:"5px 8px"}} value={frozenDays} onChange={e=>setFrozenDays(e.target.value)}/>일
           </label>
         </div>
+        {floors.length>0&&<div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:12}}>
+          <span style={{fontSize:12,color:"var(--muted)",marginRight:2}}>저장할 층</span>
+          {floors.map(f=>{const on=!offFloors.has(f.key),fz=f.data.frozen.length>0;
+            return <label key={f.key} className={"ol-check"+(on?" on":"")}><input type="checkbox" checked={on} onChange={()=>toggleFloor(f.key)}/>{fz?"❄ ":""}{f.site}</label>})}
+          <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setOffFloors(new Set())}>전체 선택</button>
+          <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setOffFloors(new Set(floors.map(f=>f.key)))}>전체 해제</button>
+        </div>}
         {vendors.length>1&&<div className="ol-chips" style={{marginBottom:12}}>
           <button className={!vendor?"on":""} onClick={()=>setVendor("")}>전체 업체</button>
           {vendors.map(v=><button key={v} className={vendor===v?"on":""} onClick={()=>setVendor(v)}>{v||"(업체명 없음)"}</button>)}
@@ -2307,8 +2323,8 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
           <ShipSheetPreview data={data} date={selDate} prefix={prefix}/>
           {/* 이미지 저장용 사본 (화면 밖, 고정 폭) — 전체 1장 + 층별 */}
           <div style={{position:"fixed",left:-20000,top:0,width:SHIP_PRINT_W,background:"#fff"}} aria-hidden="true">
-            <ShipSheetPreview data={data} date={selDate} prefix={prefix} print refCb={el=>{printRef.current=el}}/>
-            {floors.map(f=><ShipSheetPreview key={f.key} data={f.data} date={selDate} prefix={prefix} print refCb={el=>{floorRefs.current[f.key]=el}}/>)}
+            <ShipSheetPreview data={selData} date={selDate} prefix={prefix} print refCb={el=>{printRef.current=el}}/>
+            {selFloors.map(f=><ShipSheetPreview key={f.key} data={f.data} date={selDate} prefix={prefix} print refCb={el=>{floorRefs.current[f.key]=el}}/>)}
           </div>
         </>}
       </>}
