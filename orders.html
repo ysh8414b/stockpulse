@@ -2055,7 +2055,7 @@ function runsOf(rows,key){
 }
 const shipTitle=(prefix,date)=>`${prefix?prefix+" ":""}${fmtMd(date)} (${dowOf(date)}) 입고`;
 const fmtBoxes=n=>Number.isInteger(n)?String(n):String(Math.round(n*100)/100);
-const fmtExp=s=>s?s.replace(/-/g,"/")+" 이후":"";
+const fmtExp=s=>s?s.replace(/-/g,".")+" 이후":""; // "/" 는 html2canvas 캡처 때 글자 간격이 어긋나 "." 사용
 
 // 화면·엑셀 공통: 냉장/냉동 섹션 → 생산지점 묶음
 function shipSections(data){
@@ -2070,13 +2070,14 @@ function shipSections(data){
 const SHIP_ACCENT={chilled:{main:"#0e7490",soft:"#ecfeff",x:"0E7490",xs:"E0F7FA"},frozen:{main:"#1d4ed8",soft:"#eff6ff",x:"1D4ED8",xs:"E3ECFD"}};
 const secShort=sec=>sec.title.replace("제품","");
 
-function ShipSheetPreview({data,date,prefix}){
+function ShipSheetPreview({data,date,prefix,print,refCb}){
   const secs=shipSections(data);
   const secRows=sec=>sec.groups.flatMap(g=>g.rows);
   const total=secs.reduce((a,sec)=>a+sumBy(secRows(sec),"boxes"),0);
   const cell={padding:"8px 12px",borderBottom:"1px solid #e5e7eb",fontVariantNumeric:"tabular-nums"};
   const num={...cell,textAlign:"right"};
-  return <div className="ol-sheet" style={{padding:"22px 24px",fontSize:14,lineHeight:1.4}}>
+  // print: A4 저장용 사본 — 바깥 테두리·여백 없이 고정 폭 / data-shipcut = 페이지를 나눌 수 있는 위치(이 요소 위쪽)
+  return <div ref={refCb} className="ol-sheet" style={{padding:print?"4px 2px":"22px 24px",fontSize:14,lineHeight:1.4,...(print?{border:"none",borderRadius:0,margin:0,overflow:"visible"}:{})}}>
     <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:12,flexWrap:"wrap",paddingBottom:12,borderBottom:"2px solid #111",marginBottom:18}}>
       <div style={{fontSize:24,fontWeight:900,letterSpacing:"-0.5px"}}>{shipTitle(prefix,date)}</div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -2087,15 +2088,15 @@ function ShipSheetPreview({data,date,prefix}){
     {secs.map(sec=>{
       const ac=SHIP_ACCENT[sec.key];
       const all=secRows(sec);
-      return <div key={sec.key} style={{marginBottom:26}}>
+      return <div key={sec.key} data-shipcut="1" style={{marginBottom:26}}>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
           <span style={{width:5,height:20,borderRadius:3,background:ac.main}}/>
           <span style={{fontSize:17,fontWeight:800,color:ac.main}}>{sec.title}</span>
           <span style={{fontSize:12,color:"#6b7280"}}>{all.filter(r=>r.qty>0).length}품목</span>
         </div>
-        {sec.groups.map(g=>{
+        {sec.groups.map((g,gi)=>{
           const runs=runsOf(g.rows,r=>r.expiry);
-          return <div key={g.site} style={{border:"1px solid #d7dde5",borderLeft:`6px solid ${ac.main}`,borderRadius:8,marginBottom:16,overflow:"hidden"}}>
+          return <div key={g.site} data-shipcut={gi>0?"1":undefined} data-shipsite={g.site} style={{border:"1px solid #d7dde5",borderLeft:`6px solid ${ac.main}`,borderRadius:8,marginBottom:16,overflow:"hidden"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 14px",background:ac.soft,borderBottom:"1px solid #d7dde5"}}>
               <div style={{display:"flex",alignItems:"baseline",gap:10}}>
                 <span style={{fontSize:20,fontWeight:900,color:ac.main}}>{g.site}</span>
@@ -2125,7 +2126,7 @@ function ShipSheetPreview({data,date,prefix}){
             </table>
           </div>;
         })}
-        {sec.groups.length>1&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",borderTop:"2px solid #111",fontWeight:900,fontSize:15}}>
+        {sec.groups.length>1&&<div data-shipcut="1" style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",borderTop:"2px solid #111",fontWeight:900,fontSize:15}}>
           <span>{secShort(sec)} 합계</span>
           <span style={{fontVariantNumeric:"tabular-nums"}}>{fmtNum(sumBy(all,"qty"))}팩 · {fmtBoxes(sumBy(all,"boxes"))}박스</span>
         </div>}
@@ -2210,6 +2211,60 @@ function downloadShipXlsx(data,date,prefix,vendor){
   XLSX.writeFile(wb,`출고리스트_${date}${vendor?"_"+safe(vendor):""}.xlsx`);
 }
 
+// A4 세로 저장 — 화면 밖에 고정 폭 사본을 그려 캡처 → 300dpi A4(여백 10mm)에 폭 맞춤
+// 한 장을 넘으면 층(카드)·섹션 경계에서 나누되, 그러면 아래 빈칸이 25% 넘게 남을 때는 품목 줄 경계에서 나눔(다음 장 맨 위에 "3층 (계속)" 표시)
+const SHIP_PRINT_W=700;
+async function saveShipA4(el,kind,fileBase){
+  await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+  if(document.fonts&&document.fonts.ready)await document.fonts.ready;
+  const canvas=await html2canvas(el,{scale:3,backgroundColor:"#ffffff",useCORS:true});
+  const PW=2480,PH=3508,M=Math.round(10/25.4*300);
+  const k=(PW-2*M)/el.offsetWidth,s=canvas.width/el.offsetWidth;
+  const CONT=70; // 이어지는 장 맨 위 "(계속)" 줄 높이(px)
+  const total=el.offsetHeight,pageH=(PH-2*M-60-CONT)/k; // 아래 60px = 쪽 번호 자리
+  const base=el.getBoundingClientRect().top;
+  const topOf=x=>x.getBoundingClientRect().top-base;
+  const cuts=[...el.querySelectorAll("[data-shipcut]")].map(topOf);
+  const cards=[...el.querySelectorAll("[data-shipsite]")].map(x=>({site:x.dataset.shipsite,top:topOf(x),bottom:topOf(x)+x.offsetHeight}));
+  const rowCuts=[...el.querySelectorAll("tbody tr")].map(x=>x.getBoundingClientRect().bottom-base);
+  const pages=[];
+  let start=0;
+  while(start<total-1){
+    const limit=start+pageH;
+    let end;
+    if(total<=limit)end=total;
+    else{
+      const c=cuts.filter(x=>x>start+pageH*0.75&&x<=limit);
+      const rc=rowCuts.filter(x=>x>start+20&&x<=limit);
+      end=c.length?Math.max(...c):rc.length?Math.max(...rc):limit;
+    }
+    pages.push([start,end]);start=end;
+  }
+  const imgs=pages.map(([a,b],i)=>{
+    const pc=document.createElement("canvas");pc.width=PW;pc.height=PH;
+    const g=pc.getContext("2d");g.fillStyle="#fff";g.fillRect(0,0,PW,PH);
+    const card=cards.find(c=>c.top<a-1&&c.bottom>a+1);
+    const y0=card?M+CONT:M;
+    if(card){g.fillStyle="#111";g.font="bold 44px Pretendard, sans-serif";g.textAlign="left";g.fillText(`${card.site} (계속)`,M,M+48)}
+    g.drawImage(canvas,0,Math.round(a*s),canvas.width,Math.round((b-a)*s),M,y0,PW-2*M,Math.round((b-a)*k));
+    if(pages.length>1){g.fillStyle="#6b7280";g.font="40px Pretendard, sans-serif";g.textAlign="right";g.fillText(`${i+1} / ${pages.length}`,PW-M,PH-M+10)}
+    return pc;
+  });
+  if(kind==="pdf"){
+    const pdf=new window.jspdf.jsPDF({orientation:"portrait",unit:"mm",format:"a4"});
+    imgs.forEach((pc,i)=>{if(i)pdf.addPage();pdf.addImage(pc.toDataURL("image/jpeg",0.95),"JPEG",0,0,210,297)});
+    pdf.save(fileBase+".pdf");
+  }else{
+    for(let i=0;i<imgs.length;i++){
+      const a=document.createElement("a");
+      a.download=fileBase+(imgs.length>1?`_${i+1}`:"")+".png";
+      a.href=imgs[i].toDataURL("image/png");a.click();
+      await new Promise(r=>setTimeout(r,300));
+    }
+  }
+  return imgs.length;
+}
+
 function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrders}){
   const[prefix,setPrefix]=useState(()=>lsGet("ol-prefix","쿠팡"));
   const[showAll,setShowAll]=useState(()=>lsGet("ol-ship-all","0")==="1");
@@ -2237,6 +2292,19 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
   const data=useMemo(()=>buildShipList(allOrders,prodMap,masters.products,{vendor,showAll,frozenDays,date:selDate}),[allOrders,prodMap,masters.products,vendor,showAll,frozenDays,selDate]);
   const ordered=[...data.chilledSites.flatMap(s=>s.rows),...data.frozen].filter(r=>r.qty>0);
   const partial=ordered.filter(r=>r.partial);
+  const[saving,setSaving]=useState("");
+  const[saveMsg,setSaveMsg]=useState("");
+  const printRef=useRef(null);
+  const saveA4=async kind=>{
+    setSaving(kind);setSaveMsg("");
+    try{
+      await new Promise(r=>setTimeout(r,50));
+      const safe=x=>String(x).replace(/[\\/:*?"<>|]/g,"_");
+      const n=await saveShipA4(printRef.current,kind,`출고리스트_${selDate}${vendor?"_"+safe(vendor):""}`);
+      setSaveMsg(n>1?`A4 ${n}장으로 나눠 저장했습니다`:"A4 1장으로 저장했습니다");
+    }catch(e){setSaveMsg("저장 실패: "+errMsg(e))}
+    setSaving("");
+  };
 
   return <div className="ol-layout">
     <DateList dates={dates} selected={selDate} onSelect={setSelDate}/>
@@ -2250,7 +2318,10 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
           </div>
         </div>
         <div className="ol-toolbar">
-          <button className="ol-btn ol-btn-primary" onClick={()=>downloadShipXlsx(data,selDate,prefix,vendor)} disabled={!ordered.length}>📥 출고리스트 엑셀 다운로드</button>
+          <button className="ol-btn ol-btn-primary" onClick={()=>saveA4("png")} disabled={!ordered.length||!!saving}>{saving==="png"?"저장 중…":"🖼 A4 이미지 저장"}</button>
+          <button className="ol-btn ol-btn-secondary" onClick={()=>saveA4("pdf")} disabled={!ordered.length||!!saving}>{saving==="pdf"?"저장 중…":"📄 A4 PDF"}</button>
+          <button className="ol-btn ol-btn-secondary" onClick={()=>downloadShipXlsx(data,selDate,prefix,vendor)} disabled={!ordered.length}>📥 엑셀</button>
+          {saveMsg&&<span style={{fontSize:12,color:saveMsg.startsWith("저장 실패")?"#ef4444":"#22c55e"}}>{saveMsg}</span>}
           <label className={"ol-check"+(showAll?" on":"")}><input type="checkbox" checked={showAll} onChange={e=>setShowAll(e.target.checked)}/>발주 없는 제품도 표시</label>
           <label className={"ol-check"+(withExtra?" on":"")}><input type="checkbox" checked={withExtra} onChange={e=>setWithExtra(e.target.checked)}/>추가 발주 포함{withExtra&&extraOrders.length>0&&` (${extraOrders.length}건)`}</label>
           <label style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12,color:"var(--muted)"}}>냉동 유통기한 = 입고일 +
@@ -2266,7 +2337,13 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
         </div>
         <UnmatchedBanner unmatched={data.unmatched}/>
         {partial.length>0&&<div className="ol-warn" style={{padding:"8px 12px"}}>⚠ 입수량으로 나누어떨어지지 않는 품목(빨강): {partial.map(r=>`${r.product.name} (${fmtNum(r.qty)}÷${r.per})`).join(", ")}</div>}
-        {!data.chilledSites.length&&!data.frozen.length?<Empty emoji="🚚" text="이 날짜에 제품리스트와 매칭되는 품목이 없습니다"/>:<ShipSheetPreview data={data} date={selDate} prefix={prefix}/>}
+        {!data.chilledSites.length&&!data.frozen.length?<Empty emoji="🚚" text="이 날짜에 제품리스트와 매칭되는 품목이 없습니다"/>:<>
+          <ShipSheetPreview data={data} date={selDate} prefix={prefix}/>
+          {/* A4 저장용 사본 (화면 밖, 고정 폭) */}
+          <div style={{position:"fixed",left:-20000,top:0,width:SHIP_PRINT_W,background:"#fff"}} aria-hidden="true">
+            <ShipSheetPreview data={data} date={selDate} prefix={prefix} print refCb={el=>{printRef.current=el}}/>
+          </div>
+        </>}
       </>}
     </div>
   </div>;
