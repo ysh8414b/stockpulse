@@ -761,8 +761,12 @@ function ItemForm({adminHash,initial,onSaved,onCancel}){
         // 입수량 (매출 업로드 시 I열 ÷ 입수량 = 박스 수)
         const pq=Number(packQty)>0?Number(packQty):null;
         if(pq!=null||(initial?.pack_qty!=null)){
+          // 실패하면 창을 닫지 않고 빨간 글씨로 알림 (앱 내장 브라우저는 alert 이 안 뜰 수 있음)
           try{await rpc("aps_set_item_pack_qty",{p_admin_hash:adminHash,p_item_id:itemId,p_pack_qty:pq})}
-          catch(e3){alert("품목은 저장됐지만 입수량은 저장하지 못했습니다.\nSupabase에서 setup_aps_pack_qty.sql 을 실행해주세요.")}
+          catch(e3){
+            setErr("품목은 저장됐지만 입수량은 저장하지 못했습니다 — Supabase SQL Editor에서 setup_aps_pack_qty.sql 을 실행한 뒤 다시 저장해주세요. ("+String(e3.message||e3).slice(0,80)+")");
+            setLoading(false);return;
+          }
         }
         try{
           await rpc("aps_set_item_plan_info",{
@@ -5516,6 +5520,10 @@ function SalesTab({adminHash}){
       const buf=await f.arrayBuffer();
       // 품목 입수량 로드 → I열 ÷ 입수량 = 박스 수
       const itemList=await rpc("aps_list_items",{p_admin_hash:adminHash});
+      // SQL(setup_aps_pack_qty.sql) 미적용이면 pack_qty 필드 자체가 없음 → H열로 잘못 들어가지 않게 업로드 중단
+      if((itemList||[]).length&&!(itemList||[]).some(it=>Object.prototype.hasOwnProperty.call(it,"pack_qty"))){
+        throw new Error("입수량을 읽을 수 없습니다 — Supabase SQL Editor에서 setup_aps_pack_qty.sql 을 실행한 뒤 📦 품목에서 입수량을 다시 저장하고 업로드해주세요");
+      }
       const packQtyByCode={};
       for(const it of (itemList||[])){
         const code=salesCodeKey(it.code);
