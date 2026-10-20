@@ -5764,7 +5764,7 @@ function SalesTab({adminHash}){
     <div style={{marginTop:14,padding:"10px 14px",background:"var(--card-bg)",borderRadius:6,fontSize:11,color:"var(--muted)",lineHeight:1.6}}>
       <div><strong>💡 사용법</strong></div>
       <div>1. 매출.xlsx 업로드 → A(매출일자) / D(상품코드) / E(상품명) / <b>I(수량 kg)</b> 컬럼 인식 → <b>I열 kg ÷ 품목 규격/사양(박스당 kg)</b> = 박스 수 (예: 60kg ÷ 12 = 5박스). 규격이 없는 상품은 H(수량Box) 그대로</div>
-      <div>2. 같은 (날짜+상품)이 여러 행이면 자동 합산. <b>파일에 들어 있는 날짜만</b> 기존 기록을 지우고 교체 — 같은 파일을 몇 번 올려도 수량이 불어나지 않고, 파일에 없는 날짜는 그대로 유지</div>
+      <div>2. 같은 (날짜+상품)이 여러 행이면 자동 합산. 같은 날짜 재업로드 시 덮어쓰기 (idempotent)</div>
       <div>3. <b>주평균</b> = <b>가장 최근 4 ISO 주(월~일)의 단순 평균</b> = 한 주에 평균 몇 박스 나갔는지 (권장 안전재고)</div>
       <div style={{paddingLeft:14,color:"var(--muted)"}}>· 기간 필터(7/14/30...)는 합계·일수 표시용. 평균은 항상 <b>최근 4주 고정</b> — 시즌·추세 변동을 빠르게 반영</div>
       <div style={{paddingLeft:14,color:"var(--muted)"}}>· 예: 최근 4주 [100, 120, 110, 130] → 주평균 (100+120+110+130)/4 = 115</div>

@@ -768,11 +768,6 @@
 - `SalesTab.handleFile`: 업로드 전 `aps_list_items`로 코드별 규격 로드. 소수는 3자리 반올림 저장
 - SQL 변경 없음 (`aps_sales_daily.qty`는 NUMERIC). 단위가 박스 그대로라 주평균·안전재고·자동 생성 로직은 그대로
 - **배치 업로드 덮어쓰기 버그 수정**: 서버 `aps_upsert_sales_batch`는 배치마다 그 배치의 [최소~최대 날짜]를 DELETE 후 INSERT → 500행 경계에서 한 날짜가 두 배치에 나뉘면(또는 파일이 날짜순이 아니면) 뒤 배치가 앞 배치에서 넣은 같은 날짜 행을 지웠음. 클라이언트에서 날짜순 정렬 + 같은 날짜는 한 배치에만 담도록 변경 (SQL 변경 없음)
-- **`setup_aps_v12.sql`** (신규, 1회 실행 — `setup_aps_sales.sql`에도 반영): `aps_upsert_sales_batch` 재정의(시그니처 동일)
-  - 삭제 범위: [최소~최대 날짜] 전체 → **업로드에 들어 있는 날짜만** (파일에 없는 중간 날짜는 보존)
-  - (날짜, 코드)별로 SQL에서 먼저 합산 후 INSERT, 충돌 시 `qty = EXCLUDED.qty`(교체) — 예전 `qty + EXCLUDED.qty`(누적) 제거 → 어떤 경우에도 기존 값에 더해지지 않음. 코드는 `btrim`
-  - `pg_advisory_xact_lock(hashtext('aps_sales_upload'))`로 업로드 직렬화 → 두 기기 동시 업로드도 안전
-  - 반환에 `deleted` 추가. 로컬 Postgres 16 검증: 같은 업로드 2회·8개 동시 실행 모두 수량 동일, 파일에 없는 날짜 유지
 - **기존 업로드분은 H열 기준**이므로 같은 매출 파일을 다시 업로드하면 날짜 범위가 덮어써져 새 산식으로 바뀜
 
 ### APS — 📊 재고 탭에 재고시트 박스 수 연동 (2026-06-28)

@@ -25,7 +25,6 @@ ALTER TABLE aps_sales_daily ENABLE ROW LEVEL SECURITY;
 -- p_rows: [{"date":"2026-06-15","code":"B0000006","name":"치즈 400g*16","qty":1.0}, ...]
 -- 같은 (date, code) 여러 건은 클라이언트가 미리 sum 해서 보내야 함
 -- ───────────────────────────────────────────
--- (2026-10-20 v12: 업로드 날짜만 교체 + 합산 후 교체(누적 X) + 업로드 직렬화)
 CREATE OR REPLACE FUNCTION aps_upsert_sales_batch(
   p_admin_hash TEXT,
   p_rows       JSONB
@@ -35,46 +34,37 @@ DECLARE
   v_min DATE;
   v_max DATE;
   v_inserted INT := 0;
-  v_deleted INT := 0;
 BEGIN
   PERFORM aps_assert_admin(p_admin_hash);
   IF p_rows IS NULL OR jsonb_typeof(p_rows) <> 'array' OR jsonb_array_length(p_rows) = 0 THEN
-    RETURN json_build_object('inserted', 0, 'deleted', 0, 'min_date', NULL, 'max_date', NULL);
+    RETURN json_build_object('inserted', 0, 'min_date', NULL, 'max_date', NULL);
   END IF;
 
-  -- 매출 업로드끼리 직렬화 (트랜잭션 끝나면 자동 해제)
-  PERFORM pg_advisory_xact_lock(hashtext('aps_sales_upload'));
+  -- 업로드된 행 중 최소/최대 날짜
+  SELECT MIN((r->>'date')::DATE), MAX((r->>'date')::DATE)
+    INTO v_min, v_max
+    FROM jsonb_array_elements(p_rows) AS r;
 
-  -- 이번 업로드 행 (코드 공백 제거, 빈 코드 제외)
-  SELECT MIN((r->>'date')::DATE), MAX((r->>'date')::DATE) INTO v_min, v_max
-  FROM jsonb_array_elements(p_rows) AS r
-  WHERE r->>'date' IS NOT NULL AND btrim(COALESCE(r->>'code', '')) <> '';
-  IF v_min IS NULL THEN
-    RETURN json_build_object('inserted', 0, 'deleted', 0, 'min_date', NULL, 'max_date', NULL);
-  END IF;
+  -- 같은 범위의 기존 데이터 삭제 (재업로드 idempotent)
+  DELETE FROM aps_sales_daily WHERE date BETWEEN v_min AND v_max;
 
-  -- 이번 업로드에 들어 있는 날짜만 삭제
-  DELETE FROM aps_sales_daily
-  WHERE date IN (
-    SELECT DISTINCT (r->>'date')::DATE FROM jsonb_array_elements(p_rows) AS r
-    WHERE r->>'date' IS NOT NULL AND btrim(COALESCE(r->>'code', '')) <> ''
-  );
-  GET DIAGNOSTICS v_deleted = ROW_COUNT;
-
-  -- (날짜, 코드)별 합산 후 INSERT. 충돌 시 교체(누적 아님)
+  -- 신규 INSERT
   INSERT INTO aps_sales_daily(date, code, name, qty, updated_at)
-  SELECT (r->>'date')::DATE, btrim(r->>'code'), MAX(COALESCE(r->>'name', '')),
-         SUM(COALESCE((r->>'qty')::NUMERIC, 0)), now()
+  SELECT
+    (r->>'date')::DATE,
+    r->>'code',
+    COALESCE(r->>'name', ''),
+    COALESCE((r->>'qty')::NUMERIC, 0),
+    now()
   FROM jsonb_array_elements(p_rows) AS r
-  WHERE r->>'date' IS NOT NULL AND btrim(COALESCE(r->>'code', '')) <> ''
-  GROUP BY (r->>'date')::DATE, btrim(r->>'code')
+  WHERE r->>'code' IS NOT NULL AND r->>'code' <> ''
   ON CONFLICT (date, code) DO UPDATE
-    SET qty = EXCLUDED.qty,
+    SET qty = aps_sales_daily.qty + EXCLUDED.qty,
         name = CASE WHEN EXCLUDED.name <> '' THEN EXCLUDED.name ELSE aps_sales_daily.name END,
         updated_at = now();
-  GET DIAGNOSTICS v_inserted = ROW_COUNT;
 
-  RETURN json_build_object('inserted', v_inserted, 'deleted', v_deleted, 'min_date', v_min, 'max_date', v_max);
+  GET DIAGNOSTICS v_inserted = ROW_COUNT;
+  RETURN json_build_object('inserted', v_inserted, 'min_date', v_min, 'max_date', v_max);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
