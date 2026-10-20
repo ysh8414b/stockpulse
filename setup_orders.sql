@@ -184,6 +184,16 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+-- 출고장용 제품명 (2026-10-20, setup_orders_shipname.sql 과 동일) — 빈 값 = 제품명 그대로
+ALTER TABLE ol_products ADD COLUMN IF NOT EXISTS ship_name TEXT DEFAULT '';
+CREATE OR REPLACE FUNCTION ol_set_product_ship_name(p_admin_hash TEXT, p_id BIGINT, p_ship_name TEXT)
+RETURNS VOID AS $$
+BEGIN
+  -- 인증 없음 (2026-10-13: 비밀번호 없이 접근 허용)
+  UPDATE ol_products SET ship_name = COALESCE(TRIM(p_ship_name),''), updated_at = now() WHERE id = p_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 CREATE OR REPLACE FUNCTION ol_delete_product(p_admin_hash TEXT, p_id BIGINT)
 RETURNS VOID AS $$
 BEGIN

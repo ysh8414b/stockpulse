@@ -611,6 +611,8 @@ function ProductForm({adminHash,masters,initial,onSaved,onCancel,onReloadMasters
   const[code,setCode]=useState(initial?.code||"");
   const[name,setName]=useState(initial?.name||"");
   const[imageName,setImageName]=useState(initial?.image_name||"");
+  const[shipName,setShipName]=useState(initial?.ship_name||"");
+  const[savedId,setSavedId]=useState(initial?.id||null); // 출고장용 이름 저장만 실패했을 때 다시 저장해도 중복 추가 안 되게
   const[perBox,setPerBox]=useState(initial?.per_box??"");
   const[methodIds,setMethodIds]=useState(Array.isArray(initial?.method_ids)?initial.method_ids.map(Number):[]);
   const[site,setSite]=useState(initial?.site||"");
@@ -635,23 +637,35 @@ function ProductForm({adminHash,masters,initial,onSaved,onCancel,onReloadMasters
     setSaving(true);setErr("");
     try{
       const args={
-        p_admin_hash:adminHash,p_id:initial?.id||null,p_code:code.trim(),p_name:name.trim(),
+        p_admin_hash:adminHash,p_id:savedId,p_code:code.trim(),p_name:name.trim(),
         p_image_name:imageName.trim(),p_per_box:per,p_method_ids:methodIds,
         p_site:site.trim(),p_box_spec:boxSpec,p_color:color
       };
       const missingFn=e=>/function|PGRST202|schema cache/i.test(String(e?.message||e));
-      try{await rpc("ol_upsert_product",{...args,p_sauce:sauce.trim(),p_storage:storage})}
+      let id;
+      try{id=await rpc("ol_upsert_product",{...args,p_sauce:sauce.trim(),p_storage:storage})}
       catch(e){
         // setup_orders_storage.sql 실행 전이면 냉장/냉동 없이 저장하고 안내
         if(!missingFn(e))throw e;
-        try{await rpc("ol_upsert_product",{...args,p_sauce:sauce.trim()})}
+        try{id=await rpc("ol_upsert_product",{...args,p_sauce:sauce.trim()})}
         catch(e2){
           // setup_orders_sauce.sql 실행 전이면 양념 없이 저장하고 안내
           if(!missingFn(e2))throw e2;
-          await rpc("ol_upsert_product",args);
+          id=await rpc("ol_upsert_product",args);
           if(sauce.trim())alert("제품은 저장했지만 양념은 저장되지 않았습니다.\nSupabase SQL Editor에서 setup_orders_sauce.sql 을 1회 실행해 주세요.");
         }
         if(storage==="frozen")alert("제품은 저장했지만 냉장/냉동 구분은 저장되지 않았습니다.\nSupabase SQL Editor에서 setup_orders_storage.sql 을 1회 실행해 주세요.");
+      }
+      const pid=Number(id)||savedId;
+      if(pid&&!savedId)setSavedId(pid);
+      // 출고장용 제품명 — 별도 함수로 저장 (값이 바뀐 경우만)
+      if(pid&&shipName.trim()!==(initial?.ship_name||"").trim()){
+        try{await rpc("ol_set_product_ship_name",{p_admin_hash:adminHash,p_id:pid,p_ship_name:shipName.trim()})}
+        catch(e){
+          if(!missingFn(e))throw e;
+          setErr("제품은 저장했지만 출고장용 제품명은 저장되지 않았습니다. Supabase SQL Editor에서 setup_orders_shipname.sql 을 1회 실행한 뒤 다시 저장하세요.");
+          setSaving(false);return;
+        }
       }
       onSaved();
     }catch(e){setErr(errMsg(e))}
@@ -666,6 +680,7 @@ function ProductForm({adminHash,masters,initial,onSaved,onCancel,onReloadMasters
     </div>
     <div style={{marginBottom:12}}><div className="ol-label">제품명 *</div><input className="ol-input" value={name} onChange={e=>setName(e.target.value)} placeholder="발주서/부착리스트에 표시될 이름"/></div>
     <div style={{marginBottom:12}}><div className="ol-label">이미지용 제품명 (적재이미지에 표시)</div><input className="ol-input" value={imageName} onChange={e=>setImageName(e.target.value)} placeholder="예: 삼겹구이용"/></div>
+    <div style={{marginBottom:12}}><div className="ol-label">출고장용 제품명 (🚚 출고장에 표시 · 비우면 제품명 그대로)</div><input className="ol-input" value={shipName} onChange={e=>setShipName(e.target.value)} placeholder="예: 양념닭주물럭 2kg"/></div>
 
     <div style={{marginBottom:12}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -1005,7 +1020,7 @@ function ProductsTab({adminHash,masters,reloadMasters}){
     return masters.products.filter(p=>{
       if(siteF!=="all"&&((p.site||"").trim()||NO_SITE)!==siteF)return false;
       if(!s)return true;
-      return [p.code,p.name,p.image_name].some(x=>String(x||"").toLowerCase().includes(s));
+      return [p.code,p.name,p.image_name,p.ship_name].some(x=>String(x||"").toLowerCase().includes(s));
     });
   },[masters.products,q,siteF]);
 
@@ -1033,7 +1048,7 @@ function ProductsTab({adminHash,masters,reloadMasters}){
       <thead><tr><th>제품코드</th><th>제품명</th><th>이미지용 이름</th><th className="right">입수</th><th>적재방식</th><th>생산지점</th><th>보관</th><th>양념</th><th>박스규격</th><th>단독 1파렛트 적재량</th><th></th></tr></thead>
       <tbody>{list.map(p=><tr key={p.id}>
         <td style={{fontFamily:"monospace",fontSize:12}}>{p.code}</td>
-        <td>{p.name}</td>
+        <td>{p.name}{(p.ship_name||"").trim()&&<div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>🚚 {p.ship_name}</div>}</td>
         <td><span style={{display:"inline-block",width:10,height:10,borderRadius:3,background:p.color,marginRight:6,verticalAlign:"middle"}}/><b style={{color:p.color}}>{p.image_name||"–"}</b></td>
         <td className="right">{p.per_box}</td>
         <td>{(p.method_ids||[]).map(id=>methodMap[Number(id)]).filter(Boolean).map(m=><span key={m.id} className={"ol-pill "+m.kind}>{m.name}</span>)}
@@ -1464,6 +1479,7 @@ function layoutMixedCalc(lines,slots){
   });
 }
 const imgName=p=>p.image_name||p.name;
+const shipNameOf=p=>(p?.ship_name||"").trim()||p?.name||"";
 
 // ── 적재이미지 편집 (위치 이동 + 글씨 수정) ──
 // 편집 내용은 ol_settings에 key = "img:{발주번호}:{생산지점}" 로 저장 (PC·모바일 공유)
@@ -2115,7 +2131,7 @@ function ShipSheetPreview({data,date,prefix,print,refCb}){
                   const run=runs.find(x=>x.start===i);
                   const dim=!r.qty;
                   return <tr key={r.code+r.expiry} style={{color:dim?"#b6bcc6":"#111"}}>
-                    <td style={cell}>{r.product.name}</td>
+                    <td style={cell}>{shipNameOf(r.product)}</td>
                     <td style={{...cell,textAlign:"center",color:"#6b7280",fontSize:12}}>{r.per}ea</td>
                     <td style={num}>{r.qty?fmtNum(r.qty):"–"}</td>
                     <td style={{...num,fontWeight:800,background:dim?"transparent":"#fef9c3",color:r.partial?"#dc2626":dim?"#b6bcc6":"#111"}} title={r.partial?"입수량으로 나누어떨어지지 않음":""}>{r.qty?fmtBoxes(r.boxes):"–"}</td>
@@ -2179,7 +2195,7 @@ function downloadShipXlsx(data,date,prefix,vendor){
       g.rows.forEach(x=>{
         const R=r+1,dim=!x.qty;
         const c=dim?"A0A6B0":undefined;
-        put(r,0,x.product.name,st({sz:12,indent:1,color:c}));
+        put(r,0,shipNameOf(x.product),st({sz:12,indent:1,color:c}));
         put(r,1,`${x.per}ea`,st({sz:11,h:"center",color:"6B7280"}));
         put(r,2,x.qty||"",st({sz:12,h:"right",fmt:"#,##0",color:c}));
         put(r,3,x.boxes,st({sz:13,b:true,h:"right",fmt:"0.##",fill:dim?undefined:"FFF4C2",color:x.partial?"DC2626":c}),`C${R}/${x.per}`);
@@ -2318,7 +2334,7 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
           발주서 {allOrders.filter(o=>!vendor||(o.vendor||"").trim()===vendor).length}건 · 업체·센터가 달라도 같은 제품은 합쳐서 표시 · 박스수량 = 총 팩수량 ÷ 입수량 · 냉장 소비기한은 발주서의 유통(소비)기한 · 냉동 유통기한은 발주서 값이 없으면 입고일 + {frozenDays||0}일
         </div>
         <UnmatchedBanner unmatched={data.unmatched}/>
-        {partial.length>0&&<div className="ol-warn" style={{padding:"8px 12px"}}>⚠ 입수량으로 나누어떨어지지 않는 품목(빨강): {partial.map(r=>`${r.product.name} (${fmtNum(r.qty)}÷${r.per})`).join(", ")}</div>}
+        {partial.length>0&&<div className="ol-warn" style={{padding:"8px 12px"}}>⚠ 입수량으로 나누어떨어지지 않는 품목(빨강): {partial.map(r=>`${shipNameOf(r.product)} (${fmtNum(r.qty)}÷${r.per})`).join(", ")}</div>}
         {!data.chilledSites.length&&!data.frozen.length?<Empty emoji="🚚" text="이 날짜에 제품리스트와 매칭되는 품목이 없습니다"/>:<>
           <ShipSheetPreview data={data} date={selDate} prefix={prefix}/>
           {/* 이미지 저장용 사본 (화면 밖, 고정 폭) — 전체 1장 + 층별 */}
