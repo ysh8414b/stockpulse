@@ -2133,7 +2133,7 @@ function ShipSheetPreview({data,date,prefix,print,refCb}){
                   const run=runs.find(x=>x.start===i);
                   const dim=!r.qty;
                   return <tr key={r.code+r.expiry} style={{color:dim?"#b6bcc6":"#111"}}>
-                    <td style={cell}>{boldDigits(shipNameOf(r.product),dim)}<span style={{color:dim?"#c7ccd4":"#6b7280",marginLeft:6,whiteSpace:"nowrap"}}>/ {r.per}ea</span></td>
+                    <td style={cell}>{boldDigits(shipNameOf(r.product),dim)}<span style={{color:dim?"#9ca3af":"#000",fontWeight:900,marginLeft:6,whiteSpace:"nowrap"}}>/ {r.per}ea</span></td>
                     <td style={num}>{r.qty?fmtNum(r.qty):"–"}</td>
                     <td style={{...num,fontWeight:800,background:dim?"transparent":"#fef9c3",color:r.partial?"#dc2626":dim?"#b6bcc6":"#111"}} title={r.partial?"입수량으로 나누어떨어지지 않음":""}>{r.qty?fmtBoxes(r.boxes):"–"}</td>
                     {run&&<td rowSpan={run.len} style={{...cell,textAlign:"center",fontWeight:600,fontSize:13,borderLeft:"1px solid #e5e7eb",color:"#111"}}>{fmtExp(run.value)}</td>}
