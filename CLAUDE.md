@@ -761,13 +761,14 @@
 - **Excel 인코딩 노트**: 매출.xlsx는 ERP에서 깨진 UTF-8/CP949 혼합 인코딩 — 그러나 SheetJS는 정상 디코딩 가능(openpyxl과 달리). 노드 테스트: 604행 → 592행 유효 매출, 203개 (date,code) 그룹, 82개 상품, 한글명 정상
 - **운영 순서**: Supabase에서 `setup_aps_sales.sql` 실행 1회 → 💰 매출 탭에서 매출.xlsx 업로드 → 재고시트 탭에 제품코드 등록되어 있으면 자동 매칭
 
-### APS — 매출 수량을 I열(kg) ÷ 규격/사양으로 집계 (2026-10-20)
-- 사용자 요청: 매출 업로드 시 H열(box) 대신 I열(수량 kg)을 읽고, 품목의 규격/사양(박스당 kg)으로 나눠 박스 수로 집계 (예: I=60, 규격 12 → 5박스)
-- `parseSalesWorkbook(buf, specKgByCode)`: 행마다 `I ÷ 박스당 kg`. 규격이 없거나 숫자로 못 읽는 상품, I열이 빈 행은 H열(box) 그대로 사용 → 결과의 `fallback`에 모아 업로드 후 빨강 경고로 상품 목록 표시
-- `salesBoxKgFromSpec(spec)`: `12` / `12kg` / `500g` / `1kg*4`(=4kg) / `500g*8`(=4kg) 해석 (`parseSpecKg` + `a*n` 형식)
-- `SalesTab.handleFile`: 업로드 전 `aps_list_items`로 코드별 규격 로드. 소수는 3자리 반올림 저장
-- SQL 변경 없음 (`aps_sales_daily.qty`는 NUMERIC). 단위가 박스 그대로라 주평균·안전재고·자동 생성 로직은 그대로
-- **기존 업로드분은 H열 기준**이므로 같은 매출 파일을 다시 업로드하면 날짜 범위가 덮어써져 새 산식으로 바뀜
+### APS — 매출 수량을 I열 ÷ 품목 입수량으로 집계 (2026-10-20)
+- 사용자 요청: 매출 업로드 시 H열(box) 대신 I열(수량)을 읽고 품목의 **입수량**으로 나눠 박스 수로 집계 (예: I=60, 입수량 12 → 5박스). 처음엔 규격/사양으로 나눴다가 같은 날 사용자 요청으로 별도 입수량 칸으로 변경
+- **`setup_aps_pack_qty.sql`** (신규, 1회 실행, v10 전제): `aps_items.pack_qty NUMERIC NULL` + `aps_list_items` 재정의(`pack_qty` 포함) + `aps_set_item_pack_qty(hash, item_id, qty)`(0 이하/NULL = 미설정). `aps_upsert_item` 시그니처는 그대로
+- **ItemForm**(제품/반제품만): 규격/사양 옆에 "입수량" 숫자 칸. 저장 시 `aps_upsert_item` 후 `aps_set_item_pack_qty` 호출(SQL 미실행이면 안내 alert)
+- `parseSalesWorkbook(buf, packQtyByCode)`: 행마다 `I ÷ 입수량`. 입수량이 없는 상품이나 I열이 빈 행은 H열(box) 그대로 → 업로드 후 빨강 경고로 상품 목록 표시
+- `SalesTab.handleFile`: 업로드 전 `aps_list_items`로 코드별 입수량 로드. 소수는 3자리 반올림 저장
+- 단위가 박스 그대로라 주평균·안전재고·자동 생성 로직은 그대로
+- **기존 업로드분은 H열 기준**이므로 입수량 입력 후 같은 매출 파일을 다시 업로드해야 새 산식으로 바뀜
 
 ### APS — 매출 날짜별 삭제 (2026-10-20)
 - 사용자 요청: 💰 매출 탭 📅 날짜별 보기에서 날짜 하나씩 삭제
