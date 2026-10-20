@@ -2030,7 +2030,7 @@ function ListsTab({adminHash,masters,reloadMasters,dates,selDate,setSelDate,orde
 // ═══════════════════════════════════════════
 const siteCmp=(a,b)=>a===NO_SITE?1:b===NO_SITE?-1:a.localeCompare(b,"ko",{numeric:true});
 function buildShipList(orders,prodMap,products,opts){
-  const{vendor,showAll,frozenDays}=opts;
+  const{vendor,showAll,frozenDays,merge}=opts;
   const rows=new Map(),unmatched=[];
   const sorted=[...orders].sort((a,b)=>String(a.order_no).localeCompare(String(b.order_no),undefined,{numeric:true}));
   for(const o of sorted){
@@ -2038,10 +2038,11 @@ function buildShipList(orders,prodMap,products,opts){
     for(const it of (o.items||[])){
       const p=prodMap[it.code];
       if(!p){unmatched.push({order:o,item:it});continue}
-      const k=it.code+"|"+(it.expiry_date?String(it.expiry_date).slice(0,10):"");
+      const exp=merge?"":(it.expiry_date?String(it.expiry_date).slice(0,10):""); // 기간 합계는 소비기한 무시
+      const k=it.code+"|"+exp;
       const cur=rows.get(k);
       if(cur)cur.qty+=Number(it.qty||0);
-      else rows.set(k,{product:p,code:it.code,qty:Number(it.qty||0),expiry:it.expiry_date?String(it.expiry_date).slice(0,10):"",seq:rows.size});
+      else rows.set(k,{product:p,code:it.code,qty:Number(it.qty||0),expiry:exp,seq:rows.size});
     }
   }
   // 발주서에 줄은 있지만 발주수량이 0인 품목(취소·미발주)은 "발주 없는 제품"과 같이 취급 → 옵션을 켰을 때만 표시
@@ -2055,7 +2056,7 @@ function buildShipList(orders,prodMap,products,opts){
     const per=Math.max(1,Number(r.product.per_box)||1);
     const frozen=storageOf(r.product)==="frozen";
     let expiry=r.expiry;
-    if(frozen&&!expiry&&r.qty>0&&opts.date&&Number.isFinite(fz)&&fz>0)expiry=addDays(opts.date,fz);
+    if(!merge&&frozen&&!expiry&&r.qty>0&&opts.date&&Number.isFinite(fz)&&fz>0)expiry=addDays(opts.date,fz);
     return{...r,per,boxes:r.qty/per,partial:r.qty%per!==0,frozen,site:(r.product.site||"").trim()||NO_SITE,expiry};
   });
   const bySeq=(a,b)=>a.seq-b.seq;
@@ -2071,7 +2072,10 @@ function runsOf(rows,key){
   rows.forEach((r,i)=>{const v=key(r),l=out[out.length-1];if(l&&l.value===v)l.len++;else out.push({start:i,len:1,value:v})});
   return out;
 }
-const shipTitle=(prefix,date)=>`${prefix?prefix+" ":""}${fmtMd(date)} (${dowOf(date)}) 입고`;
+// dateTo가 있으면 기간 합계 제목 (예: "쿠팡 10/14 (화) ~ 10/20 (월) 발주 합계")
+const shipTitle=(prefix,date,dateTo)=>dateTo&&dateTo!==date
+  ?`${prefix?prefix+" ":""}${fmtMd(date)} (${dowOf(date)}) ~ ${fmtMd(dateTo)} (${dowOf(dateTo)}) 발주 합계`
+  :`${prefix?prefix+" ":""}${fmtMd(date)} (${dowOf(date)}) ${dateTo?"발주 합계":"입고"}`;
 const fmtBoxes=n=>Number.isInteger(n)?String(n):String(Math.round(n*100)/100);
 const fmtExp=s=>s?s.replace(/-/g,".")+" 이후":""; // "/" 는 html2canvas 캡처 때 글자 간격이 어긋나 "." 사용
 
@@ -2088,7 +2092,8 @@ function shipSections(data){
 const SHIP_ACCENT={chilled:{main:"#0e7490",soft:"#ecfeff",x:"0E7490",xs:"E0F7FA"},frozen:{main:"#1d4ed8",soft:"#eff6ff",x:"1D4ED8",xs:"E3ECFD"}};
 const secShort=sec=>sec.title.replace("제품","");
 
-function ShipSheetPreview({data,date,prefix,print,refCb}){
+function ShipSheetPreview({data,date,dateTo,prefix,print,refCb}){
+  const noExp=!!dateTo; // 기간 합계는 소비기한이 섞이므로 열 생략
   const secs=shipSections(data);
   const secRows=sec=>sec.groups.flatMap(g=>g.rows);
   const total=secs.reduce((a,sec)=>a+sumBy(secRows(sec),"boxes"),0);
@@ -2097,7 +2102,7 @@ function ShipSheetPreview({data,date,prefix,print,refCb}){
   // print: 이미지 저장용 사본 — 바깥 테두리 없이 고정 폭
   return <div ref={refCb} className="ol-sheet" style={{padding:print?"24px 22px":"22px 24px",fontSize:14,lineHeight:1.4,...(print?{border:"none",borderRadius:0,margin:0,overflow:"visible"}:{})}}>
     <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:12,flexWrap:"wrap",paddingBottom:12,borderBottom:"2px solid #111",marginBottom:18}}>
-      <div style={{fontSize:24,fontWeight:900,letterSpacing:"-0.5px"}}>{shipTitle(prefix,date)}</div>
+      <div style={{fontSize:24,fontWeight:900,letterSpacing:"-0.5px"}}>{shipTitle(prefix,date,dateTo)}</div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
         {secs.map(sec=><span key={sec.key} style={{padding:"4px 10px",borderRadius:14,background:SHIP_ACCENT[sec.key].soft,color:SHIP_ACCENT[sec.key].main,fontWeight:700,fontSize:13}}>{secShort(sec)} {fmtBoxes(sumBy(secRows(sec),"boxes"))}박스</span>)}
         <span style={{padding:"4px 10px",borderRadius:14,background:"#111",color:"#fff",fontWeight:700,fontSize:13}}>총 {fmtBoxes(total)}박스</span>
@@ -2123,10 +2128,10 @@ function ShipSheetPreview({data,date,prefix,print,refCb}){
               <span style={{padding:"4px 12px",borderRadius:16,background:ac.main,color:"#fff",fontWeight:800,fontSize:15}}>{fmtBoxes(sumBy(g.rows,"boxes"))}박스</span>
             </div>
             <table style={{minWidth:600}}>
-              <colgroup><col/><col style={{width:100}}/><col style={{width:90}}/><col style={{width:150}}/></colgroup>
+              <colgroup><col/><col style={{width:100}}/><col style={{width:90}}/>{!noExp&&<col style={{width:150}}/>}</colgroup>
               <thead><tr style={{background:"#f8fafc",color:"#475569",fontSize:12}}>
                 <th style={{...cell,textAlign:"center"}}>제품명</th>
-                <th style={num}>총 팩수량</th><th style={num}>박스수량</th><th style={{...cell,textAlign:"center"}}>{sec.expLabel}</th>
+                <th style={num}>총 팩수량</th><th style={num}>박스수량</th>{!noExp&&<th style={{...cell,textAlign:"center"}}>{sec.expLabel}</th>}
               </tr></thead>
               <tbody>
                 {g.rows.map((r,i)=>{
@@ -2136,7 +2141,7 @@ function ShipSheetPreview({data,date,prefix,print,refCb}){
                     <td style={{...cell,textAlign:"center"}}>{boldDigits(shipNameOf(r.product),dim)}<span style={{color:dim?"#9ca3af":"#000",fontWeight:900,marginLeft:6,whiteSpace:"nowrap"}}>/ {r.per}ea</span></td>
                     <td style={num}>{r.qty?fmtNum(r.qty):"–"}</td>
                     <td style={{...num,fontWeight:800,background:dim?"transparent":"#fef9c3",color:r.partial?"#dc2626":dim?"#b6bcc6":"#111"}} title={r.partial?"입수량으로 나누어떨어지지 않음":""}>{r.qty?fmtBoxes(r.boxes):"–"}</td>
-                    {run&&<td rowSpan={run.len} style={{...cell,textAlign:"center",fontWeight:600,fontSize:13,borderLeft:"1px solid #e5e7eb",color:"#111"}}>{fmtExp(run.value)}</td>}
+                    {!noExp&&run&&<td rowSpan={run.len} style={{...cell,textAlign:"center",fontWeight:600,fontSize:13,borderLeft:"1px solid #e5e7eb",color:"#111"}}>{fmtExp(run.value)}</td>}
                   </tr>;
                 })}
               </tbody>
@@ -2153,7 +2158,8 @@ function ShipSheetPreview({data,date,prefix,print,refCb}){
 }
 
 // 출고장 엑셀 — 화면과 같은 구성 (A 제품명 / 입수 · B 총 팩수량 · C 박스수량 · D 소비/유통기한)
-function downloadShipXlsx(data,date,prefix,vendor){
+function downloadShipXlsx(data,date,prefix,vendor,dateTo){
+  const noExp=!!dateTo,LC=noExp?2:3; // 기간 합계: 소비기한 열(D) 없음
   const F="Pretendard";
   const line=(style,rgb)=>({style,color:{rgb:rgb||"D0D5DD"}});
   const grid={left:line("thin"),right:line("thin"),top:line("thin"),bottom:line("thin")};
@@ -2172,14 +2178,14 @@ function downloadShipXlsx(data,date,prefix,vendor){
   const secRows=sec=>sec.groups.flatMap(g=>g.rows);
   const all=secs.flatMap(secRows);
   const noBorder={};
-  span(0,0,3,shipTitle(prefix,date)+(vendor?` · ${vendor}`:""),st({sz:20,b:true,border:{bottom:line("medium","111111")}}));
+  span(0,0,LC,shipTitle(prefix,date,dateTo)+(vendor?` · ${vendor}`:""),st({sz:20,b:true,border:{bottom:line("medium","111111")}}));
   rowsH[0]={hpt:36};
-  span(1,0,3,[...secs.map(sec=>`${secShort(sec)} ${fmtBoxes(sumBy(secRows(sec),"boxes"))}박스`),`총 ${fmtBoxes(sumBy(all,"boxes"))}박스`].join("   ·   "),st({sz:12,color:"555555",border:noBorder}));
+  span(1,0,LC,[...secs.map(sec=>`${secShort(sec)} ${fmtBoxes(sumBy(secRows(sec),"boxes"))}박스`),`총 ${fmtBoxes(sumBy(all,"boxes"))}박스`].join("   ·   "),st({sz:12,color:"555555",border:noBorder}));
   rowsH[1]={hpt:22};
   let r=3;
   for(const sec of secs){
     const ac=SHIP_ACCENT[sec.key];
-    span(r,0,3,sec.title,st({sz:15,b:true,color:"FFFFFF",fill:ac.x,border:noBorder}));rowsH[r]={hpt:28};r++;
+    span(r,0,LC,sec.title,st({sz:15,b:true,color:"FFFFFF",fill:ac.x,border:noBorder}));rowsH[r]={hpt:28};r++;
     rowsH[r]={hpt:10};r++; // 섹션 제목과 첫 지점 사이 여백
     const hd=h=>st({sz:11,b:true,color:"475569",fill:"F1F5F9",h});
     const bandRefs=[],qtyRanges=[];
@@ -2188,10 +2194,10 @@ function downloadShipXlsx(data,date,prefix,vendor){
       const bb={left:line("medium",ac.x),right:line("medium",ac.x),top:line("medium",ac.x),bottom:line("thin",ac.x)};
       span(band,0,1,`${g.site}   (${g.rows.filter(x=>x.qty>0).length}품목 · ${fmtNum(sumBy(g.rows,"qty"))}팩)`,st({sz:16,b:true,color:ac.x,fill:ac.xs,border:bb}));
       put(band,2,sumBy(g.rows,"boxes"),st({sz:16,b:true,color:"FFFFFF",fill:ac.x,h:"right",fmt:'0.##"박스"',border:bb}),`SUM(C${first+1}:C${last+1})`);
-      put(band,3,"",st({fill:ac.xs,border:bb}));
+      if(!noExp)put(band,3,"",st({fill:ac.xs,border:bb}));
       rowsH[band]={hpt:30};bandRefs.push(band+1);qtyRanges.push(`B${first+1}:B${last+1}`);
       r++;
-      put(r,0,"제품명",hd("left"));put(r,1,"총 팩수량",hd("right"));put(r,2,"박스수량",hd("right"));put(r,3,sec.expLabel,hd("center"));
+      put(r,0,"제품명",hd("left"));put(r,1,"총 팩수량",hd("right"));put(r,2,"박스수량",hd("right"));if(!noExp)put(r,3,sec.expLabel,hd("center"));
       rowsH[r]={hpt:20};r++;
       g.rows.forEach(x=>{
         const R=r+1,dim=!x.qty;
@@ -2201,7 +2207,7 @@ function downloadShipXlsx(data,date,prefix,vendor){
         put(r,2,x.boxes,st({sz:13,b:true,h:"right",fmt:"0.##",fill:dim?undefined:"FFF4C2",color:x.partial?"DC2626":c}),`B${R}/${x.per}`);
         rowsH[r]={hpt:22};r++;
       });
-      for(const run of runsOf(g.rows,x=>x.expiry)){
+      if(!noExp)for(const run of runsOf(g.rows,x=>x.expiry)){
         const a=first+run.start,s=st({sz:12,b:true,h:"center",fmt:'yyyy/mm/dd"이후"'});
         ws[enc(a,3)]=run.value?{t:"n",v:excelSerial(run.value),z:'yyyy/mm/dd"이후"',s}:{t:"s",v:"",s};
         for(let k=a+1;k<a+run.len;k++)put(k,3,"",s);
@@ -2213,18 +2219,18 @@ function downloadShipXlsx(data,date,prefix,vendor){
     put(r,0,`${secShort(sec)} 합계`,st({sz:13,b:true,border:top}));
     put(r,1,sumBy(secRows(sec),"qty"),st({sz:13,b:true,h:"right",fmt:"#,##0",border:top}),`SUM(${qtyRanges.join(",")})`);
     put(r,2,sumBy(secRows(sec),"boxes"),st({sz:14,b:true,h:"right",fmt:"0.##",border:top}),bandRefs.map(x=>"C"+x).join("+"));
-    put(r,3,"",st({border:top}));
+    if(!noExp)put(r,3,"",st({border:top}));
     rowsH[r]={hpt:26};r+=2;
   }
-  ws["!ref"]=`A1:D${Math.max(r,2)}`;
+  ws["!ref"]=`A1:${noExp?"C":"D"}${Math.max(r,2)}`;
   ws["!merges"]=merges;
-  ws["!cols"]=[{wch:60},{wch:13},{wch:12},{wch:19}];
+  ws["!cols"]=[{wch:60},{wch:13},{wch:12},...(noExp?[]:[{wch:19}])];
   ws["!rows"]=rowsH;
   ws["!pageSetup"]={orientation:"portrait"};
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,"출고장");
   const safe=x=>String(x).replace(/[\\/:*?"<>|]/g,"_");
-  XLSX.writeFile(wb,`출고리스트_${date}${vendor?"_"+safe(vendor):""}.xlsx`);
+  XLSX.writeFile(wb,`출고리스트_${date}${dateTo&&dateTo!==date?"~"+dateTo:dateTo?"_합계":""}${vendor?"_"+safe(vendor):""}.xlsx`);
 }
 
 // 이미지 저장 — 화면 밖에 고정 폭 사본을 그려 캡처 → PNG 한 장 (높이 제한 없음, 페이지 나눔 없음)
@@ -2243,6 +2249,37 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
   const[frozenDays,setFrozenDays]=useState(()=>lsGet("ol-ship-frozen-days","182"));
   const[vendor,setVendor]=useState("");
   const[extraOrders,setExtraOrders]=useState([]);
+  // 기간 합계 모드 — 입고예정일이 기간 안인 발주서(일반 + 추가)를 모두 합침, 소비기한 구분 없이 제품별 합계
+  const[mode,setMode]=useState(()=>lsGet("ol-ship-mode","day")==="range"?"range":"day");
+  const[rFrom,setRFrom]=useState(()=>lsGet("ol-ship-from",""));
+  const[rTo,setRTo]=useState(()=>lsGet("ol-ship-to",""));
+  const[rangeOrders,setRangeOrders]=useState([]);
+  const[rangeLoading,setRangeLoading]=useState(false);
+  const isRange=mode==="range";
+  useEffect(()=>lsSet("ol-ship-mode",mode),[mode]);
+  useEffect(()=>{lsSet("ol-ship-from",rFrom);lsSet("ol-ship-to",rTo)},[rFrom,rTo]);
+  // 기간이 비어 있으면 선택일 기준 최근 7일
+  useEffect(()=>{if(isRange&&(!rFrom||!rTo)&&selDate){setRFrom(addDays(selDate,-6));setRTo(selDate)}},[isRange,selDate]);
+  const rangeOk=!!(isRange&&rFrom&&rTo&&rFrom<=rTo);
+  useEffect(()=>{
+    if(!rangeOk){setRangeOrders([]);return}
+    let alive=true;setRangeLoading(true);
+    const base={p_admin_hash:adminHash,p_from:rFrom,p_to:rTo};
+    const norm=d=>(Array.isArray(d)?d:[]).map(o=>({...o,due_date:String(o.due_date).slice(0,10)}));
+    (async()=>{
+      let main=[],ext=[];
+      // setup_orders_extra.sql 실행 전이면 p_extra 없이(일반 발주만)
+      try{main=norm(await rpc("ol_list_orders",{...base,p_extra:false}))}
+      catch(e){try{main=norm(await rpc("ol_list_orders",base))}catch(e2){main=[]}}
+      if(withExtra){try{ext=norm(await rpc("ol_list_orders",{...base,p_extra:true}))}catch(e){ext=[]}}
+      if(alive){setRangeOrders([...main,...ext]);setRangeLoading(false)}
+    })();
+    return()=>{alive=false};
+  },[rangeOk,rFrom,rTo,withExtra,adminHash]);
+  const setPreset=days=>{
+    if(days==="all"){const ds=dates.map(d=>d.due_date).sort();if(ds.length){setRFrom(ds[0]);setRTo(ds[ds.length-1])}return}
+    const end=rTo||selDate||todayYmd();setRFrom(addDays(end,-(days-1)));setRTo(end);
+  };
   useEffect(()=>lsSet("ol-prefix",prefix),[prefix]);
   useEffect(()=>lsSet("ol-ship-all",showAll?"1":"0"),[showAll]);
   useEffect(()=>lsSet("ol-ship-extra",withExtra?"1":"0"),[withExtra]);
@@ -2256,11 +2293,13 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
       .catch(()=>{if(alive)setExtraOrders([])});
     return()=>{alive=false};
   },[selDate,withExtra,adminHash]);
-  const allOrders=useMemo(()=>withExtra?[...orders,...extraOrders]:orders,[orders,extraOrders,withExtra]);
+  const allOrders=useMemo(()=>isRange?rangeOrders:withExtra?[...orders,...extraOrders]:orders,[isRange,rangeOrders,orders,extraOrders,withExtra]);
+  const rangeDays=useMemo(()=>new Set(rangeOrders.map(o=>o.due_date)).size,[rangeOrders]);
+  const shipDate=isRange?rFrom:selDate,shipTo=isRange?rTo:undefined;
   const vendors=useMemo(()=>[...new Set(allOrders.map(o=>(o.vendor||"").trim()))].sort(),[allOrders]);
   useEffect(()=>{if(vendor&&!vendors.includes(vendor))setVendor("")},[vendors]);
   const prodMap=useMemo(()=>Object.fromEntries(masters.products.map(p=>[p.code,p])),[masters.products]);
-  const data=useMemo(()=>buildShipList(allOrders,prodMap,masters.products,{vendor,showAll,frozenDays,date:selDate}),[allOrders,prodMap,masters.products,vendor,showAll,frozenDays,selDate]);
+  const data=useMemo(()=>buildShipList(allOrders,prodMap,masters.products,{vendor,showAll,frozenDays,date:selDate,merge:isRange}),[allOrders,prodMap,masters.products,vendor,showAll,frozenDays,selDate,isRange]);
   const ordered=[...data.chilledSites.flatMap(s=>s.rows),...data.frozen].filter(r=>r.qty>0);
   const partial=ordered.filter(r=>r.partial);
   const[saving,setSaving]=useState("");
@@ -2284,7 +2323,7 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
     try{
       await new Promise(r=>setTimeout(r,50));
       const safe=x=>String(x).replace(/[\\/:*?"<>|]/g,"_");
-      const base=`출고리스트_${selDate}${vendor?"_"+safe(vendor):""}`;
+      const base=`출고리스트_${isRange?(rFrom===rTo?rFrom+"_합계":rFrom+"~"+rTo):selDate}${vendor?"_"+safe(vendor):""}`;
       if(kind==="all"){await saveShipPng(printRef.current,base);setSaveMsg("한 장으로 저장했습니다")}
       else{
         for(const f of selFloors){
@@ -2298,11 +2337,27 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
   };
 
   return <div className="ol-layout">
-    <DateList dates={dates} selected={selDate} onSelect={setSelDate}/>
+    <DateList dates={dates} selected={isRange?"":selDate} onSelect={d=>{setSelDate(d);setMode("day")}}/>
     <div style={{minWidth:0}}>
-      {!selDate?<Empty emoji="📄" text="발주서 탭에서 발주서를 먼저 업로드하세요"/>:loadingOrders?<Loader/>:<>
+      <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:12}}>
+        <div className="ol-chips">
+          <button className={!isRange?"on":""} onClick={()=>setMode("day")}>📅 하루 (입고일)</button>
+          <button className={isRange?"on":""} onClick={()=>setMode("range")}>🗓 기간 합계</button>
+        </div>
+        {isRange&&<>
+          <input className="ol-input" type="date" style={{width:150}} value={rFrom} onChange={e=>setRFrom(e.target.value)}/>
+          <span style={{color:"var(--muted)"}}>~</span>
+          <input className="ol-input" type="date" style={{width:150}} value={rTo} onChange={e=>setRTo(e.target.value)}/>
+          <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setPreset(7)}>최근 7일</button>
+          <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setPreset(14)}>최근 14일</button>
+          <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setPreset(30)}>최근 30일</button>
+          <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setPreset("all")}>저장된 전체</button>
+        </>}
+      </div>
+      {isRange&&rFrom&&rTo&&rFrom>rTo&&<div className="ol-warn" style={{padding:"8px 12px"}}>⚠ 시작일이 종료일보다 늦습니다</div>}
+      {(isRange?!rangeOk:!selDate)?(isRange?null:<Empty emoji="📄" text="발주서 탭에서 발주서를 먼저 업로드하세요"/>):(isRange?rangeLoading:loadingOrders)?<Loader/>:<>
         <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",marginBottom:12}}>
-          <div style={{fontSize:18,fontWeight:800}}>{selDate} ({dowOf(selDate)}) 출고장</div>
+          <div style={{fontSize:18,fontWeight:800}}>{isRange?`${rFrom} (${dowOf(rFrom)}) ~ ${rTo} (${dowOf(rTo)}) 발주 합계`:`${selDate} (${dowOf(selDate)}) 출고장`}</div>
           <div style={{display:"flex",alignItems:"center",gap:6,marginLeft:"auto"}}>
             <span style={{fontSize:12,color:"var(--muted)"}}>제목 머리말</span>
             <input className="ol-input" style={{width:110}} value={prefix} onChange={e=>setPrefix(e.target.value)}/>
@@ -2311,13 +2366,13 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
         <div className="ol-toolbar">
           <button className="ol-btn ol-btn-primary" onClick={()=>save("all")} disabled={!selFloors.length||!!saving}>{saving==="all"?"저장 중…":"🖼 한 장으로 저장"}</button>
           <button className="ol-btn ol-btn-secondary" onClick={()=>save("floor")} disabled={!selFloors.length||!!saving}>{saving==="floor"?"저장 중…":`🏭 층별로 저장 (${selFloors.length}장)`}</button>
-          <button className="ol-btn ol-btn-secondary" onClick={()=>downloadShipXlsx(data,selDate,prefix,vendor)} disabled={!ordered.length}>📥 엑셀</button>
+          <button className="ol-btn ol-btn-secondary" onClick={()=>downloadShipXlsx(data,shipDate,prefix,vendor,shipTo)} disabled={!ordered.length}>📥 엑셀</button>
           {saveMsg&&<span style={{fontSize:12,color:saveMsg.startsWith("저장 실패")?"#ef4444":"#22c55e"}}>{saveMsg}</span>}
           <label className={"ol-check"+(showAll?" on":"")}><input type="checkbox" checked={showAll} onChange={e=>setShowAll(e.target.checked)}/>발주 없는 제품도 표시</label>
-          <label className={"ol-check"+(withExtra?" on":"")}><input type="checkbox" checked={withExtra} onChange={e=>setWithExtra(e.target.checked)}/>추가 발주 포함{withExtra&&extraOrders.length>0&&` (${extraOrders.length}건)`}</label>
-          <label style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12,color:"var(--muted)"}}>냉동 유통기한 = 입고일 +
+          <label className={"ol-check"+(withExtra?" on":"")}><input type="checkbox" checked={withExtra} onChange={e=>setWithExtra(e.target.checked)}/>추가 발주 포함{!isRange&&withExtra&&extraOrders.length>0&&` (${extraOrders.length}건)`}</label>
+          {!isRange&&<label style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12,color:"var(--muted)"}}>냉동 유통기한 = 입고일 +
             <input className="ol-input" type="number" min="0" style={{width:70,padding:"5px 8px"}} value={frozenDays} onChange={e=>setFrozenDays(e.target.value)}/>일
-          </label>
+          </label>}
         </div>
         {floors.length>0&&<div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:12}}>
           <span style={{fontSize:12,color:"var(--muted)",marginRight:2}}>저장할 층</span>
@@ -2331,16 +2386,17 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
           {vendors.map(v=><button key={v} className={vendor===v?"on":""} onClick={()=>setVendor(v)}>{v||"(업체명 없음)"}</button>)}
         </div>}
         <div style={{fontSize:12,color:"var(--muted)",marginBottom:10}}>
-          발주서 {allOrders.filter(o=>!vendor||(o.vendor||"").trim()===vendor).length}건 · 업체·센터가 달라도 같은 제품은 합쳐서 표시 · 박스수량 = 총 팩수량 ÷ 입수량 · 냉장 소비기한은 발주서의 유통(소비)기한 · 냉동 유통기한은 발주서 값이 없으면 입고일 + {frozenDays||0}일
+          {isRange?<>입고예정일 기준 · 입고일 {rangeDays}일 · 발주서 {allOrders.filter(o=>!vendor||(o.vendor||"").trim()===vendor).length}건 합계 · 같은 제품은 소비기한이 달라도 한 줄로 합침(소비기한 열 없음) · 발주서는 입고일 기준 1달만 보관됩니다</>:<>
+          발주서 {allOrders.filter(o=>!vendor||(o.vendor||"").trim()===vendor).length}건 · 업체·센터가 달라도 같은 제품은 합쳐서 표시 · 박스수량 = 총 팩수량 ÷ 입수량 · 냉장 소비기한은 발주서의 유통(소비)기한 · 냉동 유통기한은 발주서 값이 없으면 입고일 + {frozenDays||0}일</>}
         </div>
         <UnmatchedBanner unmatched={data.unmatched}/>
         {partial.length>0&&<div className="ol-warn" style={{padding:"8px 12px"}}>⚠ 입수량으로 나누어떨어지지 않는 품목(빨강): {partial.map(r=>`${shipNameOf(r.product)} (${fmtNum(r.qty)}÷${r.per})`).join(", ")}</div>}
-        {!data.chilledSites.length&&!data.frozen.length?<Empty emoji="🚚" text="이 날짜에 제품리스트와 매칭되는 품목이 없습니다"/>:<>
-          <ShipSheetPreview data={data} date={selDate} prefix={prefix}/>
+        {!data.chilledSites.length&&!data.frozen.length?<Empty emoji="🚚" text={isRange?"이 기간에 제품리스트와 매칭되는 품목이 없습니다":"이 날짜에 제품리스트와 매칭되는 품목이 없습니다"}/>:<>
+          <ShipSheetPreview data={data} date={shipDate} dateTo={shipTo} prefix={prefix}/>
           {/* 이미지 저장용 사본 (화면 밖, 고정 폭) — 전체 1장 + 층별 */}
           <div style={{position:"fixed",left:-20000,top:0,width:SHIP_PRINT_W,background:"#fff"}} aria-hidden="true">
-            <ShipSheetPreview data={selData} date={selDate} prefix={prefix} print refCb={el=>{printRef.current=el}}/>
-            {selFloors.map(f=><ShipSheetPreview key={f.key} data={f.data} date={selDate} prefix={prefix} print refCb={el=>{floorRefs.current[f.key]=el}}/>)}
+            <ShipSheetPreview data={selData} date={shipDate} dateTo={shipTo} prefix={prefix} print refCb={el=>{printRef.current=el}}/>
+            {selFloors.map(f=><ShipSheetPreview key={f.key} data={f.data} date={shipDate} dateTo={shipTo} prefix={prefix} print refCb={el=>{floorRefs.current[f.key]=el}}/>)}
           </div>
         </>}
       </>}
