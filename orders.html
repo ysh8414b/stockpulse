@@ -2026,6 +2026,8 @@ function buildShipList(orders,prodMap,products,opts){
       else rows.set(k,{product:p,code:it.code,qty:Number(it.qty||0),expiry:it.expiry_date?String(it.expiry_date).slice(0,10):"",seq:rows.size});
     }
   }
+  // 발주서에 줄은 있지만 발주수량이 0인 품목(취소·미발주)은 "발주 없는 제품"과 같이 취급 → 옵션을 켰을 때만 표시
+  if(!showAll)for(const[k,r]of rows)if(!(r.qty>0))rows.delete(k);
   if(showAll){
     const has=new Set([...rows.values()].map(r=>r.code));
     for(const p of products)if(!has.has(p.code))rows.set(p.code+"|",{product:p,code:p.code,qty:0,expiry:"",seq:1e6+rows.size});
