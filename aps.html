@@ -5483,21 +5483,10 @@ function SalesTab({adminHash}){
       const parsed=parseSalesWorkbook(buf,specKgByCode);
       if(!parsed.rows.length)throw new Error("유효한 매출 데이터가 없습니다 (A=일자, D=코드, I=수량(kg) 컬럼 확인)");
       // 500행씩 배치 업로드
-      // 서버는 배치마다 [최소~최대 날짜]를 지우고 다시 넣음 → 한 날짜가 두 배치에 나뉘거나
-      //  배치끼리 날짜 범위가 겹치면 앞 배치에서 넣은 행이 뒤 배치에서 지워짐.
-      //  날짜순 정렬 + 같은 날짜는 한 배치에만 담아 배치 범위가 서로 겹치지 않게 함
       const BATCH=500;
-      const sorted=[...parsed.rows].sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
-      const chunks=[];let cur=[];
-      for(let i=0;i<sorted.length;){
-        let j=i;while(j<sorted.length&&sorted[j].date===sorted[i].date)j++;
-        const day=sorted.slice(i,j);
-        if(cur.length&&cur.length+day.length>BATCH){chunks.push(cur);cur=[]}
-        cur=cur.concat(day);i=j;
-      }
-      if(cur.length)chunks.push(cur);
       let inserted=0, minD=null, maxD=null;
-      for(const chunk of chunks){
+      for(let i=0;i<parsed.rows.length;i+=BATCH){
+        const chunk=parsed.rows.slice(i,i+BATCH);
         const res=await rpc("aps_upsert_sales_batch",{p_admin_hash:adminHash,p_rows:chunk});
         inserted+=(res?.inserted||0);
         if(res?.min_date && (!minD||res.min_date<minD))minD=res.min_date;
