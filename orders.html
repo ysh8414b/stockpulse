@@ -2659,6 +2659,68 @@ function downloadFrozenXlsx(lots){
   XLSX.writeFile(wb,`냉동재고_${todayYmd()}.xlsx`);
 }
 
+// 이미지 저장용 깔끔한 시트 (흰 배경, 버튼·배경색 없이) — 지금 보기(제품별/위치별/소비기한순)와 필터 그대로
+function FrozenPrintSheet({view,byProduct,byLocation,byExpiry,lots,filterText}){
+  const C={line:"#d4d4d8",band:"#f4f4f5",muted:"#71717a",text:"#111"};
+  const td={padding:"9px 12px",borderBottom:`1px solid ${C.line}`,fontSize:15,verticalAlign:"middle"};
+  const th={padding:"8px 12px",fontSize:12,fontWeight:700,color:C.muted,borderBottom:`2px solid ${C.text}`,textAlign:"left",whiteSpace:"nowrap"};
+  const qtyTd={...td,textAlign:"right",fontSize:17,fontWeight:800,whiteSpace:"nowrap",fontVariantNumeric:"tabular-nums"};
+  const unitSpan=u=><span style={{fontSize:12,fontWeight:500,color:C.muted,marginLeft:2}}>{u||"박스"}</span>;
+  const qty=(n,u)=><>{fmtNum(n)}{unitSpan(u)}</>;
+  const total=ls=>fzUnitSum(ls).map(([u,n],i)=><span key={u}>{i>0&&<span style={{color:C.muted}}> · </span>}{qty(n,u)}</span>);
+  // 기한 지남·30일 이내만 색으로 표시, 나머지는 회색 D-n
+  const dday=exp=>{
+    if(!exp)return <span style={{color:C.muted}}>–</span>;
+    const st=fzStatus(exp);
+    const color=st==="expired"?"#dc2626":st==="soon"?"#ea580c":C.muted;
+    return <span style={{color,fontWeight:st==="expired"||st==="soon"?800:500,whiteSpace:"nowrap"}}>{st==="expired"?`지남 (${fzDText(exp)})`:fzDText(exp)}</span>;
+  };
+  const expTd=exp=><td style={{...td,whiteSpace:"nowrap",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{fzExpText(exp)}</td>;
+  const locText=l=>(l.location||"").trim()||"–";
+  const band=(cols,left,right,key)=><tr key={key}><td colSpan={cols} style={{padding:"10px 12px",background:C.band,borderBottom:`1px solid ${C.line}`,borderTop:`10px solid #fff`}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:16}}>
+      <span style={{fontSize:16,fontWeight:800,wordBreak:"keep-all"}}>{left}</span>
+      <span style={{fontSize:17,fontWeight:800,whiteSpace:"nowrap"}}>{right}</span>
+    </div></td></tr>;
+  const today=todayYmd();
+  const stats={products:new Set(lots.map(fzKey)).size,locs:new Set(lots.map(fzLoc)).size};
+  const hasExpired=lots.some(l=>fzStatus(l.expiry)==="expired"),hasSoon=lots.some(l=>fzStatus(l.expiry)==="soon");
+
+  let table;
+  if(view==="product")table=<table style={{width:"100%",borderCollapse:"collapse"}}>
+    <thead><tr><th style={th}>소비기한</th><th style={th}>남은 기간</th><th style={th}>위치</th><th style={{...th,textAlign:"right"}}>수량</th></tr></thead>
+    <tbody>{byProduct.flatMap(g=>[band(4,fzName(g.lots[0]),total(g.lots),"b"+g.key),
+      ...g.lots.map(l=><tr key={l.id}>{expTd(l.expiry)}<td style={td}>{dday(l.expiry)}</td><td style={td}>{locText(l)}</td><td style={qtyTd}>{qty(l.qty,l.unit)}</td></tr>)])}</tbody>
+  </table>;
+  else if(view==="location")table=<table style={{width:"100%",borderCollapse:"collapse"}}>
+    <thead><tr><th style={th}>제품</th><th style={th}>소비기한</th><th style={th}>남은 기간</th><th style={{...th,textAlign:"right"}}>수량</th></tr></thead>
+    <tbody>{byLocation.flatMap(g=>[band(4,"📍 "+g.loc,total(g.lots),"b"+g.loc),
+      ...g.lots.map(l=><tr key={l.id}><td style={{...td,fontWeight:700}}>{fzName(l)}</td>{expTd(l.expiry)}<td style={td}>{dday(l.expiry)}</td><td style={qtyTd}>{qty(l.qty,l.unit)}</td></tr>)])}</tbody>
+  </table>;
+  else table=<table style={{width:"100%",borderCollapse:"collapse"}}>
+    <thead><tr><th style={th}>소비기한</th><th style={th}>남은 기간</th><th style={th}>제품</th><th style={th}>위치</th><th style={{...th,textAlign:"right"}}>수량</th></tr></thead>
+    <tbody>{byExpiry.map(l=><tr key={l.id}>{expTd(l.expiry)}<td style={td}>{dday(l.expiry)}</td><td style={{...td,fontWeight:700}}>{fzName(l)}</td><td style={td}>{locText(l)}</td><td style={qtyTd}>{qty(l.qty,l.unit)}</td></tr>)}</tbody>
+  </table>;
+
+  return <div style={{width:820,background:"#fff",color:C.text,padding:"36px 40px 28px",boxSizing:"border-box",fontFamily:"Pretendard, 'Malgun Gothic', sans-serif"}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",gap:16,paddingBottom:14,marginBottom:6}}>
+      <div>
+        <div style={{fontSize:28,fontWeight:900,letterSpacing:"-0.5px"}}>냉동재고 현황</div>
+        <div style={{fontSize:14,color:C.muted,marginTop:4}}>{fzExpText(today)} ({dowOf(today)}) 기준{filterText&&<> · {filterText}</>}</div>
+      </div>
+      <div style={{textAlign:"right"}}>
+        <div style={{fontSize:24,fontWeight:900}}>{total(lots)}</div>
+        <div style={{fontSize:13,color:C.muted,marginTop:2}}>{stats.products}종 · 위치 {stats.locs}곳</div>
+      </div>
+    </div>
+    {table}
+    <div style={{display:"flex",justifyContent:"space-between",marginTop:16,fontSize:12,color:C.muted}}>
+      <span>{hasExpired&&<span style={{color:"#dc2626",fontWeight:700,marginRight:12}}>● 기한 지남</span>}{hasSoon&&<span style={{color:"#ea580c",fontWeight:700}}>● {FZ_SOON}일 이내</span>}</span>
+      <span>{{product:"제품별 · 소비기한 빠른 순",location:"위치별 · 제품명 순",expiry:"소비기한 빠른 순"}[view]}</span>
+    </div>
+  </div>;
+}
+
 function FrozenTab({adminHash,masters}){
   const[rawLots,setRawLots]=useState([]);
   const[rawTxns,setRawTxns]=useState([]);
@@ -2673,6 +2735,8 @@ function FrozenTab({adminHash,masters}){
   const[action,setAction]=useState(null); // {type:"in"|"out"|"move", lot}
   const[delId,setDelId]=useState(null);
   const[showHist,setShowHist]=useState(false);
+  const[printing,setPrinting]=useState(false);
+  const printRef=useRef(null);
 
   const load=useCallback(async()=>{
     try{
@@ -2720,6 +2784,17 @@ function FrozenTab({adminHash,masters}){
   },[filtered]);
   const byExpiry=useMemo(()=>[...filtered].sort((a,b)=>fzExpCmp(a,b)||fzNameCmp(a,b)),[filtered]);
 
+  const filterText=[stF!=="all"&&{expired:"기한 지남만",soon:`${FZ_SOON}일 이내만`,warn:`${FZ_WARN}일 이내만`}[stF],
+    locF!=="all"&&"위치 "+locF,q.trim()&&`검색 "${q.trim()}"`].filter(Boolean).join(" · ");
+  const savePng=async()=>{
+    setPrinting(true);
+    try{
+      await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+      await saveShipPng(printRef.current,`냉동재고_${todayYmd()}`);
+    }catch(e){setErr("이미지 저장 실패: "+String(e?.message||e))}
+    setPrinting(false);
+  };
+
   const del=async l=>{
     try{await rpc("ol_delete_frozen_lot",{p_admin_hash:adminHash,p_id:l.id});setDelId(null);load()}catch(e){setErr(fzErr(e))}
   };
@@ -2762,6 +2837,7 @@ function FrozenTab({adminHash,masters}){
       <div className="ol-subtabs">
         {[["product","📦 제품별"],["location","📍 위치별"],["expiry","⏳ 소비기한순"]].map(([v,l])=><button key={v} className={view===v?"on":""} onClick={()=>setView(v)}>{l}</button>)}
       </div>
+      <button className="ol-btn ol-btn-secondary" disabled={!filtered.length||printing} onClick={savePng}>{printing?"저장 중…":"🖼 이미지 저장"}</button>
       <button className="ol-btn ol-btn-secondary" disabled={!filtered.length} onClick={()=>downloadFrozenXlsx(filtered)}>📥 엑셀</button>
       <button className="ol-btn ol-btn-secondary" title="새로고침" onClick={load}>↻</button>
       <input className="ol-input" style={{maxWidth:240,marginLeft:"auto"}} placeholder="제품·코드·위치·메모 검색" value={q} onChange={e=>setQ(e.target.value)}/>
@@ -2848,6 +2924,7 @@ function FrozenTab({adminHash,masters}){
       </table></div>}
     </div>}
 
+    {printing&&<div style={{position:"fixed",left:-20000,top:0}}><div ref={printRef}><FrozenPrintSheet view={view} byProduct={byProduct} byLocation={byLocation} byExpiry={byExpiry} lots={filtered} filterText={filterText}/></div></div>}
     {editing&&<Modal onClose={()=>setEditing(null)}><FrozenLotForm adminHash={adminHash} masters={masters} initial={editing} locations={locations} onCancel={()=>setEditing(null)} onSaved={()=>{setEditing(null);load()}}/></Modal>}
     {action&&<Modal onClose={()=>setAction(null)}><FrozenActionForm adminHash={adminHash} type={action.type} lot={action.lot} locations={locations} onCancel={()=>setAction(null)} onDone={()=>{setAction(null);load()}}/></Modal>}
   </>;
