@@ -100,6 +100,9 @@
     .fz-row.fz-expired td{background:rgba(239,68,68,.07)}
     .fz-row.fz-soon td{background:rgba(249,115,22,.05)}
     .fz-actions{display:inline-flex;gap:4px;align-items:center;white-space:nowrap}
+    .fz-qty-btn{background:none;border:1px dashed transparent;border-radius:6px;padding:2px 6px;margin:-3px -7px;cursor:pointer;color:inherit;font:inherit}
+    .fz-qty-btn:hover{border-color:#06b6d4;background:rgba(6,182,212,0.08)}
+    .fz-qty-in{width:84px;padding:4px 6px;border-radius:6px;border:1.5px solid #06b6d4;background:var(--bg);color:var(--text);font:inherit;font-size:15px;font-weight:800;text-align:right}
     .fz-act{width:30px;height:28px;border-radius:6px;border:1px solid var(--card-bd);background:var(--bg);color:var(--text);cursor:pointer;font-size:13px;font-family:inherit;padding:0}
     .fz-act:hover{background:var(--card-hbg)}
     .fz-act.in{color:#16a34a;font-weight:800}
@@ -2787,6 +2790,37 @@ function FrozenActionForm({adminHash,type,lot,locations,onDone,onCancel}){
   </>;
 }
 
+// 수량 칸 클릭 → 그 자리에서 숫자 수정 (Enter/바깥 클릭 저장, Esc 취소). 차이만큼 입고/출고로 기록
+function FrozenQtyCell({adminHash,lot,onSaved,onError}){
+  const cur=Number(lot.qty||0);
+  const[edit,setEdit]=useState(false);
+  const[val,setVal]=useState("");
+  const[busy,setBusy]=useState(false);
+  const done=useRef(false);
+  const start=()=>{done.current=false;setVal(String(cur));setEdit(true)};
+  const commit=async()=>{
+    if(done.current)return;done.current=true;
+    const n=Number(val);
+    if(val.trim()===""||!Number.isFinite(n)||n<0){setEdit(false);if(val.trim()!=="")onError("수량은 0 이상 숫자로 입력하세요.");return}
+    const delta=Math.round((n-cur)*1000)/1000;
+    if(delta===0){setEdit(false);return}
+    setBusy(true);
+    try{
+      await rpc("ol_frozen_change_qty",{p_admin_hash:adminHash,p_id:lot.id,p_delta:delta,p_memo:"수량 직접 수정"});
+      setEdit(false);onSaved();
+    }catch(e){onError(fzErr(e));setEdit(false)}
+    setBusy(false);
+  };
+  if(!edit)return <button className="fz-qty-btn" title="클릭해서 수량 수정" onClick={start}>{fzQty(lot.qty,lot.unit)}</button>;
+  return <span style={{display:"inline-flex",alignItems:"center",gap:4}}>
+    <input className="fz-qty-in" type="number" min="0" step="any" autoFocus disabled={busy} value={val}
+      onFocus={e=>e.target.select()} onChange={e=>setVal(e.target.value)} onBlur={commit}
+      onKeyDown={e=>{if(e.key==="Enter")e.target.blur();else if(e.key==="Escape"){done.current=true;setEdit(false)}}}/>
+    <span style={{fontSize:11,color:"var(--muted)"}}>{lot.unit||"박스"}</span>
+    {Number(val)===0&&val.trim()!==""&&<span style={{fontSize:11,color:"#ef4444"}}>0이면 삭제</span>}
+  </span>;
+}
+
 function downloadFrozenXlsx(lots){
   const sorted=[...lots].sort((a,b)=>fzNameCmp(a,b)||fzExpCmp(a,b)||locCmp(fzLoc(a),fzLoc(b)));
   const head=["제품코드","제품명","수량","단위","소비기한","남은 일수","상태","위치","입고일","메모"];
@@ -2978,6 +3012,7 @@ function FrozenTab({adminHash,masters}){
       <button className="fz-act" title="수정" onClick={()=>setEditing(l)}>✏</button>
       <button className="fz-act" title="삭제" onClick={()=>setDelId(l.id)}>🗑</button>
     </span>;
+  const qtyCell=l=><FrozenQtyCell key={l.id+":"+l.qty} adminHash={adminHash} lot={l} onSaved={load} onError={setErr}/>;
   const rowCls=l=>"fz-row fz-"+fzStatus(l.expiry);
   const memoCell=l=>l.memo?<span style={{fontSize:12,color:"var(--muted)"}}>{l.memo}</span>:<span style={{color:"var(--dimmer)"}}>–</span>;
   const nameCell=l=><>
@@ -3035,7 +3070,7 @@ function FrozenTab({adminHash,masters}){
             <tbody>{g.lots.map(l=><tr key={l.id} className={rowCls(l)}>
               <td><ExpiryBadge exp={l.expiry}/></td>
               <td><span className="fz-loc">📍 {fzLoc(l)}</span></td>
-              <td className="right fz-qty">{fzQty(l.qty,l.unit)}</td>
+              <td className="right fz-qty">{qtyCell(l)}</td>
               <td style={{fontSize:12,color:"var(--muted)",whiteSpace:"nowrap"}}>{l.in_date?fzExpText(l.in_date):"–"}</td>
               <td>{memoCell(l)}</td>
               <td className="right">{actions(l)}</td>
@@ -3053,7 +3088,7 @@ function FrozenTab({adminHash,masters}){
           <tbody>{g.lots.map(l=><tr key={l.id} className={rowCls(l)}>
             <td>{nameCell(l)}</td>
             <td><ExpiryBadge exp={l.expiry}/></td>
-            <td className="right fz-qty">{fzQty(l.qty,l.unit)}</td>
+            <td className="right fz-qty">{qtyCell(l)}</td>
             <td>{memoCell(l)}</td>
             <td className="right">{actions(l)}</td>
           </tr>)}</tbody>
@@ -3065,7 +3100,7 @@ function FrozenTab({adminHash,masters}){
           <td><ExpiryBadge exp={l.expiry}/></td>
           <td>{nameCell(l)}</td>
           <td><span className="fz-loc">📍 {fzLoc(l)}</span></td>
-          <td className="right fz-qty">{fzQty(l.qty,l.unit)}</td>
+          <td className="right fz-qty">{qtyCell(l)}</td>
           <td>{memoCell(l)}</td>
           <td className="right">{actions(l)}</td>
         </tr>)}</tbody>
