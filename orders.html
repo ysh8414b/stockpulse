@@ -247,7 +247,8 @@ function parseOrderWorkbook(buf,fileName){
     const orderType=String(a1("C11")||findRight("발주구분")||"").trim();
 
     // 상품 표 헤더 행 찾기 ("상품코드")
-    let hr=-1,codeCol=1,nameCol=2,qtyCol=6,dateCol=20,centerCol=5;
+    // 수량은 H열 "업체납품가능수량" 사용 (G열 발주수량 아님)
+    let hr=-1,codeCol=1,nameCol=2,qtyCol=7,dateCol=20,centerCol=5;
     for(let r=rng.s.r;r<=rng.e.r&&hr<0;r++)for(let c=rng.s.c;c<=rng.e.c;c++){
       if(norm(at(r,c))==="상품코드"){hr=r;break}
     }
@@ -256,7 +257,7 @@ function parseOrderWorkbook(buf,fileName){
         const h=norm(at(hr,c));
         if(h==="상품코드")codeCol=c;
         else if(h.startsWith("상품명"))nameCol=c;
-        else if(h==="발주수량")qtyCol=c;
+        else if(h.includes("납품가능"))qtyCol=c;
         else if(h==="물류센터")centerCol=c;
         else if(h.includes("제조")||h.includes("유통"))dateCol=c;
       }
