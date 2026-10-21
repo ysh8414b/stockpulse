@@ -78,6 +78,34 @@
     .ol-sheet td,.ol-sheet th{padding:5px 8px}
     .ol-sheet .grid td,.ol-sheet .grid th{border:1px solid #333;text-align:center}
     .ol-sheet .ttl{background:#ffff00;font-size:18px;font-weight:900;text-align:center;padding:8px}
+    .fz-stats{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px}
+    .fz-stat{background:var(--card-bg);border:1px solid var(--card-bd);border-radius:10px;padding:12px 14px;min-width:0}
+    .fz-stat.clickable{cursor:pointer}
+    .fz-stat.clickable:hover{background:var(--card-hbg)}
+    .fz-stat.on{border-color:rgba(6,182,212,.55);background:rgba(6,182,212,.08)}
+    .fz-stat .k{font-size:12px;color:var(--muted);margin-bottom:4px}
+    .fz-stat .v{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums}
+    .fz-stat .v small{font-size:12px;font-weight:500;color:var(--muted);margin-left:2px}
+    .fz-groups{display:flex;flex-direction:column;gap:12px}
+    .fz-group{background:var(--card-bg);border:1px solid var(--card-bd);border-radius:10px;overflow:hidden}
+    .fz-group-hd{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 16px;border-left:5px solid #3b82f6;border-bottom:1px solid var(--div2)}
+    .fz-group-name{font-size:15px;font-weight:800;word-break:keep-all}
+    .fz-group-total{font-size:20px;font-weight:800;white-space:nowrap;font-variant-numeric:tabular-nums}
+    .fz-table td{padding:8px 10px}
+    .fz-table tr:last-child td{border-bottom:none}
+    .fz-qty{font-size:15px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
+    .fz-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;white-space:nowrap}
+    .fz-loc{white-space:nowrap;font-size:13px}
+    .fz-row.fz-expired td{background:rgba(239,68,68,.07)}
+    .fz-row.fz-soon td{background:rgba(249,115,22,.05)}
+    .fz-actions{display:inline-flex;gap:4px;align-items:center;white-space:nowrap}
+    .fz-act{width:30px;height:28px;border-radius:6px;border:1px solid var(--card-bd);background:var(--bg);color:var(--text);cursor:pointer;font-size:13px;font-family:inherit;padding:0}
+    .fz-act:hover{background:var(--card-hbg)}
+    .fz-act.in{color:#16a34a;font-weight:800}
+    .fz-act.out{color:#ef4444;font-weight:800}
+    .fz-lot-sum{background:var(--card-bg);border:1px solid var(--card-bd);border-radius:8px;padding:12px 14px;margin-bottom:14px}
+    @media (max-width:900px){.fz-stats{grid-template-columns:repeat(3,1fr)}}
+    @media (max-width:600px){.fz-stats{grid-template-columns:repeat(2,1fr)}.fz-group-total{font-size:16px}.fz-group-hd{padding:10px 12px}}
     .ol-img-wrap{overflow-x:auto;border:1px solid var(--card-bd);border-radius:8px;margin-bottom:10px}
     @media (max-width:900px){
       .ol-layout{grid-template-columns:1fr}
@@ -2452,7 +2480,375 @@ function useOrderData(adminHash,extra,onErr){
   return{dates,reloadDates,selDate,setSelDate,orders,reloadOrders,loadingOrders};
 }
 
-const VALID_TABS=["products","orders","lists","ship","extra"];
+// ═══════════════════════════════════════════
+// ❄ 냉동재고 탭 — 로트(제품 + 소비기한 + 위치)별 수량 관리
+// ═══════════════════════════════════════════
+const FZ_SOON=30, FZ_WARN=90;
+const FZ_STATUS={
+  expired:{label:"기한 지남",color:"#ef4444",bg:"rgba(239,68,68,.12)"},
+  soon:{label:`${FZ_SOON}일 이내`,color:"#f97316",bg:"rgba(249,115,22,.12)"},
+  warn:{label:`${FZ_WARN}일 이내`,color:"#ca8a04",bg:"rgba(234,179,8,.14)"},
+  ok:{label:"여유",color:"#16a34a",bg:"rgba(34,197,94,.12)"},
+  none:{label:"기한 없음",color:"var(--muted)",bg:"var(--card-bg)"},
+};
+const FZ_KIND={in:["입고","#16a34a"],out:["출고","#ef4444"],adjust:["수정","#8b5cf6"],move:["이동","#0891b2"],delete:["삭제","#64748b"]};
+const NO_LOC="위치 미지정";
+function fzDays(exp){if(!exp)return null;return Math.round((parseYmd(exp)-parseYmd(todayYmd()))/86400000)}
+function fzStatus(exp){const d=fzDays(exp);if(d==null)return "none";if(d<0)return "expired";if(d<=FZ_SOON)return "soon";if(d<=FZ_WARN)return "warn";return "ok"}
+function fzDText(exp){const d=fzDays(exp);if(d==null)return "";return d===0?"D-day":d>0?`D-${d}`:`D+${-d}`}
+function fzExpText(exp){return exp?String(exp).slice(0,10).replace(/-/g,"."):"–"}
+const fzLoc=l=>(l.location||"").trim()||NO_LOC;
+const fzKey=l=>(l.product_code||"").trim()||"name:"+l.product_name;
+const locCmp=(a,b)=>a===NO_LOC?1:b===NO_LOC?-1:a.localeCompare(b,"ko",{numeric:true});
+const fzExpCmp=(a,b)=>String(a.expiry||"9999").localeCompare(String(b.expiry||"9999"));
+const fzNameCmp=(a,b)=>a.product_name.localeCompare(b.product_name,"ko",{numeric:true});
+function fzErr(e){
+  const s=String(e?.message||e||"");
+  if(s.includes("ol_frozen")||s.includes("Could not find the function")||s.includes("PGRST202")||s.includes("PGRST205"))return "Supabase SQL Editor에서 setup_orders_frozen.sql 을 1회 실행해 주세요.";
+  if(s.includes("not_enough_stock"))return "현재 수량보다 많이 출고할 수 없습니다.";
+  if(s.includes("name_required"))return "제품명을 입력하세요.";
+  if(s.includes("qty_required"))return "수량을 입력하세요.";
+  if(s.includes("lot_not_found"))return "이미 삭제된 재고입니다. 새로고침해 주세요.";
+  return errMsg(e);
+}
+function fzQty(n,unit){return <>{fmtNum(n)}<span style={{fontSize:"0.75em",fontWeight:500,color:"var(--muted)",marginLeft:2}}>{unit||"박스"}</span></>}
+function fzUnitSum(lots){
+  const m=new Map();for(const l of lots){const u=l.unit||"박스";m.set(u,(m.get(u)||0)+Number(l.qty||0))}
+  return [...m.entries()];
+}
+
+function ExpiryBadge({exp}){
+  const st=FZ_STATUS[fzStatus(exp)];
+  return <span style={{display:"inline-flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>
+    <span style={{fontVariantNumeric:"tabular-nums",fontWeight:600}}>{fzExpText(exp)}</span>
+    {exp&&<span className="fz-badge" style={{color:st.color,background:st.bg}}>{fzDText(exp)}</span>}
+  </span>;
+}
+
+function FrozenLotForm({adminHash,masters,initial,locations,onSaved,onCancel}){
+  const isEdit=!!initial?.id;
+  const products=useMemo(()=>[...masters.products].sort((a,b)=>(storageOf(a)==="frozen"?0:1)-(storageOf(b)==="frozen"?0:1)||a.name.localeCompare(b.name,"ko",{numeric:true})),[masters.products]);
+  const label=p=>`${p.name} (${p.code})`;
+  const[prodText,setProdText]=useState(()=>{
+    if(!initial?.product_name)return "";
+    const p=masters.products.find(x=>x.code===initial.product_code);
+    return p?label(p):initial.product_name;
+  });
+  const matched=useMemo(()=>{const t=prodText.trim();return products.find(p=>label(p)===t||p.code===t)||null},[products,prodText]);
+  const[qty,setQty]=useState(initial?.qty!=null?String(initial.qty):"");
+  const[unit,setUnit]=useState(initial?.unit||"박스");
+  const[expiry,setExpiry]=useState(initial?.expiry?String(initial.expiry).slice(0,10):"");
+  const[location,setLocation]=useState(initial?.location||"");
+  const[inDate,setInDate]=useState(initial?.in_date?String(initial.in_date).slice(0,10):todayYmd());
+  const[memo,setMemo]=useState(initial?.memo||"");
+  const[busy,setBusy]=useState(false);
+  const[err,setErr]=useState("");
+  const save=async()=>{
+    const name=matched?matched.name:prodText.trim();
+    const q=Number(qty);
+    if(!name){setErr("제품을 선택하거나 제품명을 입력하세요.");return}
+    if(!(q>0)&&!(isEdit&&qty!==""&&q===0)){setErr("수량을 입력하세요.");return}
+    setBusy(true);setErr("");
+    try{
+      const code=matched?matched.code:(isEdit&&initial.product_name===name?initial.product_code||"":"");
+      await rpc("ol_upsert_frozen_lot",{p_admin_hash:adminHash,p_id:initial?.id||null,p_product_code:code,
+        p_product_name:name,p_qty:q,p_unit:unit,p_expiry:expiry||null,p_location:location,p_in_date:inDate||null,p_memo:memo});
+      onSaved();
+    }catch(e){setErr(fzErr(e));setBusy(false)}
+  };
+  return <>
+    <h3 style={{margin:"0 0 16px",fontSize:17}}>{isEdit?"✏ 재고 수정":"❄ 냉동 입고 등록"}</h3>
+    <div className="ol-label">제품 *</div>
+    <input className="ol-input" list="fz-products" value={prodText} onChange={e=>setProdText(e.target.value)} placeholder="제품명·코드 검색 (목록에 없으면 이름 직접 입력)" autoFocus={!isEdit}/>
+    <datalist id="fz-products">{products.map(p=><option key={p.id} value={label(p)}>{storageOf(p)==="frozen"?"❄ 냉동":"냉장"}</option>)}</datalist>
+    <div style={{fontSize:11,margin:"4px 0 12px",color:matched?"#0891b2":"var(--muted)"}}>
+      {matched?<>✓ 제품리스트 연결 · 코드 {matched.code} · 입수 {matched.per_box}{storageOf(matched)!=="frozen"&&<span style={{color:"#f59e0b"}}> · 냉장 제품</span>}</>:prodText.trim()?"제품리스트에 없는 이름으로 저장됩니다":" "}
+    </div>
+    <div className="ol-grid">
+      <div><div className="ol-label">수량 *</div>
+        <div style={{display:"flex",gap:6}}>
+          <input className="ol-input" type="number" min="0" step="any" value={qty} onChange={e=>setQty(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")save()}}/>
+          <select className="ol-input" style={{width:78,flexShrink:0}} value={unit} onChange={e=>setUnit(e.target.value)}>{["박스","팩","kg","개"].map(u=><option key={u}>{u}</option>)}</select>
+        </div></div>
+      <div><div className="ol-label">소비기한</div><input className="ol-input" type="date" value={expiry} onChange={e=>setExpiry(e.target.value)}/></div>
+      <div><div className="ol-label">위치</div>
+        <input className="ol-input" list="fz-locations" value={location} onChange={e=>setLocation(e.target.value)} placeholder="예: 냉동창고 A-3"/>
+        <datalist id="fz-locations">{locations.map(l=><option key={l} value={l}/>)}</datalist></div>
+      <div><div className="ol-label">입고일</div><input className="ol-input" type="date" value={inDate} onChange={e=>setInDate(e.target.value)}/></div>
+    </div>
+    <div className="ol-label">메모</div>
+    <input className="ol-input" value={memo} onChange={e=>setMemo(e.target.value)} placeholder="선택"/>
+    {!isEdit&&<div style={{fontSize:11,color:"var(--muted)",marginTop:8}}>같은 제품·소비기한·위치 재고가 이미 있으면 수량이 합쳐집니다</div>}
+    {err&&<div className="ol-err">{err}</div>}
+    <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:18}}>
+      <button className="ol-btn ol-btn-secondary" onClick={onCancel}>취소</button>
+      <button className="ol-btn ol-btn-primary" disabled={busy} onClick={save}>{busy?"저장 중…":"저장"}</button>
+    </div>
+  </>;
+}
+
+function FrozenActionForm({adminHash,type,lot,locations,onDone,onCancel}){
+  const cur=Number(lot.qty||0);
+  const unit=lot.unit||"박스";
+  const[qty,setQty]=useState(type==="move"?String(cur):"");
+  const[memo,setMemo]=useState("");
+  const[loc,setLoc]=useState("");
+  const[busy,setBusy]=useState(false);
+  const[err,setErr]=useState("");
+  const q=Number(qty)||0;
+  const after=type==="in"?cur+q:type==="out"?cur-q:cur;
+  const title={in:"입고",out:"출고",move:"위치 이동"}[type];
+  const submit=async()=>{
+    if(!(q>0)){setErr("수량을 입력하세요.");return}
+    if(type==="out"&&q>cur){setErr("현재 수량보다 많이 출고할 수 없습니다.");return}
+    if(type==="move"&&loc.trim()===(lot.location||"").trim()){setErr("다른 위치를 입력하세요.");return}
+    setBusy(true);setErr("");
+    try{
+      if(type==="move")await rpc("ol_frozen_relocate",{p_admin_hash:adminHash,p_id:lot.id,p_qty:Math.min(q,cur),p_location:loc});
+      else await rpc("ol_frozen_change_qty",{p_admin_hash:adminHash,p_id:lot.id,p_delta:type==="in"?q:-q,p_memo:memo});
+      onDone();
+    }catch(e){setErr(fzErr(e));setBusy(false)}
+  };
+  return <>
+    <h3 style={{margin:"0 0 14px",fontSize:17}}>{{in:"＋ ",out:"－ ",move:"⇄ "}[type]+title}</h3>
+    <div className="fz-lot-sum">
+      <b>{lot.product_name}</b>
+      <div style={{display:"flex",gap:14,flexWrap:"wrap",marginTop:6,fontSize:12,color:"var(--muted)",alignItems:"center"}}>
+        <span>소비기한 <ExpiryBadge exp={lot.expiry}/></span>
+        <span>📍 {fzLoc(lot)}</span>
+        <span>현재 <b style={{color:"var(--text)"}}>{fzQty(cur,unit)}</b></span>
+      </div>
+    </div>
+    {type==="move"&&<><div className="ol-label">이동할 위치</div>
+      <input className="ol-input" list="fz-locations2" value={loc} onChange={e=>setLoc(e.target.value)} placeholder="새 위치" autoFocus/>
+      <datalist id="fz-locations2">{locations.filter(l=>l!==(lot.location||"").trim()).map(l=><option key={l} value={l}/>)}</datalist>
+      <div style={{height:12}}/></>}
+    <div className="ol-label">{type==="move"?"옮길 수량":"수량"} ({unit})</div>
+    <div style={{display:"flex",gap:6}}>
+      <input className="ol-input" type="number" min="0" step="any" value={qty} onChange={e=>setQty(e.target.value)} autoFocus={type!=="move"} onKeyDown={e=>{if(e.key==="Enter")submit()}}/>
+      {type!=="in"&&<button className="ol-btn ol-btn-secondary" onClick={()=>setQty(String(cur))}>전량</button>}
+    </div>
+    {type!=="move"&&<div style={{fontSize:13,margin:"10px 0 12px"}}>변경 후 <b style={{color:after<0?"#ef4444":"var(--text)"}}>{fmtNum(after)} {unit}</b>{type==="out"&&after===0&&<span style={{color:"var(--muted)"}}> — 0이 되면 목록에서 사라집니다</span>}</div>}
+    {type!=="move"&&<><div className="ol-label">메모</div><input className="ol-input" value={memo} onChange={e=>setMemo(e.target.value)} placeholder={type==="out"?"예: 쿠팡 출고":"선택"} onKeyDown={e=>{if(e.key==="Enter")submit()}}/></>}
+    {type==="move"&&q>0&&q<cur&&<div style={{fontSize:12,color:"var(--muted)",marginTop:8}}>{fmtNum(q)} {unit}만 옮기고 {fmtNum(cur-q)} {unit}는 지금 위치에 남깁니다</div>}
+    {err&&<div className="ol-err">{err}</div>}
+    <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:18}}>
+      <button className="ol-btn ol-btn-secondary" onClick={onCancel}>취소</button>
+      <button className={"ol-btn "+(type==="out"?"ol-btn-danger":"ol-btn-primary")} disabled={busy} onClick={submit}>{busy?"처리 중…":title}</button>
+    </div>
+  </>;
+}
+
+function downloadFrozenXlsx(lots){
+  const sorted=[...lots].sort((a,b)=>fzNameCmp(a,b)||fzExpCmp(a,b)||locCmp(fzLoc(a),fzLoc(b)));
+  const head=["제품코드","제품명","수량","단위","소비기한","남은 일수","상태","위치","입고일","메모"];
+  const rows=sorted.map(l=>[l.product_code||"",l.product_name,Number(l.qty||0),l.unit||"박스",l.expiry?String(l.expiry).slice(0,10):"",fzDays(l.expiry)??"",FZ_STATUS[fzStatus(l.expiry)].label,(l.location||"").trim(),l.in_date?String(l.in_date).slice(0,10):"",l.memo||""]);
+  const ws=XLSX.utils.aoa_to_sheet([head,...rows]);
+  ws["!cols"]=[12,32,8,6,12,9,10,16,12,20].map(w=>({wch:w}));
+  const bd={style:"thin",color:{rgb:"BBBBBB"}};
+  const range=XLSX.utils.decode_range(ws["!ref"]);
+  for(let r=0;r<=range.e.r;r++)for(let c=0;c<=range.e.c;c++){
+    const a=XLSX.utils.encode_cell({r,c});if(!ws[a])ws[a]={t:"s",v:""};
+    ws[a].s={font:{name:"맑은 고딕",sz:11,bold:r===0},border:{top:bd,bottom:bd,left:bd,right:bd},
+      alignment:{horizontal:c===1||c===9?"left":"center",vertical:"center"},
+      ...(r===0?{fill:{fgColor:{rgb:"DBEAFE"}}}:{})};
+  }
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"냉동재고");
+  XLSX.writeFile(wb,`냉동재고_${todayYmd()}.xlsx`);
+}
+
+function FrozenTab({adminHash,masters}){
+  const[lots,setLots]=useState([]);
+  const[txns,setTxns]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[err,setErr]=useState("");
+  const[q,setQ]=useState("");
+  const[view,setView]=useState(()=>{const v=lsGet("ol-fz-view","product");return ["product","location","expiry"].includes(v)?v:"product"});
+  useEffect(()=>lsSet("ol-fz-view",view),[view]);
+  const[locF,setLocF]=useState("all");
+  const[stF,setStF]=useState("all");
+  const[editing,setEditing]=useState(null);
+  const[action,setAction]=useState(null); // {type:"in"|"out"|"move", lot}
+  const[delId,setDelId]=useState(null);
+  const[showHist,setShowHist]=useState(false);
+
+  const load=useCallback(async()=>{
+    try{
+      const d=await rpc("ol_list_frozen",{p_admin_hash:adminHash});
+      setLots(d?.lots||[]);setTxns(d?.txns||[]);setErr("");
+    }catch(e){setErr(fzErr(e))}
+    setLoading(false);
+  },[adminHash]);
+  useEffect(()=>{load()},[load]);
+
+  const prodMap=useMemo(()=>new Map(masters.products.map(p=>[p.code,p])),[masters.products]);
+  const locations=useMemo(()=>[...new Set(lots.map(l=>(l.location||"").trim()).filter(Boolean))].sort(locCmp),[lots]);
+  const filtered=useMemo(()=>{
+    const s=q.trim().toLowerCase();
+    return lots.filter(l=>{
+      if(locF!=="all"&&fzLoc(l)!==locF)return false;
+      const st=fzStatus(l.expiry);
+      if(stF==="expired"&&st!=="expired")return false;
+      if(stF==="soon"&&!(st==="expired"||st==="soon"))return false;
+      if(stF==="warn"&&!(st==="expired"||st==="soon"||st==="warn"))return false;
+      if(!s)return true;
+      const p=prodMap.get(l.product_code);
+      return [l.product_name,l.product_code,l.location,l.memo,p?.ship_name,p?.image_name].some(x=>String(x||"").toLowerCase().includes(s));
+    });
+  },[lots,q,locF,stF,prodMap]);
+
+  const stats=useMemo(()=>{
+    const c={expired:0,soon:0};for(const l of lots){const st=fzStatus(l.expiry);if(st in c)c[st]++}
+    return {products:new Set(lots.map(fzKey)).size,qty:fzUnitSum(lots),locs:new Set(lots.map(fzLoc)).size,...c};
+  },[lots]);
+
+  const byProduct=useMemo(()=>{
+    const m=new Map();
+    for(const l of filtered){const k=fzKey(l);if(!m.has(k))m.set(k,{key:k,name:l.product_name,code:l.product_code,lots:[]});m.get(k).lots.push(l)}
+    return [...m.values()].map(g=>({...g,lots:g.lots.sort((a,b)=>fzExpCmp(a,b)||locCmp(fzLoc(a),fzLoc(b))),prod:prodMap.get(g.code)}))
+      .sort((a,b)=>a.name.localeCompare(b.name,"ko",{numeric:true}));
+  },[filtered,prodMap]);
+  const byLocation=useMemo(()=>{
+    const m=new Map();
+    for(const l of filtered){const k=fzLoc(l);if(!m.has(k))m.set(k,[]);m.get(k).push(l)}
+    return [...m.entries()].sort((a,b)=>locCmp(a[0],b[0])).map(([loc,ls])=>({loc,lots:ls.sort((a,b)=>fzNameCmp(a,b)||fzExpCmp(a,b))}));
+  },[filtered]);
+  const byExpiry=useMemo(()=>[...filtered].sort((a,b)=>fzExpCmp(a,b)||fzNameCmp(a,b)),[filtered]);
+
+  const del=async l=>{
+    try{await rpc("ol_delete_frozen_lot",{p_admin_hash:adminHash,p_id:l.id});setDelId(null);load()}catch(e){setErr(fzErr(e))}
+  };
+
+  // 삭제는 confirm() 대신 그 자리 확인 (앱 내장 브라우저에서 confirm 창이 안 뜨는 경우 대비)
+  const actions=l=>delId===l.id
+    ?<span className="fz-actions"><span style={{fontSize:12,color:"#ef4444",fontWeight:600}}>삭제할까요?</span>
+      <button className="ol-btn ol-btn-danger ol-btn-sm" onClick={()=>del(l)}>삭제</button>
+      <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setDelId(null)}>취소</button></span>
+    :<span className="fz-actions">
+      <button className="fz-act in" title="입고" onClick={()=>setAction({type:"in",lot:l})}>＋</button>
+      <button className="fz-act out" title="출고" onClick={()=>setAction({type:"out",lot:l})}>－</button>
+      <button className="fz-act" title="위치 이동" onClick={()=>setAction({type:"move",lot:l})}>⇄</button>
+      <button className="fz-act" title="수정" onClick={()=>setEditing(l)}>✏</button>
+      <button className="fz-act" title="삭제" onClick={()=>setDelId(l.id)}>🗑</button>
+    </span>;
+  const rowCls=l=>"fz-row fz-"+fzStatus(l.expiry);
+  const memoCell=l=>l.memo?<span style={{fontSize:12,color:"var(--muted)"}}>{l.memo}</span>:<span style={{color:"var(--dimmer)"}}>–</span>;
+  const nameCell=l=>{const p=prodMap.get(l.product_code);return <>
+    <div style={{fontWeight:700}}>{l.product_name}</div>
+    <div style={{fontSize:11,color:"var(--muted)"}}><span style={{fontFamily:"monospace"}}>{l.product_code||"코드 없음"}</span>{p&&<> · 입수 {p.per_box}</>}</div></>};
+  const totalText=ls=>fzUnitSum(ls).map(([u,n],i)=><span key={u}>{i>0&&" · "}{fzQty(n,u)}</span>);
+
+  if(loading)return <Empty emoji="❄" text="불러오는 중…"/>;
+
+  return <>
+    {err&&<div className="ol-warn">{err}</div>}
+    <div className="fz-stats">
+      <div className="fz-stat"><div className="k">제품</div><div className="v">{stats.products}<small>종</small></div></div>
+      <div className="fz-stat"><div className="k">총 수량</div><div className="v" style={stats.qty.length>1?{fontSize:16}:undefined}>{stats.qty.length?stats.qty.map(([u,n],i)=><span key={u}>{i>0&&<small> · </small>}{fmtNum(n)}<small>{u}</small></span>):<>0<small>박스</small></>}</div></div>
+      <div className="fz-stat"><div className="k">위치</div><div className="v">{stats.locs}<small>곳</small></div></div>
+      <div className={"fz-stat clickable"+(stF==="soon"?" on":"")} onClick={()=>setStF(stF==="soon"?"all":"soon")}>
+        <div className="k">소비기한 {FZ_SOON}일 이내</div><div className="v" style={{color:stats.soon?"#f97316":undefined}}>{stats.soon}<small>건</small></div></div>
+      <div className={"fz-stat clickable"+(stF==="expired"?" on":"")} onClick={()=>setStF(stF==="expired"?"all":"expired")}>
+        <div className="k">기한 지남</div><div className="v" style={{color:stats.expired?"#ef4444":undefined}}>{stats.expired}<small>건</small></div></div>
+    </div>
+
+    <div className="ol-toolbar">
+      <button className="ol-btn ol-btn-primary" onClick={()=>setEditing({})}>＋ 입고 등록</button>
+      <div className="ol-subtabs">
+        {[["product","📦 제품별"],["location","📍 위치별"],["expiry","⏳ 소비기한순"]].map(([v,l])=><button key={v} className={view===v?"on":""} onClick={()=>setView(v)}>{l}</button>)}
+      </div>
+      <button className="ol-btn ol-btn-secondary" disabled={!filtered.length} onClick={()=>downloadFrozenXlsx(filtered)}>📥 엑셀</button>
+      <button className="ol-btn ol-btn-secondary" title="새로고침" onClick={load}>↻</button>
+      <input className="ol-input" style={{maxWidth:240,marginLeft:"auto"}} placeholder="제품·코드·위치·메모 검색" value={q} onChange={e=>setQ(e.target.value)}/>
+    </div>
+    <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:14,alignItems:"center"}}>
+      <div className="ol-chips">
+        {[["all","전체 기한"],["expired","기한 지남"],["soon",`${FZ_SOON}일 이내`],["warn",`${FZ_WARN}일 이내`]].map(([v,l])=><button key={v} className={stF===v?"on":""} onClick={()=>setStF(v)}>{l}</button>)}
+      </div>
+      {locations.length>0&&<div className="ol-chips">
+        <button className={locF==="all"?"on":""} onClick={()=>setLocF("all")}>📍 전체 위치</button>
+        {[...locations,...(lots.some(l=>!(l.location||"").trim())?[NO_LOC]:[])].map(l=><button key={l} className={locF===l?"on":""} onClick={()=>setLocF(l)}>{l}</button>)}
+      </div>}
+    </div>
+
+    {!lots.length?(!err&&<Empty emoji="❄" text="등록된 냉동재고가 없습니다. '＋ 입고 등록'으로 시작하세요."/>):
+     !filtered.length?<Empty emoji="🔍" text="조건에 맞는 재고가 없습니다"/>:
+     view==="product"?<div className="fz-groups">{byProduct.map(g=>
+        <div key={g.key} className="fz-group">
+          <div className="fz-group-hd" style={{borderLeftColor:FZ_STATUS[fzStatus(g.lots[0].expiry)].color}}>
+            <div style={{minWidth:0}}>
+              <div className="fz-group-name">{g.name}</div>
+              <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}><span style={{fontFamily:"monospace"}}>{g.code||"코드 없음"}</span>{g.prod&&<> · 입수 {g.prod.per_box}</>} · {g.lots.length}건{g.lots[0].expiry&&<> · 가장 빠른 기한 {fzExpText(g.lots[0].expiry)}</>}</div>
+            </div>
+            <div className="fz-group-total">{totalText(g.lots)}</div>
+          </div>
+          <div className="ol-scroll"><table className="ol-table fz-table">
+            <thead><tr><th>소비기한</th><th>위치</th><th className="right">수량</th><th>입고일</th><th>메모</th><th></th></tr></thead>
+            <tbody>{g.lots.map(l=><tr key={l.id} className={rowCls(l)}>
+              <td><ExpiryBadge exp={l.expiry}/></td>
+              <td><span className="fz-loc">📍 {fzLoc(l)}</span></td>
+              <td className="right fz-qty">{fzQty(l.qty,l.unit)}</td>
+              <td style={{fontSize:12,color:"var(--muted)",whiteSpace:"nowrap"}}>{l.in_date?fzExpText(l.in_date):"–"}</td>
+              <td>{memoCell(l)}</td>
+              <td className="right">{actions(l)}</td>
+            </tr>)}</tbody>
+          </table></div>
+        </div>)}</div>:
+     view==="location"?<div className="fz-groups">{byLocation.map(g=><div key={g.loc} className="fz-group">
+        <div className="fz-group-hd">
+          <div><div className="fz-group-name">📍 {g.loc}</div>
+            <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>{new Set(g.lots.map(fzKey)).size}개 제품 · {g.lots.length}건</div></div>
+          <div className="fz-group-total">{totalText(g.lots)}</div>
+        </div>
+        <div className="ol-scroll"><table className="ol-table fz-table">
+          <thead><tr><th>제품</th><th>소비기한</th><th className="right">수량</th><th>메모</th><th></th></tr></thead>
+          <tbody>{g.lots.map(l=><tr key={l.id} className={rowCls(l)}>
+            <td>{nameCell(l)}</td>
+            <td><ExpiryBadge exp={l.expiry}/></td>
+            <td className="right fz-qty">{fzQty(l.qty,l.unit)}</td>
+            <td>{memoCell(l)}</td>
+            <td className="right">{actions(l)}</td>
+          </tr>)}</tbody>
+        </table></div>
+      </div>)}</div>:
+     <div className="fz-group"><div className="ol-scroll"><table className="ol-table fz-table">
+        <thead><tr><th>소비기한</th><th>제품</th><th>위치</th><th className="right">수량</th><th>메모</th><th></th></tr></thead>
+        <tbody>{byExpiry.map(l=><tr key={l.id} className={rowCls(l)}>
+          <td><ExpiryBadge exp={l.expiry}/></td>
+          <td>{nameCell(l)}</td>
+          <td><span className="fz-loc">📍 {fzLoc(l)}</span></td>
+          <td className="right fz-qty">{fzQty(l.qty,l.unit)}</td>
+          <td>{memoCell(l)}</td>
+          <td className="right">{actions(l)}</td>
+        </tr>)}</tbody>
+      </table></div></div>}
+
+    {txns.length>0&&<div className="ol-card" style={{marginTop:18,padding:0,overflow:"hidden"}}>
+      <div onClick={()=>setShowHist(!showHist)} style={{padding:"12px 16px",cursor:"pointer",fontWeight:700,fontSize:14,display:"flex",justifyContent:"space-between"}}>
+        <span>🧾 입출고 이력 <span style={{fontWeight:400,fontSize:12,color:"var(--muted)"}}>최근 {txns.length}건</span></span><span style={{color:"var(--muted)"}}>{showHist?"▲":"▼"}</span>
+      </div>
+      {showHist&&<div className="ol-scroll" style={{maxHeight:420,overflowY:"auto"}}><table className="ol-table">
+        <thead><tr><th>일시</th><th>구분</th><th>제품</th><th>소비기한</th><th>위치</th><th className="right">변동</th><th className="right">이후</th><th>메모</th></tr></thead>
+        <tbody>{txns.map(t=>{const[kl,kc]=FZ_KIND[t.kind]||[t.kind,"var(--muted)"];const d=new Date(t.created_at);const ch=Number(t.qty_change||0);
+          return <tr key={t.id}>
+            <td style={{fontSize:12,whiteSpace:"nowrap",color:"var(--muted)"}}>{`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`}</td>
+            <td><span className="fz-badge" style={{color:kc,border:`1px solid ${kc}55`}}>{kl}</span></td>
+            <td style={{fontWeight:600}}>{t.product_name}</td>
+            <td style={{fontSize:12,whiteSpace:"nowrap"}}>{fzExpText(t.expiry)}</td>
+            <td style={{fontSize:12}}>{(t.location||"").trim()||"–"}</td>
+            <td className="right" style={{fontWeight:700,color:t.kind==="move"?"var(--text)":ch>0?"#16a34a":ch<0?"#ef4444":"var(--muted)"}}>{t.kind==="move"?fmtNum(ch):(ch>0?"+":"")+fmtNum(ch)}</td>
+            <td className="right">{t.kind==="move"?"–":fmtNum(t.qty_after)}</td>
+            <td style={{fontSize:12,color:"var(--muted)"}}>{t.memo||""}</td>
+          </tr>})}</tbody>
+      </table></div>}
+    </div>}
+
+    {editing&&<Modal onClose={()=>setEditing(null)}><FrozenLotForm adminHash={adminHash} masters={masters} initial={editing} locations={locations} onCancel={()=>setEditing(null)} onSaved={()=>{setEditing(null);load()}}/></Modal>}
+    {action&&<Modal onClose={()=>setAction(null)}><FrozenActionForm adminHash={adminHash} type={action.type} lot={action.lot} locations={locations} onCancel={()=>setAction(null)} onDone={()=>{setAction(null);load()}}/></Modal>}
+  </>;
+}
+
+const VALID_TABS=["products","orders","lists","ship","frozen","extra"];
 function getTabFromHash(){const h=(window.location.hash||"").replace("#","");return VALID_TABS.includes(h)?h:"orders"}
 
 function App(){
@@ -2486,7 +2882,7 @@ function App(){
   const firstTab=useRef(true);
   useEffect(()=>{
     if(firstTab.current){firstTab.current=false;return}
-    const d=tab==="extra"?extraData:tab==="products"?null:main;
+    const d=tab==="extra"?extraData:(tab==="products"||tab==="frozen")?null:main;
     if(d){d.reloadDates();d.reloadOrders(d.selDate)}
   },[tab]);
 
@@ -2512,6 +2908,7 @@ function App(){
           <button className={"ol-tab"+(tab==="orders"?" active":"")} onClick={()=>setTab("orders")}>📄 발주서</button>
           <button className={"ol-tab"+(tab==="lists"?" active":"")} onClick={()=>setTab("lists")}>🗂 발주리스트</button>
           <button className={"ol-tab"+(tab==="ship"?" active":"")} onClick={()=>setTab("ship")}>🚚 출고장</button>
+          <button className={"ol-tab"+(tab==="frozen"?" active":"")} onClick={()=>setTab("frozen")}>❄ 냉동재고</button>
           <button className={"ol-tab"+(tab==="extra"?" active":"")} onClick={()=>setTab("extra")}>➕ 추가 발주</button>
         </div>
         {mastersErr&&<div className="ol-warn">{mastersErr}</div>}
@@ -2519,6 +2916,7 @@ function App(){
         {tab==="orders"&&<OrdersTab {...shared}/>}
         {tab==="lists"&&<ListsTab {...shared}/>}
         {tab==="ship"&&<ShipTab {...shared}/>}
+        {tab==="frozen"&&<FrozenTab adminHash={adminHash} masters={masters}/>}
         {tab==="extra"&&<>
           <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",marginBottom:12}}>
             <div className="ol-subtabs">
