@@ -1567,7 +1567,7 @@ function startScaleDrag(e,el,items,onLive,onCommit){
   const move=ev=>{
     const d=((ev.clientX-sx)+(ev.clientY-sy))/2;
     const k=Math.max(0.2,(h0+d)/h0);
-    last={};items.forEach(it=>{last[it.id]=Math.min(120,Math.max(8,Math.round(it.base*k)))});
+    last={};items.forEach(it=>{last[it.id]=Math.min(it.max??120,Math.max(it.min??8,Math.round(it.base*k)))});
     onLive(last);
   };
   const up=()=>{
@@ -1576,9 +1576,14 @@ function startScaleDrag(e,el,items,onLive,onCommit){
   };
   window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);window.addEventListener("pointercancel",up);
 }
+// 크기 조절 대상([data-tid]) → {id,base,min,max}. 글씨는 px(8~120), 혼적 표 칸(data-kind="box")은 %(30~300)
+function scaleItemOf(el,sizes){
+  const id=el.dataset.tid;
+  return{id,base:sizes?.[id]??Number(el.dataset.base),min:el.dataset.min?Number(el.dataset.min):8,max:el.dataset.max?Number(el.dataset.max):120,box:el.dataset.kind==="box"};
+}
 const HANDLE_STYLE={position:"absolute",width:11,height:11,background:"#06b6d4",border:"1.5px solid #fff",borderRadius:2,boxShadow:"0 0 0 1px #06b6d4",cursor:"nwse-resize",touchAction:"none",zIndex:6};
 
-function EditText({id,value,base,edit,ed,onText,selected,onSelect,onLiveSize,onCommitSize,style}){
+function EditText({id,value,base,edit,ed,onText,selected,onSelect,onScaleSel,style}){
   const[active,setActive]=useState(false);
   const ref=useRef(null);
   const texts=ed.text;
@@ -1598,8 +1603,8 @@ function EditText({id,value,base,edit,ed,onText,selected,onSelect,onLiveSize,onC
   };
   return <div key={shown+(active?"#":"")} ref={ref} data-tid={id} data-base={base}
     contentEditable={active} suppressContentEditableWarning
-    title={edit&&!active?"클릭: 선택(크기 조절) · 더블클릭: 글씨 수정":undefined}
-    onClick={()=>{if(edit&&onSelect)onSelect(id)}}
+    title={edit&&!active?"클릭: 선택(크기 조절) · Shift/Ctrl+클릭: 여러 개 선택 · 더블클릭: 글씨 수정":undefined}
+    onClick={e=>{if(edit&&onSelect)onSelect(id,e.shiftKey||e.ctrlKey||e.metaKey)}}
     onDoubleClick={e=>{if(edit){e.stopPropagation();setActive(true)}}}
     onBlur={()=>{if(active)commit()}}
     onKeyDown={e=>{
@@ -1607,8 +1612,8 @@ function EditText({id,value,base,edit,ed,onText,selected,onSelect,onLiveSize,onC
       if(e.key==="Escape"){e.preventDefault();setActive(false)}
     }}
     style={{width:"fit-content",maxWidth:"100%",marginLeft:"auto",marginRight:"auto",...style,position:"relative",fontSize:px,whiteSpace:"pre-wrap",outline:active?"2px solid #06b6d4":(edit&&selected?"2px solid #f59e0b":"none"),outlineOffset:1,cursor:active?"text":undefined,userSelect:active?"text":undefined,minWidth:active?20:undefined,minHeight:edit&&!shown?"1em":undefined}}
-  >{shown}{edit&&selected&&!active&&onCommitSize&&<span contentEditable={false} title="끌어서 글씨 크기 조절"
-      onPointerDown={e=>startScaleDrag(e,ref.current,[{id,base:ed.size?.[id]??base}],onLiveSize,onCommitSize)}
+  >{shown}{edit&&selected&&!active&&onScaleSel&&<span contentEditable={false} title="끌어서 선택한 글씨 크기 조절"
+      onPointerDown={e=>onScaleSel(e,ref.current)}
       style={{...HANDLE_STYLE,right:-7,bottom:-7}}/>}</div>;
 }
 
@@ -1632,6 +1637,7 @@ function DragBlock({id,edit,pos,onMove,onGuides,sizes,onLiveSize,onCommitSize,in
   const dragRef=useRef(null);
   const down=e=>{
     if(!edit||e.button>0||e.target.isContentEditable)return;
+    if(e.shiftKey)return; // Shift+드래그 = 범위 선택 (용지 화면이 처리)
     e.stopPropagation(); // 안쪽 블록을 잡으면 그 블록만 이동
     if(e.pointerType==="mouse")e.preventDefault();
     const el=elRef.current,root=el.closest("[data-imgroot]");
@@ -1673,7 +1679,7 @@ function DragBlock({id,edit,pos,onMove,onGuides,sizes,onLiveSize,onCommitSize,in
   },[!!drag]);
   const resizeDown=e=>{
     const el=elRef.current;
-    const items=[...el.querySelectorAll("[data-tid]")].map(t=>({id:t.dataset.tid,base:sizes?.[t.dataset.tid]??Number(t.dataset.base)}));
+    const items=[...el.querySelectorAll("[data-tid]")].map(t=>scaleItemOf(t,sizes));
     startScaleDrag(e,el,items,onLiveSize,onCommitSize);
   };
   // 상자는 내용(글씨) 크기만큼만 — 좌우 auto 마진으로 원래처럼 가운데 정렬
@@ -1687,15 +1693,16 @@ function DragBlock({id,edit,pos,onMove,onGuides,sizes,onLiveSize,onCommitSize,in
   </div>;
 }
 
-function LoadImage({group,date,prefix,refCb,edit,ed:edSaved,live,onMove,onText,sel,onSelect,onLiveSize,onCommitSize}){
+function LoadImage({group,date,prefix,refCb,edit,ed:edSaved,live,onMove,onText,sel,onSelect,onScaleSel,onLiveSize,onCommitSize}){
   const[guides,setGuides]=useState(null);
+  const selSet=new Set(sel||[]);
   const ed=live&&Object.keys(live).length?{...edSaved,size:{...edSaved.size,...live}}:edSaved;
   const pallets=group.pallets;
   const total=pallets[0]?.total||pallets.length; // 같은 업체의 다른 생산지점까지 합친 총 파렛트 수
   const singles=groupSinglePallets(pallets);
   const mixed=pallets.filter(p=>p.kind==="mixed");
   const font="'Pretendard','Apple SD Gothic Neo','Malgun Gothic',sans-serif";
-  const T=(id,value,base,style)=><EditText id={id} value={value} base={base} edit={edit} ed={ed} onText={onText} selected={sel===id} onSelect={onSelect} onLiveSize={onLiveSize} onCommitSize={onCommitSize} style={style}/>;
+  const T=(id,value,base,style)=><EditText id={id} value={value} base={base} edit={edit} ed={ed} onText={onText} selected={selSet.has(id)} onSelect={onSelect} onScaleSel={onScaleSel} style={style}/>;
   const D=(id,style,children,inner)=><DragBlock key={id} id={id} edit={edit} pos={ed.pos} onMove={onMove} onGuides={setGuides} sizes={edSaved.size} onLiveSize={onLiveSize} onCommitSize={onCommitSize} inner={inner} style={style}>{children}</DragBlock>;
   return <div ref={refCb} data-imgroot="1" style={{position:"relative",width:920,background:"#ffffff",color:"#111",padding:"34px 40px 40px",boxSizing:"border-box",fontFamily:font,overflow:"hidden"}}>
     {edit&&guides?.v!=null&&<div style={{position:"absolute",left:guides.v,top:0,bottom:0,width:0,borderLeft:"1px solid #ec4899",zIndex:20,pointerEvents:"none"}}/>}
@@ -1730,15 +1737,18 @@ function LoadImage({group,date,prefix,refCb,edit,ed:edSaved,live,onMove,onText,s
           // 자리 수는 항상 층당 방 수(6) — 제품이 더 많으면 한 자리에 여러 제품을 나눠 쌓음 (예전엔 자리를 늘려 3번째 줄이 생기며 깨졌음)
           const cells=layoutMixed(p.lines,Math.max(1,p.slots||6));
           const rows=[];for(let i=0;i<cells.length;i+=cols)rows.push(cells.slice(i,i+cols));
+          // 표 칸 크기 = 칸 배율(size[k.box], %) × 전체 배율 — 블록 ■ 크기 조절·전체 글씨 배율 때 글씨와 같이 커지고 작아짐
+          const bk=k+".box",bs=(ed.size?.[bk]??100)/100*(ed.scale||100)/100;
           return D(k,{},
-            <table style={{borderCollapse:"collapse"}}><tbody>
+            <table data-tid={bk} data-base={100} data-min={30} data-max={300} data-kind="box"
+              style={{borderCollapse:"collapse",outline:edit&&selSet.has(bk)?"2px solid #f59e0b":"none",outlineOffset:2}}><tbody>
               {rows.map((row,ri)=><tr key={ri}>
                 {row.map((c,ci)=>{
                   const ck=`${k}.c${ri*cols+ci}`;
                   // 한 자리에 두 제품이 섞이면 위쪽 제품부터 위에 표시 (글씨 id: 첫 제품 .n/.c, 다음 .p1.n/.p1.c …)
                   const parts=c?[...c.parts].map((x,pi)=>({...x,pi})).reverse():[];
-                  return <td key={ci} style={{border:"1.5px solid #333",width:132,height:128,textAlign:"center",verticalAlign:"middle",position:"relative",color:c?c.ln.product.color:"#111",fontWeight:800,lineHeight:1.35,padding:4}}>
-                    {ri===0&&ci===0&&<div style={{position:"absolute",top:6,left:10,color:"#111",fontWeight:800,zIndex:1}}>{D(k+".lb",{marginLeft:0,marginRight:0},T(k+".label",`${total}-${p.no}`,16),true)}</div>}
+                  return <td key={ci} style={{border:"1.5px solid #333",width:Math.round(132*bs),height:Math.round(128*bs),textAlign:"center",verticalAlign:"middle",position:"relative",color:c?c.ln.product.color:"#111",fontWeight:800,lineHeight:1.35,padding:Math.max(1,Math.round(4*bs))}}>
+                    {ri===0&&ci===0&&<div style={{position:"absolute",top:Math.round(6*bs),left:Math.round(10*bs),color:"#111",fontWeight:800,zIndex:1}}>{D(k+".lb",{marginLeft:0,marginRight:0},T(k+".label",`${total}-${p.no}`,16),true)}</div>}
                     {parts.map((x,j)=>{
                       const pk=x.pi===0?ck:`${ck}.p${x.pi}`;
                       // 제품이 3개 이상 섞인 자리는 글씨를 줄이고 이름·수량을 한 줄로
@@ -1788,7 +1798,11 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
   const[histTick,setHistTick]=useState(0);
   useEffect(()=>{const v=fresh();setEd(v);edRef.current=v;undoRef.current=[];redoRef.current=[];setHistTick(t=>t+1)},[key,sig]);
   const[edit,setEdit]=useState(false);
-  const[sel,setSel]=useState(null); // 크기 조절할 선택된 글씨 id
+  // 크기 조절할 선택된 글씨 id 목록 (여러 개 가능 — Shift/Ctrl+클릭, 빈 곳 드래그 범위 선택)
+  const[selArr,setSelArr]=useState([]);
+  const sel=selArr;
+  const setSel=v=>setSelArr(v==null?[]:Array.isArray(v)?v:[v]);
+  const onSelect=(id,add)=>setSelArr(cur=>add?(cur.includes(id)?cur.filter(x=>x!==id):[...cur,id]):[id]);
   useEffect(()=>{if(!edit)setSel(null)},[edit]);
   const[status,setStatus]=useState("");
   const[saving,setSaving]=useState(false);
@@ -1834,9 +1848,10 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
   useEffect(()=>{
     if(!edit)return;
     const onKey=e=>{
-      if(!(e.ctrlKey||e.metaKey)||e.altKey)return;
       const t=e.target;
       if(t&&(t.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)))return;
+      if(e.key==="Escape"){setSelArr([]);return} // 선택 해제
+      if(!(e.ctrlKey||e.metaKey)||e.altKey)return;
       const k=e.key.toLowerCase();
       if(k==="z"&&!e.shiftKey){e.preventDefault();histKeys.current.undo()}
       else if(k==="y"||(k==="z"&&e.shiftKey)){e.preventDefault();histKeys.current.redo()}
@@ -1857,29 +1872,71 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
     setSel(null);
   };
   const setExtraColor=(bid,color)=>persist({...edRef.current,extra:(edRef.current.extra||[]).map(x=>x.id===bid?{...x,color}:x)});
-  const selExtra=sel&&/^x[^.]*\.t$/.test(sel)?(ed.extra||[]).find(x=>x.id+".t"===sel):null;
+  const selExtra=sel.length===1&&/^x[^.]*\.t$/.test(sel[0])?(ed.extra||[]).find(x=>x.id+".t"===sel[0]):null;
   // 원래대로: 브라우저 confirm() 창이 안 뜨는 환경이 있어 화면 안에서 한 번 더 확인
   const[askReset,setAskReset]=useState(false);
   const reset=()=>{setAskReset(false);setSel(null);persist(blank)};
 
-  // 글씨 크기: 선택한 글씨 개별(px) / 전체 배율(%)
-  const selBase=()=>{const el=elRef.current?.querySelector(`[data-tid="${CSS.escape(sel)}"]`);return el?Number(el.dataset.base):null};
-  const selPx=sel?(ed.size?.[sel]??selBase()):null;
-  const changeSize=delta=>{
-    if(!sel)return;
-    const cur=edRef.current.size?.[sel]??selBase();
-    if(cur==null)return;
-    const next=Math.min(120,Math.max(8,cur+delta));
-    persist({...edRef.current,size:{...edRef.current.size,[sel]:next}});
+  // 글씨 크기: 선택한 글씨(여러 개 가능) / 전체 배율(%)
+  const selItems=()=>{
+    const root=elRef.current;if(!root)return[];
+    return sel.map(id=>{const el=root.querySelector(`[data-tid="${CSS.escape(id)}"]`);return el?scaleItemOf(el,edRef.current.size):null}).filter(Boolean);
   };
-  const resetSize=()=>{
-    if(!sel)return;
-    const size={...edRef.current.size};delete size[sel];
+  const selOne=sel.length===1?selItems()[0]:null;
+  const selPx=selOne?selOne.base:null;
+  // 글씨 하나: ±2px · 여러 개 또는 표 칸: 각각 ±10% (비율 유지)
+  const changeSize=dir=>{
+    const its=selItems();if(!its.length)return;
+    const size={...edRef.current.size};
+    its.forEach(it=>{
+      let n=its.length===1&&!it.box?it.base+2*dir:Math.round(it.base*(1+0.1*dir));
+      if(n===it.base)n+=dir;
+      size[it.id]=Math.min(it.max,Math.max(it.min,n));
+    });
     persist({...edRef.current,size});
   };
+  const resetSize=()=>{
+    if(!sel.length)return;
+    const size={...edRef.current.size};sel.forEach(id=>delete size[id]);
+    persist({...edRef.current,size});
+  };
+  const selHasSize=sel.some(id=>ed.size?.[id]!=null);
   // 드래그 크기 조절: 끄는 동안 live 로 미리보기, 놓으면 저장
   const[live,setLive]=useState({});
   const commitSizes=map=>persist({...edRef.current,size:{...edRef.current.size,...map}});
+  // 선택한 글씨 모서리 ■ → 선택한 것 전부 같은 비율로
+  const onScaleSel=(e,el)=>startScaleDrag(e,el,selItems(),setLive,commitSizes);
+
+  // 범위 선택: 빈 곳(또는 Shift 누르고 아무 곳)을 끌면 사각형 안에 걸친 글씨 선택 (표 칸은 사각형 안에 다 들어와야 선택)
+  // Shift/Ctrl 누르고 끌면 기존 선택에 추가
+  const[marq,setMarq]=useState(null);
+  const marqDown=e=>{
+    if(!edit||e.button>0||e.target.isContentEditable)return;
+    if(e.target.closest("[data-bid]")&&!e.shiftKey)return; // 블록 위는 이동 (DragBlock)
+    if(e.pointerType==="mouse")e.preventDefault();
+    const add=e.shiftKey||e.ctrlKey||e.metaKey;
+    const s={x0:e.clientX,y0:e.clientY,x1:e.clientX,y1:e.clientY};
+    setMarq(s);
+    const move=ev=>{s.x1=ev.clientX;s.y1=ev.clientY;setMarq({...s})};
+    const up=()=>{
+      window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);window.removeEventListener("pointercancel",up);
+      setMarq(null);
+      const L=Math.min(s.x0,s.x1),R=Math.max(s.x0,s.x1),T=Math.min(s.y0,s.y1),B=Math.max(s.y0,s.y1);
+      if(R-L<4&&B-T<4){if(!add)setSelArr([]);return} // 그냥 클릭 → 빈 곳이면 선택 해제
+      // 드래그 끝난 뒤 생기는 click 이 글씨 선택을 바꾸지 않게 한 번 막음
+      const block=ev=>{ev.stopPropagation();ev.preventDefault()};
+      window.addEventListener("click",block,{capture:true,once:true});
+      setTimeout(()=>window.removeEventListener("click",block,{capture:true}),0);
+      const hit=[];
+      elRef.current?.querySelectorAll("[data-tid]").forEach(t=>{
+        const r=t.getBoundingClientRect();if(!r.width||!r.height)return;
+        const ok=t.dataset.kind==="box"?(r.left>=L&&r.right<=R&&r.top>=T&&r.bottom<=B):(r.right>=L&&r.left<=R&&r.bottom>=T&&r.top<=B);
+        if(ok)hit.push(t.dataset.tid);
+      });
+      setSelArr(cur=>add?[...new Set([...cur,...hit])]:hit);
+    };
+    window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);window.addEventListener("pointercancel",up);
+  };
   const changeScale=delta=>{
     const next=Math.min(200,Math.max(50,(edRef.current.scale||100)+delta));
     persist({...edRef.current,scale:next});
@@ -1978,12 +2035,13 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
       {status&&<span style={{fontSize:12,color:status.startsWith("⚠")?"#ef4444":"var(--muted)"}}>{status}</span>}
     </div>
     {edit&&<div className="ol-toolbar" style={{marginBottom:8,padding:"8px 10px",background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:8,fontSize:12}}>
-      <span style={{color:"var(--muted)"}}>선택한 글씨</span>
-      <button className="ol-btn ol-btn-secondary ol-btn-sm" disabled={!sel} onClick={()=>changeSize(-2)}>A−</button>
-      <b style={{minWidth:44,textAlign:"center"}}>{sel&&selPx!=null?`${selPx}px`:"–"}</b>
-      {sel&&selPx!=null&&(ed.scale||100)!==100&&<span style={{color:"var(--muted)"}}>(전체 배율 적용 시 {Math.round(selPx*(ed.scale||100)/100)}px)</span>}
-      <button className="ol-btn ol-btn-secondary ol-btn-sm" disabled={!sel} onClick={()=>changeSize(2)}>A+</button>
-      <button className="ol-btn ol-btn-secondary ol-btn-sm" disabled={!sel||ed.size?.[sel]==null} onClick={resetSize}>기본</button>
+      <span style={{color:"var(--muted)"}}>{sel.length>1?`선택 ${sel.length}개`:"선택한 글씨"}</span>
+      <button className="ol-btn ol-btn-secondary ol-btn-sm" disabled={!sel.length} onClick={()=>changeSize(-1)}>A−</button>
+      <b style={{minWidth:44,textAlign:"center"}}>{sel.length>1?`${sel.length}개`:selOne?(selOne.box?`표 ${selPx}%`:`${selPx}px`):"–"}</b>
+      {selOne&&!selOne.box&&(ed.scale||100)!==100&&<span style={{color:"var(--muted)"}}>(전체 배율 적용 시 {Math.round(selPx*(ed.scale||100)/100)}px)</span>}
+      <button className="ol-btn ol-btn-secondary ol-btn-sm" disabled={!sel.length} onClick={()=>changeSize(1)}>A+</button>
+      <button className="ol-btn ol-btn-secondary ol-btn-sm" disabled={!selHasSize} onClick={resetSize}>기본</button>
+      {sel.length>0&&<button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setSel(null)} title="선택 해제 (Esc)">선택 해제</button>}
       <span style={{width:1,height:20,background:"var(--card-bd)",margin:"0 6px"}}/>
       <span style={{color:"var(--muted)"}}>전체 글씨</span>
       <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>changeScale(-10)}>A−</button>
@@ -1998,19 +2056,20 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
         <button className="ol-btn ol-btn-secondary ol-btn-sm" style={{color:"#ef4444"}} onClick={()=>removeExtra(selExtra.id)}>🗑 글씨 삭제</button>
       </>}
     </div>}
-    {edit&&<div style={{fontSize:12,color:"var(--muted)",marginBottom:8}}>점선 상자를 <b>끌어서</b> 위치 이동(옆 블록과 줄이 맞으면 분홍 안내선과 함께 붙음, <b>Alt</b> 누르고 끌면 자유 이동) · 상자 오른쪽 아래 <b style={{color:"#06b6d4"}}>■</b>을 끌면 블록 글씨 전체 크기 조절 · 글씨를 <b>클릭</b>하면 선택(주황 테두리) → 글씨 모서리 ■을 끌거나 A−/A+로 크기 조절 · <b>더블클릭</b>하면 글씨 수정 (Enter 저장, Shift+Enter 줄바꿈, Esc 취소, 비우면 글씨 숨김) · 수정 내용은 자동 저장</div>}
+    {edit&&<div style={{fontSize:12,color:"var(--muted)",marginBottom:8}}>점선 상자를 <b>끌어서</b> 위치 이동(옆 블록과 줄이 맞으면 분홍 안내선과 함께 붙음, <b>Alt</b> 누르고 끌면 자유 이동) · 상자 오른쪽 아래 <b style={{color:"#06b6d4"}}>■</b>을 끌면 블록 글씨 전체 크기 조절(혼적 표는 칸도 같이) · 글씨를 <b>클릭</b>하면 선택(주황 테두리), <b>Shift/Ctrl+클릭</b>으로 여러 개 · <b>빈 곳을 끌거나 Shift 누르고 끌면</b> 사각형 안 글씨 한꺼번에 선택(혼적 표를 통째로 감싸면 표 칸도 선택) → 글씨 모서리 ■을 끌거나 A−/A+로 크기 조절, Esc 선택 해제 · <b>더블클릭</b>하면 글씨 수정 (Enter 저장, Shift+Enter 줄바꿈, Esc 취소, 비우면 글씨 숨김) · 수정 내용은 자동 저장</div>}
     {staleDropped&&<div className="ol-warn" style={{padding:"8px 12px",fontSize:12}}>발주 내용이 바뀌어 파렛트 구성이 달라졌습니다. 이전에 수정한 위치·글씨는 적용하지 않았습니다.</div>}
-    <div ref={wrapRef} className="ol-img-wrap" style={{background:"#e5e7eb",padding:12}}>
+    {marq&&<div style={{position:"fixed",left:Math.min(marq.x0,marq.x1),top:Math.min(marq.y0,marq.y1),width:Math.abs(marq.x1-marq.x0),height:Math.abs(marq.y1-marq.y0),border:"1px solid #f59e0b",background:"rgba(245,158,11,0.12)",zIndex:1000,pointerEvents:"none"}}/>}
+    <div ref={wrapRef} className="ol-img-wrap" onPointerDown={marqDown} style={{background:"#e5e7eb",padding:12}}>
       <div style={{position:"relative",width:frameW,height:frameH,background:"#ffffff",overflow:"hidden",margin:"0 auto",boxShadow:"0 2px 10px rgba(0,0,0,.25)"}}>
         {edit&&<div style={{position:"absolute",left:mpx,top:mpx,right:mpx,bottom:mpx,border:"1px dashed #cbd5e1",pointerEvents:"none"}}/>}
         <div style={{position:"absolute",left:0,top:0,transformOrigin:"0 0",transform:`translate(${view.tx}px,${view.ty}px) scale(${view.s})`}}>
-          <LoadImage group={group} date={date} prefix={prefix} refCb={el=>{elRef.current=el}} edit={edit} ed={ed} live={live} onMove={onMove} onText={onText} sel={sel} onSelect={setSel} onLiveSize={setLive} onCommitSize={commitSizes}/>
+          <LoadImage group={group} date={date} prefix={prefix} refCb={el=>{elRef.current=el}} edit={edit} ed={ed} live={live} onMove={onMove} onText={onText} sel={sel} onSelect={onSelect} onScaleSel={onScaleSel} onLiveSize={setLive} onCommitSize={commitSizes}/>
         </div>
         <div style={{position:"absolute",right:8,bottom:5,fontSize:11,color:"#94a3b8",pointerEvents:"none"}}>{ps.label} {ps.w}×{ps.h}mm{fitPaper?" · 용지에 맞춰 확대":""}</div>
       </div>
     </div>
     {saving&&<div style={{position:"fixed",left:-20000,top:0}} aria-hidden="true">
-      <LoadImage group={group} date={date} prefix={prefix} refCb={el=>{capRef.current=el}} edit={false} ed={ed} live={{}} onMove={()=>{}} onText={()=>{}} sel={null} onSelect={()=>{}}/>
+      <LoadImage group={group} date={date} prefix={prefix} refCb={el=>{capRef.current=el}} edit={false} ed={ed} live={{}} onMove={()=>{}} onText={()=>{}} sel={[]} onSelect={()=>{}}/>
     </div>}
   </div>;
 }
