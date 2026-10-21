@@ -1040,7 +1040,22 @@ function MethodManager({adminHash,masters,onChanged,onClose}){
   </>;
 }
 
-function ProductsTab({adminHash,masters,reloadMasters}){
+// 제품리스트 탭: 오른쪽 위에서 📦 제품 정보 / 💰 판매가 전환
+function ProductsTab(props){
+  const[view,setView]=useState(()=>lsGet("ol-prod-view","info")==="price"?"price":"info");
+  useEffect(()=>lsSet("ol-prod-view",view),[view]);
+  return <>
+    <div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}>
+      <div className="ol-subtabs">
+        <button className={view==="info"?"on":""} onClick={()=>setView("info")}>📦 제품 정보</button>
+        <button className={view==="price"?"on":""} onClick={()=>setView("price")}>💰 판매가</button>
+      </div>
+    </div>
+    {view==="info"?<ProductInfoView {...props}/>:<PriceView adminHash={props.adminHash}/>}
+  </>;
+}
+
+function ProductInfoView({adminHash,masters,reloadMasters}){
   const[q,setQ]=useState("");
   const[siteF,setSiteF]=useState("all");
   const[editing,setEditing]=useState(null); // null | {} | product
@@ -1105,6 +1120,554 @@ function ProductsTab({adminHash,masters,reloadMasters}){
     {modal==="specs"&&<Modal onClose={()=>setModal("")}><BoxSpecManager adminHash={adminHash} masters={masters} onChanged={reloadMasters} onClose={()=>setModal("")}/></Modal>}
     {modal==="methods"&&<Modal lg onClose={()=>setModal("")}><MethodManager adminHash={adminHash} masters={masters} onChanged={reloadMasters} onClose={()=>setModal("")}/></Modal>}
   </>;
+}
+
+// ═══════════════════════════════════════════
+// 💰 판매가 (제품리스트 탭 안)
+//  - 쿠팡/스마트스토어는 서버에서 페이지를 읽지 못하게 막혀 있어(403/429) 자동 수집 대신
+//    ① 표에서 클릭 수정 ② 엑셀 가져오기/내보내기 ③ 상품 페이지에서 북마크 버튼으로 가져오기
+// ═══════════════════════════════════════════
+const HIST_FIELD={sale:"판매가",discount:"할인가",store:"스토어가",supply:"공급가"};
+const HIST_SRC={manual:"직접 수정",import:"엑셀",capture:"페이지에서"};
+function priceErr(e){
+  const s=String(e?.message||e||"");
+  if(s.includes("Could not find the function")||s.includes("PGRST202")||s.includes("ol_prices")||s.includes("ol_price"))return "Supabase에서 setup_orders_prices.sql을 먼저 실행하세요.";
+  if(s.includes("name_required"))return "상품명은 필수입니다.";
+  return errMsg(e);
+}
+function fmtWon(n){return n==null||n===""?"–":Number(n).toLocaleString("ko-KR")}
+function storageLabel(s){return s==="frozen"?"냉동":"냉장"}
+function priceSheetKey(p){return (p.vendor||"")+"|"+(p.storage==="frozen"?"frozen":"chilled")}
+function priceSheetName(p){return `${p.vendor||"(업체 없음)"}(${storageLabel(p.storage)})`}
+function daysAgo(ts){if(!ts)return null;return Math.round((parseYmd(todayYmd())-parseYmd(fmtYmd(new Date(ts))))/86400000)}
+function isDiscounting(p){return p.discount_price!=null&&p.sale_price!=null&&Number(p.discount_price)<Number(p.sale_price)}
+// 링크에서 상품 식별값 추출 (쿠팡 vendorItemId / itemId / productId, 스마트스토어 상품번호)
+function priceUrlKeys(u){
+  u=String(u||"");const g=re=>{const m=u.match(re);return m?m[1]:""};
+  const store=/naver\.com/i.test(u);
+  return {vid:g(/[?&]vendorItemId=(\d+)/),iid:g(/[?&]itemId=(\d+)/),pid:store?"":g(/\/products\/(\d+)/),sid:store?g(/\/products\/(\d+)/):""};
+}
+function matchCapture(items,url,site){
+  const k=priceUrlKeys(url);
+  if(site==="store")return k.sid?items.filter(p=>priceUrlKeys(p.store_url).sid===k.sid):[];
+  for(const f of["vid","iid","pid"]){
+    if(!k[f])continue;
+    const m=items.filter(p=>priceUrlKeys(p.coupang_url)[f]===k[f]);
+    if(m.length)return m;
+  }
+  return [];
+}
+function sortPriceItems(items){
+  return [...items].sort((a,b)=>(a.vendor||"").localeCompare(b.vendor||"","ko")||(a.storage==="frozen")-(b.storage==="frozen")||(a.sort_order||0)-(b.sort_order||0)||a.id-b.id);
+}
+
+// 판매링크 엑셀 → 상품 행. 시트 이름 "업체(냉장)" / "업체(냉동)", 제목 행에서 칸 위치 자동 탐지
+function parsePriceWorkbook(buf){
+  const wb=XLSX.read(buf,{type:"array"});
+  const rows=[],sheets=[];
+  for(const sn of wb.SheetNames){
+    const ws=wb.Sheets[sn];
+    if(!ws||!ws["!ref"])continue;
+    const rng=XLSX.utils.decode_range(ws["!ref"]);
+    const aoa=XLSX.utils.sheet_to_json(ws,{header:1,defval:"",raw:true,blankrows:true});
+    let hr=-1;
+    for(let i=0;i<Math.min(aoa.length,10);i++){if((aoa[i]||[]).some(c=>String(c).includes("상품명"))){hr=i;break}}
+    if(hr<0)continue;
+    const H=aoa[hr].map(c=>String(c).replace(/\s+/g," ").trim());
+    const find=(fn,from=0)=>{for(let i=from;i<H.length;i++)if(fn(H[i],i))return i;return -1};
+    const cName=find(h=>h.includes("상품명"));
+    const cSku=find(h=>/SKU\s*ID/i.test(h));
+    const cBar=find((h,i)=>i!==cName&&(/바코드/.test(h)||/^BARCODE$/i.test(h)));
+    const cBox=find(h=>/box/i.test(h)&&h.includes("수량"));
+    const cStoreUrl=find(h=>h.includes("스마트")&&h.includes("링크"));
+    const cCpUrl=find(h=>h.includes("링크")&&!h.includes("스마트"));
+    const cSupply=find(h=>h.includes("공급가"));
+    const cSale=find((h,i)=>h==="판매가"&&(cStoreUrl<0||i<cStoreUrl));
+    const cDisc=find(h=>h.includes("할인가"));
+    const cStore=cStoreUrl>=0?find(h=>h==="판매가",cStoreUrl+1):-1;
+    const m=sn.match(/^(.*?)\s*\((냉장|냉동)\)\s*$/);
+    const vendor=(m?m[1]:sn).trim();
+    const storage=/냉동/.test(sn)?"frozen":"chilled";
+    const cellAt=(r,c)=>ws[XLSX.utils.encode_cell({r:r+rng.s.r,c:c+rng.s.c})];
+    const link=(r,c)=>{
+      if(c<0)return "";
+      const v=String(aoa[r][c]??"").trim();
+      if(/^https?:/i.test(v))return v;
+      return cellAt(r,c)?.l?.Target||v;
+    };
+    const numAt=(row,c)=>{
+      const v=row[c];
+      if(v===""||v==null)return null;
+      if(typeof v==="string"&&!/\d/.test(v))return null;
+      return toNum(v);
+    };
+    const txt=v=>{const s=String(v??"").trim();return /^\d+\.0+$/.test(s)?s.replace(/\.0+$/,""):s};
+    let n=0;
+    for(let r=hr+1;r<aoa.length;r++){
+      const row=aoa[r]||[];
+      const name=String(row[cName]??"").trim();
+      if(!name)continue;
+      const o={vendor,storage,sort_order:++n,name,
+        sku_id:cSku>=0?txt(row[cSku]):"",barcode:cBar>=0?txt(row[cBar]):"",
+        coupang_url:link(r,cCpUrl),store_url:link(r,cStoreUrl)};
+      if(cBox>=0)o.per_box=numAt(row,cBox);
+      if(cSupply>=0)o.supply_price=numAt(row,cSupply);
+      if(cSale>=0)o.sale_price=numAt(row,cSale);
+      if(cDisc>=0)o.discount_price=numAt(row,cDisc);
+      if(cStore>=0)o.store_price=numAt(row,cStore);
+      rows.push(o);
+    }
+    if(n)sheets.push(`${sn} ${n}개`);
+  }
+  // 엑셀 안에서 SKU ID가 겹치는 행은 SKU로 찾지 않음 (서로 덮어쓰지 않게)
+  const cnt={};for(const r of rows)if(r.sku_id)cnt[r.sku_id]=(cnt[r.sku_id]||0)+1;
+  const dupSkus=Object.keys(cnt).filter(k=>cnt[k]>1);
+  for(const r of rows)if(r.sku_id&&cnt[r.sku_id]>1)r.sku_dup=true;
+  return {rows,sheets,dupSkus};
+}
+
+// 판매가 엑셀 내보내기 — 원래 판매링크 엑셀과 같은 칸 구성 (시트 = 업체(냉장/냉동))
+function downloadPriceXlsx(items){
+  const groups=new Map();
+  for(const p of sortPriceItems(items)){const k=priceSheetKey(p);if(!groups.has(k))groups.set(k,[]);groups.get(k).push(p)}
+  const wb=XLSX.utils.book_new();
+  const HDR=["No.","SKU ID","상품명/옵션/BARCODE","바코드","Box 내 SKU 수량","상품판매링크","공급가","판매가","현재 할인가","할인액","스마트 스토어 판매링크","판매가"];
+  const bd={style:"thin",color:{rgb:"BFBFBF"}};
+  const border={top:bd,bottom:bd,left:bd,right:bd};
+  const used=new Set();
+  for(const list of groups.values()){
+    const aoa=[HDR];
+    list.forEach((p,i)=>{
+      const disc=p.discount_price!=null?Number(p.discount_price):(p.sale_price!=null?Number(p.sale_price):null);
+      aoa.push([i+1,p.sku_id&&/^\d+$/.test(p.sku_id)?Number(p.sku_id):(p.sku_id||""),p.name,p.barcode&&/^\d{1,15}$/.test(p.barcode)?Number(p.barcode):(p.barcode||""),
+        p.per_box!=null?Number(p.per_box):"",p.coupang_url||"",p.supply_price!=null?Number(p.supply_price):"",
+        p.sale_price!=null?Number(p.sale_price):"",disc!=null?disc:"","",p.store_url||"",p.store_price!=null?Number(p.store_price):""]);
+    });
+    const ws=XLSX.utils.aoa_to_sheet(aoa);
+    for(let r=0;r<aoa.length;r++)for(let c=0;c<HDR.length;c++){
+      const a=XLSX.utils.encode_cell({r,c});
+      if(!ws[a])ws[a]={t:"s",v:""};
+      const cell=ws[a];
+      if(r===0){cell.s={font:{bold:true,name:"맑은 고딕",sz:10},fill:{fgColor:{rgb:"F1F5F9"}},alignment:{horizontal:"center",vertical:"center",wrapText:true},border};continue}
+      cell.s={font:{name:"맑은 고딕",sz:10},border,alignment:{vertical:"center",horizontal:c===2||c===5||c===10?"left":"center"}};
+      if(c===1||c===3)cell.z="0";
+      if([6,7,8,9,11].includes(c)&&cell.t==="n")cell.z="#,##0";
+      if((c===5||c===10)&&/^https?:/i.test(String(cell.v))){cell.l={Target:String(cell.v)};cell.s.font={...cell.s.font,color:{rgb:"0563C1"},underline:true}}
+    }
+    for(let r=1;r<aoa.length;r++){
+      if(aoa[r][7]===""||aoa[r][8]==="")continue;
+      ws[XLSX.utils.encode_cell({r,c:9})]={t:"n",f:`I${r+1}-H${r+1}`,v:aoa[r][8]-aoa[r][7],z:"#,##0;[Red]-#,##0",s:{font:{name:"맑은 고딕",sz:10},border,alignment:{horizontal:"center",vertical:"center"}}};
+    }
+    ws["!cols"]=[{wch:5},{wch:11},{wch:52},{wch:15},{wch:8},{wch:40},{wch:9},{wch:9},{wch:10},{wch:9},{wch:40},{wch:9}];
+    let name=priceSheetName(list[0]).replace(/[\[\]:*?\/\\]/g,"").slice(0,31)||"시트";
+    let base=name,k=2;while(used.has(name))name=(base.slice(0,28)+"_"+(k++));
+    used.add(name);
+    XLSX.utils.book_append_sheet(wb,ws,name);
+  }
+  if(!wb.SheetNames.length)XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([HDR]),"판매가");
+  XLSX.writeFile(wb,`판매가_${todayYmd()}.xlsx`);
+}
+
+// 북마크 버튼 코드: 쿠팡/스마트스토어 상품 페이지에서 가격을 읽어 이 페이지(?pricecap=)를 작은 창으로 염
+function priceBookmarklet(base){
+  const code=`(function(){var h=location.hostname,u=location.href;
+function pk(t){t=String(t||"");var m=t.match(/(\\d{1,3}(?:,\\d{3})+|\\d{3,})\\s*원/)||t.match(/\\d{1,3}(?:,\\d{3})+|\\d{4,}/);return m?Number(String(m[1]||m[0]).replace(/,/g,"")):null}
+function q(ss){for(var i=0;i<ss.length;i++){var e=document.querySelector(ss[i]);if(e){var v=pk(e.textContent);if(v)return v}}return null}
+var ld=null;document.querySelectorAll('script[type="application/ld+json"]').forEach(function(s){try{[].concat(JSON.parse(s.textContent)).forEach(function(o){var f=[].concat((o&&o.offers)||[])[0];if(f&&f.price&&ld==null)ld=Number(String(f.price).replace(/[^0-9.]/g,""))||null})}catch(e){}});
+var site="",sale=null,orig=null,html=document.documentElement.innerHTML;
+if(/coupang\\.com/.test(h)){site="coupang";sale=q([".sales-price-amount",".sales-price .price-amount",".prod-sale-price .total-price",".final-price-amount",".final-price .price-amount",".prod-coupon-price .total-price",".total-price"])||ld;orig=q([".original-price-amount",".original-price .price-amount",".prod-origin-price .origin-price",".origin-price"]);}
+else if(/naver\\.com/.test(h)){site="store";var a=html.match(/"discountedSalePrice"\\s*:\\s*(\\d+)/),b=html.match(/"salePrice"\\s*:\\s*(\\d+)/);sale=(a&&Number(a[1]))||ld||(b&&Number(b[1]));orig=b?Number(b[1]):null;}
+else{alert("쿠팡 또는 스마트스토어 상품 페이지에서 눌러 주세요");return}
+var d={site:site,url:u,sale:sale,orig:orig,title:document.title.slice(0,120)};
+var w=window.open(${JSON.stringify(base)}+"?pricecap="+encodeURIComponent(JSON.stringify(d)),"olpricecap","width=560,height=760");
+if(!w)alert("팝업이 차단되었습니다. 이 사이트의 팝업을 허용해 주세요.")})()`;
+  return "javascript:"+encodeURIComponent(code.replace(/\n/g,""));
+}
+
+// 표 안 가격 칸: 클릭 → 숫자 입력 → Enter/바깥 클릭 저장, Esc 취소, 비우면 없음
+function PriceCell({value,onSave,bold,color}){
+  const[ed,setEd]=useState(false);const[v,setV]=useState("");
+  const doneRef=useRef(false);
+  const start=()=>{doneRef.current=false;setV(value==null?"":String(Number(value)));setEd(true)};
+  const commit=async()=>{
+    if(doneRef.current)return;doneRef.current=true;
+    const s=v.replace(/[,\s원]/g,"");
+    const n=s===""?null:Number(s);
+    setEd(false);
+    if(s!==""&&(!isFinite(n)||n<0))return;
+    if(n===(value==null?null:Number(value)))return;
+    await onSave(n);
+  };
+  if(ed)return <input autoFocus className="fz-qty-in" style={{width:92,fontSize:13}} inputMode="numeric" value={v}
+    onChange={e=>setV(e.target.value)} onBlur={commit}
+    onKeyDown={e=>{if(e.key==="Enter")commit();else if(e.key==="Escape"){doneRef.current=true;setEd(false)}}}/>;
+  return <button className="fz-qty-btn" style={{fontWeight:bold?800:600,color:color||"inherit",fontVariantNumeric:"tabular-nums"}} onClick={start} title="클릭해서 수정">{fmtWon(value)}</button>;
+}
+// 최근 14일 안에 바뀐 가격 표시 (▲ 오름 빨강 / ▼ 내림 파랑)
+function ChangeMark({h}){
+  if(!h||h.old_value==null||h.new_value==null)return null;
+  const d=Number(h.new_value)-Number(h.old_value);
+  if(!d)return null;
+  const when=fmtMd(fmtYmd(new Date(h.created_at)));
+  return <span title={`${when} ${fmtWon(h.old_value)} → ${fmtWon(h.new_value)} (${HIST_SRC[h.source]||h.source})`}
+    style={{fontSize:10,fontWeight:700,color:d>0?"#ef4444":"#3b82f6",marginLeft:4,whiteSpace:"nowrap"}}>{d>0?"▲":"▼"}{fmtWon(Math.abs(d))}</span>;
+}
+
+function PriceForm({adminHash,initial,vendors,history,onCancel,onSaved}){
+  const isNew=!initial?.id;
+  const[f,setF]=useState(()=>({vendor:initial?.vendor||vendors[0]||"",storage:initial?.storage||"chilled",name:initial?.name||"",
+    sku_id:initial?.sku_id||"",barcode:initial?.barcode||"",per_box:initial?.per_box??"",coupang_url:initial?.coupang_url||"",
+    store_url:initial?.store_url||"",supply_price:initial?.supply_price??"",sale_price:initial?.sale_price??"",
+    discount_price:initial?.discount_price??"",store_price:initial?.store_price??"",memo:initial?.memo||""}));
+  const[err,setErr]=useState("");const[busy,setBusy]=useState(false);
+  const set=(k,v)=>setF(o=>({...o,[k]:v}));
+  const save=async()=>{
+    if(!f.name.trim()){setErr("상품명은 필수입니다.");return}
+    setBusy(true);setErr("");
+    try{
+      const row={...f};
+      for(const k of["per_box","supply_price","sale_price","discount_price","store_price"])row[k]=String(row[k]??"").replace(/[,\s원]/g,"");
+      await rpc("ol_upsert_price",{p_admin_hash:adminHash,p_id:initial?.id||null,p_row:row});
+      onSaved();
+    }catch(e){setErr(priceErr(e));setBusy(false)}
+  };
+  const inp=(k,label,props={})=><div><div className="ol-label">{label}</div><input className="ol-input" value={f[k]} onChange={e=>set(k,e.target.value)} {...props}/></div>;
+  const hist=(history||[]).filter(h=>initial?.id&&h.price_id===initial.id).slice(0,12);
+  return <div>
+    <h3 style={{margin:"0 0 14px",fontSize:17}}>{isNew?"+ 판매 상품 추가":"판매 상품 수정"}</h3>
+    <div className="ol-grid">
+      <div><div className="ol-label">업체</div><input className="ol-input" list="ol-price-vendors" value={f.vendor} onChange={e=>set("vendor",e.target.value)} placeholder="예: 고급진"/>
+        <datalist id="ol-price-vendors">{vendors.map(v=><option key={v} value={v}/>)}</datalist></div>
+      <div><div className="ol-label">보관</div><div className="ol-chips">
+        <button className={f.storage==="chilled"?"on":""} onClick={()=>set("storage","chilled")}>🧊 냉장</button>
+        <button className={f.storage==="frozen"?"on":""} onClick={()=>set("storage","frozen")}>❄ 냉동</button></div></div>
+    </div>
+    <div style={{marginBottom:12}}>{inp("name","상품명 *")}</div>
+    <div className="ol-grid">{inp("sku_id","SKU ID")}{inp("barcode","바코드")}{inp("per_box","Box 내 수량",{inputMode:"numeric"})}</div>
+    <div className="ol-grid">{inp("supply_price","공급가",{inputMode:"numeric"})}{inp("sale_price","판매가",{inputMode:"numeric"})}{inp("discount_price","현재 할인가 (없으면 비움)",{inputMode:"numeric"})}{inp("store_price","스마트스토어 판매가",{inputMode:"numeric"})}</div>
+    <div style={{marginBottom:12}}>{inp("coupang_url","쿠팡 판매링크",{placeholder:"https://www.coupang.com/vp/products/..."})}</div>
+    <div style={{marginBottom:12}}>{inp("store_url","스마트스토어 판매링크",{placeholder:"https://smartstore.naver.com/..."})}</div>
+    <div style={{marginBottom:12}}>{inp("memo","메모")}</div>
+    {hist.length>0&&<div className="ol-card" style={{padding:12}}>
+      <div style={{fontSize:12,fontWeight:700,marginBottom:6}}>🧾 이 상품 가격 변경 이력</div>
+      {hist.map(h=><div key={h.id} style={{fontSize:12,display:"flex",gap:8,padding:"3px 0",borderTop:"1px dashed var(--div)"}}>
+        <span style={{color:"var(--muted)",width:92}}>{fmtYmd(new Date(h.created_at))}</span>
+        <span style={{width:60}}>{HIST_FIELD[h.field]||h.field}</span>
+        <span>{fmtWon(h.old_value)} → <b>{fmtWon(h.new_value)}</b></span>
+        <span style={{marginLeft:"auto",color:"var(--muted)"}}>{HIST_SRC[h.source]||h.source}</span>
+      </div>)}
+    </div>}
+    {err&&<div className="ol-err">{err}</div>}
+    <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
+      <button className="ol-btn ol-btn-secondary" onClick={onCancel}>취소</button>
+      <button className="ol-btn ol-btn-primary" disabled={busy} onClick={save}>{busy?"저장 중…":"저장"}</button>
+    </div>
+  </div>;
+}
+
+function BookmarkletHelp({onClose}){
+  const base=location.origin+location.pathname;
+  const href=useMemo(()=>priceBookmarklet(base),[base]);
+  const[copied,setCopied]=useState(false);
+  const local=/^(localhost|127\.|\[::1\])/.test(location.hostname)||location.protocol==="file:";
+  return <div>
+    <h3 style={{margin:"0 0 10px",fontSize:17}}>🔖 가격 가져오기 버튼 설치</h3>
+    <div style={{fontSize:13,lineHeight:1.7,color:"var(--text)"}}>
+      쿠팡·스마트스토어는 외부 프로그램이 가격을 읽지 못하게 막혀 있어서, <b>내 브라우저에서 상품 페이지를 연 상태로</b> 버튼을 눌러 가져옵니다.
+      <ol style={{margin:"10px 0",paddingLeft:20}}>
+        <li>북마크바를 켭니다 (<b>Ctrl+Shift+B</b>)</li>
+        <li>아래 <b>💰 가격 저장</b> 버튼을 북마크바로 <b>끌어다 놓습니다</b></li>
+        <li>판매가 표에서 <b>쿠팡↗ / 스토어↗</b>를 눌러 상품 페이지를 엽니다</li>
+        <li>북마크바의 <b>💰 가격 저장</b>을 누르면 작은 창이 뜨고, 읽어 온 가격을 확인한 뒤 <b>Enter</b>로 저장합니다</li>
+      </ol>
+    </div>
+    <div style={{textAlign:"center",margin:"16px 0"}}>
+      <a ref={el=>{if(el)el.setAttribute("href",href)}} onClick={e=>{e.preventDefault();alert("클릭하지 말고 북마크바로 끌어다 놓으세요.")}} draggable="true"
+        style={{display:"inline-block",padding:"10px 22px",borderRadius:8,background:"linear-gradient(135deg,#06b6d4,#8b5cf6)",color:"#fff",fontWeight:800,textDecoration:"none",cursor:"grab"}}>💰 가격 저장</a>
+      <div style={{fontSize:11,color:"var(--muted)",marginTop:6}}>↑ 북마크바로 끌어다 놓기</div>
+    </div>
+    {local&&<div className="ol-warn" style={{fontSize:12}}>지금 주소가 내 컴퓨터(<b>{location.host}</b>)입니다. 버튼은 지금 연 주소로 저장 창을 띄우므로, 실제 사이트 주소에서 다시 설치하세요.</div>}
+    <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.6}}>
+      · 가격을 못 찾거나 잘못 읽으면 창에서 직접 고쳐서 저장하면 됩니다 (쿠폰가 대신 판매가를 쓰려면 숫자만 바꾸세요).<br/>
+      · 링크로 상품을 찾지 못하면 창에서 상품을 고르고, 그 링크를 상품에 저장할 수 있습니다.<br/>
+      · 끌어다 놓기가 안 되면 아무 페이지나 북마크로 추가한 뒤, 주소(URL) 칸에 아래 코드를 붙여 넣으세요.
+    </div>
+    <div style={{display:"flex",gap:8,marginTop:8}}>
+      <input className="ol-input" readOnly value={href} onFocus={e=>e.target.select()} style={{fontFamily:"monospace",fontSize:11}}/>
+      <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={async()=>{try{await navigator.clipboard.writeText(href);setCopied(true)}catch(e){}}}>{copied?"✓ 복사됨":"복사"}</button>
+    </div>
+    <div style={{textAlign:"right",marginTop:14}}><button className="ol-btn ol-btn-secondary" onClick={onClose}>닫기</button></div>
+  </div>;
+}
+
+function PriceView({adminHash}){
+  const[data,setData]=useState(null);
+  const[err,setErr]=useState("");
+  const[q,setQ]=useState("");
+  const[sheetF,setSheetF]=useState(()=>lsGet("ol-price-sheet","all"));
+  const[onlyDisc,setOnlyDisc]=useState(false);
+  const[editing,setEditing]=useState(null);
+  const[showBm,setShowBm]=useState(false);
+  const[msg,setMsg]=useState(null);
+  const[histOpen,setHistOpen]=useState(false);
+  const[delId,setDelId]=useState(null);
+  const fileRef=useRef(null);
+  useEffect(()=>lsSet("ol-price-sheet",sheetF),[sheetF]);
+
+  const load=useCallback(async()=>{
+    try{const d=await rpc("ol_list_prices",{p_admin_hash:adminHash});setData({items:d?.items||[],history:d?.history||[]});setErr("")}
+    catch(e){setErr(priceErr(e));setData(d=>d||{items:[],history:[]})}
+  },[adminHash]);
+  useEffect(()=>{load()},[load]);
+  // 가격 저장 창(다른 창)에서 저장하면 바로 새로고침 + 이 탭으로 돌아오면 새로고침
+  useEffect(()=>{
+    let bc=null;try{bc=new BroadcastChannel("ol-prices");bc.onmessage=()=>load()}catch(e){}
+    const f=()=>{if(document.visibilityState==="visible")load()};
+    document.addEventListener("visibilitychange",f);
+    return()=>{try{bc&&bc.close()}catch(e){}document.removeEventListener("visibilitychange",f)};
+  },[load]);
+
+  const items=data?.items||[];
+  const history=data?.history||[];
+  const vendors=useMemo(()=>[...new Set(items.map(p=>p.vendor).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"ko")),[items]);
+  const sheets=useMemo(()=>{
+    const m=new Map();
+    for(const p of sortPriceItems(items)){const k=priceSheetKey(p);if(!m.has(k))m.set(k,{key:k,name:priceSheetName(p),count:0});m.get(k).count++}
+    return [...m.values()];
+  },[items]);
+  const lastChange=useMemo(()=>{
+    const m={};const lim=Date.now()-14*86400000;
+    for(const h of history){if(new Date(h.created_at).getTime()<lim)continue;const k=h.price_id+"|"+h.field;if(!m[k])m[k]=h}
+    return m;
+  },[history]);
+  const filtered=useMemo(()=>{
+    const s=q.trim().toLowerCase();
+    return sortPriceItems(items).filter(p=>{
+      if(sheetF!=="all"&&priceSheetKey(p)!==sheetF)return false;
+      if(onlyDisc&&!isDiscounting(p))return false;
+      if(!s)return true;
+      return [p.name,p.sku_id,p.barcode,p.vendor,p.memo].some(x=>String(x||"").toLowerCase().includes(s));
+    });
+  },[items,q,sheetF,onlyDisc]);
+  const groups=useMemo(()=>{
+    const m=new Map();
+    for(const p of filtered){const k=priceSheetKey(p);if(!m.has(k))m.set(k,{key:k,name:priceSheetName(p),storage:p.storage,list:[]});m.get(k).list.push(p)}
+    return [...m.values()];
+  },[filtered]);
+  const stats=useMemo(()=>({
+    total:items.length,disc:items.filter(isDiscounting).length,
+    today:items.filter(p=>daysAgo(p.price_checked_at)===0).length,
+    stale:items.filter(p=>{const d=daysAgo(p.price_checked_at);return d==null||d>7}).length,
+  }),[items]);
+
+  const setPrice=async(p,key,n)=>{
+    setData(d=>({...d,items:d.items.map(x=>x.id===p.id?{...x,[key]:n,price_checked_at:new Date().toISOString()}:x)}));
+    try{await rpc("ol_set_price_values",{p_admin_hash:adminHash,p_id:p.id,p_values:{[key]:n},p_source:"manual"})}
+    catch(e){setMsg({t:"err",s:priceErr(e)})}
+    load();
+  };
+  const onFile=async e=>{
+    const f=e.target.files?.[0];e.target.value="";
+    if(!f)return;
+    setMsg({t:"info",s:"엑셀 읽는 중…"});
+    try{
+      const {rows,sheets,dupSkus}=parsePriceWorkbook(await f.arrayBuffer());
+      if(!rows.length){setMsg({t:"err",s:"상품을 찾지 못했습니다 — 제목 행에 '상품명' 칸이 있어야 합니다."});return}
+      const res=await rpc("ol_import_prices",{p_admin_hash:adminHash,p_rows:rows});
+      setMsg({t:"ok",s:`✓ ${sheets.join(" · ")} — 새 상품 ${res?.inserted||0}개, 기존 상품 ${res?.updated||0}개 갱신 (가격 바뀜 ${res?.price_changes||0}건)`
+        +(dupSkus.length?` · ⚠ SKU ID가 겹치는 상품이 있습니다 (${dupSkus.join(", ")}) — 상품명으로 구분했으니 SKU를 확인해 주세요`:"")});
+      load();
+    }catch(err){setMsg({t:"err",s:priceErr(err)})}
+  };
+  const del=async p=>{
+    try{await rpc("ol_delete_price",{p_admin_hash:adminHash,p_id:p.id});setDelId(null);load()}
+    catch(e){setMsg({t:"err",s:priceErr(e)})}
+  };
+
+  if(!data)return <Loader/>;
+  return <>
+    <div className="ol-toolbar">
+      <button className="ol-btn ol-btn-primary" onClick={()=>setEditing({})}>+ 상품 추가</button>
+      <button className="ol-btn ol-btn-secondary" onClick={()=>fileRef.current?.click()}>📁 엑셀 가져오기</button>
+      <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{display:"none"}} onChange={onFile}/>
+      <button className="ol-btn ol-btn-secondary" disabled={!items.length} onClick={()=>downloadPriceXlsx(filtered.length&&(sheetF!=="all"||q||onlyDisc)?filtered:items)}>📥 엑셀 내보내기</button>
+      <button className="ol-btn ol-btn-secondary" onClick={()=>setShowBm(true)}>🔖 가격 가져오기 버튼</button>
+      <input className="ol-input" style={{maxWidth:240,marginLeft:"auto"}} placeholder="상품명·SKU·바코드 검색" value={q} onChange={e=>setQ(e.target.value)}/>
+    </div>
+    {err&&<div className="ol-warn">{err}</div>}
+    {msg&&<div className={msg.t==="err"?"ol-warn":"ol-ok"} style={{display:"flex",gap:8,alignItems:"center"}}><span style={{flex:1}}>{msg.s}</span><button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setMsg(null)}>닫기</button></div>}
+
+    {items.length>0&&<div className="fz-stats" style={{gridTemplateColumns:"repeat(4,1fr)"}}>
+      <div className={"fz-stat clickable"+(!onlyDisc&&sheetF==="all"?" on":"")} onClick={()=>{setOnlyDisc(false);setSheetF("all")}}><div className="k">판매 상품</div><div className="v">{stats.total}<small>개</small></div></div>
+      <div className={"fz-stat clickable"+(onlyDisc?" on":"")} onClick={()=>setOnlyDisc(v=>!v)}><div className="k">할인 중</div><div className="v" style={{color:"#ef4444"}}>{stats.disc}<small>개</small></div></div>
+      <div className="fz-stat"><div className="k">오늘 확인</div><div className="v" style={{color:"#16a34a"}}>{stats.today}<small>개</small></div></div>
+      <div className="fz-stat"><div className="k">7일 넘게 미확인</div><div className="v" style={{color:stats.stale?"#f59e0b":undefined}}>{stats.stale}<small>개</small></div></div>
+    </div>}
+
+    {sheets.length>1&&<div className="ol-chips" style={{marginBottom:12}}>
+      <button className={sheetF==="all"?"on":""} onClick={()=>setSheetF("all")}>전체 {items.length}</button>
+      {sheets.map(s=><button key={s.key} className={sheetF===s.key?"on":""} onClick={()=>setSheetF(s.key)}>{s.name} {s.count}</button>)}
+    </div>}
+
+    {items.length===0?<div className="ol-card" style={{textAlign:"center",padding:"36px 20px"}}>
+      <div style={{fontSize:32,marginBottom:8}}>💰</div>
+      <div style={{fontSize:14,fontWeight:700,marginBottom:6}}>등록된 판매 상품이 없습니다</div>
+      <div style={{fontSize:13,color:"var(--muted)",lineHeight:1.7}}>쓰고 계신 <b>판매링크 엑셀</b>(시트 이름 "업체(냉장)" / "업체(냉동)")을 <b>📁 엑셀 가져오기</b>로 올리면<br/>상품·링크·가격이 한 번에 등록됩니다.</div>
+    </div>:
+    groups.length===0?<Empty emoji="🔍" text="조건에 맞는 상품이 없습니다"/>:
+    groups.map(g=><div key={g.key} className="fz-group" style={{marginBottom:14}}>
+      <div className="fz-group-hd" style={{borderLeftColor:g.storage==="frozen"?"#3b82f6":"#06b6d4"}}>
+        <div className="fz-group-name">{g.name}</div>
+        <div style={{fontSize:12,color:"var(--muted)"}}>{g.list.length}개 · 할인 중 {g.list.filter(isDiscounting).length}개</div>
+      </div>
+      <div className="ol-scroll"><table className="ol-table" style={{minWidth:1080}}>
+        <thead><tr><th className="center">No</th><th>상품명</th><th className="right">입수</th><th className="right">공급가</th><th className="right">판매가</th><th className="right">현재 할인가</th><th className="right">할인액</th><th className="right">스토어가</th><th className="center">확인</th><th className="center">링크</th><th></th></tr></thead>
+        <tbody>{g.list.map((p,i)=>{
+          const disc=isDiscounting(p);
+          const dAmt=disc?Number(p.discount_price)-Number(p.sale_price):0;
+          const ago=daysAgo(p.price_checked_at);
+          return <tr key={p.id}>
+            <td className="center" style={{color:"var(--muted)",fontSize:12}}>{i+1}</td>
+            <td style={{minWidth:280}}>
+              <div style={{fontWeight:600,wordBreak:"keep-all"}}>{p.name}</div>
+              <div style={{fontSize:11,color:"var(--muted)",marginTop:2,fontFamily:"monospace"}}>{[p.sku_id&&"SKU "+p.sku_id,p.barcode].filter(Boolean).join(" · ")}{p.memo&&<span style={{fontFamily:"inherit"}}> · {p.memo}</span>}</div>
+            </td>
+            <td className="right">{p.per_box!=null?fmtNum(p.per_box):"–"}</td>
+            <td className="right" style={{whiteSpace:"nowrap"}}><PriceCell value={p.supply_price} onSave={n=>setPrice(p,"supply_price",n)}/><ChangeMark h={lastChange[p.id+"|supply"]}/></td>
+            <td className="right" style={{whiteSpace:"nowrap"}}><PriceCell value={p.sale_price} onSave={n=>setPrice(p,"sale_price",n)}/><ChangeMark h={lastChange[p.id+"|sale"]}/></td>
+            <td className="right" style={{whiteSpace:"nowrap",background:disc?"rgba(239,68,68,.06)":undefined}}><PriceCell value={p.discount_price} bold color={disc?"#ef4444":undefined} onSave={n=>setPrice(p,"discount_price",n)}/><ChangeMark h={lastChange[p.id+"|discount"]}/></td>
+            <td className="right" style={{whiteSpace:"nowrap",fontSize:12,color:disc?"#ef4444":"var(--dimmer)",fontWeight:disc?700:400}}>{disc?<>{fmtWon(dAmt)}<div style={{fontSize:10,fontWeight:500}}>{(dAmt/Number(p.sale_price)*100).toFixed(1)}%</div></>:"–"}</td>
+            <td className="right" style={{whiteSpace:"nowrap"}}><PriceCell value={p.store_price} onSave={n=>setPrice(p,"store_price",n)}/><ChangeMark h={lastChange[p.id+"|store"]}/></td>
+            <td className="center" style={{fontSize:11,whiteSpace:"nowrap",color:ago==null?"var(--dimmer)":ago===0?"#16a34a":ago>7?"#f59e0b":"var(--muted)",fontWeight:ago===0?700:400}}
+              title={p.price_checked_at?new Date(p.price_checked_at).toLocaleString("ko-KR"):"확인 기록 없음"}>{ago==null?"–":ago===0?"오늘":`${ago}일 전`}</td>
+            <td className="center" style={{whiteSpace:"nowrap"}}>
+              {p.coupang_url?<a className="ol-btn ol-btn-secondary ol-btn-sm" style={{textDecoration:"none",marginRight:4}} href={p.coupang_url} target="_blank" rel="noopener noreferrer">쿠팡↗</a>:<span style={{color:"var(--dimmer)",fontSize:11,marginRight:4}}>쿠팡 –</span>}
+              {p.store_url?<a className="ol-btn ol-btn-secondary ol-btn-sm" style={{textDecoration:"none"}} href={p.store_url} target="_blank" rel="noopener noreferrer">스토어↗</a>:null}
+            </td>
+            <td className="right" style={{whiteSpace:"nowrap"}}>
+              {delId===p.id?<>
+                <span style={{fontSize:12,marginRight:6}}>삭제할까요?</span>
+                <button className="ol-btn ol-btn-danger ol-btn-sm" style={{marginRight:4}} onClick={()=>del(p)}>삭제</button>
+                <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setDelId(null)}>취소</button>
+              </>:<>
+                <button className="ol-btn ol-btn-secondary ol-btn-sm" style={{marginRight:4}} onClick={()=>setEditing(p)}>수정</button>
+                <button className="ol-btn ol-btn-danger ol-btn-sm" onClick={()=>setDelId(p.id)}>🗑</button>
+              </>}
+            </td>
+          </tr>})}</tbody>
+      </table></div>
+    </div>)}
+
+    {items.length>0&&<div style={{fontSize:12,color:"var(--muted)",margin:"4px 0 14px",lineHeight:1.6}}>
+      가격 숫자를 <b>클릭</b>하면 바로 고칠 수 있습니다 (Enter 저장 · Esc 취소 · 비우면 없음). 현재 할인가가 판매가보다 낮을 때만 할인으로 표시하고, 최근 14일 안에 바뀐 가격은 ▲▼로 표시됩니다.
+    </div>}
+
+    {history.length>0&&<div className="ol-card" style={{padding:0}}>
+      <div style={{padding:"12px 16px",cursor:"pointer",fontWeight:700,fontSize:14,display:"flex",justifyContent:"space-between"}} onClick={()=>setHistOpen(o=>!o)}>
+        <span>🧾 가격 변경 이력 <span style={{fontSize:12,color:"var(--muted)",fontWeight:500}}>(최근 180일 · {history.length}건)</span></span><span>{histOpen?"▲":"▼"}</span>
+      </div>
+      {histOpen&&<div className="ol-scroll" style={{borderTop:"1px solid var(--div2)"}}><table className="ol-table" style={{minWidth:640}}>
+        <thead><tr><th>일시</th><th>상품</th><th>항목</th><th className="right">이전</th><th className="right">변경</th><th className="right">차이</th><th>방법</th></tr></thead>
+        <tbody>{history.slice(0,200).map(h=>{const d=h.old_value!=null&&h.new_value!=null?Number(h.new_value)-Number(h.old_value):null;
+          return <tr key={h.id}>
+            <td style={{fontSize:12,whiteSpace:"nowrap"}}>{new Date(h.created_at).toLocaleString("ko-KR",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"})}</td>
+            <td style={{fontSize:12}}>{h.name}</td>
+            <td style={{fontSize:12}}>{HIST_FIELD[h.field]||h.field}</td>
+            <td className="right">{fmtWon(h.old_value)}</td>
+            <td className="right" style={{fontWeight:700}}>{fmtWon(h.new_value)}</td>
+            <td className="right" style={{color:d>0?"#ef4444":d<0?"#3b82f6":"var(--muted)",fontSize:12}}>{d==null?"–":(d>0?"+":"")+fmtWon(d)}</td>
+            <td style={{fontSize:12,color:"var(--muted)"}}>{HIST_SRC[h.source]||h.source}</td>
+          </tr>})}</tbody>
+      </table></div>}
+    </div>}
+
+    {editing&&<Modal lg onClose={()=>setEditing(null)}><PriceForm adminHash={adminHash} initial={editing} vendors={vendors} history={history} onCancel={()=>setEditing(null)} onSaved={()=>{setEditing(null);load()}}/></Modal>}
+    {showBm&&<Modal onClose={()=>setShowBm(false)}><BookmarkletHelp onClose={()=>setShowBm(false)}/></Modal>}
+  </>;
+}
+
+// 북마크 버튼이 연 작은 창: 읽어 온 가격 확인 → 저장
+function PriceCapture({payload}){
+  const isStore=payload.site==="store";
+  const[items,setItems]=useState(null);
+  const[err,setErr]=useState("");
+  const[selId,setSelId]=useState("");
+  const[matched,setMatched]=useState([]);
+  const[q,setQ]=useState("");
+  const[saveLink,setSaveLink]=useState(false);
+  const[vals,setVals]=useState(()=>isStore?{store_price:payload.sale??""}:{sale_price:payload.orig??payload.sale??"",discount_price:payload.sale??""});
+  const[state,setState]=useState(""); // "" | saving | done
+  useEffect(()=>{applyTheme(getStoredTheme())},[]);
+  useEffect(()=>{(async()=>{
+    try{
+      const d=await rpc("ol_list_prices",{p_admin_hash:""});
+      const its=sortPriceItems(d?.items||[]);
+      setItems(its);
+      const m=matchCapture(its,payload.url,payload.site);
+      setMatched(m);
+      if(m.length===1)setSelId(String(m[0].id));
+      if(!m.length)setSaveLink(true);
+    }catch(e){setErr(priceErr(e));setItems([])}
+  })()},[]);
+  const sel=items?.find(p=>String(p.id)===selId);
+  const options=useMemo(()=>{
+    if(!items)return [];
+    const s=q.trim().toLowerCase();
+    const base=matched.length>1&&!s?matched:items;
+    return s?base.filter(p=>[p.name,p.sku_id,p.barcode].some(x=>String(x||"").toLowerCase().includes(s))):base;
+  },[items,matched,q]);
+  const save=async()=>{
+    if(!sel){setErr("상품을 고르세요.");return}
+    const out={};
+    for(const k in vals){const s=String(vals[k]??"").replace(/[,\s원]/g,"");out[k]=s===""?null:Number(s)}
+    setState("saving");setErr("");
+    try{
+      if(saveLink)await rpc("ol_upsert_price",{p_admin_hash:"",p_id:sel.id,p_row:isStore?{store_url:payload.url}:{coupang_url:payload.url}});
+      await rpc("ol_set_price_values",{p_admin_hash:"",p_id:sel.id,p_values:out,p_source:"capture"});
+      try{const bc=new BroadcastChannel("ol-prices");bc.postMessage("saved");bc.close()}catch(e){}
+      setState("done");
+      setTimeout(()=>{try{window.close()}catch(e){}},1300);
+    }catch(e){setErr(priceErr(e));setState("")}
+  };
+  const field=(k,label,cur)=><div style={{marginBottom:10}}>
+    <div className="ol-label">{label} {sel&&<span style={{color:"var(--dimmer)"}}>· 저장된 값 {fmtWon(cur)}</span>}</div>
+    <input className="ol-input" style={{fontSize:20,fontWeight:800,padding:"10px 12px"}} inputMode="numeric" value={vals[k]??""}
+      onChange={e=>setVals(v=>({...v,[k]:e.target.value}))} onKeyDown={e=>{if(e.key==="Enter")save()}} autoFocus={k!=="discount_price"&&!!sel}/>
+  </div>;
+  const noPrice=payload.sale==null&&payload.orig==null;
+  return <div style={{maxWidth:520,margin:"0 auto",padding:18,boxSizing:"border-box",minHeight:"100vh",background:"var(--bg)",color:"var(--text)"}}>
+    <div style={{fontSize:16,fontWeight:800,marginBottom:4}}>💰 {isStore?"스마트스토어":"쿠팡"} 가격 저장</div>
+    <div style={{fontSize:11,color:"var(--muted)",marginBottom:12,wordBreak:"break-all"}}>{payload.title||payload.url}</div>
+    {state==="done"?<div className="ol-ok" style={{fontSize:15,fontWeight:700,textAlign:"center",padding:20}}>✓ 저장됐습니다 — 창이 곧 닫힙니다</div>:
+    !items?<Loader/>:<>
+      {noPrice&&<div className="ol-warn" style={{fontSize:12}}>이 페이지에서 가격을 찾지 못했습니다. 화면의 가격을 보고 직접 입력해 주세요.</div>}
+      <div className="ol-label">상품</div>
+      {matched.length===1&&sel?<div className="ol-card" style={{padding:"10px 12px",marginBottom:12}}>
+        <div style={{fontWeight:700}}>{sel.name}</div>
+        <div style={{fontSize:11,color:"var(--muted)"}}>{priceSheetName(sel)}{sel.sku_id?" · SKU "+sel.sku_id:""} · 링크로 자동 찾음</div>
+      </div>:<div style={{marginBottom:12}}>
+        {matched.length===0&&<div style={{fontSize:12,color:"#f59e0b",marginBottom:6}}>이 링크로 등록된 상품이 없습니다 — 상품을 골라 주세요.</div>}
+        {matched.length>1&&<div style={{fontSize:12,color:"#f59e0b",marginBottom:6}}>같은 상품 페이지에 옵션이 {matched.length}개 있습니다 — 골라 주세요.</div>}
+        <input className="ol-input" placeholder="상품명·SKU 검색" value={q} onChange={e=>setQ(e.target.value)} style={{marginBottom:6}}/>
+        <select className="ol-input" size={Math.min(8,Math.max(3,options.length))} value={selId} onChange={e=>setSelId(e.target.value)}>
+          {options.map(p=><option key={p.id} value={p.id}>[{priceSheetName(p)}] {p.name}</option>)}
+        </select>
+        {matched.length===0&&<label style={{display:"flex",gap:6,alignItems:"center",fontSize:12,marginTop:6,cursor:"pointer"}}>
+          <input type="checkbox" checked={saveLink} onChange={e=>setSaveLink(e.target.checked)}/> 이 페이지 주소를 고른 상품의 {isStore?"스토어":"쿠팡"} 링크로 저장
+        </label>}
+      </div>}
+      {isStore?field("store_price","스마트스토어 판매가",sel?.store_price):<>
+        {field("sale_price","판매가 (정가)",sel?.sale_price)}
+        {field("discount_price","현재 할인가",sel?.discount_price)}
+        <div style={{fontSize:11,color:"var(--muted)",marginBottom:10}}>할인이 없으면 두 칸을 같은 값으로 두면 됩니다. 쿠폰가가 잡혔으면 숫자를 고쳐 주세요.</div>
+      </>}
+      {err&&<div className="ol-err" style={{marginBottom:8}}>{err}</div>}
+      <div style={{display:"flex",gap:8}}>
+        <button className="ol-btn ol-btn-secondary" onClick={()=>window.close()}>닫기</button>
+        <button className="ol-btn ol-btn-primary" style={{flex:1,fontSize:15}} disabled={!sel||state==="saving"} onClick={save}>{state==="saving"?"저장 중…":"저장 (Enter)"}</button>
+      </div>
+    </>}
+  </div>;
 }
 
 // ═══════════════════════════════════════════
@@ -3219,7 +3782,13 @@ function App(){
   </div>;
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+// ?pricecap=… → 북마크 버튼이 연 가격 저장 창
+const capPayload=(()=>{
+  const s=new URLSearchParams(location.search).get("pricecap");
+  if(s==null)return null;
+  try{const o=JSON.parse(s);return o&&typeof o==="object"?o:{}}catch(e){return {}}
+})();
+ReactDOM.createRoot(document.getElementById("root")).render(capPayload?<PriceCapture payload={capPayload}/>:<App/>);
 </script>
 </body>
 </html>
