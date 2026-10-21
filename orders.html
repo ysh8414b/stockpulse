@@ -2213,7 +2213,7 @@ function ShipSheetPreview({data,date,dateTo,prefix,print,refCb}){
   const cell={padding:"8px 12px",borderBottom:"1px solid #e5e7eb",fontVariantNumeric:"tabular-nums"};
   const num={...cell,textAlign:"center"};
   // print: 이미지 저장용 사본 — 바깥 테두리 없이 고정 폭
-  return <div ref={refCb} className="ol-sheet" style={{padding:print?"24px 22px":"22px 24px",fontSize:14,lineHeight:1.4,...(print?{border:"none",borderRadius:0,margin:0,overflow:"visible"}:{})}}>
+  return <div ref={refCb} className="ol-sheet" style={{padding:print?0:"22px 24px",fontSize:14,lineHeight:1.4,...(print?{border:"none",borderRadius:0,margin:0,overflow:"visible"}:{})}}>
     <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:12,flexWrap:"wrap",paddingBottom:12,borderBottom:"2px solid #111",marginBottom:18}}>
       <div style={{fontSize:24,fontWeight:900,letterSpacing:"-0.5px"}}>{shipTitle(prefix,date,dateTo)}</div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -2232,7 +2232,7 @@ function ShipSheetPreview({data,date,dateTo,prefix,print,refCb}){
         </div>
         {sec.groups.map((g,gi)=>{
           const runs=runsOf(g.rows,r=>r.expiry);
-          return <div key={g.site} data-shipcut={gi>0?"1":undefined} data-shipsite={g.site} style={{border:"1px solid #d7dde5",borderLeft:`6px solid ${ac.main}`,borderRadius:8,marginBottom:16,overflow:"hidden"}}>
+          return <div key={g.site} data-shipcut="1" data-shipsite={g.site} style={{border:"1px solid #d7dde5",borderLeft:`6px solid ${ac.main}`,borderRadius:8,marginBottom:16,overflow:"hidden"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 14px",background:ac.soft,borderBottom:"1px solid #d7dde5"}}>
               <div style={{display:"flex",alignItems:"baseline",gap:10}}>
                 <span style={{fontSize:20,fontWeight:900,color:ac.main}}>{g.site}</span>
@@ -2250,7 +2250,7 @@ function ShipSheetPreview({data,date,dateTo,prefix,print,refCb}){
                 {g.rows.map((r,i)=>{
                   const run=runs.find(x=>x.start===i);
                   const dim=!r.qty;
-                  return <tr key={r.code+r.expiry} style={{color:dim?"#b6bcc6":"#111"}}>
+                  return <tr key={r.code+r.expiry} data-shipcut={noExp||run?"1":undefined} style={{color:dim?"#b6bcc6":"#111"}}>
                     <td style={{...cell,textAlign:"center",fontFamily:"'NanumSquare','Pretendard',sans-serif"}}>{boldDigits(shipNameOf(r.product),dim)}<span style={{color:dim?"#9ca3af":"#000",fontWeight:900,marginLeft:6,whiteSpace:"nowrap"}}>/ {r.per}ea</span></td>
                     <td style={num}>{r.qty?fmtNum(r.qty):"–"}</td>
                     <td style={{...num,fontWeight:800,background:dim?"transparent":"#fef9c3",color:r.partial?"#dc2626":dim?"#b6bcc6":"#111"}} title={r.partial?"입수량으로 나누어떨어지지 않음":""}>{r.qty?fmtBoxes(r.boxes):"–"}</td>
@@ -2346,13 +2346,58 @@ function downloadShipXlsx(data,date,prefix,vendor,dateTo){
   XLSX.writeFile(wb,`출고리스트_${date}${dateTo&&dateTo!==date?"~"+dateTo:dateTo?"_합계":""}${vendor?"_"+safe(vendor):""}.xlsx`);
 }
 
-// 이미지 저장 — 화면 밖에 고정 폭 사본을 그려 캡처 → PNG 한 장 (높이 제한 없음, 페이지 나눔 없음)
-const SHIP_PRINT_W=700;
+// 이미지 저장 — 화면 밖에 고정 폭 사본을 그려 캡처 → PNG 한 장 (냉동재고 쪽 저장에서도 사용)
 async function saveShipPng(el,fileName){
   if(document.fonts&&document.fonts.ready)await document.fonts.ready;
   const canvas=await html2canvas(el,{scale:3,backgroundColor:"#ffffff",useCORS:true});
   const a=document.createElement("a");
   a.download=fileName+".png";a.href=canvas.toDataURL("image/png");a.click();
+}
+
+// 출고장 A4 세로 — 794×1123px(96dpi) 종이, 여백 38px(10mm), 내용 폭 718px
+const SHIP_A4={W:794,H:1123,M:38,FOOT:22,S:3};
+const SHIP_PRINT_W=SHIP_A4.W-SHIP_A4.M*2;
+// 사본을 한 번 캡처한 뒤 data-shipcut 위치(섹션·층 카드·줄 경계)에서 잘라 A4 쪽들로 나눔
+// 조금 넘치는 정도(1.2쪽 이하)는 나누지 않고 한 쪽에 축소해서 맞춤
+async function shipA4Pages(el){
+  if(document.fonts&&document.fonts.ready)await document.fonts.ready;
+  const{W,H,M,FOOT,S}=SHIP_A4;
+  const src=await html2canvas(el,{scale:S,backgroundColor:"#ffffff",useCORS:true});
+  const top=el.getBoundingClientRect().top;
+  const total=el.scrollHeight;
+  const cuts=[...new Set([...el.querySelectorAll("[data-shipcut]")].map(n=>Math.round(n.getBoundingClientRect().top-top)))].filter(c=>c>0).sort((a,b)=>a-b);
+  const areaH=H-M*2-FOOT; // 쪽 번호 자리 제외
+  const slices=[];
+  if(total<=areaH*1.2)slices.push([0,total]);
+  else{
+    let start=0;
+    while(start<total-1){
+      const limit=start+areaH;
+      let end=total<=limit?total:Math.max(...cuts.filter(c=>c>start+areaH*0.3&&c<=limit),0);
+      if(!end)end=limit; // 자를 자리가 없으면 그냥 쪽 높이에서 자름
+      slices.push([start,end]);start=end;
+    }
+  }
+  return slices.map(([a,b],i)=>{
+    const pg=document.createElement("canvas");pg.width=W*S;pg.height=H*S;
+    const ctx=pg.getContext("2d");
+    ctx.fillStyle="#ffffff";ctx.fillRect(0,0,pg.width,pg.height);
+    const h=b-a,k=Math.min(1,(slices.length>1?areaH:H-M*2)/h);
+    const dw=SHIP_PRINT_W*k,dx=M+(SHIP_PRINT_W-dw)/2;
+    ctx.drawImage(src,0,a*S,src.width,h*S,dx*S,M*S,dw*S,h*k*S);
+    if(slices.length>1){
+      ctx.fillStyle="#6b7280";ctx.font=`${11*S}px Pretendard, sans-serif`;ctx.textAlign="center";
+      ctx.fillText(`${i+1} / ${slices.length}`,W*S/2,(H-M+4)*S);
+    }
+    return pg;
+  });
+}
+const downloadCanvas=(c,name)=>{const a=document.createElement("a");a.download=name+".png";a.href=c.toDataURL("image/png");a.click()};
+function shipPdf(pages,name){
+  const{jsPDF}=window.jspdf;
+  const pdf=new jsPDF({orientation:"portrait",unit:"mm",format:"a4"});
+  pages.forEach((c,i)=>{if(i)pdf.addPage();pdf.addImage(c.toDataURL("image/jpeg",0.95),"JPEG",0,0,210,297)});
+  pdf.save(name+".pdf");
 }
 
 function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrders}){
@@ -2417,6 +2462,8 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
   const partial=ordered.filter(r=>r.partial);
   const[saving,setSaving]=useState("");
   const[saveMsg,setSaveMsg]=useState("");
+  const[fmt,setFmt]=useState(()=>lsGet("ol-ship-fmt","png")==="pdf"?"pdf":"png");
+  useEffect(()=>lsSet("ol-ship-fmt",fmt),[fmt]);
   const printRef=useRef(null);
   const floorRefs=useRef({});
   // 층별 저장용: 층 하나씩만 담은 출고장 (제목·요약은 그 층 기준)
@@ -2437,13 +2484,23 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
       await new Promise(r=>setTimeout(r,50));
       const safe=x=>String(x).replace(/[\\/:*?"<>|]/g,"_");
       const base=`출고리스트_${isRange?(rFrom===rTo?rFrom+"_합계":rFrom+"~"+rTo):selDate}${vendor?"_"+safe(vendor):""}`;
-      if(kind==="all"){await saveShipPng(printRef.current,base);setSaveMsg("한 장으로 저장했습니다")}
-      else{
-        for(const f of selFloors){
-          await saveShipPng(floorRefs.current[f.key],`${base}_${safe(f.site)}`);
-          await new Promise(r=>setTimeout(r,300));
+      // 전체: 선택한 층을 이어서 A4 쪽으로 나눔 / 층별: 층마다 새 쪽에서 시작
+      const jobs=kind==="all"?[{el:printRef.current,name:base}]:selFloors.map(f=>({el:floorRefs.current[f.key],name:`${base}_${safe(f.site)}`}));
+      let count=0;
+      if(fmt==="pdf"){
+        const pages=[];
+        for(const j of jobs)pages.push(...await shipA4Pages(j.el));
+        shipPdf(pages,kind==="all"?base:base+"_층별");count=pages.length;
+        setSaveMsg(`A4 PDF ${count}쪽으로 저장했습니다`);
+      }else{
+        for(const j of jobs){
+          const pages=await shipA4Pages(j.el);
+          for(let i=0;i<pages.length;i++){
+            downloadCanvas(pages[i],pages.length>1?`${j.name}_${i+1}쪽`:j.name);count++;
+            await new Promise(r=>setTimeout(r,300));
+          }
         }
-        setSaveMsg(`층별로 ${selFloors.length}장 저장했습니다`);
+        setSaveMsg(`A4 이미지 ${count}장 저장했습니다`);
       }
     }catch(e){setSaveMsg("저장 실패: "+errMsg(e))}
     setSaving("");
@@ -2477,8 +2534,12 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
           </div>
         </div>
         <div className="ol-toolbar">
-          <button className="ol-btn ol-btn-primary" onClick={()=>save("all")} disabled={!selFloors.length||!!saving}>{saving==="all"?"저장 중…":"🖼 한 장으로 저장"}</button>
-          <button className="ol-btn ol-btn-secondary" onClick={()=>save("floor")} disabled={!selFloors.length||!!saving}>{saving==="floor"?"저장 중…":`🏭 층별로 저장 (${selFloors.length}장)`}</button>
+          <div className="ol-chips" title="A4 세로 용지 크기로 저장">
+            <button className={fmt==="png"?"on":""} onClick={()=>setFmt("png")}>🖼 PNG</button>
+            <button className={fmt==="pdf"?"on":""} onClick={()=>setFmt("pdf")}>📄 PDF</button>
+          </div>
+          <button className="ol-btn ol-btn-primary" onClick={()=>save("all")} disabled={!selFloors.length||!!saving}>{saving==="all"?"저장 중…":"A4로 저장 (이어서)"}</button>
+          <button className="ol-btn ol-btn-secondary" onClick={()=>save("floor")} disabled={!selFloors.length||!!saving}>{saving==="floor"?"저장 중…":`🏭 층별 A4로 저장 (${selFloors.length}층)`}</button>
           <button className="ol-btn ol-btn-secondary" onClick={()=>downloadShipXlsx(data,shipDate,prefix,vendor,shipTo)} disabled={!ordered.length}>📥 엑셀</button>
           {saveMsg&&<span style={{fontSize:12,color:saveMsg.startsWith("저장 실패")?"#ef4444":"#22c55e"}}>{saveMsg}</span>}
           <label className={"ol-check"+(showAll?" on":"")}><input type="checkbox" checked={showAll} onChange={e=>setShowAll(e.target.checked)}/>발주 없는 제품도 표시</label>
