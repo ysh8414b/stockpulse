@@ -2206,11 +2206,10 @@ const secShort=sec=>sec.title.replace("제품","");
 
 function ShipSheetPreview({data,date,dateTo,prefix,print,refCb}){
   const noExp=!!dateTo; // 기간 합계는 소비기한이 섞이므로 열 생략
-  const big=print?17:14; // 이미지 저장용은 제품명·수량만 1.2배
   const secs=shipSections(data);
   const secRows=sec=>sec.groups.flatMap(g=>g.rows);
   const total=secs.reduce((a,sec)=>a+sumBy(secRows(sec),"boxes"),0);
-  const cell={padding:print?"10px 8px":"8px 12px",borderBottom:"1px solid #e5e7eb",fontVariantNumeric:"tabular-nums"};
+  const cell={padding:"8px 12px",borderBottom:"1px solid #e5e7eb",fontVariantNumeric:"tabular-nums"};
   const num={...cell,textAlign:"center"};
   // print: 이미지 저장용 사본 — 바깥 테두리 없이 고정 폭
   return <div ref={refCb} className="ol-sheet" style={{padding:print?"24px 22px":"22px 24px",fontSize:14,lineHeight:1.4,...(print?{border:"none",borderRadius:0,margin:0,overflow:"visible"}:{})}}>
@@ -2240,8 +2239,8 @@ function ShipSheetPreview({data,date,dateTo,prefix,print,refCb}){
               </div>
               <span style={{padding:"4px 12px",borderRadius:16,background:ac.main,color:"#fff",fontWeight:800,fontSize:15}}>{fmtBoxes(sumBy(g.rows,"boxes"))}박스</span>
             </div>
-            <table style={{minWidth:print?0:600,width:"100%"}}>
-              <colgroup><col/><col style={{width:print?96:100}}/><col style={{width:print?88:90}}/>{!noExp&&<col style={{width:print?140:150}}/>}</colgroup>
+            <table style={{minWidth:600}}>
+              <colgroup><col/><col style={{width:100}}/><col style={{width:90}}/>{!noExp&&<col style={{width:150}}/>}</colgroup>
               <thead><tr style={{background:"#f8fafc",color:"#475569",fontSize:12}}>
                 <th style={{...cell,textAlign:"center"}}>제품명</th>
                 <th style={num}>총 팩수량</th><th style={num}>박스수량</th>{!noExp&&<th style={{...cell,textAlign:"center"}}>{sec.expLabel}</th>}
@@ -2251,9 +2250,9 @@ function ShipSheetPreview({data,date,dateTo,prefix,print,refCb}){
                   const run=runs.find(x=>x.start===i);
                   const dim=!r.qty;
                   return <tr key={r.code+r.expiry} style={{color:dim?"#b6bcc6":"#111"}}>
-                    <td style={{...cell,textAlign:"center",fontSize:big}}>{boldDigits(shipNameOf(r.product),dim)}<span style={{color:dim?"#9ca3af":"#000",fontWeight:900,marginLeft:6,whiteSpace:"nowrap"}}>/ {r.per}ea</span></td>
-                    <td style={{...num,fontSize:big}}>{r.qty?fmtNum(r.qty):"–"}</td>
-                    <td style={{...num,fontSize:big,fontWeight:800,background:dim?"transparent":"#fef9c3",color:r.partial?"#dc2626":dim?"#b6bcc6":"#111"}} title={r.partial?"입수량으로 나누어떨어지지 않음":""}>{r.qty?fmtBoxes(r.boxes):"–"}</td>
+                    <td style={{...cell,textAlign:"center"}}>{boldDigits(shipNameOf(r.product),dim)}<span style={{color:dim?"#9ca3af":"#000",fontWeight:900,marginLeft:6,whiteSpace:"nowrap"}}>/ {r.per}ea</span></td>
+                    <td style={num}>{r.qty?fmtNum(r.qty):"–"}</td>
+                    <td style={{...num,fontWeight:800,background:dim?"transparent":"#fef9c3",color:r.partial?"#dc2626":dim?"#b6bcc6":"#111"}} title={r.partial?"입수량으로 나누어떨어지지 않음":""}>{r.qty?fmtBoxes(r.boxes):"–"}</td>
                     {!noExp&&run&&<td rowSpan={run.len} style={{...cell,textAlign:"center",fontWeight:600,fontSize:13,borderLeft:"1px solid #e5e7eb",color:"#111"}}>{fmtExp(run.value)}</td>}
                   </tr>;
                 })}
