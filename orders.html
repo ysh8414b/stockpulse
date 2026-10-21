@@ -2206,7 +2206,7 @@ const secShort=sec=>sec.title.replace("제품","");
 
 function ShipSheetPreview({data,date,dateTo,prefix,print,refCb}){
   const noExp=!!dateTo; // 기간 합계는 소비기한이 섞이므로 열 생략
-  const big=print?21:14; // 이미지 저장용은 제품명·수량만 1.5배
+  const big=print?17:14; // 이미지 저장용은 제품명·수량만 1.2배
   const secs=shipSections(data);
   const secRows=sec=>sec.groups.flatMap(g=>g.rows);
   const total=secs.reduce((a,sec)=>a+sumBy(secRows(sec),"boxes"),0);
