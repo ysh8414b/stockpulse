@@ -482,11 +482,11 @@ CREATE TABLE IF NOT EXISTS ol_frozen_txns (
 CREATE INDEX IF NOT EXISTS idx_ol_frozen_txns_created ON ol_frozen_txns (created_at DESC);
 ALTER TABLE ol_frozen_txns ENABLE ROW LEVEL SECURITY;
 
--- 1년 지난 이력은 조회 때 자동 정리
+-- 2주 지난 이력은 조회 때 자동 정리
 CREATE OR REPLACE FUNCTION ol_list_frozen(p_admin_hash TEXT)
 RETURNS JSON AS $$
 BEGIN
-  DELETE FROM ol_frozen_txns WHERE created_at < now() - INTERVAL '365 days';
+  DELETE FROM ol_frozen_txns WHERE created_at < now() - INTERVAL '14 days';
   RETURN json_build_object(
     'lots', COALESCE((SELECT json_agg(row_to_json(l) ORDER BY l.expiry NULLS LAST, l.id) FROM ol_frozen_lots l), '[]'::json),
     'txns', COALESCE((SELECT json_agg(row_to_json(t) ORDER BY t.created_at DESC)

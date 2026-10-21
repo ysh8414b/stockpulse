@@ -2501,7 +2501,9 @@ const fzLoc=l=>(l.location||"").trim()||NO_LOC;
 const fzKey=l=>(l.product_code||"").trim()||"name:"+l.product_name;
 const locCmp=(a,b)=>a===NO_LOC?1:b===NO_LOC?-1:a.localeCompare(b,"ko",{numeric:true});
 const fzExpCmp=(a,b)=>String(a.expiry||"9999").localeCompare(String(b.expiry||"9999"));
-const fzNameCmp=(a,b)=>a.product_name.localeCompare(b.product_name,"ko",{numeric:true});
+// disp_name: 제품리스트에 연결된 제품은 "출고장용 이름(없으면 제품명) / 입수ea", 아니면 저장된 이름
+const fzName=l=>l.disp_name||l.product_name;
+const fzNameCmp=(a,b)=>fzName(a).localeCompare(fzName(b),"ko",{numeric:true});
 function fzErr(e){
   const s=String(e?.message||e||"");
   if(s.includes("ol_frozen")||s.includes("Could not find the function")||s.includes("PGRST202")||s.includes("PGRST205"))return "Supabase SQL Editor에서 setup_orders_frozen.sql 을 1회 실행해 주세요.";
@@ -2528,7 +2530,7 @@ function ExpiryBadge({exp}){
 function FrozenLotForm({adminHash,masters,initial,locations,onSaved,onCancel}){
   const isEdit=!!initial?.id;
   const products=useMemo(()=>[...masters.products].sort((a,b)=>(storageOf(a)==="frozen"?0:1)-(storageOf(b)==="frozen"?0:1)||a.name.localeCompare(b.name,"ko",{numeric:true})),[masters.products]);
-  const label=p=>`${p.name} (${p.code})`;
+  const label=p=>`${shipNameOf(p)} (${p.code})`;
   const[prodText,setProdText]=useState(()=>{
     if(!initial?.product_name)return "";
     const p=masters.products.find(x=>x.code===initial.product_code);
@@ -2612,7 +2614,7 @@ function FrozenActionForm({adminHash,type,lot,locations,onDone,onCancel}){
   return <>
     <h3 style={{margin:"0 0 14px",fontSize:17}}>{{in:"＋ ",out:"－ ",move:"⇄ "}[type]+title}</h3>
     <div className="fz-lot-sum">
-      <b>{lot.product_name}</b>
+      <b>{fzName(lot)}</b>
       <div style={{display:"flex",gap:14,flexWrap:"wrap",marginTop:6,fontSize:12,color:"var(--muted)",alignItems:"center"}}>
         <span>소비기한 <ExpiryBadge exp={lot.expiry}/></span>
         <span>📍 {fzLoc(lot)}</span>
@@ -2642,7 +2644,7 @@ function FrozenActionForm({adminHash,type,lot,locations,onDone,onCancel}){
 function downloadFrozenXlsx(lots){
   const sorted=[...lots].sort((a,b)=>fzNameCmp(a,b)||fzExpCmp(a,b)||locCmp(fzLoc(a),fzLoc(b)));
   const head=["제품코드","제품명","수량","단위","소비기한","남은 일수","상태","위치","입고일","메모"];
-  const rows=sorted.map(l=>[l.product_code||"",l.product_name,Number(l.qty||0),l.unit||"박스",l.expiry?String(l.expiry).slice(0,10):"",fzDays(l.expiry)??"",FZ_STATUS[fzStatus(l.expiry)].label,(l.location||"").trim(),l.in_date?String(l.in_date).slice(0,10):"",l.memo||""]);
+  const rows=sorted.map(l=>[l.product_code||"",fzName(l),Number(l.qty||0),l.unit||"박스",l.expiry?String(l.expiry).slice(0,10):"",fzDays(l.expiry)??"",FZ_STATUS[fzStatus(l.expiry)].label,(l.location||"").trim(),l.in_date?String(l.in_date).slice(0,10):"",l.memo||""]);
   const ws=XLSX.utils.aoa_to_sheet([head,...rows]);
   ws["!cols"]=[12,32,8,6,12,9,10,16,12,20].map(w=>({wch:w}));
   const bd={style:"thin",color:{rgb:"BBBBBB"}};
@@ -2658,8 +2660,8 @@ function downloadFrozenXlsx(lots){
 }
 
 function FrozenTab({adminHash,masters}){
-  const[lots,setLots]=useState([]);
-  const[txns,setTxns]=useState([]);
+  const[rawLots,setRawLots]=useState([]);
+  const[rawTxns,setRawTxns]=useState([]);
   const[loading,setLoading]=useState(true);
   const[err,setErr]=useState("");
   const[q,setQ]=useState("");
@@ -2675,13 +2677,16 @@ function FrozenTab({adminHash,masters}){
   const load=useCallback(async()=>{
     try{
       const d=await rpc("ol_list_frozen",{p_admin_hash:adminHash});
-      setLots(d?.lots||[]);setTxns(d?.txns||[]);setErr("");
+      setRawLots(d?.lots||[]);setRawTxns(d?.txns||[]);setErr("");
     }catch(e){setErr(fzErr(e))}
     setLoading(false);
   },[adminHash]);
   useEffect(()=>{load()},[load]);
 
   const prodMap=useMemo(()=>new Map(masters.products.map(p=>[p.code,p])),[masters.products]);
+  const withName=l=>{const p=l.product_code?prodMap.get(l.product_code):null;return p?{...l,disp_name:`${shipNameOf(p)} / ${p.per_box}ea`}:l};
+  const lots=useMemo(()=>rawLots.map(withName),[rawLots,prodMap]);
+  const txns=useMemo(()=>rawTxns.map(withName),[rawTxns,prodMap]);
   const locations=useMemo(()=>[...new Set(lots.map(l=>(l.location||"").trim()).filter(Boolean))].sort(locCmp),[lots]);
   const filtered=useMemo(()=>{
     const s=q.trim().toLowerCase();
@@ -2693,7 +2698,7 @@ function FrozenTab({adminHash,masters}){
       if(stF==="warn"&&!(st==="expired"||st==="soon"||st==="warn"))return false;
       if(!s)return true;
       const p=prodMap.get(l.product_code);
-      return [l.product_name,l.product_code,l.location,l.memo,p?.ship_name,p?.image_name].some(x=>String(x||"").toLowerCase().includes(s));
+      return [l.product_name,l.disp_name,l.product_code,l.location,l.memo,p?.ship_name,p?.image_name].some(x=>String(x||"").toLowerCase().includes(s));
     });
   },[lots,q,locF,stF,prodMap]);
 
@@ -2704,7 +2709,7 @@ function FrozenTab({adminHash,masters}){
 
   const byProduct=useMemo(()=>{
     const m=new Map();
-    for(const l of filtered){const k=fzKey(l);if(!m.has(k))m.set(k,{key:k,name:l.product_name,code:l.product_code,lots:[]});m.get(k).lots.push(l)}
+    for(const l of filtered){const k=fzKey(l);if(!m.has(k))m.set(k,{key:k,name:fzName(l),code:l.product_code,lots:[]});m.get(k).lots.push(l)}
     return [...m.values()].map(g=>({...g,lots:g.lots.sort((a,b)=>fzExpCmp(a,b)||locCmp(fzLoc(a),fzLoc(b))),prod:prodMap.get(g.code)}))
       .sort((a,b)=>a.name.localeCompare(b.name,"ko",{numeric:true}));
   },[filtered,prodMap]);
@@ -2733,9 +2738,9 @@ function FrozenTab({adminHash,masters}){
     </span>;
   const rowCls=l=>"fz-row fz-"+fzStatus(l.expiry);
   const memoCell=l=>l.memo?<span style={{fontSize:12,color:"var(--muted)"}}>{l.memo}</span>:<span style={{color:"var(--dimmer)"}}>–</span>;
-  const nameCell=l=>{const p=prodMap.get(l.product_code);return <>
-    <div style={{fontWeight:700}}>{l.product_name}</div>
-    <div style={{fontSize:11,color:"var(--muted)"}}><span style={{fontFamily:"monospace"}}>{l.product_code||"코드 없음"}</span>{p&&<> · 입수 {p.per_box}</>}</div></>};
+  const nameCell=l=><>
+    <div style={{fontWeight:700}}>{fzName(l)}</div>
+    <div style={{fontSize:11,color:"var(--muted)"}}><span style={{fontFamily:"monospace"}}>{l.product_code||"코드 없음"}</span></div></>;
   const totalText=ls=>fzUnitSum(ls).map(([u,n],i)=><span key={u}>{i>0&&" · "}{fzQty(n,u)}</span>);
 
   if(loading)return <Empty emoji="❄" text="불러오는 중…"/>;
@@ -2778,7 +2783,7 @@ function FrozenTab({adminHash,masters}){
           <div className="fz-group-hd" style={{borderLeftColor:FZ_STATUS[fzStatus(g.lots[0].expiry)].color}}>
             <div style={{minWidth:0}}>
               <div className="fz-group-name">{g.name}</div>
-              <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}><span style={{fontFamily:"monospace"}}>{g.code||"코드 없음"}</span>{g.prod&&<> · 입수 {g.prod.per_box}</>} · {g.lots.length}건{g.lots[0].expiry&&<> · 가장 빠른 기한 {fzExpText(g.lots[0].expiry)}</>}</div>
+              <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}><span style={{fontFamily:"monospace"}}>{g.code||"코드 없음"}</span> · {g.lots.length}건{g.lots[0].expiry&&<> · 가장 빠른 기한 {fzExpText(g.lots[0].expiry)}</>}</div>
             </div>
             <div className="fz-group-total">{totalText(g.lots)}</div>
           </div>
@@ -2825,7 +2830,7 @@ function FrozenTab({adminHash,masters}){
 
     {txns.length>0&&<div className="ol-card" style={{marginTop:18,padding:0,overflow:"hidden"}}>
       <div onClick={()=>setShowHist(!showHist)} style={{padding:"12px 16px",cursor:"pointer",fontWeight:700,fontSize:14,display:"flex",justifyContent:"space-between"}}>
-        <span>🧾 입출고 이력 <span style={{fontWeight:400,fontSize:12,color:"var(--muted)"}}>최근 {txns.length}건</span></span><span style={{color:"var(--muted)"}}>{showHist?"▲":"▼"}</span>
+        <span>🧾 입출고 이력 <span style={{fontWeight:400,fontSize:12,color:"var(--muted)"}}>최근 2주 · {txns.length}건</span></span><span style={{color:"var(--muted)"}}>{showHist?"▲":"▼"}</span>
       </div>
       {showHist&&<div className="ol-scroll" style={{maxHeight:420,overflowY:"auto"}}><table className="ol-table">
         <thead><tr><th>일시</th><th>구분</th><th>제품</th><th>소비기한</th><th>위치</th><th className="right">변동</th><th className="right">이후</th><th>메모</th></tr></thead>
@@ -2833,7 +2838,7 @@ function FrozenTab({adminHash,masters}){
           return <tr key={t.id}>
             <td style={{fontSize:12,whiteSpace:"nowrap",color:"var(--muted)"}}>{`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`}</td>
             <td><span className="fz-badge" style={{color:kc,border:`1px solid ${kc}55`}}>{kl}</span></td>
-            <td style={{fontWeight:600}}>{t.product_name}</td>
+            <td style={{fontWeight:600}}>{fzName(t)}</td>
             <td style={{fontSize:12,whiteSpace:"nowrap"}}>{fzExpText(t.expiry)}</td>
             <td style={{fontSize:12}}>{(t.location||"").trim()||"–"}</td>
             <td className="right" style={{fontWeight:700,color:t.kind==="move"?"var(--text)":ch>0?"#16a34a":ch<0?"#ef4444":"var(--muted)"}}>{t.kind==="move"?fmtNum(ch):(ch>0?"+":"")+fmtNum(ch)}</td>
