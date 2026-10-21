@@ -1244,6 +1244,24 @@ function OrdersTab({adminHash,masters,reloadMasters,dates,reloadDates,selDate,se
     }catch(e){alert(errMsg(e))}
   };
 
+  // 날짜별 전체 삭제 — confirm() 대신 그 자리에서 확인 (앱 내장 브라우저에서 confirm 창이 안 뜨는 경우 대비)
+  const[askDelDay,setAskDelDay]=useState(false);
+  const[delDayBusy,setDelDayBusy]=useState(false);
+  useEffect(()=>{setAskDelDay(false)},[selDate,extra]);
+  const delDay=async()=>{
+    const date=selDate;
+    setDelDayBusy(true);
+    let failed=0;
+    for(const o of orders){
+      try{await rpc("ol_delete_order",{p_admin_hash:adminHash,p_id:o.id})}catch(e){failed++}
+    }
+    setDelDayBusy(false);setAskDelDay(false);
+    const list=await reloadDates();
+    if(failed){alert(`${failed}건을 삭제하지 못했습니다. 다시 시도해 주세요.`);await reloadOrders(date);return}
+    const next=(list||[]).find(d=>d.due_date>date)?.due_date||(list||[]).slice(-1)[0]?.due_date||"";
+    setSelDate(next);await reloadOrders(next);
+  };
+
   const visibleOrders=orders.map(o=>{
     const items=(o.items||[]).filter(it=>{
       if(siteF==="all")return true;
@@ -1267,7 +1285,14 @@ function OrdersTab({adminHash,masters,reloadMasters,dates,reloadDates,selDate,se
       <DateList dates={dates} selected={selDate} onSelect={setSelDate}/>
       <div style={{minWidth:0}}>
         {!selDate?<Empty emoji="📄" text={extra?"추가 발주서를 업로드하세요 — 기존 발주리스트와 섞이지 않고 따로 적재됩니다":"발주서를 업로드하세요"}/>:loadingOrders?<Loader/>:<>
-          <div style={{fontSize:18,fontWeight:800,marginBottom:10}}>{selDate} ({dowOf(selDate)}) 입고 · {extra?"추가 ":""}발주서 {orders.length}건</div>
+          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:10}}>
+            <div style={{fontSize:18,fontWeight:800}}>{selDate} ({dowOf(selDate)}) 입고 · {extra?"추가 ":""}발주서 {orders.length}건</div>
+            {orders.length>0&&(askDelDay?<span style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:13,color:"#ef4444",fontWeight:700}}>
+              이 날짜 {extra?"추가 ":""}발주서 {orders.length}건을 모두 삭제할까요?
+              <button className="ol-btn ol-btn-danger ol-btn-sm" onClick={delDay} disabled={delDayBusy}>{delDayBusy?"삭제 중...":"모두 삭제"}</button>
+              <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setAskDelDay(false)} disabled={delDayBusy}>취소</button>
+            </span>:<button className="ol-btn ol-btn-danger ol-btn-sm" style={{marginLeft:"auto"}} onClick={()=>setAskDelDay(true)} disabled={!!qtyEdit}>🗑 이 날짜 전체 삭제</button>)}
+          </div>
           <UnmatchedBanner unmatched={unmatched} onRegister={(code,name)=>setQuickAdd({code,name})}/>
           <div className="ol-chips" style={{marginBottom:12}}>
             <button className={siteF==="all"?"on":""} onClick={()=>setSiteF("all")}>전체</button>
@@ -1640,8 +1665,7 @@ function DragBlock({id,edit,pos,onMove,onGuides,sizes,onLiveSize,onCommitSize,in
     };
     const up=()=>{
       const d=dragRef.current;dragRef.current=null;setDrag(null);onGuides&&onGuides(null);
-      if(d&&(Math.abs(d.x)>2||Math.abs(d.y)>2))onMove(id,{dx:Math.round(base.dx+d.x/d.z),dy:Math.round(base.dy+d.y/d.z)});
-    };
+      if(d&&(Math.abs(d.x)>2||Math.abs(d.y)>2))onMove(id,{dx:Math.round(base.dx+d.x/d.z),dy:Math.round(base.dy+d.y/d.z)});    };
     window.addEventListener("pointermove",move);
     window.addEventListener("pointerup",up);
     window.addEventListener("pointercancel",up);
