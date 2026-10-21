@@ -2206,19 +2206,19 @@ const secShort=sec=>sec.title.replace("제품","");
 
 function ShipSheetPreview({data,date,dateTo,prefix,print,refCb}){
   const noExp=!!dateTo; // 기간 합계는 소비기한이 섞이므로 열 생략
-  const fs=n=>print?Math.round(n*1.4):n; // 이미지 저장용은 글씨 1.4배
+  const big=print?21:14; // 이미지 저장용은 제품명·수량만 1.5배
   const secs=shipSections(data);
   const secRows=sec=>sec.groups.flatMap(g=>g.rows);
   const total=secs.reduce((a,sec)=>a+sumBy(secRows(sec),"boxes"),0);
   const cell={padding:print?"10px 8px":"8px 12px",borderBottom:"1px solid #e5e7eb",fontVariantNumeric:"tabular-nums"};
   const num={...cell,textAlign:"center"};
   // print: 이미지 저장용 사본 — 바깥 테두리 없이 고정 폭
-  return <div ref={refCb} className="ol-sheet" style={{padding:print?"24px 22px":"22px 24px",fontSize:fs(14),lineHeight:1.4,...(print?{border:"none",borderRadius:0,margin:0,overflow:"visible"}:{})}}>
+  return <div ref={refCb} className="ol-sheet" style={{padding:print?"24px 22px":"22px 24px",fontSize:14,lineHeight:1.4,...(print?{border:"none",borderRadius:0,margin:0,overflow:"visible"}:{})}}>
     <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:12,flexWrap:"wrap",paddingBottom:12,borderBottom:"2px solid #111",marginBottom:18}}>
-      <div style={{fontSize:fs(24),fontWeight:900,letterSpacing:"-0.5px"}}>{shipTitle(prefix,date,dateTo)}</div>
+      <div style={{fontSize:24,fontWeight:900,letterSpacing:"-0.5px"}}>{shipTitle(prefix,date,dateTo)}</div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        {secs.map(sec=><span key={sec.key} style={{padding:"4px 10px",borderRadius:14,background:SHIP_ACCENT[sec.key].soft,color:SHIP_ACCENT[sec.key].main,fontWeight:700,fontSize:fs(13)}}>{secShort(sec)} {fmtBoxes(sumBy(secRows(sec),"boxes"))}박스</span>)}
-        <span style={{padding:"4px 10px",borderRadius:14,background:"#111",color:"#fff",fontWeight:700,fontSize:fs(13)}}>총 {fmtBoxes(total)}박스</span>
+        {secs.map(sec=><span key={sec.key} style={{padding:"4px 10px",borderRadius:14,background:SHIP_ACCENT[sec.key].soft,color:SHIP_ACCENT[sec.key].main,fontWeight:700,fontSize:13}}>{secShort(sec)} {fmtBoxes(sumBy(secRows(sec),"boxes"))}박스</span>)}
+        <span style={{padding:"4px 10px",borderRadius:14,background:"#111",color:"#fff",fontWeight:700,fontSize:13}}>총 {fmtBoxes(total)}박스</span>
       </div>
     </div>
     {secs.map(sec=>{
@@ -2226,23 +2226,23 @@ function ShipSheetPreview({data,date,dateTo,prefix,print,refCb}){
       const all=secRows(sec);
       return <div key={sec.key} data-shipcut="1" style={{marginBottom:26}}>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-          <span style={{width:5,height:fs(20),borderRadius:3,background:ac.main}}/>
-          <span style={{fontSize:fs(17),fontWeight:800,color:ac.main}}>{sec.title}</span>
-          <span style={{fontSize:fs(12),color:"#6b7280"}}>{all.filter(r=>r.qty>0).length}품목</span>
+          <span style={{width:5,height:20,borderRadius:3,background:ac.main}}/>
+          <span style={{fontSize:17,fontWeight:800,color:ac.main}}>{sec.title}</span>
+          <span style={{fontSize:12,color:"#6b7280"}}>{all.filter(r=>r.qty>0).length}품목</span>
         </div>
         {sec.groups.map((g,gi)=>{
           const runs=runsOf(g.rows,r=>r.expiry);
           return <div key={g.site} data-shipcut={gi>0?"1":undefined} data-shipsite={g.site} style={{border:"1px solid #d7dde5",borderLeft:`6px solid ${ac.main}`,borderRadius:8,marginBottom:16,overflow:"hidden"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 14px",background:ac.soft,borderBottom:"1px solid #d7dde5"}}>
               <div style={{display:"flex",alignItems:"baseline",gap:10}}>
-                <span style={{fontSize:fs(20),fontWeight:900,color:ac.main}}>{g.site}</span>
-                <span style={{fontSize:fs(12),color:"#6b7280"}}>{g.rows.filter(r=>r.qty>0).length}품목 · {fmtNum(sumBy(g.rows,"qty"))}팩</span>
+                <span style={{fontSize:20,fontWeight:900,color:ac.main}}>{g.site}</span>
+                <span style={{fontSize:12,color:"#6b7280"}}>{g.rows.filter(r=>r.qty>0).length}품목 · {fmtNum(sumBy(g.rows,"qty"))}팩</span>
               </div>
-              <span style={{padding:"4px 12px",borderRadius:16,background:ac.main,color:"#fff",fontWeight:800,fontSize:fs(15)}}>{fmtBoxes(sumBy(g.rows,"boxes"))}박스</span>
+              <span style={{padding:"4px 12px",borderRadius:16,background:ac.main,color:"#fff",fontWeight:800,fontSize:15}}>{fmtBoxes(sumBy(g.rows,"boxes"))}박스</span>
             </div>
             <table style={{minWidth:print?0:600,width:"100%"}}>
               <colgroup><col/><col style={{width:print?96:100}}/><col style={{width:print?88:90}}/>{!noExp&&<col style={{width:print?140:150}}/>}</colgroup>
-              <thead><tr style={{background:"#f8fafc",color:"#475569",fontSize:fs(12)}}>
+              <thead><tr style={{background:"#f8fafc",color:"#475569",fontSize:12}}>
                 <th style={{...cell,textAlign:"center"}}>제품명</th>
                 <th style={num}>총 팩수량</th><th style={num}>박스수량</th>{!noExp&&<th style={{...cell,textAlign:"center"}}>{sec.expLabel}</th>}
               </tr></thead>
@@ -2251,17 +2251,17 @@ function ShipSheetPreview({data,date,dateTo,prefix,print,refCb}){
                   const run=runs.find(x=>x.start===i);
                   const dim=!r.qty;
                   return <tr key={r.code+r.expiry} style={{color:dim?"#b6bcc6":"#111"}}>
-                    <td style={{...cell,textAlign:"center"}}>{boldDigits(shipNameOf(r.product),dim)}<span style={{color:dim?"#9ca3af":"#000",fontWeight:900,marginLeft:6,whiteSpace:"nowrap"}}>/ {r.per}ea</span></td>
-                    <td style={num}>{r.qty?fmtNum(r.qty):"–"}</td>
-                    <td style={{...num,fontWeight:800,background:dim?"transparent":"#fef9c3",color:r.partial?"#dc2626":dim?"#b6bcc6":"#111"}} title={r.partial?"입수량으로 나누어떨어지지 않음":""}>{r.qty?fmtBoxes(r.boxes):"–"}</td>
-                    {!noExp&&run&&<td rowSpan={run.len} style={{...cell,textAlign:"center",fontWeight:600,fontSize:fs(13),borderLeft:"1px solid #e5e7eb",color:"#111"}}>{fmtExp(run.value)}</td>}
+                    <td style={{...cell,textAlign:"center",fontSize:big}}>{boldDigits(shipNameOf(r.product),dim)}<span style={{color:dim?"#9ca3af":"#000",fontWeight:900,marginLeft:6,whiteSpace:"nowrap"}}>/ {r.per}ea</span></td>
+                    <td style={{...num,fontSize:big}}>{r.qty?fmtNum(r.qty):"–"}</td>
+                    <td style={{...num,fontSize:big,fontWeight:800,background:dim?"transparent":"#fef9c3",color:r.partial?"#dc2626":dim?"#b6bcc6":"#111"}} title={r.partial?"입수량으로 나누어떨어지지 않음":""}>{r.qty?fmtBoxes(r.boxes):"–"}</td>
+                    {!noExp&&run&&<td rowSpan={run.len} style={{...cell,textAlign:"center",fontWeight:600,fontSize:13,borderLeft:"1px solid #e5e7eb",color:"#111"}}>{fmtExp(run.value)}</td>}
                   </tr>;
                 })}
               </tbody>
             </table>
           </div>;
         })}
-        {sec.groups.length>1&&<div data-shipcut="1" style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",borderTop:"2px solid #111",fontWeight:900,fontSize:fs(15)}}>
+        {sec.groups.length>1&&<div data-shipcut="1" style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",borderTop:"2px solid #111",fontWeight:900,fontSize:15}}>
           <span>{secShort(sec)} 합계</span>
           <span style={{fontVariantNumeric:"tabular-nums"}}>{fmtNum(sumBy(all,"qty"))}팩 · {fmtBoxes(sumBy(all,"boxes"))}박스</span>
         </div>}
