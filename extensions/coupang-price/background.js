@@ -18,12 +18,15 @@ function extractCoupangPrice() {
     return e ? num(e.textContent) : null;
   };
   const title = document.title || "";
-  const head = (document.body && document.body.innerText || "").slice(0, 400);
+  const head = (document.body && document.body.innerText || "").slice(0, 600);
+  // 쿠팡 접속 차단 화면: "요청하신 페이지의 사용권한이 없습니다" / Access Denied / 보안 확인
   const blocked = /access denied/i.test(title) || /access denied/i.test(head) ||
+    /사용권한이\s*(없습니다|제한된)/.test(head) ||
     !!document.querySelector('iframe[src*="captcha" i], [id*="captcha" i], [class*="captcha" i]');
   const u = new URL(location.href);
   return {
     blocked,
+    isProduct: /\/v[pm]\/products\/\d+/.test(location.pathname),
     sales: pick(".sales-price-amount"),
     final: pick(".final-price-amount"),
     orig: pick(".original-price-amount"),
@@ -63,6 +66,7 @@ async function readPrice(url) {
     if (!r) return { error: "페이지를 읽지 못했습니다" };
     if (r.blocked) { keepTab = true; return { blocked: true, tabId: tab.id, windowId: tab.windowId }; }
     if (r.error) return { error: r.error };
+    if (!r.isProduct) return { error: "상품 페이지가 아닌 쿠팡 메인으로 이동했습니다 (판매중지·링크 변경 가능 — 링크를 확인하세요)", title: r.title };
     const want = (url.match(/[?&]itemId=(\d+)/) || [])[1];
     if (want && r.itemId && r.itemId !== want) return { error: "다른 옵션 페이지로 바뀌었습니다 (옵션 품절·판매중지 가능)", title: r.title };
     const sale = r.sales != null ? r.sales : r.final;
@@ -86,8 +90,9 @@ chrome.runtime.onConnect.addListener((port) => {
     if (m.type !== "run" || running) return;
     running = true;
     const jobs = (m.jobs || []).filter((j) => j && /^https:\/\/(www\.|m\.)?coupang\.com\//.test(j.url || ""));
-    const delay = Math.min(Math.max(Number(m.delayMs) || 3000, 2000), 30000);
-    let ok = 0, fail = 0;
+    // 쿠팡에 부담을 주지 않도록 최소 5초 간격
+    const delay = Math.min(Math.max(Number(m.delayMs) || 8000, 5000), 60000);
+    let ok = 0, fail = 0, failRow = 0;
     send({ type: "start", total: jobs.length });
     for (let i = 0; i < jobs.length; i++) {
       if (stop) break;
@@ -101,8 +106,14 @@ chrome.runtime.onConnect.addListener((port) => {
         running = false;
         return;
       }
-      if (res.error) fail++; else ok++;
+      if (res.error) { fail++; failRow++; } else { ok++; failRow = 0; }
       send({ type: "result", index: i, id: job.id, ...res });
+      // 연속 3번 실패하면 멈춤 (차단·구조 변경일 수 있으니 계속 열지 않음)
+      if (failRow >= 3) {
+        send({ type: "stopped", reason: "fails", index: i, id: job.id, ok, fail });
+        running = false;
+        return;
+      }
       if (i < jobs.length - 1 && !stop) await sleep(delay);
     }
     send(stop ? { type: "stopped", reason: "user", ok, fail } : { type: "done", ok, fail });

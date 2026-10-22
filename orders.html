@@ -1403,6 +1403,9 @@ function BookmarkletHelp({onClose}){
 
 // 크롬 확장 프로그램 설치 안내 + 파일 묶음(zip) 받기
 const EXT_FILES=["manifest.json","background.js","bridge.js"];
+const EXT_LATEST="1.1.0"; // extensions/coupang-price/manifest.json 과 맞출 것
+const PRICE_GAPS=[5,8,15,30]; // 상품 사이 간격(초) — 쿠팡이 자동 접속으로 막지 않도록 넉넉히
+function verLt(a,b){const x=String(a||"0").split(".").map(Number),y=String(b).split(".").map(Number);for(let i=0;i<3;i++){if((x[i]||0)!==(y[i]||0))return (x[i]||0)<(y[i]||0)}return false}
 function ExtensionHelp({ext,onClose}){
   const[busy,setBusy]=useState(false);const[err,setErr]=useState("");
   const download=async()=>{
@@ -1434,7 +1437,8 @@ function ExtensionHelp({ext,onClose}){
     {err&&<div className="ol-err">{err}</div>}
     <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.7}}>
       · 버튼을 누르면 크롬이 등록된 쿠팡 링크를 <b>뒤쪽 탭으로 하나씩</b> 열어 판매가(쿠팡판매가)와 현재 할인가(와우할인 등 최종가)를 읽고 바로 닫습니다. 페이지를 열어 둔 채 다른 일을 하셔도 됩니다.<br/>
-      · 쿠팡 보안 확인이 뜨면 그 탭을 앞으로 띄우고 멈춥니다 — 직접 확인한 뒤 <b>이어서 갱신</b>을 누르세요.<br/>
+      · 짧은 간격으로 많이 열면 쿠팡이 "사용권한이 없습니다" 화면으로 잠시 접속을 막습니다. 그러면 자동으로 멈추니, 몇십 분~몇 시간 기다렸다가 간격을 늘려 <b>이어서 갱신</b>을 누르세요. 기본 간격은 8초입니다.<br/>
+      · 크롬 외에 <b>네이버 웨일</b>(<code>whale://extensions</code>)·<b>엣지</b>(<code>edge://extensions</code>)에서도 같은 방법으로 설치됩니다. 설치한 브라우저로 이 페이지를 열어야 합니다.<br/>
       · 쿠팡 화면 구조가 바뀌면 가격을 못 읽을 수 있습니다. 그때는 실패 목록이 표시됩니다.<br/>
       · 파일이 바뀌어 다시 설치할 때는 같은 폴더에 덮어쓰고 chrome://extensions 에서 ↻(새로고침)을 누르면 됩니다.
     </div>
@@ -1459,8 +1463,8 @@ function PriceView({adminHash}){
   const[ext,setExt]=useState(null);
   const[showExt,setShowExt]=useState(false);
   const[run,setRun]=useState(null); // {jobs,total,currentId,done:{id:결과},status:running|done|stopped|blocked}
-  const[gap,setGap]=useState(()=>{const n=Number(lsGet("ol-price-gap","3"));return [2,3,5,8].includes(n)?n:3});
-  useEffect(()=>lsSet("ol-price-gap",String(gap)),[gap]);
+  const[gap,setGap]=useState(()=>{const n=Number(lsGet("ol-price-gap2","8"));return PRICE_GAPS.includes(n)?n:8});
+  useEffect(()=>lsSet("ol-price-gap2",String(gap)),[gap]);
   const dataRef=useRef(null);
   const extHandler=useRef(null);
 
@@ -1538,7 +1542,7 @@ function PriceView({adminHash}){
       return;
     }
     if(d.type==="done"||d.type==="stopped"){
-      setRun(r=>r&&{...r,currentId:null,status:d.type==="done"?"done":d.reason==="blocked"?"blocked":"stopped"});
+      setRun(r=>r&&{...r,currentId:null,status:d.type==="done"?"done":d.reason==="blocked"?"blocked":d.reason==="fails"?"fails":"stopped"});
       load();
     }
   };
@@ -1596,12 +1600,13 @@ function PriceView({adminHash}){
         onClick={()=>startRun(runTargets)}>🔄 쿠팡 가격 전체 갱신 ({runTargets.length}개)</button>
       <label style={{fontSize:12,color:"var(--muted)",display:"flex",alignItems:"center",gap:6}}>상품 사이 간격
         <select className="ol-input" style={{width:"auto",padding:"5px 8px"}} value={gap} onChange={e=>setGap(Number(e.target.value))} disabled={run?.status==="running"}>
-          {[2,3,5,8].map(n=><option key={n} value={n}>{n}초</option>)}
+          {PRICE_GAPS.map(n=><option key={n} value={n}>{n}초</option>)}
         </select></label>
       <span style={{fontSize:12,color:"var(--muted)",flex:1,minWidth:200}}>
-        {(sheetF!=="all"||q||onlyDisc)?"지금 보이는 상품만 갱신합니다 · ":""}예상 {Math.ceil(runTargets.length*(gap+3)/60)}분
+        {(sheetF!=="all"||q||onlyDisc)?"지금 보이는 상품만 갱신합니다 · ":""}예상 {Math.ceil(runTargets.length*(gap+4)/60)}분
       </span>
       <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setShowExt(true)}>{ext?`🧩 확장 v${ext.version}`:"🧩 확장 프로그램 설치"}</button>
+      {ext&&verLt(ext.version,EXT_LATEST)&&<div style={{flexBasis:"100%",fontSize:12,color:"#f59e0b"}}>⚠ 확장 프로그램이 예전 버전(v{ext.version})입니다 — 🧩 버튼에서 새 파일(v{EXT_LATEST})을 받아 같은 폴더에 덮어쓰고, 확장 프로그램 관리 화면에서 ↻ 새로고침하세요. 예전 버전은 쿠팡 차단 화면을 알아보지 못합니다.</div>}
     </div>}
     {run&&(()=>{
       const doneN=Object.keys(run.done).length;
@@ -1613,14 +1618,14 @@ function PriceView({adminHash}){
       const pct=run.total?Math.round(doneN/run.total*100):0;
       return <div className="ol-card" style={{padding:14}}>
         <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:8}}>
-          <b style={{fontSize:14}}>{run.status==="running"?"🔄 쿠팡 가격 갱신 중":run.status==="done"?"✓ 갱신 완료":run.status==="blocked"?"⚠ 쿠팡 보안 확인으로 멈춤":"⏸ 중지됨"}</b>
+          <b style={{fontSize:14}}>{run.status==="running"?"🔄 쿠팡 가격 갱신 중":run.status==="done"?"✓ 갱신 완료":run.status==="blocked"?"⚠ 쿠팡 접속 차단으로 멈춤":run.status==="fails"?"⚠ 연속 실패로 멈춤":"⏸ 중지됨"}</b>
           <span style={{fontSize:13,fontVariantNumeric:"tabular-nums"}}>{doneN} / {run.total}</span>
           <span style={{fontSize:12,color:"#16a34a"}}>성공 {doneN-fails.length}</span>
           <span style={{fontSize:12,color:"#06b6d4"}}>가격 바뀜 {changes.length}</span>
           {fails.length>0&&<span style={{fontSize:12,color:"#ef4444"}}>실패 {fails.length}</span>}
           <span style={{marginLeft:"auto",display:"flex",gap:6}}>
             {run.status==="running"&&<button className="ol-btn ol-btn-danger ol-btn-sm" onClick={stopRun}>중지</button>}
-            {(run.status==="blocked"||run.status==="stopped")&&doneN<run.total&&<button className="ol-btn ol-btn-primary ol-btn-sm" onClick={()=>startRun(null,run)}>이어서 갱신 ({run.total-doneN}개)</button>}
+            {(run.status==="blocked"||run.status==="stopped"||run.status==="fails")&&doneN<run.total&&<button className="ol-btn ol-btn-primary ol-btn-sm" onClick={()=>startRun(null,run)}>이어서 갱신 ({run.total-doneN}개)</button>}
             {run.status!=="running"&&<button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setRun(null)}>닫기</button>}
           </span>
         </div>
@@ -1628,7 +1633,9 @@ function PriceView({adminHash}){
           <div style={{height:"100%",width:pct+"%",background:"linear-gradient(90deg,#06b6d4,#8b5cf6)",transition:"width .3s"}}/>
         </div>
         {run.status==="running"&&cur&&<div style={{fontSize:12,color:"var(--muted)"}}>읽는 중: {cur.name}</div>}
-        {run.status==="blocked"&&<div className="ol-warn" style={{fontSize:13,margin:"6px 0"}}>쿠팡이 보안 확인 화면을 띄웠습니다. 앞으로 띄운 쿠팡 탭에서 <b>직접 확인을 마친 뒤</b> <b>이어서 갱신</b>을 누르세요. 간격을 늘리면(5초·8초) 덜 뜹니다.</div>}
+        {run.status==="blocked"&&<div className="ol-warn" style={{fontSize:13,margin:"6px 0",lineHeight:1.6}}>쿠팡이 <b>"요청하신 페이지의 사용권한이 없습니다"</b> 화면으로 이 컴퓨터의 접속을 잠시 막았습니다 (짧은 시간에 페이지를 많이 열었다고 판단). 보통 <b>몇십 분~몇 시간 뒤</b> 풀립니다.
+          그동안 쿠팡을 계속 열면 더 길어질 수 있으니 기다렸다가 간격을 <b>15초 이상</b>으로 늘려 <b>이어서 갱신</b>을 누르세요.</div>}
+        {run.status==="fails"&&<div className="ol-warn" style={{fontSize:13,margin:"6px 0",lineHeight:1.6}}>3개 연속으로 가격을 읽지 못해 멈췄습니다. 실패한 상품의 <b>쿠팡↗</b> 링크를 직접 열어 보세요 — 쿠팡 차단 화면이면 잠시 기다렸다가, 상품 페이지가 정상이면 링크(판매중지·옵션 변경)를 확인한 뒤 <b>이어서 갱신</b>하세요.</div>}
         {(changes.length>0||fails.length>0)&&<div className="ol-scroll" style={{maxHeight:260,overflow:"auto",marginTop:6}}><table className="ol-table" style={{minWidth:560}}>
           <tbody>
             {changes.map(([id,r])=><tr key={"c"+id}>
