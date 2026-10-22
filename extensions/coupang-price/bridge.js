@@ -32,6 +32,16 @@
       port.postMessage({ type: "run", jobs: d.jobs || [], delayMs: d.delayMs });
     } else if (d.type === "stop") {
       if (port) port.postMessage({ type: "stop" });
+    } else if (d.type === "search") {
+      // 시장조사: 쿠팡 검색 결과 1페이지 읽기
+      try {
+        chrome.runtime.sendMessage({ type: "search", query: d.query, limit: d.limit }, (res) => {
+          const err = chrome.runtime.lastError;
+          post({ type: "searchResult", reqId: d.reqId, ...(err ? { error: "확장 프로그램 응답 없음: " + err.message } : (res || { error: "응답 없음" })) });
+        });
+      } catch (err) {
+        post({ type: "searchResult", reqId: d.reqId, error: "확장 프로그램이 다시 로드됐습니다. 이 페이지를 새로고침하세요." });
+      }
     }
   });
 

@@ -4,8 +4,23 @@
     {
       "name": "stockpulse",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "8000"],
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8000"
+      ],
       "port": 8000
+    },
+    {
+      "name": "stockpulse-8011",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8011"
+      ],
+      "port": 8011,
+      "autoPort": false
     }
   ]
 }

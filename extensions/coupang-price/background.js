@@ -78,6 +78,176 @@ async function readPrice(url) {
   }
 }
 
+// ── 시장조사: 쿠팡 검색 결과 페이지에서 상품 목록 읽기 ──
+// 쿠팡 화면 구조가 자주 바뀌므로 특정 클래스에 기대지 않고
+// "상품 링크(/vp/products/)를 가진 카드"를 찾아 그 안의 글씨·가격을 읽음
+function extractCoupangSearch(limit) {
+  const max = Math.min(Math.max(Number(limit) || 36, 1), 72);
+  const toNum = (s) => { const m = String(s || "").replace(/\s/g, "").match(/\d{1,3}(?:,\d{3})+|\d+/); return m ? Number(m[0].replace(/,/g, "")) : null; };
+  const title = document.title || "";
+  const head = (document.body && document.body.innerText || "").slice(0, 600);
+  const blocked = /access denied/i.test(title) || /access denied/i.test(head) ||
+    /사용권한이\s*(없습니다|제한된)/.test(head) ||
+    !!document.querySelector('iframe[src*="captcha" i], [id*="captcha" i], [class*="captcha" i]');
+  if (blocked) return { blocked: true };
+
+  const root = document.querySelector('#product-list, #productList, ul[class*="productList" i], ul[class*="ProductList"]') ||
+    document.querySelector("main") || document.body;
+  const links = [...root.querySelectorAll('a[href*="/vp/products/"]')];
+  const cardOf = (a) => {
+    // 상품 링크를 감싼 가장 가까운 목록 칸 (li) — 없으면 가격이 들어 있는 조상
+    const li = a.closest("li");
+    if (li && root.contains(li)) return li;
+    let el = a;
+    for (let i = 0; i < 6 && el.parentElement && el.parentElement !== root; i++) {
+      el = el.parentElement;
+      if (/\d[\d,]*\s*원/.test(el.innerText || "")) break;
+    }
+    return el;
+  };
+  const leafs = (card) => [...card.querySelectorAll("*")].filter((e) => !e.children.length && (e.textContent || "").trim());
+
+  const seen = new Set();
+  const items = [];
+  for (const a of links) {
+    if (items.length >= max) break;
+    let u;
+    try { u = new URL(a.getAttribute("href"), location.href); } catch (e) { continue; }
+    const pm = u.pathname.match(/\/vp\/products\/(\d+)/);
+    if (!pm) continue;
+    const productId = pm[1];
+    const itemId = u.searchParams.get("itemId") || "";
+    const vendorItemId = u.searchParams.get("vendorItemId") || "";
+    const key = productId + "|" + itemId;
+    if (seen.has(key)) continue;
+    const card = cardOf(a);
+    const text = (card.innerText || "").replace(/ /g, " ");
+    if (!/\d\s*원/.test(text)) continue;   // 가격 없는 링크(리뷰·이미지 등) 제외
+    seen.add(key);
+
+    // 상품명
+    const nameEl = card.querySelector('[class*="productName" i], [class*="ProductName"], .name, [class*="name" i]');
+    const img = card.querySelector("img");
+    let name = nameEl ? (nameEl.innerText || nameEl.textContent || "").trim() : "";
+    if (!name && img) name = (img.getAttribute("alt") || "").trim();
+    if (!name) name = text.split("\n").map((s) => s.trim()).filter((s) => !/원|%|^\(|리뷰|배송|도착/.test(s)).sort((x, y) => y.length - x.length)[0] || "";
+
+    // 가격 후보: "12,800원" 또는 숫자칸 + 옆의 "원"
+    const prices = [];
+    let rate = null, reviews = null, rating = null;
+    for (const e of leafs(card)) {
+      const t = e.textContent.replace(/ /g, " ").trim();
+      if (/^\d{1,2}\s*%$/.test(t) && rate == null) { rate = Number(t.replace(/\D/g, "")); continue; }
+      if (/^\(\s*\d[\d,]*\s*\)$/.test(t) && reviews == null) { reviews = toNum(t); continue; }
+      if (/^[0-5](\.\d)?$/.test(t) && rating == null && /rating|star/i.test(e.className + " " + (e.parentElement && e.parentElement.className))) { rating = Number(t); continue; }
+      const isPrice = /^[\d,]+\s*원?$/.test(t) || /^[\d,]+\s*원$/.test(t);
+      if (!isPrice) continue;
+      const v = toNum(t);
+      if (v == null || v < 100) continue;
+      const ctxEl = e.parentElement && e.parentElement.parentElement ? e.parentElement.parentElement : e.parentElement || e;
+      const ctx = (ctxEl.textContent || "").replace(/\s+/g, " ");
+      const own = (e.parentElement ? e.parentElement.textContent : t).replace(/\s+/g, "");
+      const tt = t.replace(/\s/g, "");
+      const at = own.indexOf(tt);
+      const before = at >= 0 ? own.slice(Math.max(0, at - 14), at) : "";
+      const after = at >= 0 ? own.slice(at + tt.length, at + tt.length + 6) : "";
+      let strike = false;
+      for (let x = e; x && x !== card; x = x.parentElement) {
+        if (/^(DEL|S|STRIKE)$/.test(x.tagName)) { strike = true; break; }
+        const td = getComputedStyle(x).textDecorationLine || "";
+        if (td.includes("line-through")) { strike = true; break; }
+        if (/base-price|basePrice|original|origin-price/i.test(x.className || "")) { strike = true; break; }
+      }
+      if (!strike && !/원/.test(tt) && !/^원/.test(after)) continue;  // "원"이 붙지 않은 숫자는 가격이 아님 (줄 그은 정상가는 예외)
+      if (/당\(?$/.test(before)) continue;                         // 단위가격 "100g당 1,234원"
+      if (/(배송비|적립|캐시|최대)\s*$/.test(before) || /^원?\s*(적립|캐시)/.test(after)) continue;
+      const fs = parseFloat(getComputedStyle(e).fontSize) || 0;
+      const wow = /와우/.test(ctx);
+      const coupon = /쿠폰/.test(ctx);
+      prices.push({ v, strike, fs, wow, coupon });
+    }
+    const live = prices.filter((p) => !p.strike);
+    // 가장 큰 글씨의 가격 = 실제 판매가 (같은 크기면 먼저 나온 것)
+    let main = null;
+    for (const p of live) if (!main || p.fs > main.fs + 0.5) main = p;
+    const base = prices.filter((p) => p.strike).reduce((m, p) => (m == null || p.v > m ? p.v : m), null);
+    const wowPrice = live.filter((p) => p.wow && p !== main).reduce((m, p) => (m == null || p.v < m ? p.v : m), null);
+    const couponPrice = live.filter((p) => p.coupon && p !== main).reduce((m, p) => (m == null || p.v < m ? p.v : m), null);
+
+    // 단위가격 "(100g당 1,234원)"
+    let unit = null;
+    const um = text.replace(/\s+/g, " ").match(/(\d+(?:\.\d+)?)\s*(g|kg|ml|l|개|매|입|장|팩)\s*당\s*([\d,]+)\s*원/i);
+    if (um) unit = { amount: Number(um[1]), unit: um[2].toLowerCase(), price: toNum(um[3]) };
+
+    // 배송 뱃지 (로켓배송/로켓프레시/로켓직구/판매자로켓 등)
+    let ship = "";
+    for (const im of card.querySelectorAll("img[alt]")) { const al = im.getAttribute("alt") || ""; if (/로켓|rocket/i.test(al)) { ship = al.trim(); break; } }
+    if (!ship) { const m = text.match(/(로켓프레시|로켓배송|로켓직구|판매자로켓|로켓그로스)/); if (m) ship = m[1]; }
+    if (!ship && card.querySelector('[class*="rocket" i], img[src*="rocket" i]')) ship = "로켓";
+
+    const lines = text.split("\n").map((s) => s.trim());
+    const ad = lines.some((s) => s === "AD" || s === "광고") || !!card.querySelector('[class*="ad-badge" i], [class*="adMark" i], [class*="AdBadge"]');
+    const soldOut = /일시품절|품절/.test(text);
+    let thumb = img ? (img.getAttribute("src") || img.getAttribute("data-src") || img.getAttribute("data-img-src") || "") : "";
+    if (thumb.startsWith("//")) thumb = "https:" + thumb;
+    if (thumb.startsWith("data:")) thumb = "";
+
+    items.push({
+      rank: items.length + 1, productId, itemId, vendorItemId,
+      url: "https://www.coupang.com/vp/products/" + productId + (itemId ? "?itemId=" + itemId + (vendorItemId ? "&vendorItemId=" + vendorItemId : "") : ""),
+      name: name.slice(0, 200), thumb: thumb.slice(0, 400),
+      price: main ? main.v : null, base, rate, wowPrice, couponPrice, unit,
+      ship, ad, soldOut, reviews, rating,
+    });
+  }
+  return {
+    items, title: title.slice(0, 120), url: location.href,
+    sample: items.length ? "" : (root.innerText || "").slice(0, 300),
+    linkCount: links.length,
+  };
+}
+
+async function readSearch(query, limit) {
+  const q = String(query || "").trim().slice(0, 100);
+  if (!q) return { error: "검색어가 없습니다" };
+  const url = "https://www.coupang.com/np/search?q=" + encodeURIComponent(q) + "&channel=user&listSize=" + Math.min(Math.max(Number(limit) || 36, 12), 72);
+  const tab = await chrome.tabs.create({ url, active: false });
+  let keepTab = false;
+  try {
+    await waitComplete(tab.id, 30000);
+    let r = null;
+    for (let i = 0; i < 16; i++) {           // 목록이 늦게 그려지면 최대 8초 더 기다림
+      try {
+        const [inj] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: extractCoupangSearch, args: [limit] });
+        r = inj && inj.result;
+      } catch (err) {
+        r = { error: "검색 페이지를 읽지 못했습니다 (" + String(err && err.message || err).slice(0, 80) + ")" };
+      }
+      if (r && (r.blocked || r.error || (r.items && r.items.length >= 4))) break;
+      await sleep(500);
+    }
+    if (!r) return { error: "검색 페이지를 읽지 못했습니다" };
+    if (r.blocked) { keepTab = true; try { await chrome.tabs.update(tab.id, { active: true }); await chrome.windows.update(tab.windowId, { focused: true }); } catch (e) {} return { blocked: true }; }
+    if (r.error) return { error: r.error };
+    if (!r.items || !r.items.length) return { error: "검색 결과에서 상품을 찾지 못했습니다 (결과 없음 또는 쿠팡 화면 구조 변경)", sample: r.sample, linkCount: r.linkCount };
+    return { items: r.items, url };
+  } finally {
+    if (!keepTab) { try { await chrome.tabs.remove(tab.id); } catch (err) {} }
+  }
+}
+
+let searching = false;
+chrome.runtime.onMessage.addListener((m, sender, sendResponse) => {
+  if (!m || m.type !== "search") return;
+  if (searching) { sendResponse({ error: "이미 검색 중입니다" }); return; }
+  searching = true;
+  readSearch(m.query, m.limit)
+    .then((r) => sendResponse(r))
+    .catch((err) => sendResponse({ error: String(err && err.message || err).slice(0, 120) }))
+    .finally(() => { searching = false; });
+  return true; // 비동기 응답
+});
+
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "olprice") return;
   let stop = false;
