@@ -1408,7 +1408,7 @@ function BookmarkletHelp({onClose}){
 
 // 크롬 확장 프로그램 설치 안내 + 파일 묶음(zip) 받기
 const EXT_FILES=["manifest.json","background.js","bridge.js"];
-const EXT_LATEST="1.2.0"; // extensions/coupang-price/manifest.json 과 맞출 것
+const EXT_LATEST="1.2.1"; // extensions/coupang-price/manifest.json 과 맞출 것
 const PRICE_GAPS=[5,8,15,30]; // 상품 사이 간격(초) — 쿠팡이 자동 접속으로 막지 않도록 넉넉히
 function verLt(a,b){const x=String(a||"0").split(".").map(Number),y=String(b).split(".").map(Number);for(let i=0;i<3;i++){if((x[i]||0)!==(y[i]||0))return (x[i]||0)<(y[i]||0)}return false}
 function ExtensionHelp({ext,onClose}){
@@ -1442,7 +1442,7 @@ function ExtensionHelp({ext,onClose}){
     {err&&<div className="ol-err">{err}</div>}
     <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.7}}>
       · 버튼을 누르면 크롬이 등록된 쿠팡 링크를 <b>뒤쪽 탭으로 하나씩</b> 열어 판매가(쿠팡판매가)와 현재 할인가(와우할인 등 최종가)를 읽고 바로 닫습니다. 페이지를 열어 둔 채 다른 일을 하셔도 됩니다.<br/>
-      · <b>🔍 시장조사</b>: 판매가 표에서 상품명을 누르고 검색하면 크롬이 쿠팡 <b>검색 결과 1페이지</b>를 뒤쪽 탭으로 열어 비슷한 상품들의 가격을 읽고 바로 닫습니다 (v1.2.0 이상).<br/>
+      · <b>🔍 시장조사</b>: 판매가 표에서 상품명을 누르고 검색하면 크롬이 쿠팡 <b>검색 결과 1페이지</b>를 뒤쪽 탭으로 열어 비슷한 상품들의 가격을 읽고 바로 닫습니다 (v1.2.1 이상).<br/>
       · 짧은 간격으로 많이 열면 쿠팡이 "사용권한이 없습니다" 화면으로 잠시 접속을 막습니다. 그러면 자동으로 멈추니, 몇십 분~몇 시간 기다렸다가 간격을 늘려 <b>이어서 갱신</b>을 누르세요. 기본 간격은 8초입니다.<br/>
       · 크롬 외에 <b>네이버 웨일</b>(<code>whale://extensions</code>)·<b>엣지</b>(<code>edge://extensions</code>)에서도 같은 방법으로 설치됩니다. 설치한 브라우저로 이 페이지를 열어야 합니다.<br/>
       · 쿠팡 화면 구조가 바뀌면 가격을 못 읽을 수 있습니다. 그때는 실패 목록이 표시됩니다.<br/>
@@ -1455,7 +1455,7 @@ function ExtensionHelp({ext,onClose}){
 // ═══════════════════════════════════════════
 // 🔍 시장조사 — 상품명 클릭 → 확장 프로그램이 쿠팡 검색 결과 1페이지를 읽어 와 비슷한 상품의 가격 비교
 // ═══════════════════════════════════════════
-const MARKET_EXT_MIN="1.2.0";
+const MARKET_EXT_MIN="1.2.1";
 function marketErr(e){
   const s=String(e?.message||e||"");
   if(s.includes("Could not find the function")||s.includes("PGRST202")||s.includes("ol_market")||s.includes("market_"))return "Supabase에서 setup_orders_market.sql을 먼저 실행하세요 (검색 결과는 보이지만 저장되지 않습니다).";

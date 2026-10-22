@@ -237,15 +237,19 @@ async function readSearch(query, limit) {
 }
 
 let searching = false;
-chrome.runtime.onMessage.addListener((m, sender, sendResponse) => {
-  if (!m || m.type !== "search") return;
-  if (searching) { sendResponse({ error: "이미 검색 중입니다" }); return; }
-  searching = true;
-  readSearch(m.query, m.limit)
-    .then((r) => sendResponse(r))
-    .catch((err) => sendResponse({ error: String(err && err.message || err).slice(0, 120) }))
-    .finally(() => { searching = false; });
-  return true; // 비동기 응답
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== "olsearch") return;
+  let gone = false;
+  port.onDisconnect.addListener(() => { gone = true; });
+  port.onMessage.addListener(async (m) => {
+    if (!m || m.type !== "search") return;
+    const reply = (r) => { if (!gone) { try { port.postMessage(r); } catch (err) {} } };
+    if (searching) { reply({ error: "이미 검색 중입니다 — 잠시 뒤 다시 누르세요" }); return; }
+    searching = true;
+    try { reply(await readSearch(m.query, m.limit)); }
+    catch (err) { reply({ error: String(err && err.message || err).slice(0, 120) }); }
+    finally { searching = false; }
+  });
 });
 
 chrome.runtime.onConnect.addListener((port) => {
