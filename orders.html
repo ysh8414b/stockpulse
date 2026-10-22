@@ -3728,6 +3728,22 @@ function FrozenTab({adminHash,masters}){
   const del=async l=>{
     try{await rpc("ol_delete_frozen_lot",{p_admin_hash:adminHash,p_id:l.id});setDelId(null);load()}catch(e){setErr(fzErr(e))}
   };
+  // 전체 삭제: 기존 로트 삭제 RPC를 5개씩 나눠 반복 호출 (SQL 추가 불필요)
+  const[askClear,setAskClear]=useState(false);
+  const[clearing,setClearing]=useState(null); // {done,total}
+  const clearAll=async()=>{
+    const ids=rawLots.map(l=>l.id);
+    setAskClear(false);setClearing({done:0,total:ids.length});
+    let fail=0,done=0;
+    for(let i=0;i<ids.length;i+=5){
+      const rs=await Promise.allSettled(ids.slice(i,i+5).map(id=>rpc("ol_delete_frozen_lot",{p_admin_hash:adminHash,p_id:id})));
+      fail+=rs.filter(r=>r.status==="rejected").length;done+=rs.length;
+      setClearing({done,total:ids.length});
+    }
+    setClearing(null);
+    if(fail)setErr(`${fail}건 삭제 실패 — 남은 재고를 다시 표시합니다`);
+    load();
+  };
 
   // 삭제는 confirm() 대신 그 자리 확인 (앱 내장 브라우저에서 confirm 창이 안 뜨는 경우 대비)
   const actions=l=>delId===l.id
@@ -3771,6 +3787,12 @@ function FrozenTab({adminHash,masters}){
       <button className="ol-btn ol-btn-secondary" disabled={!filtered.length||printing} onClick={savePng}>{printing?"저장 중…":"🖼 이미지 저장"}</button>
       <button className="ol-btn ol-btn-secondary" disabled={!filtered.length} onClick={()=>downloadFrozenXlsx(filtered)}>📥 엑셀</button>
       <button className="ol-btn ol-btn-secondary" title="새로고침" onClick={load}>↻</button>
+      {clearing?<span style={{fontSize:13,color:"#ef4444",fontWeight:600}}>삭제 중… {clearing.done}/{clearing.total}</span>
+       :askClear?<span style={{display:"inline-flex",gap:6,alignItems:"center"}}>
+          <span style={{fontSize:13,color:"#ef4444",fontWeight:600}}>재고 {rawLots.length}건을 모두 삭제할까요? 되돌릴 수 없습니다.</span>
+          <button className="ol-btn ol-btn-danger ol-btn-sm" onClick={clearAll}>모두 삭제</button>
+          <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setAskClear(false)}>취소</button></span>
+       :<button className="ol-btn ol-btn-danger" disabled={!rawLots.length} onClick={()=>setAskClear(true)}>🗑 전체 삭제</button>}
       <input className="ol-input" style={{maxWidth:240,marginLeft:"auto"}} placeholder="제품·코드·위치·메모 검색" value={q} onChange={e=>setQ(e.target.value)}/>
     </div>
     <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:14,alignItems:"center"}}>
