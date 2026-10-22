@@ -207,10 +207,11 @@ function extractCoupangSearch(limit) {
   };
 }
 
-async function readSearch(query, limit) {
+async function readSearch(query, limit, page) {
   const q = String(query || "").trim().slice(0, 100);
   if (!q) return { error: "검색어가 없습니다" };
-  const url = "https://www.coupang.com/np/search?q=" + encodeURIComponent(q) + "&channel=user&listSize=" + Math.min(Math.max(Number(limit) || 36, 12), 72);
+  const pg = Math.min(Math.max(Number(page) || 1, 1), 10);
+  const url = "https://www.coupang.com/np/search?q=" + encodeURIComponent(q) + "&channel=user&listSize=" + Math.min(Math.max(Number(limit) || 36, 12), 72) + (pg > 1 ? "&page=" + pg : "");
   const tab = await chrome.tabs.create({ url, active: false });
   let keepTab = false;
   try {
@@ -246,7 +247,7 @@ chrome.runtime.onConnect.addListener((port) => {
     const reply = (r) => { if (!gone) { try { port.postMessage(r); } catch (err) {} } };
     if (searching) { reply({ error: "이미 검색 중입니다 — 잠시 뒤 다시 누르세요" }); return; }
     searching = true;
-    try { reply(await readSearch(m.query, m.limit)); }
+    try { reply(await readSearch(m.query, m.limit, m.page)); }
     catch (err) { reply({ error: String(err && err.message || err).slice(0, 120) }); }
     finally { searching = false; }
   });

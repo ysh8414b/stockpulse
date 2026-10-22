@@ -1408,7 +1408,7 @@ function BookmarkletHelp({onClose}){
 
 // 크롬 확장 프로그램 설치 안내 + 파일 묶음(zip) 받기
 const EXT_FILES=["manifest.json","background.js","bridge.js"];
-const EXT_LATEST="1.2.1"; // extensions/coupang-price/manifest.json 과 맞출 것
+const EXT_LATEST="1.3.0"; // extensions/coupang-price/manifest.json 과 맞출 것
 const PRICE_GAPS=[5,8,15,30]; // 상품 사이 간격(초) — 쿠팡이 자동 접속으로 막지 않도록 넉넉히
 function verLt(a,b){const x=String(a||"0").split(".").map(Number),y=String(b).split(".").map(Number);for(let i=0;i<3;i++){if((x[i]||0)!==(y[i]||0))return (x[i]||0)<(y[i]||0)}return false}
 function ExtensionHelp({ext,onClose}){
@@ -1492,7 +1492,7 @@ function defaultMarketQuery(name,vendor){
 }
 function coupangPid(url){const m=String(url||"").match(/\/vp\/products\/(\d+)/);return m?m[1]:""}
 // 확장 프로그램에 검색 요청 → 결과 1번 받기 (최대 90초)
-function extSearch(query,limit){
+function extSearch(query,limit,page){
   return new Promise(resolve=>{
     const reqId="s"+Date.now()+Math.random().toString(36).slice(2,6);
     const t=setTimeout(()=>{window.removeEventListener("message",f);resolve({error:"90초 안에 응답이 없습니다 (크롬이 느리거나 확장 프로그램이 꺼져 있음)"})},90000);
@@ -1501,11 +1501,33 @@ function extSearch(query,limit){
       clearTimeout(t);window.removeEventListener("message",f);resolve(e.data);
     };
     window.addEventListener("message",f);
-    window.postMessage({__olpage:true,type:"search",query,limit,reqId},location.origin);
+    window.postMessage({__olpage:true,type:"search",query,limit,page,reqId},location.origin);
   });
 }
 const SHIP_COLOR=t=>/프레시/.test(t)?"#16a34a":/직구/.test(t)?"#8b5cf6":/판매자/.test(t)?"#f59e0b":"#3b82f6";
 const MARKET_SORTS=[["rank","검색 순위"],["u100","100g당 가격"],["price","판매가"],["reviews","리뷰 많은 순"]];
+
+// ⚡ 빠른 확인 — 쿠팡 검색 결과로 "가격이 바뀌었을 수 있는 상품"만 골라 상품 페이지 확인
+//  · 저장하는 가격은 언제나 상품 페이지에서 읽은 값 (검색 결과 값은 저장하지 않음)
+//  · 상품 페이지로 확인한 직후의 검색 표시(가격·정상가·와우·쿠폰·할인율·품절)를 기억 → 다음 빠른 확인에서 그대로면 "변동 없음"
+const FAST_EXT_MIN="1.3.0";
+const FAST_PAGES=2;          // 검색어마다 읽을 검색 결과 페이지 수 (페이지당 최대 72개)
+const FAST_GAP_MS=5000;      // 검색 페이지 사이 간격
+function fastSigOf(it){return [it.price,it.base,it.wowPrice,it.couponPrice,it.rate,it.soldOut?1:0].map(v=>v==null?"":String(v)).join("|")}
+function loadFastSigs(){try{return JSON.parse(lsGet("ol-fast-sig","{}"))||{}}catch(e){return {}}}
+function saveFastSigs(m){lsSet("ol-fast-sig",JSON.stringify(m))}
+function fastNum(v){return v==null||v===""?null:Number(v)}
+// 행 하나 판정 → {kind:"same"|"need", reason}
+function fastJudge(p,it,shared,sigs){
+  if(shared)return {kind:"need",reason:"같은 링크를 쓰는 상품이 여러 개 (검색으로 구분 불가)"};
+  if(!it)return {kind:"need",reason:"검색 결과에서 못 찾음"};
+  if(it.soldOut)return {kind:"need",reason:"검색 결과에 품절 표시"};
+  const S=fastNum(p.sale_price),D=fastNum(p.discount_price??p.sale_price);
+  const st=sigs[p.id];
+  if(st&&st.sig===fastSigOf(it)&&st.S===S&&st.D===D)return {kind:"same",reason:"지난 페이지 확인 때와 검색 표시가 같음"};
+  if(S!=null&&S===D&&it.price===S&&it.base==null&&it.wowPrice==null&&it.couponPrice==null&&it.rate==null)return {kind:"same",reason:"할인 없음 · 가격 같음"};
+  return {kind:"need",reason:st?"검색 표시가 지난번과 다름":"처음 확인 (검색 표시 기억 전)"};
+}
 
 function MarketModal({adminHash,p,ext,onClose,onChanged}){
   const[query,setQuery]=useState(()=>p.market_query||defaultMarketQuery(p.name,p.vendor));
@@ -1697,6 +1719,12 @@ function PriceView({adminHash}){
   const[histOpen,setHistOpen]=useState(false);
   const[delId,setDelId]=useState(null);
   const[marketP,setMarketP]=useState(null); // 🔍 시장조사 창
+  const[fast,setFast]=useState(null);       // ⚡ 빠른 확인 결과
+  const[fastOpen,setFastOpen]=useState(false);
+  const[fastQ,setFastQ]=useState(()=>lsGet("ol-fast-queries",""));
+  useEffect(()=>lsSet("ol-fast-queries",fastQ),[fastQ]);
+  const fastStop=useRef(false);
+  const fastFound=useRef({}); // 상품 id → 이번 빠른 확인의 검색 표시 (페이지 확인 성공 후 기억용)
   const fileRef=useRef(null);
   useEffect(()=>lsSet("ol-price-sheet",sheetF),[sheetF]);
   // 크롬 확장 프로그램 (쿠팡 가격 전체 갱신)
@@ -1776,6 +1804,8 @@ function PriceView({adminHash}){
         try{
           await rpc("ol_set_price_values",{p_admin_hash:adminHash,p_id:d.id,p_values:{sale_price:d.sale_price,discount_price:d.discount_price},p_source:"capture"});
           setData(dd=>dd&&{...dd,items:dd.items.map(x=>x.id===d.id?{...x,sale_price:d.sale_price,discount_price:d.discount_price,price_checked_at:new Date().toISOString()}:x)});
+          const fit=fastFound.current[d.id];
+          if(fit){const m=loadFastSigs();m[d.id]={sig:fastSigOf(fit),S:Number(d.sale_price),D:Number(d.discount_price),at:Date.now()};saveFastSigs(m)}
         }catch(e){res={error:"저장 실패: "+priceErr(e)}}
       }
       setRun(r=>r&&{...r,done:{...r.done,[d.id]:res}});
@@ -1806,6 +1836,55 @@ function PriceView({adminHash}){
   };
   const stopRun=()=>window.postMessage({__olpage:true,type:"stop"},location.origin);
   const runTargets=filtered.filter(p=>/coupang\.com/i.test(p.coupang_url||""));
+
+  const fastQueries=()=>{
+    const own=fastQ.split(/[,\n]/).map(x=>x.trim()).filter(Boolean);
+    return own.length?own:[...new Set(runTargets.map(p=>p.vendor).filter(Boolean))];
+  };
+  const runFast=async()=>{
+    if(!ext){setShowExt(true);return}
+    if(verLt(ext.version,FAST_EXT_MIN)){setMsg({t:"err",s:`⚡ 빠른 확인은 확장 프로그램 v${FAST_EXT_MIN} 이상이 필요합니다 (지금 v${ext.version}) — 🧩 버튼에서 새 파일을 받아 덮어쓰고 ↻ 새로고침하세요.`});return}
+    const list=runTargets;
+    const qs=fastQueries();
+    if(!list.length||!qs.length)return;
+    fastStop.current=false;
+    const found={};const log=[];
+    const total=qs.length*FAST_PAGES;let step=0;
+    setFast({status:"running",step:0,total,log:[],rows:null,queries:qs});setFastOpen(false);
+    let blocked=false;
+    outer:for(const q of qs){
+      for(let pg=1;pg<=FAST_PAGES;pg++){
+        if(fastStop.current)break outer;
+        if(step>0)await new Promise(r=>setTimeout(r,FAST_GAP_MS));
+        setFast(f=>f&&{...f,step:step+1,cur:`"${q}" ${pg}페이지`});
+        const r=await extSearch(q,72,pg);
+        step++;
+        if(r.blocked){blocked=true;log.push(`"${q}" ${pg}p: 쿠팡 접속 차단`);break outer}
+        if(r.error||!r.items){log.push(`"${q}" ${pg}p: ${r.error||"결과 없음"}`);break}
+        let add=0;for(const it of r.items){if(!found[it.productId]){found[it.productId]=it;add++}}
+        log.push(`"${q}" ${pg}p: ${r.items.length}개 (새 상품 ${add})`);
+        setFast(f=>f&&{...f,log:[...log]});
+        if(r.items.length<60)break;   // 마지막 페이지
+      }
+    }
+    const pidCount={};for(const p of list){const k=coupangPid(p.coupang_url);if(k)pidCount[k]=(pidCount[k]||0)+1}
+    const sigs=loadFastSigs();
+    const rows=list.map(p=>{const pid=coupangPid(p.coupang_url);const it=found[pid]||null;return {p,it,...fastJudge(p,it,pidCount[pid]>1,sigs)}});
+    fastFound.current={};
+    for(const r of rows)if(r.it&&r.kind==="need"&&!(pidCount[coupangPid(r.p.coupang_url)]>1))fastFound.current[r.p.id]=r.it;
+    // 변동 없음 → 확인 시각만 갱신 + 검색 표시 기억
+    let touched=0;
+    for(const r of rows.filter(r=>r.kind==="same")){
+      try{
+        await rpc("ol_set_price_values",{p_admin_hash:adminHash,p_id:r.p.id,p_values:{},p_source:"capture"});touched++;
+        sigs[r.p.id]={sig:fastSigOf(r.it),S:fastNum(r.p.sale_price),D:fastNum(r.p.discount_price??r.p.sale_price),at:Date.now()};
+      }catch(e){r.kind="need";r.reason="확인 시각 저장 실패"}
+    }
+    saveFastSigs(sigs);
+    const status=blocked?"blocked":fastStop.current?"stopped":"done";
+    setFast({status,step,total,log,rows,queries:qs,touched,found:Object.keys(found).length});
+    load();
+  };
 
   const onFile=async e=>{
     const f=e.target.files?.[0];e.target.value="";
@@ -1838,6 +1917,8 @@ function PriceView({adminHash}){
     {items.length>0&&<div className="ol-card" style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",padding:"12px 14px",borderColor:"rgba(6,182,212,.4)"}}>
       <button className="ol-btn ol-btn-primary" style={{fontSize:14}} disabled={run?.status==="running"||!runTargets.length}
         onClick={()=>startRun(runTargets)}>🔄 쿠팡 가격 전체 갱신 ({runTargets.length}개)</button>
+      <button className="ol-btn ol-btn-secondary" style={{fontSize:14,borderColor:"#f59e0b",color:"#f59e0b"}} disabled={run?.status==="running"||fast?.status==="running"||!runTargets.length}
+        onClick={runFast} title="쿠팡 검색 결과로 가격이 바뀌었을 수 있는 상품만 골라 페이지 확인">⚡ 빠른 확인</button>
       <label style={{fontSize:12,color:"var(--muted)",display:"flex",alignItems:"center",gap:6}}>상품 사이 간격
         <select className="ol-input" style={{width:"auto",padding:"5px 8px"}} value={gap} onChange={e=>setGap(Number(e.target.value))} disabled={run?.status==="running"}>
           {PRICE_GAPS.map(n=><option key={n} value={n}>{n}초</option>)}
@@ -1848,6 +1929,54 @@ function PriceView({adminHash}){
       <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setShowExt(true)}>{ext?`🧩 확장 v${ext.version}`:"🧩 확장 프로그램 설치"}</button>
       {ext&&verLt(ext.version,EXT_LATEST)&&<div style={{flexBasis:"100%",fontSize:12,color:"#f59e0b"}}>⚠ 확장 프로그램이 예전 버전(v{ext.version})입니다 — 🧩 버튼에서 새 파일(v{EXT_LATEST})을 받아 같은 폴더에 덮어쓰고, 확장 프로그램 관리 화면에서 ↻ 새로고침하세요. 예전 버전은 쿠팡 차단 화면을 알아보지 못합니다.</div>}
     </div>}
+    {items.length>0&&<div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",margin:"-4px 0 12px",fontSize:12,color:"var(--muted)"}}>
+      <span>⚡ 빠른 확인 검색어</span>
+      <input className="ol-input" style={{flex:"1 1 260px",maxWidth:460,padding:"5px 8px",fontSize:12}} value={fastQ} onChange={e=>setFastQ(e.target.value)}
+        placeholder={`비우면 업체명으로 검색: ${[...new Set(runTargets.map(p=>p.vendor).filter(Boolean))].join(", ")} (쉼표로 여러 개)`}/>
+    </div>}
+    {fast&&(()=>{
+      const rows=fast.rows||[];
+      const same=rows.filter(r=>r.kind==="same"),need=rows.filter(r=>r.kind!=="same");
+      const notFound=need.filter(r=>!r.it).length;
+      return <div className="ol-card" style={{padding:14,borderColor:"rgba(245,158,11,.45)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:6}}>
+          <b style={{fontSize:14}}>{fast.status==="running"?"⚡ 빠른 확인 중":fast.status==="blocked"?"⚠ 쿠팡 접속 차단 — 읽은 만큼만 판정":fast.status==="stopped"?"⏸ 빠른 확인 중지됨":"⚡ 빠른 확인 완료"}</b>
+          {fast.status==="running"&&<span style={{fontSize:12,color:"var(--muted)"}}>검색 {fast.step}/{fast.total} · {fast.cur||""}</span>}
+          <span style={{marginLeft:"auto",display:"flex",gap:6}}>
+            {fast.status==="running"?<button className="ol-btn ol-btn-danger ol-btn-sm" onClick={()=>{fastStop.current=true}}>중지</button>
+              :<button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setFast(null)}>닫기</button>}
+          </span>
+        </div>
+        {fast.rows&&<>
+          <div style={{display:"flex",gap:14,flexWrap:"wrap",fontSize:13,margin:"6px 0 10px"}}>
+            <span>검색에서 찾은 상품 <b>{fast.found}</b>개</span>
+            <span style={{color:"#16a34a"}}>✓ 변동 없음 <b>{same.length}</b> <small style={{color:"var(--muted)"}}>(확인 시각만 갱신)</small></span>
+            <span style={{color:"#f59e0b"}}>페이지 확인 필요 <b>{need.length}</b>{notFound?<small style={{color:"var(--muted)"}}> (검색에서 못 찾음 {notFound})</small>:null}</span>
+          </div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+            {need.length>0&&<button className="ol-btn ol-btn-primary" disabled={run?.status==="running"} onClick={()=>startRun(need.map(r=>r.p))}>🔄 필요한 {need.length}개만 페이지 확인 (약 {Math.ceil(need.length*(gap+4)/60)}분)</button>}
+            {need.length===0&&<span className="ol-ok" style={{margin:0,padding:"6px 10px",fontSize:13}}>모든 상품이 변동 없음 — 페이지 확인이 필요 없습니다</span>}
+            <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setFastOpen(o=>!o)}>{fastOpen?"상품별 판정 닫기 ▲":"상품별 판정 보기 ▼"}</button>
+          </div>
+          {fastOpen&&<div className="ol-scroll" style={{maxHeight:340,overflow:"auto",marginTop:8}}><table className="ol-table" style={{minWidth:760}}>
+            <thead><tr><th>상품</th><th className="right">저장된 판매가 / 할인가</th><th className="right">검색 결과 표시</th><th>판정</th></tr></thead>
+            <tbody>{[...need,...same].map(r=><tr key={r.p.id}>
+              <td style={{fontSize:12}}>{r.p.name}</td>
+              <td className="right" style={{fontSize:12,whiteSpace:"nowrap"}}>{fmtWon(r.p.sale_price)} / {fmtWon(r.p.discount_price??r.p.sale_price)}</td>
+              <td className="right" style={{fontSize:12,whiteSpace:"nowrap"}}>{r.it?<><b>{fmtWon(r.it.price)}</b>{r.it.base?<span style={{textDecoration:"line-through",color:"var(--muted)",marginLeft:4}}>{fmtWon(r.it.base)}</span>:null}{r.it.rate!=null?<span style={{color:"#ef4444",marginLeft:4}}>{r.it.rate}%</span>:null}{r.it.wowPrice?<div style={{fontSize:10,color:"var(--muted)"}}>와우 {fmtWon(r.it.wowPrice)}</div>:null}{r.it.couponPrice?<div style={{fontSize:10,color:"var(--muted)"}}>쿠폰 {fmtWon(r.it.couponPrice)}</div>:null}</>:"–"}</td>
+              <td style={{fontSize:12,color:r.kind==="same"?"#16a34a":"#f59e0b"}}>{r.kind==="same"?"✓ ":"→ "}{r.reason}</td>
+            </tr>)}</tbody>
+          </table></div>}
+        </>}
+        {fast.log?.length>0&&<div style={{fontSize:11,color:"var(--muted)",marginTop:8}}>{fast.log.join(" · ")}</div>}
+        {fast.status==="blocked"&&<div className="ol-warn" style={{fontSize:12,marginTop:8}}>쿠팡이 접속을 잠시 막았습니다. 몇십 분~몇 시간 뒤 다시 시도하세요. 못 읽은 상품은 "페이지 확인 필요"로 분류됩니다.</div>}
+        {fast.rows&&<div style={{fontSize:11,color:"var(--muted)",lineHeight:1.6,marginTop:8}}>
+          · 가격은 언제나 <b>상품 페이지</b>에서 읽은 값으로 저장됩니다. 검색 결과는 "바뀌었을 수 있는 상품"을 고르는 데만 씁니다.<br/>
+          · 처음에는 검색 표시를 기억해 둔 게 없어 할인 중인 상품은 "페이지 확인 필요"로 나옵니다. 한 번 페이지 확인을 하면 그때의 검색 표시를 기억해, 다음부터는 바뀐 상품만 확인합니다.<br/>
+          · 같은 쿠팡 링크를 여러 상품이 같이 쓰면(옵션 번호 없음) 검색으로 구분할 수 없어 항상 페이지 확인 대상입니다.
+        </div>}
+      </div>;
+    })()}
     {run&&(()=>{
       const doneN=Object.keys(run.done).length;
       const vals=Object.entries(run.done);

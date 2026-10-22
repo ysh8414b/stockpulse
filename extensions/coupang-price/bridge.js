@@ -53,7 +53,7 @@
         const le = chrome.runtime.lastError;
         fail("확장 프로그램의 백그라운드와 연결되지 않았습니다 — 크롬 주소창에 chrome://extensions 를 열어 이 확장 프로그램의 ↻(새로고침)을 누르고, 이 페이지도 새로고침하세요. 계속되면 확장 카드의 '오류' 버튼 내용을 알려주세요." + (le && le.message ? " (" + le.message + ")" : ""));
       });
-      sp.postMessage({ type: "search", query: d.query, limit: d.limit });
+      sp.postMessage({ type: "search", query: d.query, limit: d.limit, page: d.page });
     }
   });
 
