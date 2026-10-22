@@ -3084,7 +3084,8 @@ const SHIP_A4={W:794,H:1123,M:38,FOOT:22,S:3};
 const SHIP_PRINT_W=SHIP_A4.W-SHIP_A4.M*2;
 // 사본을 한 번 캡처한 뒤 data-shipcut 위치(섹션·층 카드·줄 경계)에서 잘라 A4 쪽들로 나눔
 // 조금 넘치는 정도(1.2쪽 이하)는 나누지 않고 한 쪽에 축소해서 맞춤
-async function shipA4Pages(el){
+// trim=true면 내용이 끝난 곳(+아래 여백)에서 종이를 잘라 빈 아래 공간을 없앰 (폭은 A4 그대로)
+async function shipA4Pages(el,{trim=false}={}){
   if(document.fonts&&document.fonts.ready)await document.fonts.ready;
   const{W,H,M,FOOT,S}=SHIP_A4;
   const src=await html2canvas(el,{scale:S,backgroundColor:"#ffffff",useCORS:true});
@@ -3104,15 +3105,17 @@ async function shipA4Pages(el){
     }
   }
   return slices.map(([a,b],i)=>{
-    const pg=document.createElement("canvas");pg.width=W*S;pg.height=H*S;
+    const multi=slices.length>1;
+    const h=b-a,k=Math.min(1,(multi?areaH:H-M*2)/h);
+    const pageH=trim?Math.min(H,Math.ceil(M+h*k+(multi?FOOT:0)+M)):H;
+    const pg=document.createElement("canvas");pg.width=W*S;pg.height=pageH*S;
     const ctx=pg.getContext("2d");
     ctx.fillStyle="#ffffff";ctx.fillRect(0,0,pg.width,pg.height);
-    const h=b-a,k=Math.min(1,(slices.length>1?areaH:H-M*2)/h);
     const dw=SHIP_PRINT_W*k,dx=M+(SHIP_PRINT_W-dw)/2;
     ctx.drawImage(src,0,a*S,src.width,h*S,dx*S,M*S,dw*S,h*k*S);
-    if(slices.length>1){
+    if(multi){
       ctx.fillStyle="#6b7280";ctx.font=`${11*S}px Pretendard, sans-serif`;ctx.textAlign="center";
-      ctx.fillText(`${i+1} / ${slices.length}`,W*S/2,(H-M+4)*S);
+      ctx.fillText(`${i+1} / ${slices.length}`,W*S/2,(pageH-M+4)*S);
     }
     return pg;
   });
@@ -3189,6 +3192,8 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
   const[saveMsg,setSaveMsg]=useState("");
   const[fmt,setFmt]=useState(()=>lsGet("ol-ship-fmt","png")==="pdf"?"pdf":"png");
   useEffect(()=>lsSet("ol-ship-fmt",fmt),[fmt]);
+  const[trim,setTrim]=useState(()=>lsGet("ol-ship-trim","1")==="1");
+  useEffect(()=>lsSet("ol-ship-trim",trim?"1":"0"),[trim]);
   const printRef=useRef(null);
   const floorRefs=useRef({});
   // 층별 저장용: 층 하나씩만 담은 출고장 (제목·요약은 그 층 기준)
@@ -3219,7 +3224,7 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
         setSaveMsg(`A4 PDF ${count}쪽으로 저장했습니다`);
       }else{
         for(const j of jobs){
-          const pages=await shipA4Pages(j.el);
+          const pages=await shipA4Pages(j.el,{trim});
           for(let i=0;i<pages.length;i++){
             downloadCanvas(pages[i],pages.length>1?`${j.name}_${i+1}쪽`:j.name);count++;
             await new Promise(r=>setTimeout(r,300));
@@ -3263,6 +3268,7 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
             <button className={fmt==="png"?"on":""} onClick={()=>setFmt("png")}>🖼 PNG</button>
             <button className={fmt==="pdf"?"on":""} onClick={()=>setFmt("pdf")}>📄 PDF</button>
           </div>
+          {fmt==="png"&&<label className={"ol-check"+(trim?" on":"")} title="내용이 끝나는 곳에서 이미지를 잘라 아래 빈 공간을 없앱니다 (폭은 A4 그대로)"><input type="checkbox" checked={trim} onChange={e=>setTrim(e.target.checked)}/>아래 여백 자르기</label>}
           <button className="ol-btn ol-btn-primary" onClick={()=>save("all")} disabled={!selFloors.length||!!saving}>{saving==="all"?"저장 중…":"A4로 저장 (이어서)"}</button>
           <button className="ol-btn ol-btn-secondary" onClick={()=>save("floor")} disabled={!selFloors.length||!!saving}>{saving==="floor"?"저장 중…":`🏭 층별 A4로 저장 (${selFloors.length}층)`}</button>
           <button className="ol-btn ol-btn-secondary" onClick={()=>downloadShipXlsx(data,shipDate,prefix,vendor,shipTo)} disabled={!ordered.length}>📥 엑셀</button>
