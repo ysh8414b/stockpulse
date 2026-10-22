@@ -1544,7 +1544,15 @@
   - `parsePriceWorkbook`: 시트명 `업체(냉장|냉동)`, '상품명' 있는 제목 행에서 칸 자동 탐지(첫 '판매가' = 쿠팡, 스토어 링크 뒤 '판매가' = 스토어가, 할인가 칸 없는 시트는 할인가 안 건드림). 원본 파일 4시트 66개 확인
   - `downloadPriceXlsx`: 원본과 같은 12칸(할인액 `=I-H` 수식, 링크 하이퍼링크, 할인 없으면 할인가 = 판매가) → `판매가_{날짜}.xlsx`. 왕복(내보내기→가져오기) 값 일치 확인
   - **🔖 가격 가져오기 버튼(북마클릿)**: `priceBookmarklet(현재 주소)` — 쿠팡/스마트스토어 상품 페이지에서 누르면 가격을 읽어(쿠팡: `.sales-price-amount`·`.prod-sale-price .total-price`·`.original-price-amount` 등 여러 선택자 + JSON-LD, 스토어: `discountedSalePrice`/`salePrice`) `orders.html?pricecap=…` 작은 창을 띄움 → `PriceCapture`가 링크의 vendorItemId → itemId → productId(스토어는 상품번호)로 상품을 찾고, 판매가/할인가를 확인·수정 후 Enter 저장(`source=capture`) → `BroadcastChannel("ol-prices")`로 열려 있는 판매가 탭 자동 새로고침, 창 자동 닫힘. 못 찾으면 상품 선택 + 그 링크를 상품에 저장 옵션
-  - 한계: 쿠팡 페이지 구조를 서버에서 볼 수 없어 선택자는 실제 페이지에서 미검증 — 못 읽거나 쿠폰가를 읽으면 창에서 숫자를 고쳐 저장. 북마크는 설치한 주소(실제 사이트)로 창을 띄우므로 localhost에서 설치하면 안 됨. 상품마다 페이지를 열고 버튼을 눌러야 함(완전 자동 아님)
+  - 한계: 북마크는 설치한 주소(실제 사이트)로 창을 띄우므로 localhost에서 설치하면 안 됨. 상품마다 페이지를 열고 버튼을 눌러야 함 → 아래 크롬 확장으로 보완
+  - **쿠팡 가격 위치 (2026-10-22 실제 페이지 확인)**: `.price-container` 안 `.sales-price-amount` = 쿠팡판매가 → **판매가**, `.final-price-amount` = 와우할인 등 최종가 → **현재 할인가**, `.original-price-amount`(줄 그어진 기준가)는 사용 안 함. 할인 없는 상품은 최종가 칸만 있음 → 판매가 = 할인가 = 최종가. 엑셀 값과 3건 일치(닭갈비 13,800/12,800, 부채살 29,900/29,900, 돌돌말이 800g 13,970). 옵션 상품은 URL의 itemId로 해당 옵션 가격이 표시됨. 북마크 버튼도 이 규칙으로 수정(payload `sale`/`disc`)
+  - **🔄 쿠팡 가격 전체 갱신 — 크롬 확장 프로그램 (같은 날)**: 서버 크롤링은 403으로 막혀 있고 우회는 하지 않으므로, 사용자 크롬이 페이지를 여는 방식
+    - **`extensions/coupang-price/`** (MV3): `manifest.json`(권한 `scripting` + `https://www.coupang.com/*`, content script는 `ainsightlab.kr/orders.html`·localhost:8000), `bridge.js`(페이지 `postMessage({__olpage})` ↔ 확장 포트 `olprice`, 응답은 `{__olext}`), `background.js`(작업 목록을 하나씩 `chrome.tabs.create({active:false})` → 로드 완료 대기 → `executeScript(extractCoupangPrice)` 최대 6초 재시도 → 탭 닫기 → 간격(2~30초) 대기)
+    - 보안 확인 감지(제목·본문 "Access Denied", captcha 요소) 시 그 탭을 앞으로 띄우고 `stopped/blocked`로 멈춤 — 자동으로 넘기지 않음. 요청 itemId와 열린 페이지 itemId가 다르면(옵션 품절 등) 저장하지 않고 실패 처리
+    - 가격 저장은 확장이 아니라 페이지가 함(`ol_set_price_values`, source `capture`) → 확장에 Supabase 키 없음
+    - 판매가 탭: 확장 감지(ping/pong), "🔄 쿠팡 가격 전체 갱신 (N개)" 카드(지금 보이는 필터 기준, 간격 2/3/5/8초 — localStorage `ol-price-gap`, 예상 시간), 진행 카드(진행 막대·읽는 중 상품·성공/가격 바뀜/실패, 중지, 보안 확인 시 "이어서 갱신", 바뀐 가격 전→후·실패 사유 목록), `ExtensionHelp`(파일 3개를 JSZip으로 묶어 `쿠팡가격갱신_확장프로그램.zip` 다운로드 + 설치 순서)
+    - 검증: 추출 함수를 실제 쿠팡 페이지에서 실행해 값 일치 확인, 페이지 쪽은 가짜 확장 메시지로 66개 갱신·실패·보안 확인 멈춤·이어서 갱신 흐름 확인. 실제 확장 설치 상태의 동작은 미검증(사용자 크롬에서 첫 실행 필요)
+    - 한계: PC 크롬이 켜져 있고 orders.html 판매가 탭이 열려 있어야 함(탭을 닫으면 중지). zip 받기는 `extensions/` 폴더가 배포(GitHub Pages)된 뒤에 동작. 쿠팡 화면 구조가 바뀌면 선택자 수정 필요(`extractCoupangPrice`)
 - **비밀번호 없이 접근 (2026-10-13 변경)**: 사용자 요청으로 로그인 화면 제거. `setup_orders.sql`의 모든 `ol_*` RPC에서 `aps_assert_admin` 호출 삭제(`p_admin_hash` 파라미터는 시그니처 호환용으로만 남기고 무시), 클라이언트는 `""` 전달. 이미 이전 버전 SQL을 실행했다면 **파일 전체를 다시 실행**해야 함(재실행 안전). 결과: URL을 아는 누구나 제품/발주서 조회·수정·삭제 가능 — anon 키는 shared.js에 공개되어 있으므로 RPC 직접 호출도 가능
 
 ## 알려진 이슈

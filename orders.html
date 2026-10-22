@@ -1275,10 +1275,11 @@ function pk(t){t=String(t||"");var m=t.match(/(\\d{1,3}(?:,\\d{3})+|\\d{3,})\\s*
 function q(ss){for(var i=0;i<ss.length;i++){var e=document.querySelector(ss[i]);if(e){var v=pk(e.textContent);if(v)return v}}return null}
 var ld=null;document.querySelectorAll('script[type="application/ld+json"]').forEach(function(s){try{[].concat(JSON.parse(s.textContent)).forEach(function(o){var f=[].concat((o&&o.offers)||[])[0];if(f&&f.price&&ld==null)ld=Number(String(f.price).replace(/[^0-9.]/g,""))||null})}catch(e){}});
 var site="",sale=null,orig=null,html=document.documentElement.innerHTML;
-if(/coupang\\.com/.test(h)){site="coupang";sale=q([".sales-price-amount",".sales-price .price-amount",".prod-sale-price .total-price",".final-price-amount",".final-price .price-amount",".prod-coupon-price .total-price",".total-price"])||ld;orig=q([".original-price-amount",".original-price .price-amount",".prod-origin-price .origin-price",".origin-price"]);}
+var disc=null;
+if(/coupang\\.com/.test(h)){site="coupang";var sp=q([".price-container .sales-price-amount"]),fp=q([".price-container .final-price-amount"]);sale=sp!=null?sp:(fp!=null?fp:ld);disc=fp!=null?fp:sale;}
 else if(/naver\\.com/.test(h)){site="store";var a=html.match(/"discountedSalePrice"\\s*:\\s*(\\d+)/),b=html.match(/"salePrice"\\s*:\\s*(\\d+)/);sale=(a&&Number(a[1]))||ld||(b&&Number(b[1]));orig=b?Number(b[1]):null;}
 else{alert("쿠팡 또는 스마트스토어 상품 페이지에서 눌러 주세요");return}
-var d={site:site,url:u,sale:sale,orig:orig,title:document.title.slice(0,120)};
+var d={site:site,url:u,sale:sale,disc:disc,orig:orig,title:document.title.slice(0,120)};
 var w=window.open(${JSON.stringify(base)}+"?pricecap="+encodeURIComponent(JSON.stringify(d)),"olpricecap","width=560,height=760");
 if(!w)alert("팝업이 차단되었습니다. 이 사이트의 팝업을 허용해 주세요.")})()`;
   return "javascript:"+encodeURIComponent(code.replace(/\n/g,""));
@@ -1400,6 +1401,47 @@ function BookmarkletHelp({onClose}){
   </div>;
 }
 
+// 크롬 확장 프로그램 설치 안내 + 파일 묶음(zip) 받기
+const EXT_FILES=["manifest.json","background.js","bridge.js"];
+function ExtensionHelp({ext,onClose}){
+  const[busy,setBusy]=useState(false);const[err,setErr]=useState("");
+  const download=async()=>{
+    setBusy(true);setErr("");
+    try{
+      const zip=new JSZip();const dir=zip.folder("coupang-price");
+      for(const f of EXT_FILES){
+        const r=await fetch("extensions/coupang-price/"+f,{cache:"no-store"});
+        if(!r.ok)throw new Error(f+" "+r.status);
+        dir.file(f,await r.text());
+      }
+      const blob=await zip.generateAsync({type:"blob"});
+      const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="쿠팡가격갱신_확장프로그램.zip";
+      document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+    }catch(e){setErr("파일을 받지 못했습니다: "+String(e.message||e))}
+    setBusy(false);
+  };
+  return <div>
+    <h3 style={{margin:"0 0 10px",fontSize:17}}>🧩 쿠팡 가격 갱신 확장 프로그램</h3>
+    {ext?<div className="ol-ok">✓ 설치되어 있습니다 (버전 {ext.version})</div>:
+      <div className="ol-warn" style={{fontSize:13}}>아직 이 브라우저에 설치되지 않았습니다 (설치했다면 이 페이지를 새로고침하세요)</div>}
+    <ol style={{fontSize:13,lineHeight:1.8,paddingLeft:20,margin:"10px 0"}}>
+      <li><button className="ol-btn ol-btn-primary ol-btn-sm" disabled={busy} onClick={download}>{busy?"만드는 중…":"📦 확장 프로그램 파일 받기 (zip)"}</button> → 받은 zip을 <b>압축 풀기</b> (예: 문서 폴더)</li>
+      <li>크롬 주소창에 <code style={{userSelect:"all",background:"var(--card-bg)",padding:"1px 6px",borderRadius:4}}>chrome://extensions</code> 입력</li>
+      <li>오른쪽 위 <b>개발자 모드</b> 켜기</li>
+      <li><b>압축해제된 확장 프로그램을 로드합니다</b> → 압축 푼 <b>coupang-price</b> 폴더 선택</li>
+      <li>이 페이지를 <b>새로고침</b>하면 "🔄 쿠팡 가격 전체 갱신" 버튼을 쓸 수 있습니다</li>
+    </ol>
+    {err&&<div className="ol-err">{err}</div>}
+    <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.7}}>
+      · 버튼을 누르면 크롬이 등록된 쿠팡 링크를 <b>뒤쪽 탭으로 하나씩</b> 열어 판매가(쿠팡판매가)와 현재 할인가(와우할인 등 최종가)를 읽고 바로 닫습니다. 페이지를 열어 둔 채 다른 일을 하셔도 됩니다.<br/>
+      · 쿠팡 보안 확인이 뜨면 그 탭을 앞으로 띄우고 멈춥니다 — 직접 확인한 뒤 <b>이어서 갱신</b>을 누르세요.<br/>
+      · 쿠팡 화면 구조가 바뀌면 가격을 못 읽을 수 있습니다. 그때는 실패 목록이 표시됩니다.<br/>
+      · 파일이 바뀌어 다시 설치할 때는 같은 폴더에 덮어쓰고 chrome://extensions 에서 ↻(새로고침)을 누르면 됩니다.
+    </div>
+    <div style={{textAlign:"right",marginTop:14}}><button className="ol-btn ol-btn-secondary" onClick={onClose}>닫기</button></div>
+  </div>;
+}
+
 function PriceView({adminHash}){
   const[data,setData]=useState(null);
   const[err,setErr]=useState("");
@@ -1413,6 +1455,14 @@ function PriceView({adminHash}){
   const[delId,setDelId]=useState(null);
   const fileRef=useRef(null);
   useEffect(()=>lsSet("ol-price-sheet",sheetF),[sheetF]);
+  // 크롬 확장 프로그램 (쿠팡 가격 전체 갱신)
+  const[ext,setExt]=useState(null);
+  const[showExt,setShowExt]=useState(false);
+  const[run,setRun]=useState(null); // {jobs,total,currentId,done:{id:결과},status:running|done|stopped|blocked}
+  const[gap,setGap]=useState(()=>{const n=Number(lsGet("ol-price-gap","3"));return [2,3,5,8].includes(n)?n:3});
+  useEffect(()=>lsSet("ol-price-gap",String(gap)),[gap]);
+  const dataRef=useRef(null);
+  const extHandler=useRef(null);
 
   const load=useCallback(async()=>{
     try{const d=await rpc("ol_list_prices",{p_admin_hash:adminHash});setData({items:d?.items||[],history:d?.history||[]});setErr("")}
@@ -1466,6 +1516,53 @@ function PriceView({adminHash}){
     catch(e){setMsg({t:"err",s:priceErr(e)})}
     load();
   };
+  dataRef.current=data;
+  // 확장 프로그램이 보낸 결과 처리 (가격은 이 페이지가 바로 저장)
+  extHandler.current=async d=>{
+    if(d.type==="start"){setRun(r=>r&&{...r,status:"running"});return}
+    if(d.type==="progress"){setRun(r=>r&&{...r,currentId:d.id});return}
+    if(d.type==="error"){setMsg({t:"err",s:d.message});setRun(r=>r&&r.status==="running"?{...r,status:"stopped"}:r);return}
+    if(d.type==="result"){
+      const old=(dataRef.current?.items||[]).find(x=>x.id===d.id);
+      let res;
+      if(d.error)res={error:d.error};
+      else{
+        const changed=!old||Number(old.sale_price)!==d.sale_price||Number(old.discount_price??old.sale_price)!==d.discount_price;
+        res={sale:d.sale_price,disc:d.discount_price,oldSale:old?.sale_price??null,oldDisc:old?.discount_price??null,changed};
+        try{
+          await rpc("ol_set_price_values",{p_admin_hash:adminHash,p_id:d.id,p_values:{sale_price:d.sale_price,discount_price:d.discount_price},p_source:"capture"});
+          setData(dd=>dd&&{...dd,items:dd.items.map(x=>x.id===d.id?{...x,sale_price:d.sale_price,discount_price:d.discount_price,price_checked_at:new Date().toISOString()}:x)});
+        }catch(e){res={error:"저장 실패: "+priceErr(e)}}
+      }
+      setRun(r=>r&&{...r,done:{...r.done,[d.id]:res}});
+      return;
+    }
+    if(d.type==="done"||d.type==="stopped"){
+      setRun(r=>r&&{...r,currentId:null,status:d.type==="done"?"done":d.reason==="blocked"?"blocked":"stopped"});
+      load();
+    }
+  };
+  useEffect(()=>{
+    const onMsg=e=>{
+      if(e.source!==window||!e.data||e.data.__olext!==true)return;
+      const d=e.data;
+      if(d.type==="ready"||d.type==="pong"){setExt({version:d.version});return}
+      extHandler.current&&extHandler.current(d);
+    };
+    window.addEventListener("message",onMsg);
+    window.postMessage({__olpage:true,type:"ping"},location.origin);
+    return()=>window.removeEventListener("message",onMsg);
+  },[]);
+  const startRun=(list,prev)=>{
+    if(!ext){setShowExt(true);return}
+    const jobs=prev?prev.jobs.filter(j=>!prev.done[j.id]):list.filter(p=>/coupang\.com/i.test(p.coupang_url||"")).map(p=>({id:p.id,url:p.coupang_url}));
+    if(!jobs.length){setMsg({t:"err",s:"쿠팡 링크가 있는 상품이 없습니다."});return}
+    setRun(prev?{...prev,status:"running"}:{jobs,total:jobs.length,done:{},status:"running",currentId:null});
+    window.postMessage({__olpage:true,type:"run",jobs,delayMs:gap*1000},location.origin);
+  };
+  const stopRun=()=>window.postMessage({__olpage:true,type:"stop"},location.origin);
+  const runTargets=filtered.filter(p=>/coupang\.com/i.test(p.coupang_url||""));
+
   const onFile=async e=>{
     const f=e.target.files?.[0];e.target.value="";
     if(!f)return;
@@ -1494,6 +1591,59 @@ function PriceView({adminHash}){
       <button className="ol-btn ol-btn-secondary" onClick={()=>setShowBm(true)}>🔖 가격 가져오기 버튼</button>
       <input className="ol-input" style={{maxWidth:240,marginLeft:"auto"}} placeholder="상품명·SKU·바코드 검색" value={q} onChange={e=>setQ(e.target.value)}/>
     </div>
+    {items.length>0&&<div className="ol-card" style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",padding:"12px 14px",borderColor:"rgba(6,182,212,.4)"}}>
+      <button className="ol-btn ol-btn-primary" style={{fontSize:14}} disabled={run?.status==="running"||!runTargets.length}
+        onClick={()=>startRun(runTargets)}>🔄 쿠팡 가격 전체 갱신 ({runTargets.length}개)</button>
+      <label style={{fontSize:12,color:"var(--muted)",display:"flex",alignItems:"center",gap:6}}>상품 사이 간격
+        <select className="ol-input" style={{width:"auto",padding:"5px 8px"}} value={gap} onChange={e=>setGap(Number(e.target.value))} disabled={run?.status==="running"}>
+          {[2,3,5,8].map(n=><option key={n} value={n}>{n}초</option>)}
+        </select></label>
+      <span style={{fontSize:12,color:"var(--muted)",flex:1,minWidth:200}}>
+        {(sheetF!=="all"||q||onlyDisc)?"지금 보이는 상품만 갱신합니다 · ":""}예상 {Math.ceil(runTargets.length*(gap+3)/60)}분
+      </span>
+      <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setShowExt(true)}>{ext?`🧩 확장 v${ext.version}`:"🧩 확장 프로그램 설치"}</button>
+    </div>}
+    {run&&(()=>{
+      const doneN=Object.keys(run.done).length;
+      const vals=Object.entries(run.done);
+      const fails=vals.filter(([,r])=>r.error);
+      const changes=vals.filter(([,r])=>!r.error&&r.changed);
+      const nameOf=id=>(items.find(x=>String(x.id)===String(id))||{}).name||("#"+id);
+      const cur=run.currentId!=null?items.find(x=>x.id===run.currentId):null;
+      const pct=run.total?Math.round(doneN/run.total*100):0;
+      return <div className="ol-card" style={{padding:14}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:8}}>
+          <b style={{fontSize:14}}>{run.status==="running"?"🔄 쿠팡 가격 갱신 중":run.status==="done"?"✓ 갱신 완료":run.status==="blocked"?"⚠ 쿠팡 보안 확인으로 멈춤":"⏸ 중지됨"}</b>
+          <span style={{fontSize:13,fontVariantNumeric:"tabular-nums"}}>{doneN} / {run.total}</span>
+          <span style={{fontSize:12,color:"#16a34a"}}>성공 {doneN-fails.length}</span>
+          <span style={{fontSize:12,color:"#06b6d4"}}>가격 바뀜 {changes.length}</span>
+          {fails.length>0&&<span style={{fontSize:12,color:"#ef4444"}}>실패 {fails.length}</span>}
+          <span style={{marginLeft:"auto",display:"flex",gap:6}}>
+            {run.status==="running"&&<button className="ol-btn ol-btn-danger ol-btn-sm" onClick={stopRun}>중지</button>}
+            {(run.status==="blocked"||run.status==="stopped")&&doneN<run.total&&<button className="ol-btn ol-btn-primary ol-btn-sm" onClick={()=>startRun(null,run)}>이어서 갱신 ({run.total-doneN}개)</button>}
+            {run.status!=="running"&&<button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setRun(null)}>닫기</button>}
+          </span>
+        </div>
+        <div style={{height:8,borderRadius:4,background:"var(--div2)",overflow:"hidden",marginBottom:8}}>
+          <div style={{height:"100%",width:pct+"%",background:"linear-gradient(90deg,#06b6d4,#8b5cf6)",transition:"width .3s"}}/>
+        </div>
+        {run.status==="running"&&cur&&<div style={{fontSize:12,color:"var(--muted)"}}>읽는 중: {cur.name}</div>}
+        {run.status==="blocked"&&<div className="ol-warn" style={{fontSize:13,margin:"6px 0"}}>쿠팡이 보안 확인 화면을 띄웠습니다. 앞으로 띄운 쿠팡 탭에서 <b>직접 확인을 마친 뒤</b> <b>이어서 갱신</b>을 누르세요. 간격을 늘리면(5초·8초) 덜 뜹니다.</div>}
+        {(changes.length>0||fails.length>0)&&<div className="ol-scroll" style={{maxHeight:260,overflow:"auto",marginTop:6}}><table className="ol-table" style={{minWidth:560}}>
+          <tbody>
+            {changes.map(([id,r])=><tr key={"c"+id}>
+              <td style={{fontSize:12}}>{nameOf(id)}</td>
+              <td className="right" style={{fontSize:12,whiteSpace:"nowrap"}}>판매가 {fmtWon(r.oldSale)} → <b>{fmtWon(r.sale)}</b></td>
+              <td className="right" style={{fontSize:12,whiteSpace:"nowrap"}}>할인가 {fmtWon(r.oldDisc??r.oldSale)} → <b style={{color:r.disc<r.sale?"#ef4444":undefined}}>{fmtWon(r.disc)}</b></td>
+            </tr>)}
+            {fails.map(([id,r])=><tr key={"f"+id}>
+              <td style={{fontSize:12}}>{nameOf(id)}</td>
+              <td colSpan={2} style={{fontSize:12,color:"#ef4444"}}>✗ {r.error}</td>
+            </tr>)}
+          </tbody>
+        </table></div>}
+      </div>;
+    })()}
     {err&&<div className="ol-warn">{err}</div>}
     {msg&&<div className={msg.t==="err"?"ol-warn":"ol-ok"} style={{display:"flex",gap:8,alignItems:"center"}}><span style={{flex:1}}>{msg.s}</span><button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setMsg(null)}>닫기</button></div>}
 
@@ -1583,6 +1733,7 @@ function PriceView({adminHash}){
 
     {editing&&<Modal lg onClose={()=>setEditing(null)}><PriceForm adminHash={adminHash} initial={editing} vendors={vendors} history={history} onCancel={()=>setEditing(null)} onSaved={()=>{setEditing(null);load()}}/></Modal>}
     {showBm&&<Modal onClose={()=>setShowBm(false)}><BookmarkletHelp onClose={()=>setShowBm(false)}/></Modal>}
+    {showExt&&<Modal onClose={()=>setShowExt(false)}><ExtensionHelp ext={ext} onClose={()=>setShowExt(false)}/></Modal>}
   </>;
 }
 
@@ -1595,7 +1746,8 @@ function PriceCapture({payload}){
   const[matched,setMatched]=useState([]);
   const[q,setQ]=useState("");
   const[saveLink,setSaveLink]=useState(false);
-  const[vals,setVals]=useState(()=>isStore?{store_price:payload.sale??""}:{sale_price:payload.orig??payload.sale??"",discount_price:payload.sale??""});
+  // 쿠팡: sale = 쿠팡판매가(없으면 최종가), disc = 와우할인 등 최종가
+  const[vals,setVals]=useState(()=>isStore?{store_price:payload.sale??""}:{sale_price:payload.sale??"",discount_price:payload.disc??payload.sale??""});
   const[state,setState]=useState(""); // "" | saving | done
   useEffect(()=>{applyTheme(getStoredTheme())},[]);
   useEffect(()=>{(async()=>{
@@ -1659,7 +1811,7 @@ function PriceCapture({payload}){
       {isStore?field("store_price","스마트스토어 판매가",sel?.store_price):<>
         {field("sale_price","판매가 (정가)",sel?.sale_price)}
         {field("discount_price","현재 할인가",sel?.discount_price)}
-        <div style={{fontSize:11,color:"var(--muted)",marginBottom:10}}>할인이 없으면 두 칸을 같은 값으로 두면 됩니다. 쿠폰가가 잡혔으면 숫자를 고쳐 주세요.</div>
+        <div style={{fontSize:11,color:"var(--muted)",marginBottom:10}}>판매가 = 쿠팡판매가, 현재 할인가 = 와우할인 등 최종가. 할인이 없으면 두 칸이 같습니다.</div>
       </>}
       {err&&<div className="ol-err" style={{marginBottom:8}}>{err}</div>}
       <div style={{display:"flex",gap:8}}>

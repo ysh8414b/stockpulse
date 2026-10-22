@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "쿠팡 가격 전체 갱신 (자동 리스트 생성기)",
+  "version": "1.0.0",
+  "description": "orders.html 판매가 탭에서 '쿠팡 가격 전체 갱신'을 누르면 등록된 쿠팡 상품 페이지를 하나씩 열어 판매가·할인가를 읽어 옵니다.",
+  "permissions": ["scripting"],
+  "host_permissions": ["https://www.coupang.com/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://ainsightlab.kr/orders.html*",
+        "https://www.ainsightlab.kr/orders.html*",
+        "http://localhost:8000/orders.html*",
+        "http://127.0.0.1:8000/orders.html*"
+      ],
+      "js": ["bridge.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
