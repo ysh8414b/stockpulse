@@ -3989,6 +3989,31 @@ function fzPaginate(items){
   if(cur.length||!pages.length)push();
   return pages;
 }
+// 모바일에서 여러 쪽 이미지를 저장하는 창 — 공유 시트로 한 번에 저장하거나, 쪽마다 눌러서 저장
+function FrozenShotsSheet({shots,onClose}){
+  const files=shots.map(x=>x.file);
+  const canShare=!!(navigator.canShare&&navigator.canShare({files}));
+  const[msg,setMsg]=useState("");
+  const shareAll=async()=>{
+    try{await navigator.share({files});setMsg("")}
+    catch(e){if(e?.name!=="AbortError")setMsg("공유 실패: "+String(e?.message||e)+" — 아래에서 쪽마다 저장하세요.")}
+  };
+  return <>
+    <h3 style={{margin:"0 0 6px",fontSize:17}}>🖼 이미지 {shots.length}장</h3>
+    <div style={{fontSize:12,color:"var(--muted)",marginBottom:12}}>모바일은 한 번에 한 파일만 내려받을 수 있어요.{canShare?" '한 번에 저장'을 누르고 공유 창에서 '이미지 저장'을 고르세요.":""} 쪽마다 저장하거나 이미지를 길게 눌러 저장해도 돼요.</div>
+    {canShare&&<button className="ol-btn ol-btn-primary" style={{width:"100%",marginBottom:12}} onClick={shareAll}>📤 {shots.length}장 한 번에 저장</button>}
+    {msg&&<div className="ol-err">{msg}</div>}
+    <div style={{display:"flex",flexDirection:"column",gap:12,maxHeight:"60vh",overflowY:"auto"}}>
+      {shots.map((x,i)=><div key={x.name} style={{border:"1px solid var(--border)",borderRadius:8,padding:8}}>
+        <img src={x.url} alt={x.name} style={{width:"100%",display:"block",borderRadius:4,background:"#fff"}}/>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:6,gap:8}}>
+          <span style={{fontSize:12,color:"var(--muted)"}}>{i+1}쪽</span>
+          <a className="ol-btn ol-btn-secondary ol-btn-sm" href={x.url} download={x.name}>⬇ 저장</a>
+        </div></div>)}
+    </div>
+    <div style={{display:"flex",justifyContent:"flex-end",marginTop:14}}><button className="ol-btn ol-btn-secondary" onClick={onClose}>닫기</button></div>
+  </>;
+}
 function FrozenPrintPages({view,byProduct,byLocation,byExpiry,lots,filterText,paged}){
   const C={line:"#d4d4d8",band:"#f4f4f5",muted:"#71717a",text:"#111"};
   const all=fzPrintItems(view,byProduct,byLocation,byExpiry);
@@ -4062,6 +4087,7 @@ function FrozenTab({adminHash,masters}){
   const[delId,setDelId]=useState(null);
   const[showHist,setShowHist]=useState(false);
   const[printing,setPrinting]=useState(false);
+  const[shots,setShots]=useState(null); // 모바일 여러 쪽 저장용 [{name,url,file}]
   const printRef=useRef(null);
 
   const load=useCallback(async()=>{
@@ -4112,6 +4138,7 @@ function FrozenTab({adminHash,masters}){
 
   const filterText=[stF!=="all"&&{expired:"기한 지남만",soon:`${FZ_SOON}일 이내만`,warn:`${FZ_WARN}일 이내만`}[stF],
     locF!=="all"&&"위치 "+locF,q.trim()&&`검색 "${q.trim()}"`].filter(Boolean).join(" · ");
+  const closeShots=()=>{if(shots)shots.forEach(x=>URL.revokeObjectURL(x.url));setShots(null)};
   // mode: "long" = 긴 한 장, "pages" = A4 쪽마다 한 장 (짧은 쪽은 아래 공백 없이)
   const savePng=async mode=>{
     setPrinting(mode);
@@ -4119,6 +4146,20 @@ function FrozenTab({adminHash,masters}){
       await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
       if(document.fonts&&document.fonts.ready)await document.fonts.ready;
       const pages=[...printRef.current.querySelectorAll("[data-page]")];
+      // 모바일 브라우저는 버튼 한 번에 파일 하나만 받게 함 → 여러 쪽이면 이미지를 먼저 만들고 저장 창에서 고르게
+      const mobile=window.matchMedia&&matchMedia("(pointer:coarse)").matches;
+      if(mobile&&pages.length>1){
+        const out=[];
+        for(let i=0;i<pages.length;i++){
+          const el=pages[i];
+          const scale=Math.max(1,Math.min(3,30000/el.scrollHeight));
+          const canvas=await html2canvas(el,{scale,backgroundColor:"#ffffff",useCORS:true});
+          const blob=await new Promise(r=>canvas.toBlob(r,"image/png"));
+          const name=`냉동재고_${todayYmd()}_${i+1}쪽.png`;
+          out.push({name,url:URL.createObjectURL(blob),file:new File([blob],name,{type:"image/png"})});
+        }
+        setShots(out);setPrinting(false);return;
+      }
       for(let i=0;i<pages.length;i++){
         const el=pages[i];
         // 아주 길면 브라우저 캔버스 한도(약 32,000px)를 넘지 않게 배율을 낮춤
@@ -4286,6 +4327,7 @@ function FrozenTab({adminHash,masters}){
       </table></div>}
     </div>}
 
+    {shots&&<Modal onClose={closeShots}><FrozenShotsSheet shots={shots} onClose={closeShots}/></Modal>}
     {printing&&<div style={{position:"fixed",left:-20000,top:0}}><div ref={printRef}><FrozenPrintPages view={view} byProduct={byProduct} byLocation={byLocation} byExpiry={byExpiry} lots={filtered} filterText={filterText} paged={printing==="pages"}/></div></div>}
     {editing&&<Modal onClose={()=>setEditing(null)}><FrozenLotForm adminHash={adminHash} masters={masters} initial={editing} locations={locations} lots={lots} onCancel={()=>setEditing(null)} onSaved={()=>{setEditing(null);load()}}/></Modal>}
     {action&&<Modal onClose={()=>setAction(null)}><FrozenActionForm adminHash={adminHash} type={action.type} lot={action.lot} locations={locations} onCancel={()=>setAction(null)} onDone={()=>{setAction(null);load()}}/></Modal>}
