@@ -3963,9 +3963,10 @@ function downloadFrozenXlsx(lots){
   XLSX.writeFile(wb,`냉동재고_${todayYmd()}.xlsx`);
 }
 
-// 이미지 저장용 A4 세로 페이지 (흰 배경, 버튼·배경색 없이) — 지금 보기(제품별/위치별/소비기한순)와 필터 그대로
-// 줄 높이를 고정해 쪽 나눔을 계산 → 쪽마다 PNG 1장 (794×1123 = A4 세로 96dpi, scale 3으로 저장)
-const FZP={W:794,H:1123,PAD_X:44,PAD_Y:46,HEAD1:92,HEAD2:44,THEAD:34,FOOT:30,BAND:46,ROW:40};
+// 이미지 저장용 페이지 (흰 배경, 버튼·배경색 없이) — 지금 보기(제품별/위치별/소비기한순)와 필터 그대로
+// paged=false: 폭 794px, 높이는 내용만큼인 긴 한 장
+// paged=true : A4 세로(794×1123) 높이 기준으로 쪽 나눔 → 쪽마다 PNG, 내용이 짧은 쪽은 아래 빈 공간 없이 잘림
+const FZP={W:794,H:1123,PAD_X:44,PAD_Y:46,HEAD1:92,HEAD2:44,THEAD:34,FOOT:30,GAP:16,BAND:46,ROW:40};
 function fzPrintItems(view,byProduct,byLocation,byExpiry){
   if(view==="product")return byProduct.flatMap(g=>[{band:true,key:"b"+g.key,label:fzName(g.lots[0]),lots:g.lots},...g.lots.map(l=>({key:l.id,lot:l}))]);
   if(view==="location")return byLocation.flatMap(g=>[{band:true,key:"b"+g.loc,label:"📍 "+g.loc,lots:g.lots},...g.lots.map(l=>({key:l.id,lot:l}))]);
@@ -3973,7 +3974,7 @@ function fzPrintItems(view,byProduct,byLocation,byExpiry){
 }
 function fzPaginate(items){
   const pages=[];let cur=[],used=0,lastBand=null;
-  const avail=i=>FZP.H-FZP.PAD_Y*2-(i===0?FZP.HEAD1:FZP.HEAD2)-FZP.THEAD-FZP.FOOT;
+  const avail=i=>FZP.H-FZP.PAD_Y*2-(i===0?FZP.HEAD1:FZP.HEAD2)-FZP.THEAD-FZP.FOOT-FZP.GAP;
   const push=()=>{pages.push(cur);cur=[];used=0};
   for(let i=0;i<items.length;i++){
     const it=items[i];
@@ -3988,9 +3989,10 @@ function fzPaginate(items){
   if(cur.length||!pages.length)push();
   return pages;
 }
-function FrozenPrintPages({view,byProduct,byLocation,byExpiry,lots,filterText}){
+function FrozenPrintPages({view,byProduct,byLocation,byExpiry,lots,filterText,paged}){
   const C={line:"#d4d4d8",band:"#f4f4f5",muted:"#71717a",text:"#111"};
-  const pages=fzPaginate(fzPrintItems(view,byProduct,byLocation,byExpiry));
+  const all=fzPrintItems(view,byProduct,byLocation,byExpiry);
+  const pages=paged?fzPaginate(all):[all];
   const td={padding:"0 12px",height:FZP.ROW,borderBottom:`1px solid ${C.line}`,fontSize:15,verticalAlign:"middle",boxSizing:"border-box",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"};
   const th={padding:"0 12px",height:FZP.THEAD,fontSize:12,fontWeight:700,color:C.muted,borderBottom:`2px solid ${C.text}`,textAlign:"left",whiteSpace:"nowrap",boxSizing:"border-box"};
   const unitSpan=u=><span style={{fontSize:12,fontWeight:500,color:C.muted,marginLeft:2}}>{u||"박스"}</span>;
@@ -4016,7 +4018,7 @@ function FrozenPrintPages({view,byProduct,byLocation,byExpiry,lots,filterText}){
   const hasExpired=lots.some(l=>fzStatus(l.expiry)==="expired"),hasSoon=lots.some(l=>fzStatus(l.expiry)==="soon");
   const sortNote={product:"제품별 · 소비기한 빠른 순",location:"위치별 · 제품명 순",expiry:"소비기한 빠른 순"}[view];
 
-  return <>{pages.map((items,pi)=><div key={pi} data-page={pi} style={{width:FZP.W,height:FZP.H,background:"#fff",color:C.text,padding:`${FZP.PAD_Y}px ${FZP.PAD_X}px`,boxSizing:"border-box",fontFamily:"Pretendard, 'Malgun Gothic', sans-serif",display:"flex",flexDirection:"column",marginBottom:20}}>
+  return <>{pages.map((items,pi)=><div key={pi} data-page={pi} style={{width:FZP.W,background:"#fff",color:C.text,padding:`${FZP.PAD_Y}px ${FZP.PAD_X}px`,boxSizing:"border-box",fontFamily:"Pretendard, 'Malgun Gothic', sans-serif",display:"flex",flexDirection:"column",marginBottom:20}}>
     {pi===0?<div style={{height:FZP.HEAD1,display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:16,boxSizing:"border-box"}}>
       <div>
         <div style={{fontSize:28,fontWeight:900,letterSpacing:"-0.5px"}}>냉동재고 현황</div>
@@ -4038,7 +4040,7 @@ function FrozenPrintPages({view,byProduct,byLocation,byExpiry,lots,filterText}){
             </div></td></tr>
         :<tr key={it.key}>{rowCells(it.lot)}<td style={qtyTd}>{qty(it.lot.qty,it.lot.unit)}</td></tr>)}</tbody>
     </table>
-    <div style={{marginTop:"auto",height:FZP.FOOT,display:"flex",justifyContent:"space-between",alignItems:"flex-end",fontSize:12,color:C.muted}}>
+    <div style={{marginTop:FZP.GAP,height:FZP.FOOT,display:"flex",justifyContent:"space-between",alignItems:"flex-end",fontSize:12,color:C.muted}}>
       <span>{hasExpired&&<span style={{color:"#dc2626",fontWeight:700,marginRight:12}}>● 기한 지남</span>}{hasSoon&&<span style={{color:"#ea580c",fontWeight:700,marginRight:12}}>● {FZ_SOON}일 이내</span>}{sortNote}</span>
       <span>{pages.length>1?`${pi+1} / ${pages.length}`:""}</span>
     </div>
@@ -4110,12 +4112,23 @@ function FrozenTab({adminHash,masters}){
 
   const filterText=[stF!=="all"&&{expired:"기한 지남만",soon:`${FZ_SOON}일 이내만`,warn:`${FZ_WARN}일 이내만`}[stF],
     locF!=="all"&&"위치 "+locF,q.trim()&&`검색 "${q.trim()}"`].filter(Boolean).join(" · ");
-  const savePng=async()=>{
-    setPrinting(true);
+  // mode: "long" = 긴 한 장, "pages" = A4 쪽마다 한 장 (짧은 쪽은 아래 공백 없이)
+  const savePng=async mode=>{
+    setPrinting(mode);
     try{
       await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+      if(document.fonts&&document.fonts.ready)await document.fonts.ready;
       const pages=[...printRef.current.querySelectorAll("[data-page]")];
-      for(let i=0;i<pages.length;i++)await saveShipPng(pages[i],`냉동재고_${todayYmd()}${pages.length>1?`_${i+1}쪽`:""}`);
+      for(let i=0;i<pages.length;i++){
+        const el=pages[i];
+        // 아주 길면 브라우저 캔버스 한도(약 32,000px)를 넘지 않게 배율을 낮춤
+        const scale=Math.max(1,Math.min(3,30000/el.scrollHeight));
+        const canvas=await html2canvas(el,{scale,backgroundColor:"#ffffff",useCORS:true});
+        const a=document.createElement("a");
+        a.download=`냉동재고_${todayYmd()}${pages.length>1?`_${i+1}쪽`:""}.png`;a.href=canvas.toDataURL("image/png");a.click();
+        // 연달아 내려받으면 브라우저가 막을 수 있어 간격을 둠
+        if(i<pages.length-1)await new Promise(r=>setTimeout(r,700));
+      }
     }catch(e){setErr("이미지 저장 실패: "+String(e?.message||e))}
     setPrinting(false);
   };
@@ -4179,7 +4192,8 @@ function FrozenTab({adminHash,masters}){
       <div className="ol-subtabs">
         {[["product","📦 제품별"],["location","📍 위치별"],["expiry","⏳ 소비기한순"]].map(([v,l])=><button key={v} className={view===v?"on":""} onClick={()=>setView(v)}>{l}</button>)}
       </div>
-      <button className="ol-btn ol-btn-secondary" disabled={!filtered.length||printing} onClick={savePng}>{printing?"저장 중…":"🖼 이미지 저장"}</button>
+      <button className="ol-btn ol-btn-secondary" disabled={!filtered.length||!!printing} onClick={()=>savePng("long")} title="전체를 세로로 긴 이미지 한 장으로">{printing==="long"?"저장 중…":"🖼 긴 한 장"}</button>
+      <button className="ol-btn ol-btn-secondary" disabled={!filtered.length||!!printing} onClick={()=>savePng("pages")} title="A4 쪽마다 한 장씩 (짧은 쪽은 아래 빈 공간 없이)">{printing==="pages"?"저장 중…":"📄 쪽별로"}</button>
       <button className="ol-btn ol-btn-secondary" disabled={!filtered.length} onClick={()=>downloadFrozenXlsx(filtered)}>📥 엑셀</button>
       <button className="ol-btn ol-btn-secondary" title="새로고침" onClick={load}>↻</button>
       {clearing?<span style={{fontSize:13,color:"#ef4444",fontWeight:600}}>삭제 중… {clearing.done}/{clearing.total}</span>
@@ -4272,7 +4286,7 @@ function FrozenTab({adminHash,masters}){
       </table></div>}
     </div>}
 
-    {printing&&<div style={{position:"fixed",left:-20000,top:0}}><div ref={printRef}><FrozenPrintPages view={view} byProduct={byProduct} byLocation={byLocation} byExpiry={byExpiry} lots={filtered} filterText={filterText}/></div></div>}
+    {printing&&<div style={{position:"fixed",left:-20000,top:0}}><div ref={printRef}><FrozenPrintPages view={view} byProduct={byProduct} byLocation={byLocation} byExpiry={byExpiry} lots={filtered} filterText={filterText} paged={printing==="pages"}/></div></div>}
     {editing&&<Modal onClose={()=>setEditing(null)}><FrozenLotForm adminHash={adminHash} masters={masters} initial={editing} locations={locations} lots={lots} onCancel={()=>setEditing(null)} onSaved={()=>{setEditing(null);load()}}/></Modal>}
     {action&&<Modal onClose={()=>setAction(null)}><FrozenActionForm adminHash={adminHash} type={action.type} lot={action.lot} locations={locations} onCancel={()=>setAction(null)} onDone={()=>{setAction(null);load()}}/></Modal>}
   </>;
