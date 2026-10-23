@@ -3775,7 +3775,7 @@ function ExpiryBadge({exp}){
   </span>;
 }
 
-function FrozenLotForm({adminHash,masters,initial,locations,onSaved,onCancel}){
+function FrozenLotForm({adminHash,masters,initial,locations,lots,onSaved,onCancel}){
   const isEdit=!!initial?.id;
   const products=useMemo(()=>[...masters.products].sort((a,b)=>(storageOf(a)==="frozen"?0:1)-(storageOf(b)==="frozen"?0:1)||a.name.localeCompare(b.name,"ko",{numeric:true})),[masters.products]);
   const label=p=>`${shipNameOf(p)} (${p.code})`;
@@ -3793,6 +3793,24 @@ function FrozenLotForm({adminHash,masters,initial,locations,onSaved,onCancel}){
   const[memo,setMemo]=useState(initial?.memo||"");
   const[busy,setBusy]=useState(false);
   const[err,setErr]=useState("");
+  // 고른 제품의 기존 재고 소비기한 (빠른 날짜순, 수정 중인 로트는 제외)
+  const expOpts=useMemo(()=>{
+    const name=matched?null:prodText.trim();
+    if(!matched&&!name)return [];
+    const m=new Map();
+    for(const l of lots||[]){
+      if(initial?.id&&l.id===initial.id)continue;
+      const d=l.expiry?String(l.expiry).slice(0,10):"";
+      if(!d)continue;
+      if(matched?l.product_code!==matched.code:(l.product_code||l.product_name!==name))continue;
+      if(!m.has(d))m.set(d,{d,qty:0,unit:l.unit||"박스",locs:[],here:false});
+      const o=m.get(d);o.qty+=Number(l.qty||0);
+      const lc=(l.location||"").trim();
+      if(lc&&!o.locs.includes(lc))o.locs.push(lc);
+      if(lc&&lc===location.trim())o.here=true;
+    }
+    return [...m.values()].sort((a,b)=>a.d.localeCompare(b.d));
+  },[lots,matched,prodText,location,initial]);
   const save=async()=>{
     const name=matched?matched.name:prodText.trim();
     const q=Number(qty);
@@ -3826,6 +3844,13 @@ function FrozenLotForm({adminHash,masters,initial,locations,onSaved,onCancel}){
         <datalist id="fz-locations">{locations.map(l=><option key={l} value={l}/>)}</datalist></div>
       <div><div className="ol-label">입고일</div><input className="ol-input" type="date" value={inDate} onChange={e=>setInDate(e.target.value)}/></div>
     </div>
+    {expOpts.length>0&&<div style={{margin:"-4px 0 12px"}}>
+      <div style={{fontSize:11,color:"var(--muted)",marginBottom:5}}>이 제품 재고에 있는 소비기한 (누르면 선택)</div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+        {expOpts.map(o=><button key={o.d} type="button" className={"ol-btn ol-btn-sm "+(expiry===o.d?"ol-btn-primary":"ol-btn-secondary")}
+          title={o.locs.join(", ")} onClick={()=>setExpiry(expiry===o.d?"":o.d)}>
+          {o.d.replace(/-/g,".")} <span style={{opacity:.75,fontWeight:400}}>· {o.qty}{o.unit}{o.here?" · 이 위치":""}</span></button>)}
+      </div></div>}
     <div className="ol-label">메모</div>
     <input className="ol-input" value={memo} onChange={e=>setMemo(e.target.value)} placeholder="선택"/>
     {!isEdit&&<div style={{fontSize:11,color:"var(--muted)",marginTop:8}}>같은 제품·소비기한·위치 재고가 이미 있으면 수량이 합쳐집니다</div>}
@@ -4150,7 +4175,7 @@ function FrozenTab({adminHash,masters}){
     </div>
 
     <div className="ol-toolbar">
-      <button className="ol-btn ol-btn-primary" onClick={()=>setEditing({})}>＋ 입고 등록</button>
+      <button className="ol-btn ol-btn-primary" onClick={()=>setEditing(locF!=="all"&&locF!==NO_LOC?{location:locF}:{})}>＋ 입고 등록</button>
       <div className="ol-subtabs">
         {[["product","📦 제품별"],["location","📍 위치별"],["expiry","⏳ 소비기한순"]].map(([v,l])=><button key={v} className={view===v?"on":""} onClick={()=>setView(v)}>{l}</button>)}
       </div>
@@ -4248,7 +4273,7 @@ function FrozenTab({adminHash,masters}){
     </div>}
 
     {printing&&<div style={{position:"fixed",left:-20000,top:0}}><div ref={printRef}><FrozenPrintPages view={view} byProduct={byProduct} byLocation={byLocation} byExpiry={byExpiry} lots={filtered} filterText={filterText}/></div></div>}
-    {editing&&<Modal onClose={()=>setEditing(null)}><FrozenLotForm adminHash={adminHash} masters={masters} initial={editing} locations={locations} onCancel={()=>setEditing(null)} onSaved={()=>{setEditing(null);load()}}/></Modal>}
+    {editing&&<Modal onClose={()=>setEditing(null)}><FrozenLotForm adminHash={adminHash} masters={masters} initial={editing} locations={locations} lots={lots} onCancel={()=>setEditing(null)} onSaved={()=>{setEditing(null);load()}}/></Modal>}
     {action&&<Modal onClose={()=>setAction(null)}><FrozenActionForm adminHash={adminHash} type={action.type} lot={action.lot} locations={locations} onCancel={()=>setAction(null)} onDone={()=>{setAction(null);load()}}/></Modal>}
   </>;
 }
