@@ -2825,7 +2825,112 @@ function ExportWeekView({week}){
 
 // 이미지 저장용 생산계획 리포트 (오프스크린 렌더 → html2canvas 캡처)
 // 라인별 그룹 + 인쇄 친화 라이트 테마. viewMode 무관하게 항상 동일 레이아웃
-function ExportPlansView({plans,lines,dayStr,allDates,matsByPlan,width=820}){
+// 1주일치 생산계획 긴 이미지 — 날짜 띠 + 날짜별 표 1개 (라인 → 시작 시각 순)
+function ExportWeekLongView({days,lines,matsByPlan,width=820}){
+  const C={text:"#0f172a",sub:"#475569",muted:"#94a3b8",line:"#e2e8f0",band:"#f1f5f9",sat:"#2563eb",sun:"#dc2626",mat:"#9a3412"};
+  const ST={in_progress:{bg:"#cffafe",fg:"#0e7490"},done:{bg:"#dcfce7",fg:"#15803d"},canceled:{bg:"#fee2e2",fg:"#b91c1c"}};
+  const today=todayStr();
+  const dowIdx=(ds)=>{const[y,m,d]=ds.split("-").map(Number);return (new Date(Date.UTC(y,m-1,d)).getUTCDay()+6)%7};
+  const dowColor=(i)=>i===5?C.sat:i===6?C.sun:C.text;
+  const md=(ds)=>{const[,m,d]=ds.split("-");return `${Number(m)}.${Number(d)}`};
+  const kgOf=(p)=>{const k=parseSpecKg(p.item_spec);return k==null?0:k*(Number(p.qty)||0)};
+  const sumOf=(ps)=>{
+    const live=ps.filter(p=>p.status!=="canceled");
+    const units={};live.forEach(p=>{const u=p.item_unit||"박스";units[u]=(units[u]||0)+(Number(p.qty)||0)});
+    return{count:ps.length,units,kg:live.reduce((s,p)=>s+kgOf(p),0)};
+  };
+  const sumText=(s)=>[...Object.entries(s.units).map(([u,q])=>`${fmtNum(q)}${u}`),s.kg>0?fmtKg(s.kg):""].filter(Boolean).join(" · ");
+  const lineOrder=(id)=>{if(!id)return "￿";const ln=lines.find(l=>l.id===id);return ln?.code||""};
+  const hm=(iso,ds)=>{
+    if(!iso)return"";
+    const k=new Date(new Date(iso).getTime()+KST_OFFSET_MS);
+    const t=`${String(k.getUTCHours()).padStart(2,"0")}:${String(k.getUTCMinutes()).padStart(2,"0")}`;
+    const kd=k.toISOString().slice(0,10);
+    return kd===ds?t:`${md(kd)} ${t}`;
+  };
+  const uniq=[...new Map(days.flatMap(d=>d.plans).map(p=>[p.id,p])).values()];
+  const totals=sumOf(uniq);
+  const first=days[0]?.dayStr||"",last=days[days.length-1]?.dayStr||"";
+  return <div style={{background:"#fff",color:C.text,fontFamily:"Pretendard, -apple-system, system-ui, sans-serif",width,boxSizing:"border-box",padding:"28px 30px 20px"}}>
+    <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:16}}>
+      <div>
+        <div style={{fontSize:13,fontWeight:700,color:C.sub}}>주간 생산계획</div>
+        <div style={{fontSize:28,fontWeight:800,letterSpacing:"-.02em",marginTop:2}}>
+          {first.slice(0,4)}. {md(first)} ({DOW_LABEL[dowIdx(first)]}) – {md(last)} ({DOW_LABEL[dowIdx(last)]})
+        </div>
+      </div>
+      <div style={{textAlign:"right"}}>
+        <div style={{fontSize:26,fontWeight:800}}>{totals.count}<span style={{fontSize:15,fontWeight:700,marginLeft:2}}>건</span></div>
+        <div style={{fontSize:13,fontWeight:600,color:C.sub}}>{sumText(totals)}</div>
+      </div>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:`repeat(${days.length},1fr)`,gap:6,margin:"16px 0 22px"}}>
+      {days.map(d=>{const di=dowIdx(d.dayStr);const n=d.plans.length;const isT=d.dayStr===today;
+        return <div key={d.dayStr} style={{border:`1.5px solid ${isT?"#f59e0b":C.line}`,background:isT?"#fffbeb":n?"#fff":C.band,borderRadius:8,padding:"7px 0",textAlign:"center"}}>
+          <div style={{fontSize:13,fontWeight:800,color:dowColor(di)}}>{DOW_LABEL[di]} <span style={{fontWeight:600,color:C.sub}}>{md(d.dayStr)}</span></div>
+          <div style={{fontSize:16,fontWeight:800,marginTop:2,color:n?C.text:C.muted}}>{n?`${n}건`:"–"}</div>
+        </div>;})}
+    </div>
+    {days.map(d=>{
+      const di=dowIdx(d.dayStr);const isT=d.dayStr===today;
+      const ps=d.plans.slice().sort((a,b)=>lineOrder(a.line_id).localeCompare(lineOrder(b.line_id))||new Date(a.start_at)-new Date(b.start_at));
+      const s=sumOf(ps);
+      return <div key={d.dayStr} style={{marginBottom:18}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,background:isT?"#fef3c7":C.band,borderRadius:8,padding:"10px 14px",borderLeft:`5px solid ${dowColor(di)}`}}>
+          <span style={{fontSize:20,fontWeight:800,color:dowColor(di)}}>{md(d.dayStr)} {DOW_LABEL[di]}요일</span>
+          {isT&&<span style={{fontSize:11,fontWeight:800,color:"#92400e",background:"#fde68a",padding:"2px 8px",borderRadius:10}}>오늘</span>}
+          <span style={{marginLeft:"auto",fontSize:14,fontWeight:700,color:ps.length?C.text:C.muted}}>
+            {ps.length?<>{s.count}건<span style={{color:C.sub,fontWeight:600,marginLeft:8}}>{sumText(s)}</span></>:"계획 없음"}
+          </span>
+        </div>
+        {ps.length>0&&<table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed",marginTop:2}}>
+          <colgroup><col style={{width:92}}/><col style={{width:100}}/><col/><col style={{width:120}}/></colgroup>
+          <tbody>
+            {ps.map((p,i)=>{
+              const lc=lineColorFor(p.line_id,lines);
+              const st=ST[p.status];
+              const cancel=p.status==="canceled";
+              const mats=(matsByPlan&&matsByPlan[p.id])||[];
+              const kg=kgOf(p);
+              const newLine=i===0||ps[i-1].line_id!==p.line_id;
+              return <tr key={p.id} style={{borderTop:i===0?"none":`1px solid ${newLine?"#cbd5e1":C.line}`,opacity:cancel?.5:1}}>
+                <td style={{padding:"11px 6px 11px 14px",verticalAlign:"top"}}>
+                  <div style={{fontSize:15,fontWeight:800}}>{hm(p.start_at,d.dayStr)}</div>
+                  <div style={{fontSize:12,color:C.sub,marginTop:1}}>~ {hm(p.end_at,d.dayStr)}</div>
+                </td>
+                <td style={{padding:"11px 6px",verticalAlign:"top"}}>
+                  {newLine&&<span style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:12,fontWeight:800,color:lc.fgLight,background:lc.bgLight,border:`1px solid ${lc.bdLight}`,padding:"3px 8px",borderRadius:12,whiteSpace:"nowrap",maxWidth:"100%",overflow:"hidden",textOverflow:"ellipsis",boxSizing:"border-box"}}>
+                    <span style={{width:7,height:7,borderRadius:4,background:lc.base,flexShrink:0}}/>{p.line_id?p.line_name:"미지정"}
+                  </span>}
+                </td>
+                <td style={{padding:"11px 8px",verticalAlign:"top"}}>
+                  <div style={{fontSize:15,fontWeight:700,lineHeight:1.35}}>
+                    <span style={{textDecoration:cancel?"line-through":"none"}}>{p.item_name}</span>
+                    {st&&<span style={{marginLeft:8,fontSize:11,fontWeight:800,background:st.bg,color:st.fg,padding:"2px 7px",borderRadius:10,verticalAlign:"2px",display:"inline-block"}}>{STATUS_LABEL[p.status]}</span>}
+                  </div>
+                  {mats.length>0&&<div style={{fontSize:12,color:C.mat,marginTop:3,lineHeight:1.5}}>
+                    {mats.map((m,mi)=><span key={mi} style={{marginRight:10,whiteSpace:"nowrap"}}>🥩 {m.name} <b>{fmtKg(m.needKg)}</b></span>)}
+                  </div>}
+                  {p.memo&&p.memo.trim()&&<div style={{fontSize:12,color:"#334155",fontWeight:600,marginTop:4,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>📝 {p.memo}</div>}
+                </td>
+                <td style={{padding:"11px 14px 11px 6px",verticalAlign:"top",textAlign:"right"}}>
+                  <div style={{fontSize:17,fontWeight:800,whiteSpace:"nowrap"}}>{fmtNum(p.qty)}<span style={{fontSize:12,fontWeight:600,color:C.sub,marginLeft:3}}>{p.item_unit||"박스"}</span></div>
+                  {kg>0&&<div style={{fontSize:12,fontWeight:700,color:C.sub,marginTop:1}}>{fmtKg(kg)}</div>}
+                </td>
+              </tr>;
+            })}
+          </tbody>
+        </table>}
+      </div>;
+    })}
+    <div style={{marginTop:6,paddingTop:10,borderTop:`1px solid ${C.line}`,display:"flex",justifyContent:"space-between",fontSize:10,color:C.muted}}>
+      <span style={{fontWeight:700,letterSpacing:".08em"}}>STOCKPULSE · APS</span>
+      <span>{new Date().toLocaleString("ko-KR")} 생성</span>
+    </div>
+  </div>;
+}
+
+function ExportPlansView({plans,lines,dayStr,allDates,matsByPlan,width=820,hideFooter=false}){
   const C={bg:"#ffffff",text:"#0f172a",muted:"#64748b",border:"#e2e8f0",cardBg:"#f8fafc",lineHdr:"#ecfeff",lineHdrBd:"#a5f3fc",rowAlt:"#fafbfc",matBg:"#fff7ed",matBd:"#fed7aa",matName:"#9a3412",matStock:"#166534",matShort:"#b91c1c"};
   const S={
     planned:{bg:"#f1f5f9",fg:"#475569"},
@@ -2940,10 +3045,10 @@ function ExportPlansView({plans,lines,dayStr,allDates,matsByPlan,width=820}){
         })}
       </div>
     }
-    <div style={{marginTop:14,display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:10,color:C.muted}}>
+    {!hideFooter&&<div style={{marginTop:14,display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:10,color:C.muted}}>
       <span style={{fontWeight:700,letterSpacing:".08em"}}>STOCKPULSE · APS</span>
       <span>Generated {new Date().toLocaleString("ko-KR")}</span>
-    </div>
+    </div>}
   </div>;
 }
 
@@ -3800,6 +3905,45 @@ function PlansTab({adminHash}){
     setExportMats({});
   };
 
+  // 1주일치(선택한 날부터 7일) 생산계획을 세로로 긴 PNG 한 장으로 저장
+  const weekLongRef=useRef(null);
+  const[weekLong,setWeekLong]=useState(null); // {days, mats}
+  const exportWeekLong=async()=>{
+    if(typeof window.html2canvas!=="function"){
+      alert("이미지 저장 라이브러리(html2canvas)가 로드되지 않았습니다. 새로고침 후 다시 시도해주세요.");return;
+    }
+    const start=allDates?todayStr():dayStr;
+    const days=[];
+    for(let i=0;i<7;i++){
+      const ds=addDays(start,i);
+      const s0=new Date(ds+"T00:00:00+09:00").getTime(),e0=s0+24*3600*1000;
+      days.push({dayStr:ds,plans:statusFiltered.filter(p=>{
+        if(!p.start_at||!p.end_at)return false;
+        return new Date(p.start_at).getTime()<e0&&new Date(p.end_at).getTime()>s0;
+      })});
+    }
+    let mats={};
+    try{
+      const uniq=[...new Map(days.flatMap(d=>d.plans).map(p=>[p.id,p])).values()];
+      mats=await buildExportMaterialsFor(adminHash,uniq,items,invData);
+    }catch(e){console.warn("[export week long mat] build failed",e)}
+    setWeekLong({days,mats});
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const target=weekLongRef.current;
+    if(!target){setWeekLong(null);alert("캡처할 영역이 없습니다");return}
+    try{
+      // 너무 길면 브라우저 캔버스 한도(약 32,000px)를 넘지 않게 배율을 낮춤
+      const h=target.offsetHeight||1;
+      const scale=Math.max(1,Math.min(2,30000/h));
+      const canvas=await window.html2canvas(target,{backgroundColor:"#ffffff",scale,logging:false,useCORS:true});
+      const link=document.createElement("a");
+      link.download=`생산계획_1주일_${days[0].dayStr}_${days[6].dayStr}.png`;
+      link.href=canvas.toDataURL("image/png");
+      document.body.appendChild(link);link.click();document.body.removeChild(link);
+    }catch(e){console.error(e);alert("이미지 저장 실패: "+(e.message||e))}
+    setWeekLong(null);
+  };
+
   // 인원 + 생산계획 통합 이미지 저장 (선택된 dayStr 기준)
   const exportCombinedFromPlans=async()=>{
     if(typeof window.html2canvas!=="function"){
@@ -3901,6 +4045,13 @@ function PlansTab({adminHash}){
         disabled={capturing||loading||plans.length===0}
         title="현재 보고 있는 날짜의 생산계획을 라인별로 정리하여 PNG로 저장">
         📷 {capturing?"저장 중...":"이미지 저장"}
+      </button>
+      <button
+        className="aps-btn aps-btn-secondary"
+        onClick={exportWeekLong}
+        disabled={!!weekLong||loading||plans.length===0}
+        title={`${allDates?"오늘":"선택한 날짜"}부터 7일치 생산계획을 날짜별로 이어 붙여 세로로 긴 PNG 한 장으로 저장`}>
+        📷 {weekLong?"저장 중...":"1주일 (길게)"}
       </button>
       <button
         className="aps-btn aps-btn-secondary"
@@ -4065,6 +4216,9 @@ function PlansTab({adminHash}){
     </div>}
     {capturing&&<div style={{position:"fixed",left:-99999,top:0,zIndex:-1,pointerEvents:"none"}} aria-hidden="true">
       <div ref={exportPlansRef}><ExportPlansView plans={listFiltered} lines={lines} dayStr={dayStr} allDates={allDates} matsByPlan={exportMats}/></div>
+    </div>}
+    {weekLong&&<div style={{position:"fixed",left:-99999,top:0,zIndex:-1,pointerEvents:"none"}} aria-hidden="true">
+      <div ref={weekLongRef} style={{display:"inline-block"}}><ExportWeekLongView days={weekLong.days} lines={lines} matsByPlan={weekLong.mats}/></div>
     </div>}
     {combinedCapturing&&combinedStaff!==null&&<div style={{position:"fixed",left:-99999,top:0,zIndex:-1,pointerEvents:"none"}} aria-hidden="true">
       <div ref={combinedExportRef}>
