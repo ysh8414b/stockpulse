@@ -1593,6 +1593,12 @@
     - 실제 쿠팡 검색 화면(비로그인)으로 14개 상품 확인 — 판매가 정상 추출. 비로그인이라 와우가 표시된 카드는 확인 못 함
     - orders.html: 판매가 칸에 와우면 "와우할인가" 표시, 정상가 취소선은 최종가가 더 쌀 때만. 중량은 쿠팡 단위가격 ÷ `salePrice`로 구하고 100g당은 최종가로 계산. 빠른 확인 "할인 없음" 판정도 새 필드에 맞춤
     - `EXT_LATEST`·`MARKET_EXT_MIN` = 1.4.0 → 확장 파일 다시 받아 설치해야 시장조사 동작. 예전 검색 기록은 옛 기준이라 다음 검색 때 ▲▼가 한 번 크게 나올 수 있음
+  - **품절 확인 (2026-10-26, 확장 v1.5.0)**: 사용자 요청 — 판매가 탭에서 쿠팡 품절 상품 확인
+    - **`setup_orders_stock.sql`** (신규, 1회 실행 — setup_orders.sql 끝에도 반영): `ol_prices.sold_out`(BOOLEAN, NULL = 미확인) / `sold_out_at`(처음 품절 확인 시각, 품절이 풀리면 NULL) / `stock_left`(품절임박 N개) / `stock_checked_at` + RPC `ol_set_price_stock(hash, id, sold_out, stock_left)`. `ol_list_prices`는 `row_to_json`이라 변경 없음
+    - 확장 `extractCoupangPrice`: ① 페이지 데이터(`__next_f`)의 `"itemId":N … "soldOut":true/false` ② schema.org Offer `availability`(InStock/OutOfStock) ③ 구매 버튼(`.prod-buy-footer`/`.prod-buy-btn`) "일시품절" 순. 링크에 itemId가 없으면 JSON-LD `sku`(`상품번호-옵션번호`)에서 옵션 번호를 얻음. "품절임박•N개" 글씨 → `stock_left`. 품절이라 가격이 없으면 오류 대신 `{sale_price:null, sold_out:true}` 전달
+    - 페이지: 🔄 쿠팡 가격 전체 갱신 결과에 `sold_out`이 있으면 `ol_set_price_stock` 저장(가격이 없으면 가격은 안 건드림). SQL 미실행이면 한 번만 안내. 요약 카드 "품절 N개 · 임박 N"(클릭 = 품절+임박만 보기), 상품명 옆 `⛔ 품절 · N일째` / `품절임박 N개` 뱃지, 품절 행 옅은 빨강, 시트 헤더 품절 수, 진행 카드에 "품절 N" + 품절됨/계속 품절/품절 풀림 줄
+    - 확인: 실제 쿠팡 상품 페이지(판매 중, 품절임박 8개)에서 `soldOut:false`·`stockLeft:8`, itemId 없는 링크도 동일. 품절 상태는 데이터의 false를 true로 바꾼 흉내로만 확인 — **실제 품절 상품 페이지는 미검증**. 페이지는 저장 호출을 가로챈 가짜 결과로 확인
+    - 한계: ⚡ 빠른 확인으로 "변동 없음" 처리된 상품은 품절 여부를 다시 확인하지 않음. 옵션이 품절돼 쿠팡이 다른 옵션으로 넘기면 기존처럼 "다른 옵션 페이지로 바뀌었습니다" 실패로 표시(품절로 저장 안 함)
   - **⚡ 빠른 확인 (2026-10-22, 확장 v1.3.0)**: 사용자 질문 "시장조사는 빠른데 전체 갱신은 왜 오래 걸리나" — 전체 갱신은 상품마다 페이지 1장 + 8초 간격(차단 방지)이라 66개 ≈ 13분, 검색은 페이지 1장에 수십 개
     - 흐름: 업체명(또는 "⚡ 빠른 확인 검색어" 칸, 쉼표 구분, localStorage `ol-fast-queries`)으로 쿠팡 검색 결과를 검색어당 최대 2페이지(`FAST_PAGES`, listSize 72, 페이지 사이 5초 `FAST_GAP_MS`) 읽음 → 내 상품을 쿠팡 productId로 맞춤 → **변동 없음**은 `ol_set_price_values(p_values:{}, source capture)`로 확인 시각만 갱신(값이 같으면 이력·가격은 안 바뀜, SQL 변경 없음) → 나머지만 "🔄 필요한 N개만 페이지 확인"(기존 전체 갱신 흐름 재사용)
     - **저장하는 가격은 항상 상품 페이지 값** — 검색 결과 값은 "바뀌었을 수 있는 상품"을 고르는 데만 사용. 검색 화면의 줄 그은 가격이 쿠팡판매가인지 기준가인지 확인할 수 없어(실제 쿠팡 미검증) 매핑을 가정하지 않는 방식으로 설계

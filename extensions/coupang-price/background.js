@@ -24,15 +24,46 @@ function extractCoupangPrice() {
     /사용권한이\s*(없습니다|제한된)/.test(head) ||
     !!document.querySelector('iframe[src*="captcha" i], [id*="captcha" i], [class*="captcha" i]');
   const u = new URL(location.href);
+  const itemId = u.searchParams.get("itemId") || "";
+
+  // 품절 여부 — ① 페이지 데이터의 "itemId":N … "soldOut":true/false ② schema.org Offer availability ③ 구매 버튼 글씨
+  let soldOut = null;
+  const avail = [];
+  let skuItem = "";
+  const walk = (o) => {
+    if (!o || typeof o !== "object") return;
+    if (Array.isArray(o)) { o.forEach(walk); return; }
+    if (o["@type"] === "Product" && !skuItem) skuItem = (String(o.sku || "").match(/-(\d+)$/) || [])[1] || "";
+    if (o.availability) avail.push({ a: String(o.availability), url: String(o.url || "") });
+    for (const k in o) if (k !== "availability") walk(o[k]);
+  };
+  for (const s of document.querySelectorAll('script[type="application/ld+json"]')) { try { walk(JSON.parse(s.textContent)); } catch (e) {} }
+  const curItem = itemId || skuItem;   // 링크에 itemId가 없으면 페이지가 보여 주는 옵션
+  if (curItem) {
+    const re = new RegExp('\\\\*"itemId\\\\*":' + curItem + '[\\s\\S]{0,800}?\\\\*"soldOut\\\\*":(true|false)');
+    for (const s of document.scripts) { const m = (s.textContent || "").match(re); if (m) { soldOut = m[1] === "true"; break; } }
+  }
+  if (soldOut == null) {
+    const hit = avail.find((x) => curItem && x.url.includes(curItem)) || avail[0];
+    if (hit) soldOut = /OutOfStock|SoldOut|Discontinued/i.test(hit.a) ? true : /InStock|LimitedAvailability|PreOrder/i.test(hit.a) ? false : null;
+  }
+  // 구매 버튼 글씨 (추천 상품 칸은 제외)
+  const buyText = [...document.querySelectorAll(".prod-buy-footer, .prod-buy-btn")].map((e) => e.innerText || "").join(" ");
+  if (soldOut == null && /일시\s*품절|품절(?!\s*임박)|구매\s*불가/.test(buyText)) soldOut = true;
+  // 품절임박 N개
+  const lm = ((document.querySelector(".product-buy-header") || document.body).innerText || "").match(/품절\s*임박\s*[•·]?\s*(\d+)\s*개/);
+  const stockLeft = soldOut ? 0 : lm ? Number(lm[1]) : null;
+
   return {
     blocked,
+    soldOut, stockLeft,
     isProduct: /\/v[pm]\/products\/\d+/.test(location.pathname),
     sales: pick(".sales-price-amount"),
     final: pick(".final-price-amount"),
     orig: pick(".original-price-amount"),
     title: title.slice(0, 150),
     host: location.hostname,
-    itemId: u.searchParams.get("itemId") || "",
+    itemId,
   };
 }
 
@@ -60,7 +91,7 @@ async function readPrice(url) {
       } catch (err) {
         r = { error: "페이지를 읽지 못했습니다 (" + String(err && err.message || err).slice(0, 80) + ")" };
       }
-      if (r && (r.blocked || r.error || r.sales != null || r.final != null)) break;
+      if (r && (r.blocked || r.error || r.sales != null || r.final != null || r.soldOut === true)) break;
       await sleep(500);
     }
     if (!r) return { error: "페이지를 읽지 못했습니다" };
@@ -71,8 +102,12 @@ async function readPrice(url) {
     if (want && r.itemId && r.itemId !== want) return { error: "다른 옵션 페이지로 바뀌었습니다 (옵션 품절·판매중지 가능)", title: r.title };
     const sale = r.sales != null ? r.sales : r.final;
     const disc = r.final != null ? r.final : r.sales;
-    if (sale == null) return { error: "가격을 찾지 못했습니다 (판매중지·품절 또는 페이지 구조 변경)", title: r.title };
-    return { sale_price: sale, discount_price: disc, orig: r.orig, title: r.title };
+    const stock = { sold_out: r.soldOut, stock_left: r.stockLeft };
+    if (sale == null) {
+      if (r.soldOut === true) return { sale_price: null, discount_price: null, ...stock, title: r.title };   // 품절이라 가격이 안 보임
+      return { error: "가격을 찾지 못했습니다 (판매중지·품절 또는 페이지 구조 변경)", title: r.title };
+    }
+    return { sale_price: sale, discount_price: disc, orig: r.orig, ...stock, title: r.title };
   } finally {
     if (!keepTab) { try { await chrome.tabs.remove(tab.id); } catch (err) {} }
   }
