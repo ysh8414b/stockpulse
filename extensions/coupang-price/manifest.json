@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "쿠팡 가격 갱신·시장조사 (자동 리스트 생성기)",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "orders.html 판매가 탭에서 쓰는 도우미: 쿠팡 가격 전체 갱신(등록된 상품 페이지를 하나씩 열어 판매가·할인가 읽기) + 시장조사(쿠팡 검색 결과 1페이지 읽기).",
   "permissions": ["scripting"],
   "host_permissions": ["https://www.coupang.com/*"],

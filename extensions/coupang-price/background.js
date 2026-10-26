@@ -162,17 +162,32 @@ function extractCoupangSearch(limit) {
       if (/당\(?$/.test(before)) continue;                         // 단위가격 "100g당 1,234원"
       if (/(배송비|적립|캐시|최대)\s*$/.test(before) || /^원?\s*(적립|캐시)/.test(after)) continue;
       const fs = parseFloat(getComputedStyle(e).fontSize) || 0;
-      const wow = /와우/.test(ctx);
-      const coupon = /쿠폰/.test(ctx);
+      // 이 가격에만 해당하는 가장 작은 묶음 (다른 가격이 들어오기 직전까지 위로) — 그 안의 글씨·뱃지로 와우/쿠폰 판단
+      let box = e;
+      while (box.parentElement && box.parentElement !== card &&
+        ((box.parentElement.textContent || "").match(/\d[\d,]*\s*원/g) || []).length <= 1) box = box.parentElement;
+      const boxText = (box.textContent || "").replace(/\s+/g, "");
+      let wowMark = false;
+      for (let x = e; x && x !== card; x = x.parentElement) { if (/wow/i.test(typeof x.className === "string" ? x.className : "")) { wowMark = true; break; } if (x === box) break; }
+      const wow = wowMark || /(^|[^켓])와우/.test(boxText) ||
+        !!box.querySelector('img[alt*="와우"], img[src*="wow" i], [class*="wow" i]');
+      const coupon = /쿠폰/.test(boxText) || /쿠폰/.test(ctx) && !wow;
       prices.push({ v, strike, fs, wow, coupon });
     }
     const live = prices.filter((p) => !p.strike);
-    // 가장 큰 글씨의 가격 = 실제 판매가 (같은 크기면 먼저 나온 것)
+    // 가장 큰 글씨의 가격 = 화면에 크게 보이는 판매가 (같은 크기면 먼저 나온 것)
     let main = null;
     for (const p of live) if (!main || p.fs > main.fs + 0.5) main = p;
-    const base = prices.filter((p) => p.strike).reduce((m, p) => (m == null || p.v > m ? p.v : m), null);
-    const wowPrice = live.filter((p) => p.wow && p !== main).reduce((m, p) => (m == null || p.v < m ? p.v : m), null);
-    const couponPrice = live.filter((p) => p.coupon && p !== main).reduce((m, p) => (m == null || p.v < m ? p.v : m), null);
+    // 최종 할인가 = 와우할인가만 인정. 그 외 할인(즉시할인·쿠폰 등)은 무시하고 정상가로 봄
+    const wowPrice = live.filter((p) => p.wow).reduce((m, p) => (m == null || p.v < m ? p.v : m), null);
+    // 정상가 = 와우가 아닌 판매가 (크게 보이는 가격). 줄 그은 가격은 쿠팡 "기준가"라 쓰지 않음
+    const listPrice = prices.filter((p) => p.strike).reduce((m, p) => (m == null || p.v > m ? p.v : m), null);
+    const nonWowMax = live.filter((p) => !p.wow).reduce((m, p) => (m == null || p.v > m ? p.v : m), null);
+    const base = main && !main.wow ? main.v : nonWowMax != null ? nonWowMax : (main ? main.v : null);
+    const salePrice = main ? main.v : null;   // 참고: 화면에 크게 보인 가격
+    const finalPrice = wowPrice != null ? wowPrice : base;
+    const wowRate = wowPrice != null && base && base > wowPrice ? Math.round((base - wowPrice) / base * 100) : null;
+    const couponPrice = live.filter((p) => p.coupon && !p.wow && p !== main).reduce((m, p) => (m == null || p.v < m ? p.v : m), null);
 
     // 단위가격 "(100g당 1,234원)"
     let unit = null;
@@ -187,7 +202,7 @@ function extractCoupangSearch(limit) {
 
     const lines = text.split("\n").map((s) => s.trim());
     const ad = lines.some((s) => s === "AD" || s === "광고") || !!card.querySelector('[class*="ad-badge" i], [class*="adMark" i], [class*="AdBadge"]');
-    const soldOut = /일시품절|품절/.test(text);
+    const soldOut = /일시품절|품절(?!\s*임박)/.test(text);   // "품절임박"은 판매 중
     let thumb = img ? (img.getAttribute("src") || img.getAttribute("data-src") || img.getAttribute("data-img-src") || "") : "";
     if (thumb.startsWith("//")) thumb = "https:" + thumb;
     if (thumb.startsWith("data:")) thumb = "";
@@ -196,7 +211,7 @@ function extractCoupangSearch(limit) {
       rank: items.length + 1, productId, itemId, vendorItemId,
       url: "https://www.coupang.com/vp/products/" + productId + (itemId ? "?itemId=" + itemId + (vendorItemId ? "&vendorItemId=" + vendorItemId : "") : ""),
       name: name.slice(0, 200), thumb: thumb.slice(0, 400),
-      price: main ? main.v : null, base, rate, wowPrice, couponPrice, unit,
+      price: finalPrice, base, rate: wowRate, shownRate: rate, salePrice, listPrice, wowPrice, couponPrice, unit,
       ship, ad, soldOut, reviews, rating,
     });
   }
