@@ -123,6 +123,38 @@
       .ol-layout{grid-template-columns:1fr}
       .ol-datelist{position:static;max-height:220px}
     }
+    .ol-ship-optbtn{display:none}
+    @media (max-width:600px){
+      /* 출고장 탭 모바일 */
+      .ol-ship .ol-datelist{display:flex;gap:6px;overflow-x:auto;max-height:none;padding:6px;-webkit-overflow-scrolling:touch}
+      .ol-ship .ol-datelist-hd{display:none}
+      .ol-ship .ol-dateitem{flex:0 0 auto;gap:6px;border-color:var(--card-bd);padding:7px 10px}
+      .ol-ship-range{display:grid!important;grid-template-columns:1fr auto 1fr;gap:6px!important;width:100%}
+      .ol-ship-range input{width:100%!important}
+      .ol-ship-range .ol-ship-presets{grid-column:1/-1;gap:4px!important}
+      .ol-ship-head{gap:8px!important}
+      .ol-ship-head>div:first-child{font-size:16px!important;width:100%}
+      .ol-ship-head>div:last-child{margin-left:0!important}
+      .ol-ship-optbtn{display:inline-block}
+      .ol-ship:not(.opt-open) .ol-ship-opt{display:none!important}
+      .ol-ship-save{display:grid!important;grid-template-columns:1fr 1fr;gap:6px!important}
+      .ol-ship-save>*{width:100%;justify-content:center;text-align:center;box-sizing:border-box}
+      .ol-ship-save .ol-ship-wide{grid-column:1/-1}
+      .ol-ship-floors{flex-wrap:nowrap!important;overflow-x:auto;padding-bottom:4px}
+      .ol-ship-floors>*{flex:0 0 auto}
+      .ol-ship-sheet{padding:14px 10px!important;font-size:13px!important}
+      .ol-ship-sheet .ol-ship-ttl{font-size:19px!important}
+      .ol-ship-sheet .ol-ship-site{font-size:17px!important}
+      .ol-ship-sheet .ol-ship-sitehd{padding:8px 10px!important}
+      .ol-ship-sheet table{min-width:0!important;table-layout:fixed}
+      .ol-ship-sheet th,.ol-ship-sheet td{padding:7px 5px!important}
+      .ol-ship-sheet th{font-size:11px}
+      .ol-ship-sheet td{word-break:keep-all;overflow-wrap:anywhere}
+      .ol-ship-sheet col.c-qty{width:50px!important}
+      .ol-ship-sheet col.c-box{width:46px!important}
+      .ol-ship-sheet col.c-exp{width:76px!important}
+      .ol-ship-sheet td.c-exp{font-size:12px!important}
+    }
     @media (max-width:600px){
       .ol-shell{padding:16px 16px 50px}
       .ol-header{padding:16px}
@@ -2248,7 +2280,7 @@ function DateList({dates,selected,onSelect}){
   const today=todayYmd();
   if(!dates.length)return <div className="ol-datelist"><div style={{fontSize:12,color:"var(--muted)",padding:10}}>업로드된 발주서가 없습니다</div></div>;
   return <div className="ol-datelist">
-    <div style={{fontSize:11,color:"var(--muted)",padding:"4px 10px 8px",fontWeight:600}}>입고예정일</div>
+    <div className="ol-datelist-hd" style={{fontSize:11,color:"var(--muted)",padding:"4px 10px 8px",fontWeight:600}}>입고예정일</div>
     {dates.map(d=><div key={d.due_date} className={"ol-dateitem"+(selected===d.due_date?" on":"")} onClick={()=>onSelect(d.due_date)}>
       <span className={d.due_date<today?"past":""}>{d.due_date} ({dowOf(d.due_date)}){d.due_date===today&&<span style={{color:"#06b6d4",marginLeft:4}}>오늘</span>}</span>
       <span className="ol-pill">{d.order_count}건</span>
@@ -3350,9 +3382,9 @@ function ShipSheetPreview({data,date,dateTo,prefix,print,refCb}){
   const cell={padding:"8px 12px",borderBottom:"1px solid #e5e7eb",fontVariantNumeric:"tabular-nums"};
   const num={...cell,textAlign:"center"};
   // print: 이미지 저장용 사본 — 바깥 테두리 없이 고정 폭
-  return <div ref={refCb} className="ol-sheet" style={{padding:print?0:"22px 24px",fontSize:14,lineHeight:1.4,...(print?{border:"none",borderRadius:0,margin:0,overflow:"visible"}:{})}}>
+  return <div ref={refCb} className={print?"ol-sheet":"ol-sheet ol-ship-sheet"} style={{padding:print?0:"22px 24px",fontSize:14,lineHeight:1.4,...(print?{border:"none",borderRadius:0,margin:0,overflow:"visible"}:{})}}>
     <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:12,flexWrap:"wrap",paddingBottom:12,borderBottom:"2px solid #111",marginBottom:18}}>
-      <div style={{fontSize:24,fontWeight:900,letterSpacing:"-0.5px"}}>{shipTitle(prefix,date,dateTo)}</div>
+      <div className="ol-ship-ttl" style={{fontSize:24,fontWeight:900,letterSpacing:"-0.5px"}}>{shipTitle(prefix,date,dateTo)}</div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
         {secs.map(sec=><span key={sec.key} style={{padding:"4px 10px",borderRadius:14,background:SHIP_ACCENT[sec.key].soft,color:SHIP_ACCENT[sec.key].main,fontWeight:700,fontSize:13}}>{secShort(sec)} {fmtBoxes(sumBy(secRows(sec),"boxes"))}박스</span>)}
         <span style={{padding:"4px 10px",borderRadius:14,background:"#111",color:"#fff",fontWeight:700,fontSize:13}}>총 {fmtBoxes(total)}박스</span>
@@ -3370,15 +3402,15 @@ function ShipSheetPreview({data,date,dateTo,prefix,print,refCb}){
         {sec.groups.map((g,gi)=>{
           const runs=runsOf(g.rows,r=>r.expiry);
           return <div key={g.site} data-shipcut="1" data-shipsite={g.site} style={{border:"1px solid #d7dde5",borderLeft:`6px solid ${ac.main}`,borderRadius:8,marginBottom:16,overflow:"hidden"}}>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 14px",background:ac.soft,borderBottom:"1px solid #d7dde5"}}>
-              <div style={{display:"flex",alignItems:"baseline",gap:10}}>
-                <span style={{fontSize:20,fontWeight:900,color:ac.main}}>{g.site}</span>
+            <div className="ol-ship-sitehd" style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 14px",background:ac.soft,borderBottom:"1px solid #d7dde5"}}>
+              <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap",minWidth:0}}>
+                <span className="ol-ship-site" style={{fontSize:20,fontWeight:900,color:ac.main}}>{g.site}</span>
                 <span style={{fontSize:12,color:"#6b7280"}}>{g.rows.filter(r=>r.qty>0).length}품목 · {fmtNum(sumBy(g.rows,"qty"))}팩</span>
               </div>
-              <span style={{padding:"4px 12px",borderRadius:16,background:ac.main,color:"#fff",fontWeight:800,fontSize:15}}>{fmtBoxes(sumBy(g.rows,"boxes"))}박스</span>
+              <span style={{padding:"4px 12px",borderRadius:16,background:ac.main,color:"#fff",fontWeight:800,fontSize:15,whiteSpace:"nowrap"}}>{fmtBoxes(sumBy(g.rows,"boxes"))}박스</span>
             </div>
             <table style={{minWidth:600}}>
-              <colgroup><col/><col style={{width:100}}/><col style={{width:90}}/>{!noExp&&<col style={{width:150}}/>}</colgroup>
+              <colgroup><col/><col className="c-qty" style={{width:100}}/><col className="c-box" style={{width:90}}/>{!noExp&&<col className="c-exp" style={{width:150}}/>}</colgroup>
               <thead><tr style={{background:"#f8fafc",color:"#475569",fontSize:12}}>
                 <th style={{...cell,textAlign:"center"}}>제품명</th>
                 <th style={num}>총 팩수량</th><th style={num}>박스수량</th>{!noExp&&<th style={{...cell,textAlign:"center"}}>{sec.expLabel}</th>}
@@ -3391,7 +3423,7 @@ function ShipSheetPreview({data,date,dateTo,prefix,print,refCb}){
                     <td style={{...cell,textAlign:"center",fontFamily:"'NanumSquare','Pretendard',sans-serif"}}>{boldDigits(shipNameOf(r.product),dim)}<span style={{color:dim?"#9ca3af":"#000",fontWeight:900,marginLeft:6,whiteSpace:"nowrap"}}>/ {r.per}ea</span></td>
                     <td style={num}>{r.qty?fmtNum(r.qty):"–"}</td>
                     <td style={{...num,fontWeight:800,background:dim?"transparent":"#fef9c3",color:r.partial?"#dc2626":dim?"#b6bcc6":"#111"}} title={r.partial?"입수량으로 나누어떨어지지 않음":""}>{r.qty?fmtBoxes(r.boxes):"–"}</td>
-                    {!noExp&&run&&<td rowSpan={run.len} style={{...cell,textAlign:"center",fontWeight:600,fontSize:13,borderLeft:"1px solid #e5e7eb",color:"#111"}}>{fmtExp(run.value)}</td>}
+                    {!noExp&&run&&<td rowSpan={run.len} className="c-exp" style={{...cell,textAlign:"center",fontWeight:600,fontSize:13,borderLeft:"1px solid #e5e7eb",color:"#111"}}>{fmtExp(run.value)}</td>}
                   </tr>;
                 })}
               </tbody>
@@ -3606,6 +3638,9 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
   useEffect(()=>lsSet("ol-ship-fmt",fmt),[fmt]);
   const[trim,setTrim]=useState(()=>lsGet("ol-ship-trim","1")==="1");
   useEffect(()=>lsSet("ol-ship-trim",trim?"1":"0"),[trim]);
+  const[optOpen,setOptOpen]=useState(false); // 모바일: 옵션 접기
+  const[shots,setShots]=useState(null); // 모바일 여러 장 저장용 [{name,label,url,file}]
+  const closeShots=()=>{if(shots)shots.forEach(x=>URL.revokeObjectURL(x.url));setShots(null)};
   const printRef=useRef(null);
   const floorRefs=useRef({});
   // 층별 저장용: 층 하나씩만 담은 출고장 (제목·요약은 그 층 기준)
@@ -3635,6 +3670,22 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
         shipPdf(pages,kind==="all"?base:base+"_층별");count=pages.length;
         setSaveMsg(`A4 PDF ${count}쪽으로 저장했습니다`);
       }else{
+        // 모바일 브라우저는 버튼 한 번에 파일 하나만 받게 함 → 여러 장이면 저장 창에서 고르게
+        const mobile=window.matchMedia&&matchMedia("(pointer:coarse)").matches;
+        if(mobile){
+          const out=[];
+          for(const j of jobs){
+            const pages=await shipA4Pages(j.el,{trim});
+            for(let i=0;i<pages.length;i++){
+              const blob=await new Promise(r=>pages[i].toBlob(r,"image/png"));
+              const nm=pages.length>1?`${j.name}_${i+1}쪽`:j.name;
+              out.push({name:nm+".png",label:nm.replace(/^출고리스트_/,""),url:URL.createObjectURL(blob),file:new File([blob],nm+".png",{type:"image/png"})});
+            }
+          }
+          if(out.length>1){setShots(out);setSaving("");return}
+          if(out.length===1){const a=document.createElement("a");a.download=out[0].name;a.href=out[0].url;a.click();setTimeout(()=>URL.revokeObjectURL(out[0].url),5000)}
+          setSaveMsg(`A4 이미지 ${out.length}장 저장했습니다`);setSaving("");return;
+        }
         for(const j of jobs){
           const pages=await shipA4Pages(j.el,{trim});
           for(let i=0;i<pages.length;i++){
@@ -3648,7 +3699,7 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
     setSaving("");
   };
 
-  return <div className="ol-layout">
+  return <div className={"ol-layout ol-ship"+(optOpen?" opt-open":"")}>
     <DateList dates={dates} selected={isRange?"":selDate} onSelect={d=>{setSelDate(d);setMode("day")}}/>
     <div style={{minWidth:0}}>
       <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:12}}>
@@ -3656,42 +3707,47 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
           <button className={!isRange?"on":""} onClick={()=>setMode("day")}>📅 하루 (입고일)</button>
           <button className={isRange?"on":""} onClick={()=>setMode("range")}>🗓 기간 합계</button>
         </div>
-        {isRange&&<>
+        {isRange&&<div className="ol-ship-range" style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
           <input className="ol-input" type="date" style={{width:150}} value={rFrom} onChange={e=>setRFrom(e.target.value)}/>
           <span style={{color:"var(--muted)"}}>~</span>
           <input className="ol-input" type="date" style={{width:150}} value={rTo} onChange={e=>setRTo(e.target.value)}/>
-          <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setPreset(7)}>최근 7일</button>
-          <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setPreset(14)}>최근 14일</button>
-          <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setPreset(30)}>최근 30일</button>
-          <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setPreset("all")}>저장된 전체</button>
-        </>}
+          <div className="ol-ship-presets" style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setPreset(7)}>최근 7일</button>
+            <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setPreset(14)}>최근 14일</button>
+            <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setPreset(30)}>최근 30일</button>
+            <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setPreset("all")}>저장된 전체</button>
+          </div>
+        </div>}
       </div>
       {isRange&&rFrom&&rTo&&rFrom>rTo&&<div className="ol-warn" style={{padding:"8px 12px"}}>⚠ 시작일이 종료일보다 늦습니다</div>}
       {(isRange?!rangeOk:!selDate)?(isRange?null:<Empty emoji="📄" text="발주서 탭에서 발주서를 먼저 업로드하세요"/>):(isRange?rangeLoading:loadingOrders)?<Loader/>:<>
-        <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",marginBottom:12}}>
+        <div className="ol-ship-head" style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",marginBottom:12}}>
           <div style={{fontSize:18,fontWeight:800}}>{isRange?`${rFrom} (${dowOf(rFrom)}) ~ ${rTo} (${dowOf(rTo)}) 발주 합계`:`${selDate} (${dowOf(selDate)}) 출고장`}</div>
-          <div style={{display:"flex",alignItems:"center",gap:6,marginLeft:"auto"}}>
+          <div className="ol-ship-opt" style={{display:"flex",alignItems:"center",gap:6,marginLeft:"auto"}}>
             <span style={{fontSize:12,color:"var(--muted)"}}>제목 머리말</span>
             <input className="ol-input" style={{width:110}} value={prefix} onChange={e=>setPrefix(e.target.value)}/>
           </div>
         </div>
-        <div className="ol-toolbar">
+        <div className="ol-toolbar ol-ship-save">
           <div className="ol-chips" title="A4 세로 용지 크기로 저장">
             <button className={fmt==="png"?"on":""} onClick={()=>setFmt("png")}>🖼 PNG</button>
             <button className={fmt==="pdf"?"on":""} onClick={()=>setFmt("pdf")}>📄 PDF</button>
           </div>
           {fmt==="png"&&<label className={"ol-check"+(trim?" on":"")} title="내용이 끝나는 곳에서 이미지를 잘라 아래 빈 공간을 없앱니다 (폭은 A4 그대로)"><input type="checkbox" checked={trim} onChange={e=>setTrim(e.target.checked)}/>아래 여백 자르기</label>}
-          <button className="ol-btn ol-btn-primary" onClick={()=>save("all")} disabled={!selFloors.length||!!saving}>{saving==="all"?"저장 중…":"A4로 저장 (이어서)"}</button>
+          <button className="ol-btn ol-btn-primary ol-ship-wide" onClick={()=>save("all")} disabled={!selFloors.length||!!saving}>{saving==="all"?"저장 중…":"A4로 저장 (이어서)"}</button>
           <button className="ol-btn ol-btn-secondary" onClick={()=>save("floor")} disabled={!selFloors.length||!!saving}>{saving==="floor"?"저장 중…":`🏭 층별 A4로 저장 (${selFloors.length}층)`}</button>
           <button className="ol-btn ol-btn-secondary" onClick={()=>downloadShipXlsx(data,shipDate,prefix,vendor,shipTo)} disabled={!ordered.length}>📥 엑셀</button>
-          {saveMsg&&<span style={{fontSize:12,color:saveMsg.startsWith("저장 실패")?"#ef4444":"#22c55e"}}>{saveMsg}</span>}
+          <button className="ol-btn ol-btn-secondary ol-ship-optbtn" onClick={()=>setOptOpen(v=>!v)}>⚙ 옵션 {optOpen?"▴":"▾"}</button>
+          {saveMsg&&<span className="ol-ship-wide" style={{fontSize:12,color:saveMsg.startsWith("저장 실패")?"#ef4444":"#22c55e"}}>{saveMsg}</span>}
+        </div>
+        <div className="ol-toolbar ol-ship-opt">
           <label className={"ol-check"+(showAll?" on":"")}><input type="checkbox" checked={showAll} onChange={e=>setShowAll(e.target.checked)}/>발주 없는 제품도 표시</label>
           <label className={"ol-check"+(withExtra?" on":"")}><input type="checkbox" checked={withExtra} onChange={e=>setWithExtra(e.target.checked)}/>추가 발주 포함{!isRange&&withExtra&&extraOrders.length>0&&` (${extraOrders.length}건)`}</label>
           {!isRange&&<label style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12,color:"var(--muted)"}}>냉동 유통기한 = 입고일 +
             <input className="ol-input" type="number" min="0" style={{width:70,padding:"5px 8px"}} value={frozenDays} onChange={e=>setFrozenDays(e.target.value)}/>일
           </label>}
         </div>
-        {floors.length>0&&<div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:12}}>
+        {floors.length>0&&<div className="ol-ship-floors" style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:12}}>
           <span style={{fontSize:12,color:"var(--muted)",marginRight:2}}>표시·저장할 층</span>
           {floors.map(f=>{const on=!offFloors.has(f.key),fz=f.data.frozen.length>0;
             return <label key={f.key} className={"ol-check"+(on?" on":"")}><input type="checkbox" checked={on} onChange={()=>toggleFloor(f.key)}/>{fz?"❄ ":""}{f.site}</label>})}
@@ -3702,7 +3758,7 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
           <button className={!vendor?"on":""} onClick={()=>setVendor("")}>전체 업체</button>
           {vendors.map(v=><button key={v} className={vendor===v?"on":""} onClick={()=>setVendor(v)}>{v||"(업체명 없음)"}</button>)}
         </div>}
-        <div style={{fontSize:12,color:"var(--muted)",marginBottom:10}}>
+        <div className="ol-ship-opt" style={{fontSize:12,color:"var(--muted)",marginBottom:10}}>
           {isRange?<>입고예정일 기준 · 입고일 {rangeDays}일 · 발주서 {allOrders.filter(o=>!vendor||(o.vendor||"").trim()===vendor).length}건 합계 · 같은 제품은 소비기한이 달라도 한 줄로 합침(소비기한 열 없음) · 발주서는 입고일 기준 1달만 보관됩니다</>:<>
           발주서 {allOrders.filter(o=>!vendor||(o.vendor||"").trim()===vendor).length}건 · 업체·센터가 달라도 같은 제품은 합쳐서 표시 · 박스수량 = 총 팩수량 ÷ 입수량 · 냉장 소비기한은 발주서의 유통(소비)기한 · 냉동 유통기한은 발주서 값이 없으면 입고일 + {frozenDays||0}일</>}
         </div>
@@ -3717,6 +3773,7 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
             {selFloors.map(f=><ShipSheetPreview key={f.key} data={f.data} date={shipDate} dateTo={shipTo} prefix={prefix} print refCb={el=>{floorRefs.current[f.key]=el}}/>)}
           </div>
         </>}
+        {shots&&<Modal onClose={closeShots}><FrozenShotsSheet shots={shots} onClose={closeShots}/></Modal>}
       </>}
     </div>
   </div>;
@@ -4049,7 +4106,7 @@ function FrozenShotsSheet({shots,onClose}){
       {shots.map((x,i)=><div key={x.name} style={{border:"1px solid var(--border)",borderRadius:8,padding:8}}>
         <img src={x.url} alt={x.name} style={{width:"100%",display:"block",borderRadius:4,background:"#fff"}}/>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:6,gap:8}}>
-          <span style={{fontSize:12,color:"var(--muted)"}}>{i+1}쪽</span>
+          <span style={{fontSize:12,color:"var(--muted)"}}>{x.label||`${i+1}쪽`}</span>
           <a className="ol-btn ol-btn-secondary ol-btn-sm" href={x.url} download={x.name}>⬇ 저장</a>
         </div></div>)}
     </div>
