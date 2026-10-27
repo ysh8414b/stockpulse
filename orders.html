@@ -1421,7 +1421,7 @@ function BookmarkletHelp({onClose}){
 
 // 크롬 확장 프로그램 설치 안내 + 파일 묶음(zip) 받기
 const EXT_FILES=["manifest.json","background.js","bridge.js"];
-const EXT_LATEST="1.5.0"; // extensions/coupang-price/manifest.json 과 맞출 것
+const EXT_LATEST="1.5.1"; // extensions/coupang-price/manifest.json 과 맞출 것
 const PRICE_GAPS=[5,8,15,30]; // 상품 사이 간격(초) — 쿠팡이 자동 접속으로 막지 않도록 넉넉히
 function verLt(a,b){const x=String(a||"0").split(".").map(Number),y=String(b).split(".").map(Number);for(let i=0;i<3;i++){if((x[i]||0)!==(y[i]||0))return (x[i]||0)<(y[i]||0)}return false}
 function ExtensionHelp({ext,onClose}){

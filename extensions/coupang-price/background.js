@@ -54,9 +54,21 @@ function extractCoupangPrice() {
   const lm = ((document.querySelector(".product-buy-header") || document.body).innerText || "").match(/품절\s*임박\s*[•·]?\s*(\d+)\s*개/);
   const stockLeft = soldOut ? 0 : lm ? Number(lm[1]) : null;
 
+  // 페이지 데이터의 쿠팡판매가 (화면 칸이 늦게 그려질 때 대비)
+  //  "salesPrice":{"displayType":"SALES",…"price":9700 / "nonWowMemberPrice":{"price":9700
+  let dataSales = null;
+  for (const s of document.scripts) {
+    const t = s.textContent || "";
+    if (t.indexOf("salesPrice") < 0 && t.indexOf("nonWowMemberPrice") < 0) continue;
+    const m = t.match(/\\*"salesPrice\\*":\{\\*"displayType\\*":\\*"SALES[^{}]{0,400}?\\*"price\\*":(\d+)/) ||
+      t.match(/\\*"nonWowMemberPrice\\*":\{\\*"price\\*":(\d+)/);
+    if (m) { dataSales = Number(m[1]); break; }
+  }
+
   return {
     blocked,
     soldOut, stockLeft,
+    dataSales,
     isProduct: /\/v[pm]\/products\/\d+/.test(location.pathname),
     sales: pick(".sales-price-amount"),
     final: pick(".final-price-amount"),
@@ -91,7 +103,9 @@ async function readPrice(url) {
       } catch (err) {
         r = { error: "페이지를 읽지 못했습니다 (" + String(err && err.message || err).slice(0, 80) + ")" };
       }
-      if (r && (r.blocked || r.error || r.sales != null || r.final != null || r.soldOut === true)) break;
+      // 쿠팡판매가 칸이 와우할인 칸보다 늦게 그려질 수 있어, 최종가만 보이면 3초까지 더 기다림
+      if (r && (r.blocked || r.error || r.sales != null || r.soldOut === true)) break;
+      if (r && r.final != null && i >= 6) break;
       await sleep(500);
     }
     if (!r) return { error: "페이지를 읽지 못했습니다" };
@@ -100,7 +114,10 @@ async function readPrice(url) {
     if (!r.isProduct) return { error: "상품 페이지가 아닌 쿠팡 메인으로 이동했습니다 (판매중지·링크 변경 가능 — 링크를 확인하세요)", title: r.title };
     const want = (url.match(/[?&]itemId=(\d+)/) || [])[1];
     if (want && r.itemId && r.itemId !== want) return { error: "다른 옵션 페이지로 바뀌었습니다 (옵션 품절·판매중지 가능)", title: r.title };
-    const sale = r.sales != null ? r.sales : r.final;
+    // 판매가: 화면의 쿠팡판매가 → 페이지 데이터의 판매가(최종가 이상일 때만) → 최종가
+    const sale = r.sales != null ? r.sales
+      : (r.dataSales != null && (r.final == null || r.dataSales >= r.final)) ? r.dataSales
+      : r.final;
     const disc = r.final != null ? r.final : r.sales;
     const stock = { sold_out: r.soldOut, stock_left: r.stockLeft };
     if (sale == null) {
