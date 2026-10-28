@@ -4149,13 +4149,14 @@ function OrderShortagePanel({adminHash,items,lines,plans,settings,invData,onAddP
   const orderCount=data.orders.filter(o=>String(o.due_date).slice(0,10)>=today).length;
   if(orderCount===0)return null;
 
-  const{rows,unlinked,unregistered,deletedLink}=result;
+  const{unlinked,unregistered,deletedLink}=result;
+  // 마감일(입고 1생산일 전)이 이미 지난 건은 표시하지 않음 (계산에는 그대로 들어가 뒤 입고일 부족분이 두 번 잡히지 않음)
+  const rows=result.rows.filter(r=>!r.late);
   const missCount=unlinked.length+unregistered.length+deletedLink.length;
   const invOld=invData?.savedAt&&isoToKstDateStr(invData.savedAt)<today;
   const noInv=!invData?.products?.length;
   const byDue={};rows.forEach(r=>{(byDue[r.due]=byDue[r.due]||[]).push(r)});
   const dues=Object.keys(byDue).sort();
-  const lateCount=rows.filter(r=>r.late).length;
 
   const add=(r,day)=>{
     const slot=suggestPlanSlot({item:r.item,day,qty:r.short,lines,plans,settings,rate:rates[r.item.id]||Number(r.item.units_per_hour)||0});
@@ -4166,7 +4167,7 @@ function OrderShortagePanel({adminHash,items,lines,plans,settings,invData,onAddP
   return <div className={"aps-oa"+(rows.length?" aps-oa-warn":" aps-oa-ok")}>
     <div className="aps-oa-head" onClick={()=>setOpen(v=>!v)}>
       <span style={{fontWeight:800}}>{rows.length?`⚠ 발주 대비 생산 필요 ${rows.length}건`:"✅ 발주 대비 재고 충분"}</span>
-      <span className="aps-oa-sub">앞으로 {ORDER_ALERT_DAYS}일 입고 발주 {orderCount}건 · 안전재고는 남기고 계산{lateCount?` · ⛔ 늦음 ${lateCount}`:""}</span>
+      <span className="aps-oa-sub">앞으로 {ORDER_ALERT_DAYS}일 입고 발주 {orderCount}건 · 안전재고는 남기고 계산</span>
       {missCount>0&&<span className="aps-oa-chip" onClick={e=>{e.stopPropagation();setOpen(true);setShowUnlinked(v=>!v)}}>🔗 APS 연결 안 된 발주 제품 {missCount}개</span>}
       <span style={{flex:1}}/>
       <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={e=>{e.stopPropagation();setTick(t=>t+1)}} title="발주서 다시 불러오기">↻</button>

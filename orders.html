@@ -45,6 +45,8 @@
     .ol-btn-danger{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.25);color:#ef4444}
     .ol-btn-sm{padding:5px 10px;font-size:12px}
     .ol-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+    .ol-lastup{font-size:13px;padding:5px 10px;border-radius:8px;background:rgba(6,182,212,.1);border:1px solid rgba(6,182,212,.35);cursor:pointer;white-space:nowrap}
+    .ol-lastup b{color:#06b6d4}
     .ol-chips{display:flex;gap:4px;flex-wrap:wrap}
     .ol-chips button{padding:6px 12px;border-radius:6px;border:1px solid var(--card-bd);background:var(--card-bg);color:var(--muted);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
     .ol-chips button.on{background:rgba(6,182,212,0.12);border-color:rgba(6,182,212,0.45);color:#06b6d4}
@@ -2359,6 +2361,13 @@ function PriceCapture({payload}){
 // ═══════════════════════════════════════════
 // 날짜 목록 (발주서 / 발주리스트 공용)
 // ═══════════════════════════════════════════
+// 업로드 시각 표시: "10/28 (화) 14:32"
+function fmtUploadAt(iso){
+  if(!iso)return "";
+  const d=new Date(iso);
+  if(isNaN(d.getTime()))return "";
+  return `${d.getMonth()+1}/${d.getDate()} (${DOW[d.getDay()]}) ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+}
 function DateList({dates,selected,onSelect}){
   const today=todayYmd();
   if(!dates.length)return <div className="ol-datelist"><div style={{fontSize:12,color:"var(--muted)",padding:10}}>업로드된 발주서가 없습니다</div></div>;
@@ -2412,6 +2421,16 @@ function OrdersTab({adminHash,masters,reloadMasters,dates,reloadDates,selDate,se
     for(const o of orders)for(const it of (o.items||[])){const x=siteOf(it.code);if(x)s.add(x)}
     return [...s].sort();
   },[orders,prodMap]);
+
+  // 최근 업로드: 입고일 목록의 last_upload(SQL 실행 후) → 없으면 지금 보는 입고일 발주서의 업로드 시각
+  const lastUpload=useMemo(()=>{
+    let best=null;
+    for(const d of dates||[])if(d.last_upload&&(!best||d.last_upload>best.at))best={at:d.last_upload,due:d.due_date,count:d.order_count};
+    if(best)return best;
+    for(const o of orders||[])if(o.created_at&&(!best||o.created_at>best.at))best={at:o.created_at,due:o.due_date,partial:true};
+    return best;
+  },[dates,orders]);
+  const dayLastUpload=useMemo(()=>{let m="";for(const o of orders||[])if(o.created_at&&o.created_at>m)m=o.created_at;return m},[orders]);
 
   const handleFiles=async files=>{
     if(!files||!files.length)return;
@@ -2531,6 +2550,9 @@ function OrdersTab({adminHash,masters,reloadMasters,dates,reloadDates,selDate,se
     <div className="ol-toolbar">
       <button className="ol-btn ol-btn-primary" onClick={()=>fileRef.current?.click()} disabled={busy}>{busy?"업로드 중...":extra?"📁 추가 발주서 업로드":"📁 발주서 업로드"}</button>
       <input ref={fileRef} type="file" accept=".xlsx,.xls,.zip" multiple style={{display:"none"}} onChange={e=>handleFiles([...e.target.files])}/>
+      {lastUpload&&<span className="ol-lastup" onClick={()=>lastUpload.due&&setSelDate(lastUpload.due)} title={lastUpload.partial?"지금 보는 입고일 기준 (setup_orders_aps_link.sql 을 실행하면 전체 입고일 기준으로 표시)":"누르면 그 입고일로 이동"}>
+        🕒 최근 업로드 <b>{fmtUploadAt(lastUpload.at)}</b>{lastUpload.due&&<span style={{color:"var(--muted)"}}> · 입고 {lastUpload.due.slice(5).replace("-","/")} ({dowOf(lastUpload.due)})</span>}
+      </span>}
       <span style={{fontSize:12,color:"var(--muted)"}}>여러 파일 동시 선택 가능 · 압축파일(.zip)도 가능 · 같은 발주번호를 다시 올리면 덮어씁니다 · 입고예정일 기준 1달 지난 발주서는 자동 삭제</span>
     </div>
 
@@ -2540,6 +2562,7 @@ function OrdersTab({adminHash,masters,reloadMasters,dates,reloadDates,selDate,se
         {!selDate?<Empty emoji="📄" text={extra?"추가 발주서를 업로드하세요 — 기존 발주리스트와 섞이지 않고 따로 적재됩니다":"발주서를 업로드하세요"}/>:loadingOrders?<Loader/>:<>
           <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:10}}>
             <div style={{fontSize:18,fontWeight:800}}>{selDate} ({dowOf(selDate)}) 입고 · {extra?"추가 ":""}발주서 {orders.length}건</div>
+            {dayLastUpload&&<span style={{fontSize:12,color:"var(--muted)"}}>🕒 이 날짜 최근 업로드 {fmtUploadAt(dayLastUpload)}</span>}
             {orders.length>0&&(askDelDay?<span style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:13,color:"#ef4444",fontWeight:700}}>
               이 날짜 {extra?"추가 ":""}발주서 {orders.length}건을 모두 삭제할까요?
               <button className="ol-btn ol-btn-danger ol-btn-sm" onClick={delDay} disabled={delDayBusy}>{delDayBusy?"삭제 중...":"모두 삭제"}</button>
@@ -2559,6 +2582,7 @@ function OrdersTab({adminHash,masters,reloadMasters,dates,reloadDates,selDate,se
                 <div style={{fontSize:15,fontWeight:800}}>발주 {o.order_no} <span className="ol-pill">{o.order_type||"발주"}</span></div>
                 <div style={{fontSize:12,color:"var(--muted)",marginTop:3}}>
                   {o.vendor} · 센터 <b style={{color:"var(--text)"}}>{o.center||"–"}</b> · 입고 {o.due_date} ({dowOf(o.due_date)}) · 📎 {o.file_name}
+                  {o.created_at&&<> · 🕒 {fmtUploadAt(o.created_at)} 업로드</>}
                 </div>
               </div>
               <div style={{display:"flex",gap:6,alignItems:"flex-start"}}>

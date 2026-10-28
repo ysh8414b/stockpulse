@@ -29,3 +29,18 @@ BEGIN
   );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ── 최근 업로드 시각 (2026-10-28) ──
+-- 입고예정일 목록에 날짜별 마지막 업로드 시각(last_upload) 추가 → 발주서 탭에 "최근 업로드" 표시
+-- (같은 발주번호를 다시 올리면 created_at 이 now() 로 바뀌므로 재업로드도 반영됨)
+CREATE OR REPLACE FUNCTION ol_list_due_dates(p_admin_hash TEXT, p_extra BOOLEAN DEFAULT FALSE)
+RETURNS JSON AS $$
+BEGIN
+  -- 인증 없음 (2026-10-13: 비밀번호 없이 접근 허용)
+  PERFORM ol_cleanup_old_orders();
+  RETURN (
+    SELECT COALESCE(json_agg(json_build_object('due_date', d, 'order_count', c, 'last_upload', lu) ORDER BY d DESC), '[]'::json)
+    FROM (SELECT due_date d, COUNT(*) c, MAX(created_at) lu FROM ol_orders WHERE is_extra = COALESCE(p_extra, FALSE) GROUP BY due_date) t
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;

@@ -368,8 +368,8 @@ BEGIN
   -- 인증 없음 (2026-10-13: 비밀번호 없이 접근 허용)
   PERFORM ol_cleanup_old_orders();
   RETURN (
-    SELECT COALESCE(json_agg(json_build_object('due_date', d, 'order_count', c) ORDER BY d DESC), '[]'::json)
-    FROM (SELECT due_date d, COUNT(*) c FROM ol_orders WHERE is_extra = COALESCE(p_extra, FALSE) GROUP BY due_date) t
+    SELECT COALESCE(json_agg(json_build_object('due_date', d, 'order_count', c, 'last_upload', lu) ORDER BY d DESC), '[]'::json)
+    FROM (SELECT due_date d, COUNT(*) c, MAX(created_at) lu FROM ol_orders WHERE is_extra = COALESCE(p_extra, FALSE) GROUP BY due_date) t
   );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
