@@ -12,6 +12,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="shared.js"></script>
   <style>
     .aps-shell{max-width:1100px;margin:0 auto;padding:20px 32px 60px;box-sizing:border-box}
@@ -47,6 +48,13 @@
     .aps-modal-bg{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px;box-sizing:border-box}
     .aps-modal{background:var(--bg);border:1px solid var(--card-bd);border-radius:12px;padding:24px;width:100%;max-width:560px;max-height:90vh;overflow:auto;box-sizing:border-box}
     .aps-modal-lg{max-width:760px}
+    .aps-wo-layout{display:grid;grid-template-columns:minmax(280px,1fr) auto;gap:16px;align-items:start}
+    .aps-wo-edit{min-width:0}
+    .aps-wo-edit textarea.aps-input{width:100%;box-sizing:border-box;resize:vertical;font-family:inherit}
+    .aps-wo-edit input.aps-input{width:100%;box-sizing:border-box}
+    .aps-wo-preview{position:sticky;top:0}
+    .aps-wo-paper{zoom:.78;border:1px solid var(--div2);border-radius:6px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.25);width:794px}
+    @media(max-width:1100px){.aps-wo-layout{grid-template-columns:1fr}.aps-wo-preview{position:static;overflow-x:auto}.aps-wo-paper{zoom:.45}}
     .aps-modal-bg.aps-side{justify-content:flex-end;align-items:stretch;padding:0}
     .aps-modal.aps-modal-side{max-width:480px;max-height:100vh;height:100vh;border-radius:0;border-right:none;border-top:none;border-bottom:none;animation:aps-slide-in .22s ease-out}
     @keyframes aps-slide-in{from{transform:translateX(100%)}to{transform:translateX(0)}}
@@ -288,7 +296,7 @@
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const{useState,useEffect,useCallback,useMemo,useRef}=React;
+const{useState,useEffect,useCallback,useMemo,useRef,useLayoutEffect}=React;
 
 // ═══ Helpers ═══
 async function hashPassword(pw){
@@ -3594,6 +3602,376 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
   </div>;
 }
 
+// ═══ 작업지시서 ═══
+// 라인별로 그날 작업 순서·수량·원육·작업 기준·지시사항·기록 칸을 한 장에 정리
+// 저장: aps_settings — wo:{날짜}:{라인키} = {leader,note} / wo_item:{품목id} = 작업 기준 (SQL 변경 없음)
+const WO_W=794;
+// A4 세로 = 794×1123px(96dpi), 여백 38px(10mm), 내용 폭 718px
+const WO_A4={W:794,H:1123,M:38,FOOT:24,HEAD:34,S:3};
+// 쪽 나누기: 작업 카드 등 [data-wocut] 경계에서만 자름. 1.15쪽 이하면 한 쪽에 축소
+function woSlices(total,cuts){
+  const{H,M,FOOT,HEAD}=WO_A4;
+  const area1=H-M*2-FOOT,areaN=area1-HEAD;
+  if(total<=area1*1.15)return[[0,total]];
+  const out=[];let start=0;
+  while(start<total-1){
+    const area=out.length?areaN:area1;
+    const limit=start+area;
+    let end=total<=limit?total:Math.max(0,...cuts.filter(c=>c>start+area*0.3&&c<=limit));
+    if(!end)end=limit;
+    out.push([start,end]);start=end;
+  }
+  // 마지막 쪽이 짧으면(특이사항만 남는 등) 앞 쪽에 조금 축소해서 붙임
+  if(out.length>1){
+    const last=out[out.length-1],prev=out[out.length-2];
+    const area=out.length>2?areaN:area1;
+    if(last[1]-prev[0]<=area*1.2){out.pop();prev[1]=last[1]}
+  }
+  return out;
+}
+function woCutsOf(body){
+  return [...new Set([...body.querySelectorAll("[data-wocut]")].map(n=>n.offsetTop))].filter(c=>c>0).sort((a,b)=>a-b);
+}
+async function woA4Pages(body,headText){
+  if(document.fonts&&document.fonts.ready)await document.fonts.ready;
+  const{W,H,M,FOOT,HEAD,S}=WO_A4;
+  const cw=body.offsetWidth,total=body.offsetHeight;
+  const src=await window.html2canvas(body,{scale:S,backgroundColor:"#ffffff",logging:false,useCORS:true});
+  const sl=woSlices(total,woCutsOf(body));
+  const multi=sl.length>1;
+  return sl.map(([a,b],i)=>{
+    const h=b-a;
+    const top=M+(i?HEAD:0);
+    const room=H-top-M-(multi?FOOT:0);
+    const k=Math.min(1,room/h);
+    const pg=document.createElement("canvas");pg.width=W*S;pg.height=H*S;
+    const ctx=pg.getContext("2d");
+    ctx.fillStyle="#ffffff";ctx.fillRect(0,0,pg.width,pg.height);
+    const dw=cw*k,dx=M+(cw-dw)/2;
+    ctx.drawImage(src,0,a*S,src.width,h*S,dx*S,top*S,dw*S,h*k*S);
+    if(i){
+      ctx.fillStyle="#475569";ctx.font=`700 ${13*S}px Pretendard, sans-serif`;ctx.textAlign="left";
+      ctx.fillText(headText+" (이어서)",M*S,(M+16)*S);
+      ctx.fillStyle="#cbd5e1";ctx.fillRect(M*S,(M+24)*S,(W-M*2)*S,1.5*S);
+    }
+    if(multi){
+      ctx.fillStyle="#6b7280";ctx.font=`600 ${12*S}px Pretendard, sans-serif`;ctx.textAlign="center";
+      ctx.fillText(`${i+1} / ${sl.length}`,W*S/2,(H-M+6)*S);
+    }
+    return pg;
+  });
+}
+const woLineKey=(lineId)=>lineId?String(lineId):"none";
+function woHM(iso,dayStr){
+  if(!iso)return"";
+  const k=new Date(new Date(iso).getTime()+KST_OFFSET_MS);
+  const t=`${String(k.getUTCHours()).padStart(2,"0")}:${String(k.getUTCMinutes()).padStart(2,"0")}`;
+  const kd=k.toISOString().slice(0,10);
+  if(kd===dayStr)return t;
+  const[,m,d]=kd.split("-");return `${Number(m)}.${Number(d)} ${t}`;
+}
+function woDur(ms){
+  const min=Math.round(ms/60000);if(!(min>0))return"";
+  const h=Math.floor(min/60),m=min%60;
+  return h?(m?`${h}시간 ${m}분`:`${h}시간`):`${m}분`;
+}
+function woDayLabel(dayStr){
+  const[y,m,d]=dayStr.split("-").map(Number);
+  return `${y}년 ${m}월 ${d}일 (${DOW_LABEL[(new Date(Date.UTC(y,m-1,d)).getUTCDay()+6)%7]})`;
+}
+
+function WorkOrderSheet({group,dayStr,mats,itemStd,info,itemById,settings,lines,showBreaks=false,onPages}){
+  const bodyRef=useRef(null);
+  const[breaks,setBreaks]=useState([]);
+  useLayoutEffect(()=>{
+    const b=bodyRef.current;if(!b)return;
+    const sl=woSlices(b.offsetHeight,woCutsOf(b));
+    const nb=sl.slice(1).map(x=>x[0]);
+    setBreaks(prev=>prev.join()===nb.join()?prev:nb);
+    onPages&&onPages(sl.length);
+  });
+  const C={text:"#0f172a",sub:"#475569",muted:"#94a3b8",line:"#cbd5e1",soft:"#f1f5f9"};
+  const lc=lineColorFor(group.line_id,lines);
+  const lunch=getLunch(settings);
+  const dayStart=new Date(dayStr+"T00:00:00+09:00").getTime();
+  const ps=group.plans;
+  const kgOf=(p)=>{const k=parseSpecKg(p.item_spec);return k==null?0:k*(Number(p.qty)||0)};
+  const units={};ps.forEach(p=>{const u=p.item_unit||"박스";units[u]=(units[u]||0)+(Number(p.qty)||0)});
+  const totalKg=ps.reduce((s,p)=>s+kgOf(p),0);
+  // 점심 줄 위치 = 점심 시작 이후에 시작하는 첫 작업 앞
+  let lunchAt=-1;
+  if(lunch&&ps.length){
+    const ls=dayStart+lunch.s*3600e3;
+    const first=new Date(ps[0].start_at).getTime(),last=new Date(ps[ps.length-1].end_at).getTime();
+    if(ls>first&&ls<last){lunchAt=ps.findIndex(p=>new Date(p.start_at).getTime()>=ls);if(lunchAt<0)lunchAt=ps.length}
+  }
+  const blank=(w)=><span style={{display:"inline-block",width:w,borderBottom:`1.5px solid ${C.text}`,height:18,verticalAlign:"-4px"}}/>;
+  const lunchRow=<div key="lunch" data-wocut="1" style={{display:"flex",alignItems:"center",gap:10,margin:"2px 0 12px",padding:"8px 14px",border:"1.5px dashed #f59e0b",borderRadius:8,background:"#fffbeb",fontSize:15,fontWeight:800,color:"#92400e"}}>🍱 점심시간 {lunch?.label}</div>;
+  return <div style={{background:"#fff",color:C.text,fontFamily:"Pretendard, -apple-system, system-ui, sans-serif",width:WO_W,boxSizing:"border-box",padding:WO_A4.M}}>
+   <div ref={bodyRef} data-wobody="1" style={{position:"relative"}}>
+    {showBreaks&&breaks.map((y,bi)=><div key={bi} style={{position:"absolute",left:-38,right:-38,top:y-7,borderTop:"2px dashed #f43f5e",zIndex:2,pointerEvents:"none"}}>
+      <span style={{position:"absolute",right:4,top:-11,fontSize:11,fontWeight:800,color:"#fff",background:"#f43f5e",padding:"1px 8px",borderRadius:8}}>✂ {bi+2}쪽 시작</span>
+    </div>)}
+    <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:16,borderBottom:`3px solid ${C.text}`,paddingBottom:12}}>
+      <div>
+        <div style={{fontSize:30,fontWeight:900,letterSpacing:"-.02em"}}>작업지시서</div>
+        <div style={{fontSize:16,fontWeight:700,color:C.sub,marginTop:4}}>{woDayLabel(dayStr)}</div>
+      </div>
+      <div style={{textAlign:"right"}}>
+        <div style={{display:"inline-flex",alignItems:"center",gap:8,fontSize:22,fontWeight:900,color:lc.fgLight,background:lc.bgLight,border:`2px solid ${lc.base}`,borderRadius:10,padding:"6px 14px"}}>
+          <span style={{width:12,height:12,borderRadius:6,background:lc.base}}/>{group.line_id?group.line_name:"라인 미지정"}
+        </div>
+        <div style={{fontSize:15,fontWeight:700,marginTop:8}}>담당자 {info?.leader?<span style={{fontSize:17,fontWeight:900,borderBottom:`1.5px solid ${C.text}`,padding:"0 6px"}}>{info.leader}</span>:blank(110)}</div>
+      </div>
+    </div>
+    <div style={{display:"flex",flexWrap:"wrap",gap:"4px 18px",fontSize:14,fontWeight:700,color:C.sub,margin:"10px 0 14px"}}>
+      <span>작업 <b style={{color:C.text,fontSize:16}}>{ps.length}건</b></span>
+      <span>총 <b style={{color:C.text,fontSize:16}}>{Object.entries(units).map(([u,q])=>`${fmtNum(q)}${u}`).join(" · ")}</b>{totalKg>0&&<> ({fmtKg(totalKg)})</>}</span>
+      <span>근무 {settings.work_start_hour||8}:00 ~ {settings.work_end_hour||17}:00</span>
+      {lunch&&<span>🍱 점심 {lunch.label}</span>}
+    </div>
+    {info?.note&&info.note.trim()&&<div data-wocut="1" style={{border:"2px solid #dc2626",background:"#fef2f2",borderRadius:10,padding:"10px 14px",marginBottom:14}}>
+      <div style={{fontSize:13,fontWeight:900,color:"#b91c1c",marginBottom:4}}>📢 오늘 전달사항</div>
+      <div style={{fontSize:16,fontWeight:700,lineHeight:1.5,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{info.note}</div>
+    </div>}
+    {ps.length===0&&<div style={{padding:"40px 0",textAlign:"center",color:C.muted,fontSize:15}}>이 라인에 작업이 없습니다</div>}
+    {ps.map((p,i)=>{
+      const it=itemById[p.item_id];
+      const ms=(mats&&mats[p.id])||[];
+      const kg=kgOf(p);
+      const std=(itemStd[p.item_id]||"").trim();
+      const memo=(p.memo||"").trim();
+      const dur=woDur(new Date(p.end_at)-new Date(p.start_at));
+      const card=<div key={p.id} data-wocut="1" style={{border:`2px solid ${C.text}`,borderRadius:10,marginBottom:12,overflow:"hidden",breakInside:"avoid"}}>
+        <div style={{display:"flex",alignItems:"stretch"}}>
+          <div style={{width:54,flexShrink:0,background:C.text,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,fontWeight:900}}>{i+1}</div>
+          <div style={{flex:1,padding:"10px 14px",minWidth:0}}>
+            <div style={{fontSize:15,fontWeight:800,color:C.sub}}>{woHM(p.start_at,dayStr)} ~ {woHM(p.end_at,dayStr)}{dur&&<span style={{fontWeight:600,marginLeft:8}}>({dur})</span>}
+              {p.status==="done"&&<span style={{marginLeft:8,fontSize:12,background:"#dcfce7",color:"#15803d",padding:"2px 8px",borderRadius:10}}>완료</span>}
+              {p.status==="in_progress"&&<span style={{marginLeft:8,fontSize:12,background:"#cffafe",color:"#0e7490",padding:"2px 8px",borderRadius:10}}>진행중</span>}
+            </div>
+            <div style={{fontSize:22,fontWeight:900,lineHeight:1.3,marginTop:2,wordBreak:"break-word"}}>{p.item_name}</div>
+            <div style={{fontSize:13,color:C.sub,fontWeight:600,marginTop:2}}>
+              {[p.item_code,(p.item_spec||"").trim()&&`규격 ${p.item_spec}`,it?.pack_qty&&`입수 ${fmtNum(it.pack_qty)}`].filter(Boolean).join(" · ")}
+            </div>
+          </div>
+          <div style={{flexShrink:0,padding:"10px 16px",textAlign:"right",borderLeft:`1px solid ${C.line}`,display:"flex",flexDirection:"column",justifyContent:"center",minWidth:120}}>
+            <div style={{fontSize:30,fontWeight:900,lineHeight:1}}>{fmtNum(p.qty)}<span style={{fontSize:15,fontWeight:700,marginLeft:3}}>{p.item_unit||"박스"}</span></div>
+            {kg>0&&<div style={{fontSize:15,fontWeight:800,color:C.sub,marginTop:4}}>{fmtKg(kg)}</div>}
+          </div>
+        </div>
+        {ms.length>0&&<div style={{borderTop:`1px solid ${C.line}`,padding:"8px 14px",background:"#fff7ed"}}>
+          {ms.map((m,mi)=><div key={mi} style={{marginTop:mi?6:0}}>
+            <div style={{fontSize:15,fontWeight:800,color:"#9a3412"}}>🥩 {m.name} <span style={{color:C.text}}>{fmtKg(m.needKg)}</span> 사용
+              {m.hasKeywords&&!m.ok&&<span style={{marginLeft:8,fontSize:12,color:"#fff",background:"#dc2626",padding:"2px 8px",borderRadius:10}}>재고 부족 (재고 {fmtKg(m.stockKg)})</span>}
+            </div>
+            {m.matches&&m.matches.length>0&&<div style={{fontSize:13,color:C.sub,fontWeight:600,marginTop:2,lineHeight:1.5}}>
+              재고: {m.matches.map((r,ri)=><span key={ri} style={{whiteSpace:"nowrap",marginRight:10}}>{r.rawName} <b style={{color:C.text}}>{fmtKg(r.kg)}</b></span>)}
+            </div>}
+          </div>)}
+        </div>}
+        {std&&<div style={{borderTop:`1px solid ${C.line}`,padding:"8px 14px",background:"#eff6ff"}}>
+          <span style={{fontSize:13,fontWeight:900,color:"#1d4ed8",marginRight:6}}>📏 작업 기준</span>
+          <span style={{fontSize:15,fontWeight:700,lineHeight:1.5,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{std}</span>
+        </div>}
+        {memo&&<div style={{borderTop:`1px solid ${C.line}`,padding:"8px 14px",background:"#fef9c3"}}>
+          <span style={{fontSize:13,fontWeight:900,color:"#a16207",marginRight:6}}>📝 이번 지시</span>
+          <span style={{fontSize:16,fontWeight:800,lineHeight:1.5,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{memo}</span>
+        </div>}
+        <div style={{borderTop:`1px solid ${C.line}`,padding:"10px 14px",display:"flex",flexWrap:"wrap",gap:"8px 22px",fontSize:14,fontWeight:700,color:C.sub,background:C.soft}}>
+          <span>시작 {blank(64)}</span>
+          <span>완료 {blank(64)}</span>
+          <span>실제 수량 {blank(70)} {p.item_unit||"박스"}</span>
+          <span style={{marginLeft:"auto"}}>확인 <span style={{display:"inline-block",width:20,height:20,border:`2px solid ${C.text}`,borderRadius:3,verticalAlign:"-5px",background:"#fff"}}/></span>
+        </div>
+      </div>;
+      return i===lunchAt?[lunchRow,card]:card;
+    })}
+    {lunchAt===ps.length&&lunchRow}
+    <div data-wocut="1" style={{marginTop:8,border:`1.5px solid ${C.line}`,borderRadius:10,padding:"10px 14px"}}>
+      <div style={{fontSize:13,fontWeight:900,color:C.sub}}>특이사항 (불량·로스·설비 이상 등)</div>
+      {[0,1,2].map(k=><div key={k} style={{borderBottom:`1px solid ${C.line}`,height:30}}/>)}
+    </div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:12,fontSize:11,color:C.muted}}>
+      <span style={{fontWeight:700,letterSpacing:".08em"}}>STOCKPULSE · APS</span>
+      <span>{new Date().toLocaleString("ko-KR")} 출력</span>
+    </div>
+   </div>
+  </div>;
+}
+
+function WorkOrderModal({adminHash,dayStr,plans,lines,items,invData,settings,onClose,onSaved}){
+  const itemById=useMemo(()=>{const m={};(items||[]).forEach(i=>m[i.id]=i);return m},[items]);
+  const groups=useMemo(()=>{
+    const s0=new Date(dayStr+"T00:00:00+09:00").getTime(),e0=s0+24*3600e3;
+    const day=plans.filter(p=>p.status!=="canceled"&&p.start_at&&p.end_at&&new Date(p.start_at).getTime()<e0&&new Date(p.end_at).getTime()>s0);
+    const map=new Map();
+    day.forEach(p=>{const k=woLineKey(p.line_id);if(!map.has(k))map.set(k,{key:k,line_id:p.line_id||null,line_name:p.line_name||"",plans:[]});map.get(k).plans.push(p)});
+    const out=[...map.values()];
+    out.forEach(g=>g.plans.sort((a,b)=>new Date(a.start_at)-new Date(b.start_at)));
+    const code=(g)=>g.line_id?(lines.find(l=>l.id===g.line_id)?.code||""):"￿";
+    return out.sort((a,b)=>code(a).localeCompare(code(b)));
+  },[plans,lines,dayStr]);
+  const[sel,setSel]=useState(()=>groups[0]?.key||null);
+  useEffect(()=>{if(!groups.find(g=>g.key===sel))setSel(groups[0]?.key||null)},[groups]);
+  const[mats,setMats]=useState({});
+  const[info,setInfo]=useState({}); // {lineKey:{leader,note}}
+  const[itemStd,setItemStd]=useState({});
+  const[memos,setMemos]=useState({}); // planId → 편집 중인 지시
+  const[err,setErr]=useState("");
+  const[saving,setSaving]=useState("");
+  const[loaded,setLoaded]=useState(0);
+  const[capture,setCapture]=useState(null); // 저장할 그룹 목록
+  const capRef=useRef(null);
+
+  useEffect(()=>{
+    let dead=false;
+    (async()=>{
+      try{
+        const st=await rpc("aps_get_settings",{p_admin_hash:adminHash});
+        if(dead||!st)return;
+        const inf={},std={};
+        for(const[k,v]of Object.entries(st)){
+          if(k.startsWith(`wo:${dayStr}:`)){try{inf[k.slice(`wo:${dayStr}:`.length)]=JSON.parse(v)||{}}catch(e){}}
+          else if(k.startsWith("wo_item:"))std[k.slice(8)]=v||"";
+        }
+        setInfo(inf);setItemStd(std);setLoaded(n=>n+1);
+      }catch(e){setErr("저장된 지시사항을 불러오지 못했습니다: "+(e.message||e))}
+    })();
+    (async()=>{
+      try{const all=groups.flatMap(g=>g.plans);const m=await buildExportMaterialsFor(adminHash,all,items,invData);if(!dead)setMats(m)}
+      catch(e){console.warn("[work order mat]",e)}
+    })();
+    return()=>{dead=true};
+  },[adminHash,dayStr,groups.length]);
+
+  const g=groups.find(x=>x.key===sel);
+  const flash=(t)=>{setSaving(t);setTimeout(()=>setSaving(s=>s===t?"":s),1500)};
+  const saveInfo=async(key,patch)=>{
+    const next={...(info[key]||{}),...patch};
+    setInfo(s=>({...s,[key]:next}));
+    try{await rpc("aps_set_setting",{p_admin_hash:adminHash,p_key:`wo:${dayStr}:${key}`,p_value:JSON.stringify(next)});flash("저장됨")}
+    catch(e){setErr("저장 실패: "+(e.message||e))}
+  };
+  const saveStd=async(itemId,text)=>{
+    if((itemStd[itemId]||"")===text)return;
+    setItemStd(s=>({...s,[itemId]:text}));
+    try{await rpc("aps_set_setting",{p_admin_hash:adminHash,p_key:`wo_item:${itemId}`,p_value:text});flash("저장됨")}
+    catch(e){setErr("저장 실패: "+(e.message||e))}
+  };
+  const saveMemo=async(p)=>{
+    const text=memos[p.id];
+    if(text==null||text===(p.memo||""))return;
+    try{
+      await rpc("aps_upsert_plan",{p_admin_hash:adminHash,p_id:p.id,p_item_id:p.item_id,p_line_id:p.line_id,p_qty:p.qty,
+        p_start_at:p.start_at,p_end_at:p.end_at,p_status:p.status,p_memo:text});
+      p.memo=text;flash("저장됨");onSaved&&onSaved();
+    }catch(e){setErr("지시 저장 실패: "+(e.message||e))}
+  };
+  // 미리보기에는 편집 중인 값 반영
+  const viewGroup=(gr)=>({...gr,plans:gr.plans.map(p=>memos[p.id]!=null?{...p,memo:memos[p.id]}:p)});
+
+  const[fmt,setFmt]=useState(()=>{try{return localStorage.getItem("aps-wo-fmt")==="png"?"png":"pdf"}catch(e){return "pdf"}});
+  useEffect(()=>{try{localStorage.setItem("aps-wo-fmt",fmt)}catch(e){}},[fmt]);
+  const[pages,setPages]=useState(0);
+  const lineName=(gr)=>gr.line_id?gr.line_name:"미지정";
+  // A4 세로로 저장 — 라인마다 새 쪽에서 시작, 작업 카드 경계에서 쪽을 나눔
+  const download=async(list)=>{
+    if(typeof window.html2canvas!=="function"){setErr("이미지 저장 라이브러리가 로드되지 않았습니다. 새로고침 후 다시 시도해주세요.");return}
+    if(fmt==="pdf"&&!window.jspdf){setErr("PDF 라이브러리가 로드되지 않았습니다. 새로고침하거나 PNG로 저장해주세요.");return}
+    setErr("");setCapture(list);
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    try{
+      const bodies=capRef.current?[...capRef.current.querySelectorAll("[data-wobody]")]:[];
+      const all=[];
+      for(let i=0;i<bodies.length;i++){
+        const pgs=await woA4Pages(bodies[i],`작업지시서 · ${woDayLabel(dayStr)} · ${lineName(list[i])}`);
+        pgs.forEach((c,j)=>all.push({c,gr:list[i],j,n:pgs.length}));
+      }
+      const base=`작업지시서_${dayStr}${list.length===1?"_"+lineName(list[0]):""}`;
+      if(fmt==="pdf"){
+        const{jsPDF}=window.jspdf;
+        const pdf=new jsPDF({orientation:"portrait",unit:"mm",format:"a4"});
+        all.forEach((x,i)=>{if(i)pdf.addPage();pdf.addImage(x.c.toDataURL("image/jpeg",0.95),"JPEG",0,0,210,297)});
+        pdf.save(base+".pdf");
+      }else{
+        for(let i=0;i<all.length;i++){
+          const x=all[i];
+          const a=document.createElement("a");
+          a.download=`작업지시서_${dayStr}_${lineName(x.gr)}${x.n>1?`_${x.j+1}쪽`:""}.png`;
+          a.href=x.c.toDataURL("image/png");document.body.appendChild(a);a.click();a.remove();
+          if(i<all.length-1)await new Promise(r=>setTimeout(r,700));
+        }
+      }
+    }catch(e){console.error(e);setErr("저장 실패: "+(e.message||e))}
+    setCapture(null);
+  };
+
+  const lab={fontSize:12,fontWeight:700,color:"var(--muted)",marginBottom:4,display:"block"};
+  return <div className="aps-modal-bg" onClick={onClose}>
+    <div className="aps-modal" onClick={e=>e.stopPropagation()} style={{maxWidth:1280}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,flexWrap:"wrap"}}>
+        <div style={{fontWeight:700,fontSize:16}}>📋 작업지시서 — {woDayLabel(dayStr)}</div>
+        {saving&&<span style={{fontSize:12,color:"#22c55e",fontWeight:700}}>✓ {saving}</span>}
+        <div style={{flex:1}}></div>
+        <div className="aps-view-toggle">
+          <button className={fmt==="pdf"?"on":""} onClick={()=>setFmt("pdf")} title="A4 PDF 한 파일 (출력용)">📄 PDF</button>
+          <button className={fmt==="png"?"on":""} onClick={()=>setFmt("png")} title="A4 크기 PNG, 쪽마다 한 장">🖼 PNG</button>
+        </div>
+        <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>g&&download([viewGroup(g)])} disabled={!g||!!capture}>{capture?"저장 중...":"🖨 이 라인 A4 저장"}</button>
+        <button className="aps-btn aps-btn-primary aps-btn-sm" onClick={()=>download(groups.map(viewGroup))} disabled={!groups.length||!!capture} title="라인마다 새 쪽에서 시작">{capture?"저장 중...":`🖨 전체 라인 A4 저장 (${groups.length})`}</button>
+        <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={onClose}>✕</button>
+      </div>
+      <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.6,marginBottom:10}}>
+        A4 세로 기준으로 라인마다 작업 순서·수량·사용 원육·작업 기준·지시사항과 작업자가 직접 적는 칸(시작/완료 시각, 실제 수량, 특이사항)을 한 장으로 만듭니다.
+        <b> 작업 기준</b>은 품목에 저장되어 그 품목을 생산할 때마다 자동으로 나오고, <b>이번 지시</b>는 이 계획에만 붙습니다(생산계획 메모와 같은 칸). 칸에서 나가면 자동 저장됩니다.
+      </div>
+      {err&&<div style={{color:"#ef4444",fontSize:13,fontWeight:600,marginBottom:8}}>{err}</div>}
+      {groups.length===0?<div style={{padding:"40px 0",textAlign:"center",color:"var(--muted)"}}>이 날짜에 생산계획이 없습니다</div>:<>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
+          {groups.map(gr=>{const lc=lineColorFor(gr.line_id,lines);const on=gr.key===sel;
+            return <button key={gr.key} onClick={()=>setSel(gr.key)} className="aps-btn aps-btn-sm"
+              style={{background:on?lc.base:"transparent",color:on?"#fff":"var(--text)",border:`1.5px solid ${lc.base}`}}>
+              🏭 {gr.line_id?gr.line_name:"미지정"} · {gr.plans.length}건
+            </button>})}
+        </div>
+        {g&&<div className="aps-wo-layout">
+          <div className="aps-wo-edit">
+            <label style={lab}>담당자 (비우면 손으로 적는 칸)</label>
+            <input className="aps-input" key={"ld"+g.key+loaded} defaultValue={info[g.key]?.leader||""} placeholder="예: 김반장"
+              onBlur={e=>{if(e.target.value!==(info[g.key]?.leader||""))saveInfo(g.key,{leader:e.target.value})}}/>
+            <label style={{...lab,marginTop:10}}>📢 오늘 전달사항 (이 라인, 이 날짜)</label>
+            <textarea className="aps-input" key={"nt"+g.key+loaded} rows={3} defaultValue={info[g.key]?.note||""} placeholder="예: 오후에 위생 점검 있음 / 칼날 교체 후 시작"
+              onBlur={e=>{if(e.target.value!==(info[g.key]?.note||""))saveInfo(g.key,{note:e.target.value})}}/>
+            {g.plans.map((p,i)=><div key={p.id} style={{marginTop:12,padding:"10px 12px",border:"1px solid var(--div2)",borderRadius:8}}>
+              <div style={{fontWeight:800,fontSize:14}}>{i+1}. {p.item_name} <span style={{fontWeight:600,color:"var(--muted)",fontSize:12}}>{woHM(p.start_at,dayStr)}~{woHM(p.end_at,dayStr)} · {fmtNum(p.qty)}{p.item_unit||"박스"}</span></div>
+              <label style={{...lab,marginTop:8}}>📏 작업 기준 (이 품목 생산할 때마다 표시)</label>
+              <textarea className="aps-input" rows={2} key={"sd"+p.id+loaded} defaultValue={itemStd[p.item_id]||""} placeholder="예: 두께 3mm / 1팩 500g ±10g / 진공 포장 후 금속검출"
+                onBlur={e=>saveStd(p.item_id,e.target.value)}/>
+              <label style={{...lab,marginTop:8}}>📝 이번 지시 (이 계획에만)</label>
+              <textarea className="aps-input" rows={2} value={memos[p.id]!=null?memos[p.id]:(p.memo||"")} placeholder="예: 마트 납품분 — 라벨 따로 / 꼬리 부분 제외"
+                onChange={e=>setMemos(s=>({...s,[p.id]:e.target.value}))} onBlur={()=>saveMemo(p)}/>
+            </div>)}
+          </div>
+          <div className="aps-wo-preview">
+            <div style={{fontSize:12,fontWeight:700,color:"var(--muted)",marginBottom:6}}>미리보기 · A4 세로 <b style={{color:pages>1?"#f43f5e":"var(--text)"}}>{pages}쪽</b>{pages>1&&" (빨간 점선에서 다음 쪽)"}</div>
+            <div className="aps-wo-paper">
+              <WorkOrderSheet group={viewGroup(g)} dayStr={dayStr} mats={mats} itemStd={itemStd} info={info[g.key]} itemById={itemById} settings={settings} lines={lines} showBreaks onPages={setPages}/>
+            </div>
+          </div>
+        </div>}
+      </>}
+      {capture&&<div style={{position:"fixed",left:-20000,top:0,pointerEvents:"none"}}>
+        <div ref={capRef} style={{background:"#fff",width:WO_W}}>
+          {capture.map((gr,i)=><div key={gr.key}>
+            <WorkOrderSheet group={gr} dayStr={dayStr} mats={mats} itemStd={itemStd} info={info[gr.key]} itemById={itemById} settings={settings} lines={lines}/>
+          </div>)}
+        </div>
+      </div>}
+    </div>
+  </div>;
+}
+
 function PlansTab({adminHash}){
   const[plans,setPlans]=useState([]);
   const[items,setItems]=useState([]);
@@ -3605,6 +3983,7 @@ function PlansTab({adminHash}){
   const[showForm,setShowForm]=useState(false);
   const[showSettings,setShowSettings]=useState(false);
   const[showAuto,setShowAuto]=useState(false);
+  const[showWO,setShowWO]=useState(false);
   // 재고시트 데이터 (PNG export 시 원육 표시용) — PC/모바일 동기화
   const[invData,setInvData]=useState(()=>loadStoredInventory());
   useEffect(()=>{
@@ -4060,6 +4439,8 @@ function PlansTab({adminHash}){
         title={allDates?"전체 날짜 모드에서는 사용 불가 (단일 날짜에서만)":`선택된 날짜(${dayStr})의 가용 인원 + 생산계획을 하나의 이미지로 저장`}>
         📷 {combinedCapturing?"저장 중...":"인원+계획"}
       </button>
+      <button className="aps-btn aps-btn-secondary" onClick={()=>setShowWO(true)} disabled={loading||allDates}
+        title={allDates?"전체 날짜 모드에서는 사용 불가 (날짜를 선택하세요)":`${dayStr} 라인별 작업지시서 (작업 순서·원육·작업 기준·지시사항·기록 칸)`}>📋 작업지시서</button>
       <button className="aps-btn aps-btn-secondary" onClick={()=>setShowAuto(true)} disabled={loading||allDates}
         title={allDates?"전체 날짜 모드에서는 사용 불가 (날짜를 선택하세요)":`${dayStr} 계획을 재고·요일별 매출·생산능력으로 자동 생성`}>🤖 자동 생성</button>
       <button className="aps-btn aps-btn-primary" onClick={()=>{setEditing(null);setShowForm(true)}} disabled={items.filter(i=>i.type!=="material").length===0}>+ 생산계획 추가</button>
@@ -4208,6 +4589,8 @@ function PlansTab({adminHash}){
     }
 
     {showForm&&<PlanForm adminHash={adminHash} items={items} lines={lines} settings={settings} initial={editing} defaultDate={allDates?todayStr():dayStr} onCancel={()=>setShowForm(false)} onSaved={()=>{setShowForm(false);load()}}/>}
+    {showWO&&<WorkOrderModal adminHash={adminHash} dayStr={dayStr} plans={plans} lines={lines} items={items} invData={invData} settings={settings}
+      onClose={()=>setShowWO(false)} onSaved={load}/>}
     {showAuto&&<AutoPlanModal adminHash={adminHash} dayStr={dayStr} items={items} lines={lines} plans={plans} settings={settings} invData={invData}
       onLinesChanged={load} onCancel={()=>setShowAuto(false)} onCreated={()=>{setShowAuto(false);load()}}/>}
     {showSettings&&<SettingsModal adminHash={adminHash} settings={settings} onCancel={()=>setShowSettings(false)} onSaved={(s)=>{setSettings(prev=>({...prev,...s}));setShowSettings(false)}}/>}
