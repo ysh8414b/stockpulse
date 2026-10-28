@@ -128,3 +128,117 @@ BEGIN
   RETURN btrim(p_model);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- ═══════════════════════════════════════════
+-- 📒 공장 규칙 노트 + 📝 AI 제안 피드백 기록 (2026-10-28)
+--  노트: 관리자가 확정한 이 공장의 규칙 → AI 검토마다 함께 보냄 (AI의 기억)
+--  피드백: AI 제안을 받아들였는지/뺐는지 + 뺀 이유 + 만든 계획 id
+--          → 최근 거절 기록을 다음 검토에 함께 보내 같은 실수 반복 방지
+--          → 계획 id로 나중에 실제 생산량과 비교 (주간 회고용)
+-- ═══════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS aps_ai_notes (
+  id BIGSERIAL PRIMARY KEY,
+  content TEXT NOT NULL,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  source TEXT NOT NULL DEFAULT 'manual',   -- manual | ai (회고에서 승인한 것)
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE aps_ai_notes ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON aps_ai_notes FROM anon, authenticated;
+
+CREATE TABLE IF NOT EXISTS aps_ai_feedback (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  day DATE,                    -- 계획 날짜
+  kind TEXT NOT NULL,          -- change | line_off
+  item_id BIGINT,
+  item_name TEXT,
+  line_id BIGINT,
+  line_name TEXT,
+  rule_qty NUMERIC,            -- 규칙 초안 수량 (0 = 초안에 없음)
+  ai_qty NUMERIC,              -- AI 제안 수량 (0 = 빼기)
+  accepted BOOLEAN NOT NULL,
+  created_qty NUMERIC,         -- 실제로 만든 계획 수량 (만들지 않았으면 NULL)
+  plan_id BIGINT,              -- 만든 계획 (삭제돼도 기록은 남음)
+  ai_reason TEXT,
+  user_note TEXT               -- 관리자가 뺀 이유
+);
+CREATE INDEX IF NOT EXISTS idx_aps_ai_feedback_created ON aps_ai_feedback (created_at DESC);
+ALTER TABLE aps_ai_feedback ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON aps_ai_feedback FROM anon, authenticated;
+
+CREATE OR REPLACE FUNCTION aps_ai_list_notes(p_admin_hash TEXT)
+RETURNS JSONB AS $$
+BEGIN
+  PERFORM aps_assert_admin(p_admin_hash);
+  RETURN COALESCE((SELECT jsonb_agg(to_jsonb(n) ORDER BY n.id) FROM aps_ai_notes n), '[]'::jsonb);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+CREATE OR REPLACE FUNCTION aps_ai_upsert_note(p_admin_hash TEXT, p_id BIGINT, p_content TEXT, p_enabled BOOLEAN DEFAULT TRUE, p_source TEXT DEFAULT 'manual')
+RETURNS BIGINT AS $$
+DECLARE v_id BIGINT;
+BEGIN
+  PERFORM aps_assert_admin(p_admin_hash);
+  IF p_content IS NULL OR btrim(p_content) = '' THEN RAISE EXCEPTION 'empty_note'; END IF;
+  IF p_id IS NULL THEN
+    INSERT INTO aps_ai_notes (content, enabled, source)
+    VALUES (left(btrim(p_content), 500), COALESCE(p_enabled, TRUE), COALESCE(NULLIF(p_source, ''), 'manual'))
+    RETURNING id INTO v_id;
+    RETURN v_id;
+  END IF;
+  UPDATE aps_ai_notes SET content = left(btrim(p_content), 500), enabled = COALESCE(p_enabled, enabled), updated_at = now()
+   WHERE id = p_id;
+  RETURN p_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+CREATE OR REPLACE FUNCTION aps_ai_delete_note(p_admin_hash TEXT, p_id BIGINT)
+RETURNS BOOLEAN AS $$
+BEGIN
+  PERFORM aps_assert_admin(p_admin_hash);
+  DELETE FROM aps_ai_notes WHERE id = p_id;
+  RETURN FOUND;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- 피드백 여러 건 저장: rows = [{day,kind,item_id,item_name,line_id,line_name,rule_qty,ai_qty,accepted,created_qty,plan_id,ai_reason,user_note}]
+CREATE OR REPLACE FUNCTION aps_ai_log_feedback(p_admin_hash TEXT, p_rows JSONB)
+RETURNS INT AS $$
+DECLARE v_n INT;
+BEGIN
+  PERFORM aps_assert_admin(p_admin_hash);
+  INSERT INTO aps_ai_feedback (day, kind, item_id, item_name, line_id, line_name, rule_qty, ai_qty, accepted, created_qty, plan_id, ai_reason, user_note)
+  SELECT NULLIF(r->>'day','')::date, COALESCE(NULLIF(r->>'kind',''),'change'),
+         NULLIF(r->>'item_id','')::bigint, r->>'item_name',
+         NULLIF(r->>'line_id','')::bigint, r->>'line_name',
+         NULLIF(r->>'rule_qty','')::numeric, NULLIF(r->>'ai_qty','')::numeric,
+         COALESCE((r->>'accepted')::boolean, FALSE),
+         NULLIF(r->>'created_qty','')::numeric, NULLIF(r->>'plan_id','')::bigint,
+         left(r->>'ai_reason', 500), left(r->>'user_note', 300)
+    FROM jsonb_array_elements(COALESCE(p_rows, '[]'::jsonb)) r;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  DELETE FROM aps_ai_feedback WHERE created_at < now() - interval '365 days';
+  RETURN v_n;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- 최근 피드백 + 만든 계획의 지금 상태(수정된 수량·실제 생산량)
+CREATE OR REPLACE FUNCTION aps_ai_list_feedback(p_admin_hash TEXT, p_days INT DEFAULT 60, p_limit INT DEFAULT 200)
+RETURNS JSONB AS $$
+BEGIN
+  PERFORM aps_assert_admin(p_admin_hash);
+  RETURN COALESCE((
+    SELECT jsonb_agg(x ORDER BY x.created_at DESC) FROM (
+      SELECT f.*, p.qty AS plan_qty_now, p.status AS plan_status, p.actual_qty AS plan_actual_qty
+        FROM aps_ai_feedback f
+        LEFT JOIN aps_plans p ON p.id = f.plan_id
+       WHERE f.created_at >= now() - make_interval(days => GREATEST(COALESCE(p_days, 60), 1))
+       ORDER BY f.created_at DESC
+       LIMIT LEAST(GREATEST(COALESCE(p_limit, 200), 1), 1000)
+    ) x
+  ), '[]'::jsonb);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;

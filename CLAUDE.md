@@ -1371,6 +1371,13 @@
   - 가짜 데이터·가짜 AI 응답으로 계산(130→120, 빼기, 추가, 1라인 쉬기)과 화면 확인. **실제 Groq 호출은 미확인**(SQL 실행 + 키 등록 후 첫 사용 필요)
 - **모델 종료 대응 (같은 날)**: 사용자 첫 사용 시 `AI 오류 404: The model llama-3.3-70b-versatile does not exist` — Groq가 이 모델을 2026-08-16에 종료(공식 대체 `openai/gpt-oss-120b`). 기본 모델을 `openai/gpt-oss-120b`로 변경 + SQL에 `aps_ai_models_request`(Groq `/models` 조회, pg_net GET) / `aps_ai_set_model` 추가. 페이지는 404·`model_not_found`·`model_decommissioned`를 받으면(`AiModelGoneError`) 모델 목록을 읽어 `GROQ_MODEL_PREF`(gpt-oss-120b → qwen3.8-27b → qwen3.6-27b → gpt-oss-20b) 순으로 골라 저장하고 한 번 더 요청, "모델이 종료돼 ○○로 바꿨습니다" 안내. 모델 이름 옆 "변경"으로 목록에서 직접 선택(음성·검열 모델 제외 `GROQ_NONCHAT`). max_tokens 2048 → 4096(gpt-oss는 생각 토큰도 포함)
   - **crawl.py도 같은 모델을 6곳에서 써서 8/16부터 AI 브리핑·종목 분석·테마 분석·재료 포착 코멘트가 실패했을 가능성** → `GROQ_MODEL` 상수(환경변수, 기본 `openai/gpt-oss-120b`)로 교체. 실제 크롤링 실행으로는 미확인
+- **📒 공장 규칙 노트 + 📝 제안 피드백 (같은 날)**: 사용자 요청 "AI가 생산관리자처럼 학습하면서 커지면 좋겠다" → 모델 자체는 학습 안 되므로(파인튜닝은 이 규모에 부적합) **기억을 쌓고 매번 읽게** 하는 방식
+  - SQL(setup_aps_ai.sql 끝에 추가, 재실행 안전): `aps_ai_notes`(content·enabled·source manual|ai) + `aps_ai_list_notes`/`aps_ai_upsert_note`/`aps_ai_delete_note`, `aps_ai_feedback`(day·kind change|line_off·item·line·rule_qty·ai_qty·accepted·created_qty·plan_id·ai_reason·user_note, 365일 보관) + `aps_ai_log_feedback(hash, rows)` / `aps_ai_list_feedback(hash, days, limit)`(만든 계획의 지금 수량·상태·actual_qty를 `aps_plans`와 조인)
+  - 패널: `📒 규칙 노트 N` 버튼 → 한 줄씩 추가·수정·켜기/끄기·삭제. "AI가 함께 읽는 것: 규칙 노트 N개 · 최근 60일 뺀 제안 N건" 표시. 체크를 끈 제안 아래 "뺀 이유" 입력(`RejectNoteInput`)
+  - 자동 생성 "선택 N건 생성" 때 유효한 AI 제안마다 수락 여부·뺀 이유·만든 계획 id·수량을 `aps_ai_log_feedback`으로 기록(실패해도 생성엔 영향 없음). 생성하지 않고 창을 닫으면 기록 안 됨
+  - 프롬프트: `factory_rules`(켜진 노트 40개까지) + `past_feedback`(`aiFeedbackForPrompt` — 뺀 제안 20건(이유 포함) + 받아들였는데 나중에 관리자가 수량을 고친 계획 10건(실제 생산량 포함)). 시스템 지시에 "규칙 노트는 반드시 지키고, 관리자가 뺀 제안과 비슷한 건 그 이유가 해당 안 될 때만"
+  - 가짜 데이터로 노트 추가 → 프롬프트 포함, 뺀 이유 입력, 생성 시 피드백 2건 기록(계획 id 포함) 확인. 실제 DB 미확인
+  - 다음 단계(미구현): 🔁 주간 회고 — 쌓인 피드백을 AI가 보고 노트에 넣을 규칙을 제안, 관리자 승인 시 `source='ai'`로 저장
 - 운영 순서: (1) Supabase에서 `setup_aps_ai.sql` 실행 → (2) console.groq.com에서 API 키 발급(크롤러용 GROQ_API_KEY 재사용 가능) → (3) 📅 생산계획 → 🤖 자동 생성 → 🧠 AI 검토에 키 저장 → 요청
 - 한계: Groq 무료 한도(분당·일당 토큰)를 넘으면 429 안내. 품목이 매우 많으면 제외 목록은 40개까지만 보냄. 회의록·발주서·로스 데이터는 아직 AI에 안 보냄(필요하면 "추가 지시"에 적기). 나중에 Claude/GPT로 바꾸려면 `aps_ai_request`의 URL·모델만 교체
 
