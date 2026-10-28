@@ -3748,7 +3748,7 @@ function ShipTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrder
           </label>}
         </div>
         {floors.length>0&&<div className="ol-ship-floors" style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:12}}>
-          <span style={{fontSize:12,color:"var(--muted)",marginRight:2}}>표시·저장할 층</span>
+          <span style={{fontSize:12,color:"var(--muted)",marginRight:2}}>표시·저장할 생산지점</span>
           {floors.map(f=>{const on=!offFloors.has(f.key),fz=f.data.frozen.length>0;
             return <label key={f.key} className={"ol-check"+(on?" on":"")}><input type="checkbox" checked={on} onChange={()=>toggleFloor(f.key)}/>{fz?"❄ ":""}{f.site}</label>})}
           <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setOffFloors(new Set())}>전체 선택</button>
@@ -4433,7 +4433,469 @@ function FrozenTab({adminHash,masters}){
   </>;
 }
 
-const VALID_TABS=["products","orders","lists","ship","frozen","extra"];
+// ═══════════════════════════════════════════
+// 📤 냉동 출고 탭 — 입고일 발주서의 냉동 제품 ↔ 냉동재고 로트 자동 배정
+//  - 발주 수량(박스) = 발주 팩수량 ÷ 입수량, 제품코드로 재고 로트와 연결
+//  - 자동 배정: (우선 위치) → 소비기한 빠른 순. "한 로트로 다 나가게"면 혼자 다 채울 수 있는 로트를 먼저 고름
+//  - 출고 수량 칸을 눌러 직접 고칠 수 있음(날짜별로 브라우저에 기억), "출고 확정"으로 재고 차감
+// ═══════════════════════════════════════════
+const FZO_LOC_BG=["#dcfce7","#dbeafe","#fef3c7","#fce7f3","#e0e7ff","#ccfbf1","#ffedd5","#f3e8ff"];
+const fzoRound=n=>Math.round(n*1000)/1000;
+// 로트 수량을 박스로 (팩·개 단위면 입수량으로 나눔, kg 등은 계산 불가 → null)
+function fzoLotBoxes(l,per){
+  const u=(l.unit||"박스").trim(),q=Number(l.qty||0);
+  if(u==="박스"||u==="")return q;
+  if(u==="팩"||u==="개"||u.toLowerCase()==="ea")return fzoRound(q/per);
+  return null;
+}
+function buildFzOutPlan(orders,prodMap,lots,opts){
+  const{vendor,whole,locPref,skipExpired,manual}=opts;
+  const need=new Map();
+  const sorted=[...orders].sort((a,b)=>String(a.order_no).localeCompare(String(b.order_no),undefined,{numeric:true}));
+  for(const o of sorted){
+    if(vendor&&(o.vendor||"").trim()!==vendor)continue;
+    for(const it of (o.items||[])){
+      const p=prodMap[it.code];
+      if(!p||storageOf(p)!=="frozen")continue;
+      const q=Number(it.qty||0);if(!(q>0))continue;
+      const cur=need.get(it.code);
+      if(cur)cur.qty+=q;else need.set(it.code,{code:it.code,product:p,qty:q,seq:need.size});
+    }
+  }
+  const rank=loc=>locPref&&loc===locPref?0:1;
+  const items=[...need.values()].map(r=>{
+    const per=Math.max(1,Number(r.product.per_box)||1);
+    const boxes=fzoRound(r.qty/per);
+    const all=lots.filter(l=>(l.product_code||"").trim()===r.code&&Number(l.qty)>0).map(l=>{
+      const stock=fzoLotBoxes(l,per),expired=fzStatus(l.expiry)==="expired";
+      return{lot:l,stock,expired,usable:stock!=null&&stock>0&&!(skipExpired&&expired)};
+    });
+    const cand=all.filter(x=>x.usable).sort((a,b)=>rank(fzLoc(a.lot))-rank(fzLoc(b.lot))||fzExpCmp(a.lot,b.lot)||locCmp(fzLoc(a.lot),fzLoc(b.lot)));
+    const out=new Map();
+    const man=manual&&manual[r.code];
+    if(man){
+      for(const x of all){const v=Number(man[x.lot.id]||0);if(v>0&&x.stock!=null)out.set(x.lot.id,fzoRound(Math.min(v,x.stock)))}
+    }else{
+      let left=boxes;
+      const one=whole?cand.find(x=>x.stock>=left):null;
+      if(one){out.set(one.lot.id,left);left=0}
+      else for(const x of cand){
+        if(left<=0)break;
+        const t=fzoRound(Math.min(left,x.stock));
+        if(t>0){out.set(x.lot.id,t);left=fzoRound(left-t)}
+      }
+    }
+    const shipped=fzoRound([...out.values()].reduce((a,b)=>a+b,0));
+    const rows=all.sort((a,b)=>fzExpCmp(a.lot,b.lot)||locCmp(fzLoc(a.lot),fzLoc(b.lot))).map(x=>({...x,out:out.get(x.lot.id)||0}));
+    const stockSum=fzoRound(all.filter(x=>x.usable).reduce((a,x)=>a+x.stock,0));
+    return{...r,per,boxes,partial:r.qty%per!==0,rows,shipped,stockSum,
+      short:fzoRound(Math.max(0,boxes-shipped)),over:fzoRound(Math.max(0,shipped-boxes)),manual:!!man};
+  });
+  return items.sort((a,b)=>a.seq-b.seq);
+}
+
+// 화면·이미지 공통 표 (이미지 양식: 냉동제품 | 발주 수량 | 소비기한 | 위치 | 재고 | 출고 수량)
+// 제품 표 (냉동제품 | 발주 수량 | 소비기한 | 위치 | 재고 | 출고 수량) — 제품별 보기·생산지점 카드 공통
+function FzOutTable({plan,onlyOut,locColor,print,outCell,flush}){
+  const C={line:"#cbd5e1",strong:"#111",yellow:"#ffff00",muted:"#6b7280"};
+  const cell={padding:"8px 10px",borderBottom:`1px solid ${C.line}`,borderLeft:`1px solid ${C.line}`,textAlign:"center",fontVariantNumeric:"tabular-nums",verticalAlign:"middle"};
+  const th={...cell,fontWeight:800,fontSize:15,borderBottom:`2px solid ${C.strong}`,borderTop:flush?"none":`1px solid ${C.line}`};
+  return <>
+    <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed",minWidth:print?0:560,borderRight:flush?"none":`1px solid ${C.line}`}}>
+      <colgroup><col style={{width:"38%"}}/><col style={{width:"13%"}}/><col style={{width:"17%"}}/><col style={{width:"10%"}}/><col style={{width:"10%"}}/><col style={{width:"12%"}}/></colgroup>
+      <thead><tr>
+        <th style={{...th,background:C.yellow,...(flush?{borderLeft:"none"}:{})}}>냉동제품</th>
+        <th style={{...th,background:C.yellow}}>발주 수량</th>
+        <th style={th}>소비기한</th><th style={th}>위치</th><th style={th}>재고</th><th style={th}>출고 수량</th>
+      </tr></thead>
+      {plan.map(it=>{
+        const rows=onlyOut?it.rows.filter(x=>x.out>0):it.rows;
+        const n=Math.max(1,rows.length);
+        const top={borderTop:`2px solid ${C.strong}`};
+        const head=[
+          <td key="nm" rowSpan={n} style={{...cell,...top,...(flush?{borderLeft:"none"}:{}),fontFamily:"'NanumSquare','Pretendard',sans-serif",fontSize:15}}>
+            {boldDigits(shipNameOf(it.product))}
+            {!print&&it.manual&&<div style={{fontSize:11,color:"#7c3aed",fontWeight:700,marginTop:2}}>✋ 직접 수정함</div>}
+          </td>,
+          <td key="q" rowSpan={n} style={{...cell,...top,background:C.yellow,fontWeight:900,fontSize:17}}>
+            <span style={{color:it.partial?"#dc2626":"#111"}}>{fmtBoxes(it.boxes)}</span>
+            {it.short>0&&<div style={{fontSize:12,fontWeight:800,color:"#dc2626",marginTop:2}}>부족 {fmtBoxes(it.short)}</div>}
+            {it.over>0&&<div style={{fontSize:12,fontWeight:800,color:"#7c3aed",marginTop:2}}>초과 {fmtBoxes(it.over)}</div>}
+          </td>];
+        if(!rows.length)return <tbody key={it.code} data-shipcut="1"><tr>{head}
+          <td colSpan={4} style={{...cell,...top,color:"#dc2626",fontWeight:700}}>{it.rows.length?"출고할 로트 없음":"냉동재고에 이 제품 재고 없음"}</td></tr></tbody>;
+        return <tbody key={it.code} data-shipcut="1">{rows.map((x,i)=>{
+          const t=i===0?top:{};
+          const st=fzStatus(x.lot.expiry);
+          const loc=fzLoc(x.lot);
+          return <tr key={x.lot.id}>
+            {i===0&&head}
+            <td style={{...cell,...t,color:x.expired?"#dc2626":"#111",fontWeight:x.expired?800:500}}>{fzExpText(x.lot.expiry)}{x.expired&&<span style={{fontSize:11,marginLeft:4}}>지남</span>}{!x.expired&&st==="soon"&&<span style={{fontSize:11,marginLeft:4,color:"#ea580c"}}>임박</span>}</td>
+            <td style={{...cell,...t,background:locColor(loc)}}>{loc===NO_LOC?"–":loc}</td>
+            <td style={{...cell,...t,color:x.usable?"#111":"#9ca3af"}} title={x.stock==null?`단위(${x.lot.unit})를 박스로 바꿀 수 없어 배정에서 제외`:""}>{x.stock==null?`${fmtNum(x.lot.qty)}${x.lot.unit}`:fmtBoxes(x.stock)}</td>
+            <td style={{...cell,...t,fontWeight:x.out>0?900:400,fontSize:x.out>0?16:14,background:x.out>0?"#fff7ed":"transparent",padding:outCell?"4px 6px":cell.padding}}>
+              {outCell?outCell(it,x):x.out>0?fmtBoxes(x.out):""}</td>
+          </tr>;})}</tbody>;
+      })}
+    </table>
+  </>;
+}
+function FzOutSheet({plan,date,prefix,vendor,onlyOut,locColor,print,refCb,outCell}){
+  const C={line:"#cbd5e1",strong:"#111",yellow:"#ffff00",muted:"#6b7280"};
+  const totalNeed=fzoRound(plan.reduce((a,x)=>a+x.boxes,0));
+  const totalOut=fzoRound(plan.reduce((a,x)=>a+x.shipped,0));
+  const totalShort=fzoRound(plan.reduce((a,x)=>a+x.short,0));
+  const cell={padding:"8px 10px",borderBottom:`1px solid ${C.line}`,borderLeft:`1px solid ${C.line}`,textAlign:"center",fontVariantNumeric:"tabular-nums",verticalAlign:"middle"};
+  const th={...cell,fontWeight:800,fontSize:15,borderBottom:`2px solid ${C.strong}`,borderTop:`1px solid ${C.line}`};
+  return <div ref={refCb} className="ol-sheet" style={{padding:print?0:"22px 24px",fontSize:14,lineHeight:1.35,background:"#fff",color:"#111",...(print?{border:"none",borderRadius:0,margin:0,overflow:"visible"}:{})}}>
+    <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:12,flexWrap:"wrap",paddingBottom:12,borderBottom:`2px solid ${C.strong}`,marginBottom:16}}>
+      <div style={{fontSize:24,fontWeight:900,letterSpacing:"-0.5px"}}>{shipTitle(prefix,date)}{vendor&&<span style={{fontSize:15,fontWeight:600,color:C.muted,marginLeft:8}}>{vendor}</span>}</div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <span style={{padding:"4px 10px",borderRadius:14,background:"#eff6ff",color:"#1d4ed8",fontWeight:700,fontSize:13}}>발주 {fmtBoxes(totalNeed)}박스</span>
+        <span style={{padding:"4px 10px",borderRadius:14,background:"#111",color:"#fff",fontWeight:700,fontSize:13}}>출고 {fmtBoxes(totalOut)}박스</span>
+        {totalShort>0&&<span style={{padding:"4px 10px",borderRadius:14,background:"#fee2e2",color:"#dc2626",fontWeight:800,fontSize:13}}>부족 {fmtBoxes(totalShort)}박스</span>}
+      </div>
+    </div>
+    <FzOutTable plan={plan} onlyOut={onlyOut} locColor={locColor} print={print} outCell={outCell}/>
+  </div>;
+}
+
+// 생산지점별: 제품리스트의 생산지점(층)으로 제품을 묶음 → 지점마다 제품 표
+function fzOutSiteGroups(plan){
+  const m=new Map();
+  for(const it of plan){const f=(it.product.site||"").trim()||NO_SITE;if(!m.has(f))m.set(f,[]);m.get(f).push(it)}
+  return [...m.entries()].sort((a,b)=>siteCmp(a[0],b[0])).map(([floor,items])=>({floor,items,
+    total:fzoRound(items.reduce((a,x)=>a+x.boxes,0)),out:fzoRound(items.reduce((a,x)=>a+x.shipped,0)),short:fzoRound(items.reduce((a,x)=>a+x.short,0))}));
+}
+function FzOutFloorSheet({groups,date,prefix,vendor,onlyOut,locColor,print,refCb,outCell}){
+  const C={strong:"#111",muted:"#6b7280"};
+  const sum=k=>fzoRound(groups.reduce((a,g)=>a+g[k],0));
+  const one=groups.length===1;
+  return <div ref={refCb} className="ol-sheet" style={{padding:print?0:"22px 24px",fontSize:14,lineHeight:1.35,background:"#fff",color:"#111",...(print?{border:"none",borderRadius:0,margin:0,overflow:"visible"}:{})}}>
+    <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:12,flexWrap:"wrap",paddingBottom:12,borderBottom:`2px solid ${C.strong}`,marginBottom:16}}>
+      <div style={{fontSize:24,fontWeight:900,letterSpacing:"-0.5px"}}>{shipTitle(prefix,date)}{one?` · ${groups[0].floor}`:""}{vendor&&<span style={{fontSize:15,fontWeight:600,color:C.muted,marginLeft:8}}>{vendor}</span>}</div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <span style={{padding:"4px 10px",borderRadius:14,background:"#eff6ff",color:"#1d4ed8",fontWeight:700,fontSize:13}}>발주 {fmtBoxes(sum("total"))}박스</span>
+        <span style={{padding:"4px 10px",borderRadius:14,background:"#111",color:"#fff",fontWeight:700,fontSize:13}}>출고 {fmtBoxes(sum("out"))}박스</span>
+        {sum("short")>0&&<span style={{padding:"4px 10px",borderRadius:14,background:"#fee2e2",color:"#dc2626",fontWeight:800,fontSize:13}}>부족 {fmtBoxes(sum("short"))}박스</span>}
+      </div>
+    </div>
+    {!groups.length&&<div style={{padding:"30px 0",textAlign:"center",color:C.muted}}>선택한 생산지점이 없습니다</div>}
+    {groups.map(g=><div key={g.floor} data-shipcut="1" style={{border:"1px solid #cbd5e1",borderLeft:"6px solid #1d4ed8",borderRadius:8,marginBottom:18,overflow:"hidden"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 14px",background:"#eff6ff",borderBottom:"1px solid #cbd5e1",flexWrap:"wrap"}}>
+        <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap"}}>
+          <span style={{fontSize:22,fontWeight:900,color:"#1d4ed8"}}>🏭 {g.floor}</span>
+          <span style={{fontSize:12,color:C.muted}}>{g.items.length}개 제품 · 출고 {fmtBoxes(g.out)}박스{g.short>0&&<b style={{color:"#dc2626"}}> · 부족 {fmtBoxes(g.short)}</b>}</span>
+        </div>
+        <span style={{padding:"4px 12px",borderRadius:16,background:"#1d4ed8",color:"#fff",fontWeight:800,fontSize:15,whiteSpace:"nowrap"}}>발주 {fmtBoxes(g.total)}박스</span>
+      </div>
+      <FzOutTable plan={g.items} onlyOut={onlyOut} locColor={locColor} print={print} outCell={outCell} flush/>
+    </div>)}
+  </div>;
+}
+
+function downloadFzOutXlsx(plan,date,prefix,vendor,onlyOut){
+  const F="맑은 고딕",line={style:"thin",color:{rgb:"BFC6D0"}},thick={style:"medium",color:{rgb:"111111"}};
+  const ws={},merges=[],rowsH=[];
+  const enc=(r,c)=>XLSX.utils.encode_cell({r,c});
+  const st=(o={})=>({font:{name:F,sz:o.sz||12,bold:!!o.b,...(o.color?{color:{rgb:o.color}}:{})},
+    alignment:{horizontal:"center",vertical:"center",wrapText:true},
+    border:{left:line,right:line,bottom:line,top:o.top?thick:line},
+    ...(o.fill?{fill:{patternType:"solid",fgColor:{rgb:o.fill}}}:{})});
+  const put=(r,c,v,s)=>{ws[enc(r,c)]={t:typeof v==="number"?"n":"s",v:v??"",s}};
+  put(0,0,shipTitle(prefix,date)+(vendor?` · ${vendor}`:""),{font:{name:F,sz:16,bold:true},alignment:{horizontal:"center",vertical:"center"}});
+  for(let c=1;c<6;c++)put(0,c,"",{});
+  merges.push({s:{r:0,c:0},e:{r:0,c:5}});rowsH[0]={hpt:30};
+  ["냉동제품","발주 수량","소비기한","위치","재고","출고 수량"].forEach((h,c)=>put(1,c,h,st({b:true,sz:13,fill:c<2?"FFFF00":undefined})));
+  rowsH[1]={hpt:24};
+  let r=2;
+  for(const it of plan){
+    const rows=onlyOut?it.rows.filter(x=>x.out>0):it.rows;
+    const n=Math.max(1,rows.length);
+    for(let i=0;i<n;i++){
+      const x=rows[i],top=i===0;
+      put(r+i,0,i===0?shipNameOf(it.product):"",st({top,sz:12}));
+      put(r+i,1,i===0?it.boxes:"",st({top,b:true,sz:13,fill:"FFFF00",color:it.short>0?"DC2626":undefined}));
+      if(!x){put(r,2,it.rows.length?"출고할 로트 없음":"재고 없음",st({top,color:"DC2626"}));for(let c=3;c<6;c++)put(r,c,"",st({top}));merges.push({s:{r,c:2},e:{r,c:5}});continue}
+      put(r+i,2,fzExpText(x.lot.expiry),st({top,color:x.expired?"DC2626":undefined}));
+      put(r+i,3,fzLoc(x.lot)===NO_LOC?"":fzLoc(x.lot),st({top}));
+      put(r+i,4,x.stock==null?`${x.lot.qty}${x.lot.unit}`:x.stock,st({top}));
+      put(r+i,5,x.out>0?x.out:"",st({top,b:x.out>0}));
+      rowsH[r+i]={hpt:22};
+    }
+    if(n>1){merges.push({s:{r,c:0},e:{r:r+n-1,c:0}});merges.push({s:{r,c:1},e:{r:r+n-1,c:1}})}
+    r+=n;
+  }
+  ws["!ref"]=`A1:F${r}`;ws["!merges"]=merges;ws["!rows"]=rowsH;
+  ws["!cols"]=[{wch:44},{wch:11},{wch:14},{wch:9},{wch:9},{wch:11}];
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"냉동 출고");
+  // 생산지점별 시트: 생산지점 | 냉동제품 | 발주 수량 | 소비기한 | 위치 | 출고 수량
+  const fl=[["생산지점","냉동제품","발주 수량","소비기한","위치","출고 수량"]];
+  for(const g of fzOutSiteGroups(plan)){
+    for(const it of g.items){
+      const outs=it.rows.filter(x=>x.out>0);
+      if(!outs.length)fl.push([g.floor,shipNameOf(it.product),it.boxes,"재고 없음","",0]);
+      outs.forEach((x,i)=>fl.push([g.floor,i?"":shipNameOf(it.product),i?"":it.boxes,fzExpText(x.lot.expiry),fzLoc(x.lot)===NO_LOC?"":fzLoc(x.lot),x.out]));
+    }
+    fl.push([`${g.floor} 합계`,"",g.total,"","",g.out]);
+  }
+  const ws2=XLSX.utils.aoa_to_sheet(fl);
+  ws2["!cols"]=[{wch:12},{wch:44},{wch:11},{wch:14},{wch:9},{wch:11}];
+  const r2=XLSX.utils.decode_range(ws2["!ref"]);
+  for(let r=0;r<=r2.e.r;r++)for(let c=0;c<=r2.e.c;c++){
+    const a=XLSX.utils.encode_cell({r,c});if(!ws2[a])ws2[a]={t:"s",v:""};
+    const sum=String(fl[r][0]).endsWith(" 합계");
+    ws2[a].s={font:{name:F,sz:12,bold:r===0||sum||c===5},border:{left:line,right:line,top:line,bottom:line},
+      alignment:{horizontal:c===1?"left":"center",vertical:"center"},
+      ...(r===0?{fill:{patternType:"solid",fgColor:{rgb:"FFFF00"}}}:sum?{fill:{patternType:"solid",fgColor:{rgb:"F1F5F9"}}}:{})};
+  }
+  XLSX.utils.book_append_sheet(wb,ws2,"생산지점별");
+  const safe=x=>String(x).replace(/[\\/:*?"<>|]/g,"_");
+  XLSX.writeFile(wb,`냉동출고_${date}${vendor?"_"+safe(vendor):""}.xlsx`);
+}
+
+// 출고 수량 칸 — 누르면 숫자 입력, Enter/바깥 클릭 저장, Esc 취소
+function FzOutQtyCell({value,max,onSave}){
+  const[edit,setEdit]=useState(false);
+  const[val,setVal]=useState("");
+  const done=useRef(false);
+  const commit=()=>{
+    if(done.current)return;done.current=true;setEdit(false);
+    const t=val.trim();const n=t===""?0:Number(t);
+    if(!Number.isFinite(n)||n<0)return;
+    onSave(fzoRound(Math.min(n,max)));
+  };
+  if(!edit)return <button className="fz-qty-btn" title="눌러서 출고 수량 수정" style={{minWidth:40,justifyContent:"center",fontWeight:"inherit",fontSize:"inherit"}}
+    onClick={()=>{done.current=false;setVal(value?String(value):"");setEdit(true)}}>{value>0?fmtBoxes(value):<span style={{color:"#cbd5e1"}}>＋</span>}</button>;
+  return <input className="fz-qty-in" type="number" min="0" max={max} step="any" autoFocus value={val} style={{width:64}}
+    onFocus={e=>e.target.select()} onChange={e=>setVal(e.target.value)} onBlur={commit}
+    onKeyDown={e=>{if(e.key==="Enter")e.target.blur();else if(e.key==="Escape"){done.current=true;setEdit(false)}}}/>;
+}
+
+function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrders}){
+  const[prefix,setPrefix]=useState(()=>lsGet("ol-prefix","쿠팡"));
+  useEffect(()=>lsSet("ol-prefix",prefix),[prefix]);
+  const[withExtra,setWithExtra]=useState(()=>lsGet("ol-ship-extra","1")==="1");
+  useEffect(()=>lsSet("ol-ship-extra",withExtra?"1":"0"),[withExtra]);
+  const[whole,setWhole]=useState(()=>lsGet("ol-fzout-whole","1")==="1");
+  useEffect(()=>lsSet("ol-fzout-whole",whole?"1":"0"),[whole]);
+  const[skipExpired,setSkipExpired]=useState(()=>lsGet("ol-fzout-skipexp","1")==="1");
+  useEffect(()=>lsSet("ol-fzout-skipexp",skipExpired?"1":"0"),[skipExpired]);
+  const[onlyOut,setOnlyOut]=useState(()=>lsGet("ol-fzout-only","0")==="1");
+  useEffect(()=>lsSet("ol-fzout-only",onlyOut?"1":"0"),[onlyOut]);
+  const[locPref,setLocPref]=useState(()=>lsGet("ol-fzout-loc",""));
+  useEffect(()=>lsSet("ol-fzout-loc",locPref),[locPref]);
+  const[vendor,setVendor]=useState("");
+  const[extraOrders,setExtraOrders]=useState([]);
+  const[rawLots,setRawLots]=useState([]);
+  const[lotErr,setLotErr]=useState("");
+  const[lotLoading,setLotLoading]=useState(true);
+  const[msg,setMsg]=useState("");
+  const[saving,setSaving]=useState("");
+  const[ask,setAsk]=useState(false);
+  const[progress,setProgress]=useState(null);
+  const printRef=useRef(null);
+
+  const loadLots=useCallback(async()=>{
+    try{const d=await rpc("ol_list_frozen",{p_admin_hash:adminHash});setRawLots(d?.lots||[]);setLotErr("")}
+    catch(e){setLotErr(fzErr(e))}
+    setLotLoading(false);
+  },[adminHash]);
+  useEffect(()=>{loadLots()},[loadLots]);
+  useEffect(()=>{
+    let alive=true;
+    if(!selDate||!withExtra){setExtraOrders([]);return}
+    rpc("ol_list_orders",{p_admin_hash:adminHash,p_from:selDate,p_to:selDate,p_extra:true})
+      .then(d=>{if(alive)setExtraOrders(Array.isArray(d)?d:[])}).catch(()=>{if(alive)setExtraOrders([])});
+    return()=>{alive=false};
+  },[selDate,withExtra,adminHash]);
+
+  // 직접 고친 출고 수량 — 날짜별로 {제품코드:{로트id:박스}}
+  const manKey="ol-fzout-man:"+selDate;
+  const[manual,setManual]=useState({});
+  useEffect(()=>{try{setManual(JSON.parse(lsGet(manKey,"{}"))||{})}catch(e){setManual({})}},[manKey]);
+  const saveManual=m=>{setManual(m);lsSet(manKey,JSON.stringify(m))};
+  const doneKey="ol-fzout-done:"+selDate;
+  const[doneInfo,setDoneInfo]=useState(null);
+  useEffect(()=>{try{setDoneInfo(JSON.parse(lsGet(doneKey,"null")))}catch(e){setDoneInfo(null)}},[doneKey]);
+
+  const allOrders=useMemo(()=>withExtra?[...orders,...extraOrders]:orders,[orders,extraOrders,withExtra]);
+  const prodMap=useMemo(()=>Object.fromEntries(masters.products.map(p=>[p.code,p])),[masters.products]);
+  const frozenOrders=useMemo(()=>allOrders.filter(o=>(o.items||[]).some(it=>storageOf(prodMap[it.code])==="frozen")),[allOrders,prodMap]);
+  const vendors=useMemo(()=>[...new Set(frozenOrders.map(o=>(o.vendor||"").trim()))].sort(),[frozenOrders]);
+  useEffect(()=>{if(vendor&&!vendors.includes(vendor))setVendor("")},[vendors]);
+  const locations=useMemo(()=>[...new Set(rawLots.map(fzLoc))].filter(l=>l!==NO_LOC).sort(locCmp),[rawLots]);
+  const locColor=loc=>{const i=locations.indexOf(loc);return i<0?"transparent":FZO_LOC_BG[i%FZO_LOC_BG.length]};
+  const plan=useMemo(()=>buildFzOutPlan(allOrders,prodMap,rawLots,{vendor,whole,locPref,skipExpired,manual}),
+    [allOrders,prodMap,rawLots,vendor,whole,locPref,skipExpired,manual]);
+  const moves=plan.flatMap(it=>it.rows.filter(x=>x.out>0).map(x=>({it,x})));
+  const shortItems=plan.filter(x=>x.short>0);
+  const partial=plan.filter(x=>x.partial);
+  const anyManual=plan.some(x=>x.manual);
+  // 📦 제품별 / 🏭 생산지점별 보기
+  const[view,setView]=useState(()=>lsGet("ol-fzout-view","product")==="floor"?"floor":"product");
+  useEffect(()=>lsSet("ol-fzout-view",view),[view]);
+  const floorGroups=useMemo(()=>fzOutSiteGroups(plan),[plan]);
+  // 생산지점 선택 — 끈 지점만 기억(새 지점은 기본 선택)
+  const[offFloors,setOffFloors]=useState(()=>{try{return new Set(JSON.parse(lsGet("ol-fzout-off","[]")))}catch(e){return new Set()}});
+  useEffect(()=>lsSet("ol-fzout-off",JSON.stringify([...offFloors])),[offFloors]);
+  const toggleFloor=f=>setOffFloors(prev=>{const n=new Set(prev);n.has(f)?n.delete(f):n.add(f);return n});
+  const selGroups=floorGroups.filter(g=>!offFloors.has(g.floor));
+  const floorRefs=useRef({});
+
+  const setOut=(it,x,v)=>{
+    const cur={};for(const r of it.rows)if(r.out>0)cur[r.lot.id]=r.out;
+    if(v>0)cur[x.lot.id]=v;else delete cur[x.lot.id];
+    // 발주 수량을 넘으면 다른 로트에서 덜어냄 (소비기한 늦은 로트부터) → 로트를 옮기듯 수정
+    let over=fzoRound(Object.values(cur).reduce((a,b)=>a+b,0)-it.boxes);
+    for(const r of [...it.rows].reverse()){
+      if(over<=0)break;
+      if(r.lot.id===x.lot.id||!cur[r.lot.id])continue;
+      const t=Math.min(over,cur[r.lot.id]);
+      cur[r.lot.id]=fzoRound(cur[r.lot.id]-t);if(!(cur[r.lot.id]>0))delete cur[r.lot.id];
+      over=fzoRound(over-t);
+    }
+    saveManual({...manual,[it.code]:cur});
+  };
+  const resetItem=code=>{const m={...manual};delete m[code];saveManual(m)};
+  const outCell=(it,x)=>x.usable
+    ?<span style={{display:"inline-flex",alignItems:"center",gap:4}}><FzOutQtyCell key={x.lot.id+":"+x.out} value={x.out} max={x.stock} onSave={v=>setOut(it,x,v)}/></span>
+    :(x.out>0?fmtBoxes(x.out):"");
+
+  const confirm=async()=>{
+    setAsk(false);setMsg("");
+    const memo=`${fmtMd(selDate)} 입고 발주 출고${vendor?" · "+vendor:""}`;
+    let fail=0;setProgress({done:0,total:moves.length});
+    for(let i=0;i<moves.length;i++){
+      const{x}=moves[i];
+      // 박스 단위가 아닌 로트(팩·개)는 원래 단위로 환산해서 차감
+      const u=(x.lot.unit||"박스").trim();
+      const delta=u==="박스"||u===""?x.out:fzoRound(x.out*moves[i].it.per);
+      try{await rpc("ol_frozen_change_qty",{p_admin_hash:adminHash,p_id:x.lot.id,p_delta:-delta,p_memo:memo})}
+      catch(e){fail++}
+      setProgress({done:i+1,total:moves.length});
+    }
+    setProgress(null);
+    const info={at:Date.now(),boxes:fzoRound(moves.reduce((a,m)=>a+m.x.out,0)),fail};
+    lsSet(doneKey,JSON.stringify(info));setDoneInfo(info);
+    saveManual({});
+    await loadLots();
+    setMsg(fail?`⚠ ${fail}건 차감 실패 — 냉동재고 탭에서 확인하세요`:`✓ 재고에서 ${fmtBoxes(info.boxes)}박스를 차감했습니다`);
+  };
+
+  // kind: png | pdf / perFloor: 층별 보기에서 층마다 따로(층마다 새 쪽)
+  const save=async(kind,perFloor)=>{
+    const tag=kind+(perFloor?"-floor":"");
+    setSaving(tag);setMsg("");
+    try{
+      await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+      const safe=x=>String(x).replace(/[\\/:*?"<>|]/g,"_");
+      const name=`냉동출고_${selDate}${vendor?"_"+safe(vendor):""}${view==="floor"?"_생산지점별":""}`;
+      const jobs=perFloor?selGroups.map(g=>({el:floorRefs.current[g.floor],name:`냉동출고_${selDate}${vendor?"_"+safe(vendor):""}_${safe(g.floor)}`})):[{el:printRef.current,name}];
+      const all=[];let count=0;
+      for(const j of jobs){
+        const pages=await shipA4Pages(j.el,{trim:kind==="png"});
+        if(kind==="pdf"){all.push(...pages);continue}
+        for(let i=0;i<pages.length;i++){downloadCanvas(pages[i],pages.length>1?`${j.name}_${i+1}쪽`:j.name);count++;await new Promise(r=>setTimeout(r,500))}
+      }
+      if(kind==="pdf"){shipPdf(all,name);count=all.length}
+      setMsg(`${kind==="pdf"?"PDF":"이미지"} 저장했습니다 (A4 ${count}${kind==="pdf"?"쪽":"장"})`);
+    }catch(e){setMsg("저장 실패: "+errMsg(e))}
+    setSaving("");
+  };
+
+  const fmtAt=t=>{const d=new Date(t);return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`};
+
+  return <div className="ol-layout">
+    <DateList dates={dates} selected={selDate} onSelect={setSelDate}/>
+    <div style={{minWidth:0}}>
+      {lotErr&&<div className="ol-warn">{lotErr}</div>}
+      {!selDate?<Empty emoji="📄" text="발주서 탭에서 발주서를 먼저 업로드하세요"/>:(loadingOrders||lotLoading)?<Loader/>:<>
+        <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",marginBottom:12}}>
+          <div style={{fontSize:18,fontWeight:800}}>{selDate} ({dowOf(selDate)}) 냉동 출고</div>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginLeft:"auto"}}>
+            <span style={{fontSize:12,color:"var(--muted)"}}>제목 머리말</span>
+            <input className="ol-input" style={{width:110}} value={prefix} onChange={e=>setPrefix(e.target.value)}/>
+          </div>
+        </div>
+
+        <div className="ol-toolbar">
+          {progress?<span style={{fontSize:13,fontWeight:700,color:"#ef4444"}}>재고 차감 중… {progress.done}/{progress.total}</span>
+           :ask?<span style={{display:"inline-flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+              <span style={{fontSize:13,fontWeight:700,color:"#ef4444"}}>로트 {moves.length}건, {fmtBoxes(moves.reduce((a,m)=>a+m.x.out,0))}박스를 냉동재고에서 차감할까요?</span>
+              <button className="ol-btn ol-btn-danger ol-btn-sm" onClick={confirm}>차감</button>
+              <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setAsk(false)}>취소</button></span>
+           :<button className="ol-btn ol-btn-primary" disabled={!moves.length} onClick={()=>setAsk(true)} title="배정된 출고 수량만큼 냉동재고에서 출고 처리">✅ 출고 확정 (재고 차감)</button>}
+          <div className="ol-subtabs">
+            <button className={view==="product"?"on":""} onClick={()=>setView("product")}>📦 제품별</button>
+            <button className={view==="floor"?"on":""} onClick={()=>setView("floor")}>🏭 생산지점별</button>
+          </div>
+          <button className="ol-btn ol-btn-secondary" disabled={!plan.length||!!saving||(view==="floor"&&!selGroups.length)} onClick={()=>save("png")}>{saving==="png"?"저장 중…":"🖼 이미지 (A4)"}</button>
+          <button className="ol-btn ol-btn-secondary" disabled={!plan.length||!!saving||(view==="floor"&&!selGroups.length)} onClick={()=>save("pdf")}>{saving==="pdf"?"저장 중…":"📄 PDF"}</button>
+          {view==="floor"&&selGroups.length>1&&<button className="ol-btn ol-btn-secondary" disabled={!!saving} onClick={()=>save("png",true)} title="생산지점마다 이미지 한 장씩">{saving==="png-floor"?"저장 중…":`🖼 지점별로 저장 (${selGroups.length}장)`}</button>}
+          <button className="ol-btn ol-btn-secondary" disabled={!plan.length} onClick={()=>downloadFzOutXlsx(plan,selDate,prefix,vendor,onlyOut)}>📥 엑셀</button>
+          <button className="ol-btn ol-btn-secondary" title="냉동재고 다시 불러오기" onClick={loadLots}>↻</button>
+          {anyManual&&<button className="ol-btn ol-btn-secondary" onClick={()=>saveManual({})} title="직접 고친 출고 수량을 모두 지우고 자동 배정으로">↺ 모두 자동 배정</button>}
+          {msg&&<span style={{fontSize:12,fontWeight:600,color:msg.startsWith("✓")||msg.includes("저장했")?"#16a34a":"#ef4444"}}>{msg}</span>}
+        </div>
+
+        <div className="ol-toolbar">
+          <label className={"ol-check"+(whole?" on":"")} title="발주 수량을 혼자 다 채울 수 있는 로트가 있으면 그 로트에서만 출고(로트를 덜 쪼갬)"><input type="checkbox" checked={whole} onChange={e=>setWhole(e.target.checked)}/>한 로트에서 다 나가게 우선</label>
+          <label className={"ol-check"+(skipExpired?" on":"")}><input type="checkbox" checked={skipExpired} onChange={e=>setSkipExpired(e.target.checked)}/>기한 지난 재고 제외</label>
+          <label className={"ol-check"+(onlyOut?" on":"")}><input type="checkbox" checked={onlyOut} onChange={e=>setOnlyOut(e.target.checked)}/>출고하는 로트만 표시</label>
+          <label className={"ol-check"+(withExtra?" on":"")}><input type="checkbox" checked={withExtra} onChange={e=>setWithExtra(e.target.checked)}/>추가 발주 포함{withExtra&&extraOrders.length>0&&` (${extraOrders.length}건)`}</label>
+        </div>
+        {locations.length>1&&<div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:12}}>
+          <span style={{fontSize:12,color:"var(--muted)"}}>먼저 꺼낼 위치</span>
+          <div className="ol-chips">
+            <button className={!locPref?"on":""} onClick={()=>setLocPref("")}>상관없음 (소비기한 순)</button>
+            {locations.map(l=><button key={l} className={locPref===l?"on":""} onClick={()=>setLocPref(l)}>📍 {l}</button>)}
+          </div>
+        </div>}
+        {vendors.length>1&&<div className="ol-chips" style={{marginBottom:12}}>
+          <button className={!vendor?"on":""} onClick={()=>setVendor("")}>전체 업체</button>
+          {vendors.map(v=><button key={v} className={vendor===v?"on":""} onClick={()=>setVendor(v)}>{v||"(업체명 없음)"}</button>)}
+        </div>}
+
+        <div style={{fontSize:12,color:"var(--muted)",marginBottom:10}}>
+          발주 수량(박스) = 발주 팩수량 ÷ 입수량 · 제품코드로 냉동재고와 연결 · 자동 배정 = {locPref?`📍${locPref} 먼저 → `:""}소비기한 빠른 순{whole?" (한 로트로 다 채울 수 있으면 그 로트만)":""} · 출고 수량 칸을 눌러 직접 고칠 수 있어요 (이 브라우저에 날짜별로 기억)
+        </div>
+        {doneInfo&&<div className="ol-warn" style={{padding:"8px 12px",borderColor:"#16a34a",color:"#15803d",background:"rgba(34,197,94,.08)"}}>
+          ✓ 이 입고일은 {fmtAt(doneInfo.at)}에 {fmtBoxes(doneInfo.boxes)}박스를 재고에서 차감했습니다. 다시 확정하면 한 번 더 빠집니다.
+          <button className="ol-btn ol-btn-secondary ol-btn-sm" style={{marginLeft:8}} onClick={()=>{lsSet(doneKey,"null");setDoneInfo(null)}}>표시 지우기</button>
+        </div>}
+        {shortItems.length>0&&<div className="ol-warn" style={{padding:"8px 12px"}}>⚠ 재고 부족: {shortItems.map(x=>`${shipNameOf(x.product)} ${fmtBoxes(x.short)}박스`).join(", ")}</div>}
+        {partial.length>0&&<div className="ol-warn" style={{padding:"8px 12px"}}>⚠ 입수량으로 나누어떨어지지 않는 품목(빨강): {partial.map(x=>`${shipNameOf(x.product)} (${fmtNum(x.qty)}÷${x.per})`).join(", ")}</div>}
+        {plan.some(x=>x.manual)&&<div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10,alignItems:"center"}}>
+          <span style={{fontSize:12,color:"#7c3aed",fontWeight:700}}>✋ 직접 수정한 제품</span>
+          {plan.filter(x=>x.manual).map(x=><button key={x.code} className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>resetItem(x.code)} title="자동 배정으로 되돌리기">{shipNameOf(x.product)} ↺</button>)}
+        </div>}
+
+        {!plan.length?<Empty emoji="❄" text={frozenOrders.length?"이 업체의 냉동 발주가 없습니다":"이 입고일 발주서에 냉동 제품이 없습니다 (제품리스트에서 보관을 ❄ 냉동으로 지정)"}/>:<>
+          {view==="floor"&&floorGroups.length>0&&<div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:12}}>
+            <span style={{fontSize:12,color:"var(--muted)",marginRight:2}}>표시·저장할 생산지점</span>
+            {floorGroups.map(g=>{const on=!offFloors.has(g.floor);
+              return <label key={g.floor} className={"ol-check"+(on?" on":"")}><input type="checkbox" checked={on} onChange={()=>toggleFloor(g.floor)}/>🏭 {g.floor} <span style={{color:"var(--muted)",fontWeight:500}}>{fmtBoxes(g.total)}박스</span></label>})}
+            <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setOffFloors(new Set())}>전체 선택</button>
+          </div>}
+          {view==="product"
+            ?<div className="ol-scroll"><FzOutSheet plan={plan} date={selDate} prefix={prefix} vendor={vendor} onlyOut={onlyOut} locColor={locColor} outCell={outCell}/></div>
+            :<div className="ol-scroll"><FzOutFloorSheet groups={selGroups} date={selDate} prefix={prefix} vendor={vendor} onlyOut={onlyOut} locColor={locColor} outCell={outCell}/></div>}
+          <div style={{position:"fixed",left:-20000,top:0,width:SHIP_PRINT_W,background:"#fff"}} aria-hidden="true">
+            {view==="product"
+              ?<FzOutSheet plan={plan} date={selDate} prefix={prefix} vendor={vendor} onlyOut={onlyOut} locColor={locColor} print refCb={el=>{printRef.current=el}}/>
+              :<>
+                <FzOutFloorSheet groups={selGroups} date={selDate} prefix={prefix} vendor={vendor} onlyOut={onlyOut} locColor={locColor} print refCb={el=>{printRef.current=el}}/>
+                {selGroups.map(g=><FzOutFloorSheet key={g.floor} groups={[g]} date={selDate} prefix={prefix} vendor={vendor} onlyOut={onlyOut} locColor={locColor} print refCb={el=>{floorRefs.current[g.floor]=el}}/>)}
+              </>}
+          </div>
+        </>}
+      </>}
+    </div>
+  </div>;
+}
+
+const VALID_TABS=["products","orders","lists","ship","frozen","fzout","extra"];
 function getTabFromHash(){const h=(window.location.hash||"").replace("#","");return VALID_TABS.includes(h)?h:"orders"}
 
 function App(){
@@ -4494,6 +4956,7 @@ function App(){
           <button className={"ol-tab"+(tab==="lists"?" active":"")} onClick={()=>setTab("lists")}>🗂 발주리스트</button>
           <button className={"ol-tab"+(tab==="ship"?" active":"")} onClick={()=>setTab("ship")}>🚚 출고장</button>
           <button className={"ol-tab"+(tab==="frozen"?" active":"")} onClick={()=>setTab("frozen")}>❄ 냉동재고</button>
+          <button className={"ol-tab"+(tab==="fzout"?" active":"")} onClick={()=>setTab("fzout")}>📤 냉동 출고</button>
           <button className={"ol-tab"+(tab==="extra"?" active":"")} onClick={()=>setTab("extra")}>➕ 추가 발주</button>
         </div>
         {mastersErr&&<div className="ol-warn">{mastersErr}</div>}
@@ -4502,6 +4965,7 @@ function App(){
         {tab==="lists"&&<ListsTab {...shared}/>}
         {tab==="ship"&&<ShipTab {...shared}/>}
         {tab==="frozen"&&<FrozenTab adminHash={adminHash} masters={masters}/>}
+        {tab==="fzout"&&<FzOutTab {...shared}/>}
         {tab==="extra"&&<>
           <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",marginBottom:12}}>
             <div className="ol-subtabs">
