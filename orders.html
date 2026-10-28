@@ -4606,7 +4606,7 @@ function buildFzOutPlan(orders,prodMap,lots,opts){
 
 // 화면·이미지 공통 표 (이미지 양식: 냉동제품 | 발주 수량 | 소비기한 | 위치 | 재고 | 출고 수량)
 // 제품 표 (냉동제품 | 발주 수량 | 소비기한 | 위치 | 재고 | 출고 수량) — 제품별 보기·생산지점 카드 공통
-function FzOutTable({plan,onlyOut,locColor,print,outCell,flush}){
+function FzOutTable({plan,onlyOut,locColor,print,outCell,flush,onHide}){
   const C={line:"#cbd5e1",strong:"#111",yellow:"#ffff00",muted:"#6b7280"};
   const cell={padding:"8px 10px",borderBottom:`1px solid ${C.line}`,borderLeft:`1px solid ${C.line}`,textAlign:"center",fontVariantNumeric:"tabular-nums",verticalAlign:"middle"};
   const th={...cell,fontWeight:800,fontSize:15,borderBottom:`2px solid ${C.strong}`,borderTop:flush?"none":`1px solid ${C.line}`};
@@ -4625,6 +4625,7 @@ function FzOutTable({plan,onlyOut,locColor,print,outCell,flush}){
         const head=[
           <td key="nm" rowSpan={n} style={{...cell,...top,...(flush?{borderLeft:"none"}:{}),fontFamily:"'NanumSquare','Pretendard',sans-serif",fontSize:15}}>
             {boldDigits(shipNameOf(it.product))}
+            {!print&&onHide&&<button className="ol-btn ol-btn-secondary ol-btn-sm" style={{marginLeft:6,padding:"1px 6px",fontSize:11,verticalAlign:"middle"}} title="이 제품 숨기기 (표·이미지·엑셀·출고 확정에서 빠짐)" onClick={()=>onHide(it.code)}>🙈 숨기기</button>}
             {!print&&it.manual&&<div style={{fontSize:11,color:"#7c3aed",fontWeight:700,marginTop:2}}>✋ 직접 수정함</div>}
           </td>,
           <td key="q" rowSpan={n} style={{...cell,...top,background:C.yellow,fontWeight:900,fontSize:17}}>
@@ -4650,7 +4651,7 @@ function FzOutTable({plan,onlyOut,locColor,print,outCell,flush}){
     </table>
   </>;
 }
-function FzOutSheet({plan,date,prefix,vendor,onlyOut,locColor,print,refCb,outCell}){
+function FzOutSheet({plan,date,prefix,vendor,onlyOut,locColor,print,refCb,outCell,onHide}){
   const C={line:"#cbd5e1",strong:"#111",yellow:"#ffff00",muted:"#6b7280"};
   const totalNeed=fzoRound(plan.reduce((a,x)=>a+x.boxes,0));
   const totalOut=fzoRound(plan.reduce((a,x)=>a+x.shipped,0));
@@ -4666,7 +4667,7 @@ function FzOutSheet({plan,date,prefix,vendor,onlyOut,locColor,print,refCb,outCel
         {totalShort>0&&<span style={{padding:"4px 10px",borderRadius:14,background:"#fee2e2",color:"#dc2626",fontWeight:800,fontSize:13}}>부족 {fmtBoxes(totalShort)}박스</span>}
       </div>
     </div>
-    <FzOutTable plan={plan} onlyOut={onlyOut} locColor={locColor} print={print} outCell={outCell}/>
+    <FzOutTable plan={plan} onlyOut={onlyOut} locColor={locColor} print={print} outCell={outCell} onHide={onHide}/>
   </div>;
 }
 
@@ -4677,7 +4678,7 @@ function fzOutSiteGroups(plan){
   return [...m.entries()].sort((a,b)=>siteCmp(a[0],b[0])).map(([floor,items])=>({floor,items,
     total:fzoRound(items.reduce((a,x)=>a+x.boxes,0)),out:fzoRound(items.reduce((a,x)=>a+x.shipped,0)),short:fzoRound(items.reduce((a,x)=>a+x.short,0))}));
 }
-function FzOutFloorSheet({groups,date,prefix,vendor,onlyOut,locColor,print,refCb,outCell}){
+function FzOutFloorSheet({groups,date,prefix,vendor,onlyOut,locColor,print,refCb,outCell,onHide}){
   const C={strong:"#111",muted:"#6b7280"};
   const sum=k=>fzoRound(groups.reduce((a,g)=>a+g[k],0));
   const one=groups.length===1;
@@ -4699,7 +4700,7 @@ function FzOutFloorSheet({groups,date,prefix,vendor,onlyOut,locColor,print,refCb
         </div>
         <span style={{padding:"4px 12px",borderRadius:16,background:"#1d4ed8",color:"#fff",fontWeight:800,fontSize:15,whiteSpace:"nowrap"}}>발주 {fmtBoxes(g.total)}박스</span>
       </div>
-      <FzOutTable plan={g.items} onlyOut={onlyOut} locColor={locColor} print={print} outCell={outCell} flush/>
+      <FzOutTable plan={g.items} onlyOut={onlyOut} locColor={locColor} print={print} outCell={outCell} onHide={onHide} flush/>
     </div>)}
   </div>;
 }
@@ -4836,8 +4837,15 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
   useEffect(()=>{if(vendor&&!vendors.includes(vendor))setVendor("")},[vendors]);
   const locations=useMemo(()=>[...new Set(rawLots.map(fzLoc))].filter(l=>l!==NO_LOC).sort(locCmp),[rawLots]);
   const locColor=loc=>{const i=locations.indexOf(loc);return i<0?"transparent":FZO_LOC_BG[i%FZO_LOC_BG.length]};
-  const plan=useMemo(()=>buildFzOutPlan(allOrders,prodMap,rawLots,{vendor,whole,locPref,skipExpired,manual}),
+  const fullPlan=useMemo(()=>buildFzOutPlan(allOrders,prodMap,rawLots,{vendor,whole,locPref,skipExpired,manual}),
     [allOrders,prodMap,rawLots,vendor,whole,locPref,skipExpired,manual]);
+  // 숨긴 제품(제품코드) — 날짜와 상관없이 이 브라우저에 기억. 숨기면 표·이미지·엑셀·출고 확정에서 모두 빠짐
+  const[hiddenCodes,setHiddenCodes]=useState(()=>{try{return new Set(JSON.parse(lsGet("ol-fzout-hidden","[]")))}catch(e){return new Set()}});
+  useEffect(()=>lsSet("ol-fzout-hidden",JSON.stringify([...hiddenCodes])),[hiddenCodes]);
+  const hideItem=code=>setHiddenCodes(prev=>new Set([...prev,code]));
+  const unhideItem=code=>setHiddenCodes(prev=>{const n=new Set(prev);n.delete(code);return n});
+  const plan=useMemo(()=>fullPlan.filter(x=>!hiddenCodes.has(x.code)),[fullPlan,hiddenCodes]);
+  const hiddenItems=fullPlan.filter(x=>hiddenCodes.has(x.code));
   const moves=plan.flatMap(it=>it.rows.filter(x=>x.out>0).map(x=>({it,x})));
   const shortItems=plan.filter(x=>x.short>0);
   const partial=plan.filter(x=>x.partial);
@@ -4981,7 +4989,13 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
           {plan.filter(x=>x.manual).map(x=><button key={x.code} className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>resetItem(x.code)} title="자동 배정으로 되돌리기">{shipNameOf(x.product)} ↺</button>)}
         </div>}
 
-        {!plan.length?<Empty emoji="❄" text={frozenOrders.length?"이 업체의 냉동 발주가 없습니다":"이 입고일 발주서에 냉동 제품이 없습니다 (제품리스트에서 보관을 ❄ 냉동으로 지정)"}/>:<>
+        {hiddenItems.length>0&&<div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10,alignItems:"center"}}>
+          <span style={{fontSize:12,color:"var(--muted)",fontWeight:700}}>🙈 숨긴 제품 {hiddenItems.length}개</span>
+          {hiddenItems.map(x=><button key={x.code} className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>unhideItem(x.code)} title="다시 보이기">{shipNameOf(x.product)} · {fmtBoxes(x.boxes)}박스 👁</button>)}
+          {hiddenItems.length>1&&<button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setHiddenCodes(new Set())}>모두 보이기</button>}
+        </div>}
+
+        {!plan.length?<Empty emoji="❄" text={hiddenItems.length?"모든 냉동 제품을 숨겼습니다 — 위에서 👁 눌러 다시 보이기":frozenOrders.length?"이 업체의 냉동 발주가 없습니다":"이 입고일 발주서에 냉동 제품이 없습니다 (제품리스트에서 보관을 ❄ 냉동으로 지정)"}/>:<>
           {view==="floor"&&floorGroups.length>0&&<div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:12}}>
             <span style={{fontSize:12,color:"var(--muted)",marginRight:2}}>표시·저장할 생산지점</span>
             {floorGroups.map(g=>{const on=!offFloors.has(g.floor);
@@ -4989,8 +5003,8 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
             <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setOffFloors(new Set())}>전체 선택</button>
           </div>}
           {view==="product"
-            ?<div className="ol-scroll"><FzOutSheet plan={plan} date={selDate} prefix={prefix} vendor={vendor} onlyOut={onlyOut} locColor={locColor} outCell={outCell}/></div>
-            :<div className="ol-scroll"><FzOutFloorSheet groups={selGroups} date={selDate} prefix={prefix} vendor={vendor} onlyOut={onlyOut} locColor={locColor} outCell={outCell}/></div>}
+            ?<div className="ol-scroll"><FzOutSheet plan={plan} date={selDate} prefix={prefix} vendor={vendor} onlyOut={onlyOut} locColor={locColor} outCell={outCell} onHide={hideItem}/></div>
+            :<div className="ol-scroll"><FzOutFloorSheet groups={selGroups} date={selDate} prefix={prefix} vendor={vendor} onlyOut={onlyOut} locColor={locColor} outCell={outCell} onHide={hideItem}/></div>}
           <div style={{position:"fixed",left:-20000,top:0,width:SHIP_PRINT_W,background:"#fff"}} aria-hidden="true">
             {view==="product"
               ?<FzOutSheet plan={plan} date={selDate} prefix={prefix} vendor={vendor} onlyOut={onlyOut} locColor={locColor} print refCb={el=>{printRef.current=el}}/>
