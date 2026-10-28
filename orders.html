@@ -679,6 +679,49 @@ function assignVendorColors(vendors,saved){
 // ═══════════════════════════════════════════
 // 제품 리스트 탭
 // ═══════════════════════════════════════════
+// ── APS 품목 연결 (발주 제품 → APS 생산 품목) ──
+let _apsItemsCache=null,_apsItemsPromise=null;
+function loadApsItems(force){
+  if(_apsItemsCache&&!force)return Promise.resolve(_apsItemsCache);
+  if(_apsItemsPromise&&!force)return _apsItemsPromise;
+  _apsItemsPromise=rpc("ol_list_aps_items",{p_admin_hash:""})
+    .then(d=>{_apsItemsCache={items:Array.isArray(d)?d:[],missing:false};return _apsItemsCache})
+    .catch(e=>{const missing=/function|PGRST202|schema cache/i.test(String(e?.message||e));_apsItemsPromise=null;return {items:[],missing,error:missing?"":errMsg(e)}});
+  return _apsItemsPromise;
+}
+function useApsItems(){
+  const[st,setSt]=useState(_apsItemsCache);
+  useEffect(()=>{let alive=true;loadApsItems().then(r=>{if(alive)setSt(r)});return()=>{alive=false}},[]);
+  return st; // null = 불러오는 중
+}
+// 이름 비교용: 괄호 안·중량·기호·공백 제거
+function apsNameKey(s){
+  return String(s||"").toLowerCase().replace(/\[[^\]]*\]|\([^)]*\)/g," ")
+    .replace(/\d+(\.\d+)?\s*(kg|g|ea|개|팩|입)/g," ").replace(/[*x×\/,·_\-]/g," ").replace(/\s+/g,"");
+}
+function apsSim(a,b){
+  const A=apsNameKey(a),B=apsNameKey(b);
+  if(!A||!B)return 0;
+  if(A===B)return 1;
+  const grams=x=>{const m=new Map();for(let i=0;i<x.length-1;i++){const g=x.slice(i,i+2);m.set(g,(m.get(g)||0)+1)}return m};
+  const ga=grams(A),gb=grams(B);let inter=0,na=0,nb=0;
+  ga.forEach(v=>na+=v);gb.forEach(v=>nb+=v);
+  ga.forEach((v,k)=>{inter+=Math.min(v,gb.get(k)||0)});
+  let sc=na+nb?2*inter/(na+nb):0;
+  if(A.includes(B)||B.includes(A))sc=Math.max(sc,0.75);
+  return sc;
+}
+// 발주 제품명과 가장 비슷한 APS 품목 (점수 0.45 이상만)
+function suggestApsItem(names,items){
+  let best=null,bs=0;
+  for(const it of items||[]){
+    const sc=Math.max(0,...names.filter(Boolean).map(n=>apsSim(n,it.name)));
+    if(sc>bs){bs=sc;best=it}
+  }
+  return bs>=0.45?best:null;
+}
+function apsItemLabel(it){return it?`${it.name}${(it.spec||"").trim()?" · "+it.spec:""} (${it.code})`:""}
+
 function ProductForm({adminHash,masters,initial,onSaved,onCancel,onReloadMasters}){
   const isEdit=!!initial?.id;
   const[code,setCode]=useState(initial?.code||"");
@@ -686,6 +729,10 @@ function ProductForm({adminHash,masters,initial,onSaved,onCancel,onReloadMasters
   const[imageName,setImageName]=useState(initial?.image_name||"");
   const[shipName,setShipName]=useState(initial?.ship_name||"");
   const[savedId,setSavedId]=useState(initial?.id||null); // 출고장용 이름 저장만 실패했을 때 다시 저장해도 중복 추가 안 되게
+  const initApsId=initial?.aps_item_id!=null?Number(initial.aps_item_id):null;
+  const[apsItemId,setApsItemId]=useState(initApsId);
+  const apsSt=useApsItems();
+  const apsSuggest=useMemo(()=>apsItemId||!apsSt?.items?.length?null:suggestApsItem([name,shipName,imageName],apsSt.items),[apsItemId,apsSt,name,shipName,imageName]);
   const[perBox,setPerBox]=useState(initial?.per_box??"");
   const[methodIds,setMethodIds]=useState(Array.isArray(initial?.method_ids)?initial.method_ids.map(Number):[]);
   const[site,setSite]=useState(initial?.site||"");
@@ -740,6 +787,15 @@ function ProductForm({adminHash,masters,initial,onSaved,onCancel,onReloadMasters
           setSaving(false);return;
         }
       }
+      // APS 품목 연결 — 값이 바뀐 경우만
+      if(pid&&(apsItemId??null)!==initApsId){
+        try{await rpc("ol_set_product_aps_item",{p_admin_hash:adminHash,p_id:pid,p_aps_item_id:apsItemId??null})}
+        catch(e){
+          if(!missingFn(e))throw e;
+          setErr("제품은 저장했지만 APS 품목 연결은 저장되지 않았습니다. Supabase SQL Editor에서 setup_orders_aps_link.sql 을 1회 실행한 뒤 다시 저장하세요.");
+          setSaving(false);return;
+        }
+      }
       onSaved();
     }catch(e){setErr(errMsg(e))}
     setSaving(false);
@@ -754,6 +810,23 @@ function ProductForm({adminHash,masters,initial,onSaved,onCancel,onReloadMasters
     <div style={{marginBottom:12}}><div className="ol-label">제품명 *</div><input className="ol-input" value={name} onChange={e=>setName(e.target.value)} placeholder="발주서/부착리스트에 표시될 이름"/></div>
     <div style={{marginBottom:12}}><div className="ol-label">이미지용 제품명 (적재이미지에 표시)</div><input className="ol-input" value={imageName} onChange={e=>setImageName(e.target.value)} placeholder="예: 삼겹구이용"/></div>
     <div style={{marginBottom:12}}><div className="ol-label">출고장용 제품명 (🚚 출고장에 표시 · 비우면 제품명 그대로)</div><input className="ol-input" value={shipName} onChange={e=>setShipName(e.target.value)} placeholder="예: 양념닭주물럭 2kg"/></div>
+    <div style={{marginBottom:12}}>
+      <div className="ol-label">🔗 APS 품목 (생산계획 연결 — 이 제품 발주가 재고보다 많으면 생산계획 탭에 알림)</div>
+      {apsSt===null?<div style={{fontSize:12,color:"var(--muted)"}}>APS 품목 불러오는 중…</div>:
+       apsSt.missing?<div style={{fontSize:12,color:"#f59e0b"}}>Supabase SQL Editor에서 setup_orders_aps_link.sql 을 1회 실행하면 연결할 수 있습니다.</div>:
+       apsSt.error?<div style={{fontSize:12,color:"#ef4444"}}>{apsSt.error}</div>:
+       <>
+        <select className="ol-input" value={apsItemId??""} onChange={e=>setApsItemId(e.target.value?Number(e.target.value):null)}>
+          <option value="">— 연결 안 함 —</option>
+          {apsSt.items.map(it=><option key={it.id} value={it.id}>{it.type==="semi"?"[반제품] ":""}{apsItemLabel(it)}</option>)}
+          {apsItemId!=null&&!apsSt.items.some(it=>Number(it.id)===apsItemId)&&<option value={apsItemId}>(삭제된 APS 품목 #{apsItemId})</option>}
+        </select>
+        {apsSuggest&&<div style={{fontSize:12,marginTop:4,color:"var(--muted)"}}>
+          추천: <b style={{color:"var(--text)"}}>{apsItemLabel(apsSuggest)}</b>{" "}
+          <button type="button" className="ol-btn ol-btn-secondary ol-btn-sm" style={{padding:"1px 8px"}} onClick={()=>setApsItemId(Number(apsSuggest.id))}>이걸로 연결</button>
+        </div>}
+       </>}
+    </div>
 
     <div style={{marginBottom:12}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -1100,6 +1173,11 @@ function ProductInfoView({adminHash,masters,reloadMasters}){
   const[siteF,setSiteF]=useState("all");
   const[editing,setEditing]=useState(null); // null | {} | product
   const[modal,setModal]=useState(""); // specs | methods
+  const[apsOnlyUnlinked,setApsOnlyUnlinked]=useState(false);
+  const apsSt=useApsItems();
+  const apsById=useMemo(()=>{const m={};(apsSt?.items||[]).forEach(it=>{m[Number(it.id)]=it});return m},[apsSt]);
+  const apsLinkOn=!!apsSt&&!apsSt.missing&&!apsSt.error;
+  const unlinkedCount=apsLinkOn?masters.products.filter(p=>p.aps_item_id==null).length:0;
   const methodMap=useMemo(()=>toMethodMap(masters.methods),[masters.methods]);
   const cfg=useMemo(()=>palletCfg(masters.settings),[masters.settings]);
   const sites=useMemo(()=>[...new Set(masters.products.map(p=>(p.site||"").trim()||NO_SITE))].sort(),[masters.products]);
@@ -1107,10 +1185,11 @@ function ProductInfoView({adminHash,masters,reloadMasters}){
     const s=q.trim().toLowerCase();
     return masters.products.filter(p=>{
       if(siteF!=="all"&&((p.site||"").trim()||NO_SITE)!==siteF)return false;
+      if(apsOnlyUnlinked&&p.aps_item_id!=null)return false;
       if(!s)return true;
       return [p.code,p.name,p.image_name,p.ship_name].some(x=>String(x||"").toLowerCase().includes(s));
     });
-  },[masters.products,q,siteF]);
+  },[masters.products,q,siteF,apsOnlyUnlinked]);
 
   const del=async p=>{
     if(!confirm(`'${p.name}' (${p.code}) 제품을 삭제할까요?`))return;
@@ -1129,6 +1208,7 @@ function ProductInfoView({adminHash,masters,reloadMasters}){
     <div className="ol-chips" style={{marginBottom:12}}>
       <button className={siteF==="all"?"on":""} onClick={()=>setSiteF("all")}>전체 {masters.products.length}</button>
       {sites.map(s=><button key={s} className={siteF===s?"on":""} onClick={()=>setSiteF(s)}>🏭 {s} {masters.products.filter(p=>((p.site||"").trim()||NO_SITE)===s).length}</button>)}
+      {apsLinkOn&&<button className={apsOnlyUnlinked?"on":""} style={unlinkedCount&&!apsOnlyUnlinked?{color:"#f59e0b",borderColor:"#f59e0b"}:undefined} onClick={()=>setApsOnlyUnlinked(v=>!v)} title="APS 품목과 연결 안 된 제품만 보기">🔗 APS 미연결 {unlinkedCount}</button>}
     </div>
     {masters.products.length===0?<Empty emoji="📦" text="등록된 제품이 없습니다. '+ 제품 추가'로 시작하세요."/>:
     list.length===0?<Empty emoji="🔍" text="검색 결과가 없습니다"/>:
@@ -1136,7 +1216,10 @@ function ProductInfoView({adminHash,masters,reloadMasters}){
       <thead><tr><th>제품코드</th><th>제품명</th><th>이미지용 이름</th><th className="right">입수</th><th>적재방식</th><th>생산지점</th><th>보관</th><th>양념</th><th>박스규격</th><th>단독 1파렛트 적재량</th><th></th></tr></thead>
       <tbody>{list.map(p=><tr key={p.id}>
         <td style={{fontFamily:"monospace",fontSize:12}}>{p.code}</td>
-        <td>{p.name}{(p.ship_name||"").trim()&&<div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>🚚 {p.ship_name}</div>}</td>
+        <td>{p.name}{(p.ship_name||"").trim()&&<div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>🚚 {p.ship_name}</div>}
+          {apsLinkOn&&(p.aps_item_id!=null
+            ?<div style={{fontSize:11,color:"#06b6d4",marginTop:2}}>🔗 {apsById[Number(p.aps_item_id)]?.name||("APS #"+p.aps_item_id)}</div>
+            :<div style={{fontSize:11,color:"#f59e0b",marginTop:2}}>🔗 APS 미연결</div>)}</td>
         <td><span style={{display:"inline-block",width:10,height:10,borderRadius:3,background:p.color,marginRight:6,verticalAlign:"middle"}}/><b style={{color:p.color}}>{p.image_name||"–"}</b></td>
         <td className="right">{p.per_box}</td>
         <td>{(p.method_ids||[]).map(id=>methodMap[Number(id)]).filter(Boolean).map(m=><span key={m.id} className={"ol-pill "+m.kind}>{m.name}</span>)}

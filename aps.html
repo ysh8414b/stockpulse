@@ -106,6 +106,29 @@
     }
     /* === 생산계획 좌측 재고 패널 === */
     .aps-plans-layout{display:flex;gap:14px;align-items:flex-start}
+    /* 📦 발주 부족 알림 */
+    .aps-oa{border:1px solid var(--card-bd);border-radius:10px;margin:0 0 12px;background:var(--card-bg);font-size:13px}
+    .aps-oa-warn{border-color:rgba(245,158,11,.55);border-left:5px solid #f59e0b}
+    .aps-oa-ok{border-left:5px solid #10b981}
+    .aps-oa-muted{padding:10px 12px;color:var(--muted);font-size:12px}
+    .aps-oa-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 12px;cursor:pointer;user-select:none}
+    .aps-oa-sub{font-size:11px;color:var(--muted)}
+    .aps-oa-tog{font-size:11px;color:var(--dimmer)}
+    .aps-oa-chip{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid #f59e0b;color:#f59e0b;cursor:pointer}
+    .aps-oa-body{padding:0 12px 10px}
+    .aps-oa-note{font-size:12px;color:#f59e0b;margin-bottom:6px}
+    .aps-oa-miss{font-size:12px;padding:8px 10px;border-radius:8px;background:rgba(245,158,11,.08);margin-bottom:8px}
+    .aps-oa-tag{display:inline-block;margin:2px 4px 2px 0;padding:1px 7px;border-radius:6px;background:var(--bg);border:1px solid var(--card-bd)}
+    .aps-oa-day{margin-top:6px}
+    .aps-oa-dayhd{font-weight:700;font-size:12px;color:var(--muted);padding:4px 0;border-bottom:1px dashed var(--card-bd)}
+    .aps-oa-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--card-bd)}
+    .aps-oa-row:last-child{border-bottom:none}
+    .aps-oa-row.late{background:rgba(239,68,68,.06)}
+    .aps-oa-nm{flex:1;min-width:220px}
+    .aps-oa-calc{font-size:11px;color:var(--muted);margin-top:2px;cursor:help}
+    .aps-oa-short{font-weight:800;color:#ef4444;white-space:nowrap}
+    .aps-oa-btns{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+    .aps-oa-late{font-size:12px;font-weight:700;color:#ef4444}
     .aps-plans-main{flex:1;min-width:0}
     .aps-inv-panel{width:280px;flex-shrink:0;background:var(--card-bg);border:1px solid var(--card-bd);border-radius:8px;padding:10px 10px 12px;max-height:82vh;overflow-y:auto;position:sticky;top:14px;box-sizing:border-box}
     .aps-inv-panel-title{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:var(--text);padding:2px 2px 8px;border-bottom:1px solid var(--div2);margin-bottom:6px}
@@ -1921,22 +1944,23 @@ function InventoryQuickPanel({onClose,onJumpToSheet,adminHash,items,plans}){
 // ═══════════════════════════════════════════
 // 생산계획 탭
 // ═══════════════════════════════════════════
-function PlanForm({adminHash,items,lines,settings,initial,defaultDate,onSaved,onCancel}){
+function PlanForm({adminHash,items,lines,settings,initial,prefill,defaultDate,onSaved,onCancel}){
   const isEdit=!!initial;
+  const pf=!isEdit?prefill:null; // 발주 부족 알림에서 미리 채운 값
   const wsh=parseInt(settings?.work_start_hour||"8");
   const baseDate=defaultDate||todayStr();
   const defaultStartInput=`${baseDate}T${String(wsh).padStart(2,"0")}:00`;
   const defaultEndInput=`${baseDate}T${String(Math.min(wsh+1,23)).padStart(2,"0")}:00`;
-  const[itemId,setItemId]=useState(initial?.item_id||"");
+  const[itemId,setItemId]=useState(initial?.item_id||pf?.item_id||"");
   const[itemQuery,setItemQuery]=useState("");
   const[itemOpen,setItemOpen]=useState(false);
   const[itemHi,setItemHi]=useState(0);
-  const[lineId,setLineId]=useState(initial?.line_id||"");
-  const[qty,setQty]=useState(initial?.qty||"");
-  const[startAt,setStartAt]=useState(initial?isoToKstInput(initial.start_at):defaultStartInput);
-  const[endAt,setEndAt]=useState(initial?isoToKstInput(initial.end_at):defaultEndInput);
+  const[lineId,setLineId]=useState(initial?.line_id||pf?.line_id||"");
+  const[qty,setQty]=useState(initial?.qty||pf?.qty||"");
+  const[startAt,setStartAt]=useState(initial?isoToKstInput(initial.start_at):pf?.start_at?isoToKstInput(pf.start_at):defaultStartInput);
+  const[endAt,setEndAt]=useState(initial?isoToKstInput(initial.end_at):pf?.end_at?isoToKstInput(pf.end_at):defaultEndInput);
   const[status,setStatus]=useState(initial?.status||"planned");
-  const[memo,setMemo]=useState(initial?.memo||"");
+  const[memo,setMemo]=useState(initial?.memo||pf?.memo||"");
   const[err,setErr]=useState("");
   const[loading,setLoading]=useState(false);
 
@@ -2081,6 +2105,9 @@ function PlanForm({adminHash,items,lines,settings,initial,defaultDate,onSaved,on
   return <div className="aps-modal-bg aps-side" onClick={onCancel}>
     <div className="aps-modal aps-modal-side" onClick={e=>e.stopPropagation()}>
       <div style={{fontWeight:700,fontSize:"16px",marginBottom:"14px"}}>{isEdit?"📅 생산계획 수정":"📅 생산계획 추가"}</div>
+       {pf&&<div style={{fontSize:12,padding:"8px 10px",borderRadius:8,background:"rgba(245,158,11,.1)",border:"1px solid rgba(245,158,11,.35)",marginBottom:12,lineHeight:1.5}}>
+         📦 발주 부족분으로 채웠습니다 — 품목·수량·라인·시간을 확인하고 저장하세요.{pf._hint&&<div style={{color:"#f59e0b",marginTop:2}}>{pf._hint}</div>}
+       </div>}
       <div className="aps-form-grid">
         <div style={{gridColumn:"1 / -1"}}>
           <div className="aps-form-label">품목 * <span style={{color:"var(--muted)",fontWeight:400}}>(코드/이름 검색)</span></div>
@@ -3972,6 +3999,214 @@ function WorkOrderModal({adminHash,dayStr,plans,lines,items,invData,settings,onC
   </div>;
 }
 
+// ═══════════════════════════════════════════
+// 📦 발주 부족 알림 (2026-10-28)
+//  자동 리스트 생성기(orders.html)에 올린 발주서 → 연결된 APS 품목별로
+//  필요 박스(발주수량 ÷ 입수량)와 쓸 수 있는 박스(재고 − 안전재고 + 마감 전 끝나는 계획)를 비교
+//  부족하면 입고일 2생산일 전(권장) / 1생산일 전(마감)에 계획 추가 버튼 표시
+// ═══════════════════════════════════════════
+const ORDER_ALERT_DAYS=21; // 오늘부터 이 기간 안의 입고일만
+function nthProdDayBefore(day,n,prodDays){
+  const set=new Set((Array.isArray(prodDays)&&prodDays.length?prodDays:[1,2,3,4,5]).map(Number));
+  let d=day,cnt=0,guard=0;
+  while(cnt<n&&guard<400){d=addDays(d,-1);guard++;if(set.has(isoDowOf(d)))cnt++}
+  return d;
+}
+function loadProdDays(){
+  try{const o=JSON.parse(localStorage.getItem("aps-autoplan-opts-v2")||"{}");if(Array.isArray(o.prodDays)&&o.prodDays.length)return o.prodDays.map(Number)}catch(e){}
+  return [1,2,3,4,5];
+}
+function fmtMDDow(d){return d?`${fmtMD(d)} (${DOW_LABEL[isoDowOf(d)-1]})`:""}
+
+// orders: ol_list_orders 결과, olProducts: ol_list_masters.products
+function computeOrderShortages({orders,olProducts,items,plans,invProducts,prodDays,useSafety,today}){
+  const olByCode={};(olProducts||[]).forEach(p=>{if(p.code)olByCode[String(p.code).trim()]=p});
+  const itemById={};(items||[]).forEach(it=>{itemById[Number(it.id)]=it});
+  const stockByCode={};(invProducts||[]).forEach(p=>{if(p.code)stockByCode[p.code]=Number(p.box||0)});
+  const demand={}; // itemId → {due → {boxes, sources:[]}}
+  const unlinked={},unregistered={},deletedLink={};
+  for(const o of orders||[]){
+    const due=String(o.due_date||"").slice(0,10);
+    if(!due||due<today)continue;
+    for(const ln of o.items||[]){
+      const qty=Number(ln.qty)||0;
+      if(qty<=0)continue;
+      const code=String(ln.code||"").trim();
+      const op=olByCode[code];
+      if(!op){(unregistered[code]=unregistered[code]||{code,name:ln.name,qty:0}).qty+=qty;continue}
+      if(op.aps_item_id==null){(unlinked[code]=unlinked[code]||{code,name:op.name||ln.name,qty:0}).qty+=qty;continue}
+      const it=itemById[Number(op.aps_item_id)];
+      if(!it){(deletedLink[code]=deletedLink[code]||{code,name:op.name||ln.name,qty:0}).qty+=qty;continue}
+      const per=Number(op.per_box)||1;
+      const boxes=qty/per;
+      const m=(demand[it.id]=demand[it.id]||{});
+      const slot=(m[due]=m[due]||{boxes:0,sources:[]});
+      slot.boxes+=boxes;
+      slot.sources.push({vendor:o.vendor,center:o.center,order_no:o.order_no,code,name:op.ship_name||op.name||ln.name,qty,per,boxes,extra:!!o.is_extra});
+    }
+  }
+  const rows=[];
+  for(const idStr of Object.keys(demand)){
+    const it=itemById[Number(idStr)];
+    const stockKnown=it.code in stockByCode;
+    const stock=stockKnown?stockByCode[it.code]:0;
+    const safety=useSafety?Math.max(0,Number(it.safety_stock||0)):0;
+    const avail=Math.max(0,stock-safety);
+    // 마감일까지 끝나는 계획/진행중 계획 (오늘 이전에 끝났어야 할 계획은 재고에 반영됐는지 알 수 없어 제외 — 자동 생성과 같은 기준)
+    const myPlans=(plans||[]).filter(p=>Number(p.item_id)===Number(it.id)&&(p.status==="planned"||p.status==="in_progress")&&p.end_at&&isoToKstDateStr(p.end_at)>=today);
+    const dues=Object.keys(demand[idStr]).sort();
+    let cumDemand=0,cumShort=0;
+    for(const due of dues){
+      const slot=demand[idStr][due];
+      cumDemand+=slot.boxes;
+      const deadline=nthProdDayBefore(due,1,prodDays);
+      const recommend=nthProdDayBefore(due,2,prodDays);
+      const planned=myPlans.filter(p=>isoToKstDateStr(p.end_at)<=deadline).reduce((a,p)=>a+Number(p.qty||0),0);
+      // 앞 입고일 부족분은 그 날 알림으로 만들어질 것으로 보고 빼 줌 → 재고를 두 번 세지 않음
+      const short=Math.ceil(Math.max(0,cumDemand-avail-planned-cumShort)-1e-9);
+      if(short>0){
+        rows.push({item:it,due,deadline,recommend,need:slot.boxes,cumDemand,stock,stockKnown,safety,avail,planned,short,sources:slot.sources,
+          late:deadline<today,recOk:recommend>=today});
+        cumShort+=short;
+      }
+    }
+  }
+  rows.sort((a,b)=>a.due.localeCompare(b.due)||String(a.item.name).localeCompare(String(b.item.name)));
+  const list=o=>Object.values(o).sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+  return {rows,unlinked:list(unlinked),unregistered:list(unregistered),deletedLink:list(deletedLink)};
+}
+
+// 그 날 그 품목을 넣을 라인과 시간 제안 (생산 가능 라인 중 가장 빨리 비는 라인, 점심 제외)
+function suggestPlanSlot({item,day,qty,lines,plans,settings,rate}){
+  const ws=parseInt(settings?.work_start_hour)||8;
+  const dayStart=kstDayStartMs(day);
+  const winStart=dayStart+ws*3600000;
+  const lunch=getLunch(settings);
+  const lS=lunch?dayStart+lunch.s*3600000:0,lE=lunch?dayStart+lunch.e*3600000:0;
+  const skipLunch=t=>(lunch&&t>=lS&&t<lE)?lE:t;
+  const lineIds=(Array.isArray(item.line_ids)?item.line_ids:[]).map(Number).filter(id=>lines.some(l=>Number(l.id)===id));
+  const cands=lineIds.length?lineIds:[null];
+  const nowMs=day===todayStr()?Date.now():0;
+  let best=null;
+  for(const lid of cands){
+    let c=Math.max(winStart,nowMs);
+    if(lid!=null)for(const p of plans||[]){
+      if(Number(p.line_id)!==lid||p.status==="canceled"||!p.start_at||!p.end_at)continue;
+      const s=new Date(p.start_at).getTime(),e=new Date(p.end_at).getTime();
+      if(s<dayStart+86400000&&e>dayStart&&e>c)c=e;
+    }
+    c=skipLunch(ceilQuarter(c));
+    if(!best||c<best.start)best={lid,start:c};
+  }
+  const durMs=rate>0?Math.max(QUARTER_MS,ceilQuarter(qty/rate*3600000)):3600000;
+  let end=best.start+durMs;
+  if(lunch&&best.start<lS&&end>lS)end+=lE-lS;
+  return {line_id:best.lid,start_at:new Date(best.start).toISOString(),end_at:new Date(end).toISOString(),hasRate:rate>0};
+}
+
+function OrderShortagePanel({adminHash,items,lines,plans,settings,invData,onAddPlan}){
+  const[data,setData]=useState(null); // {orders, products, linkMissing} | {error}
+  const[rates,setRates]=useState({});
+  const[open,setOpen]=useState(()=>{try{return localStorage.getItem("aps-order-alert-open")!=="0"}catch(e){return true}});
+  useEffect(()=>{try{localStorage.setItem("aps-order-alert-open",open?"1":"0")}catch(e){}},[open]);
+  const[showUnlinked,setShowUnlinked]=useState(false);
+  const[tick,setTick]=useState(0);
+  const today=todayStr();
+  useEffect(()=>{
+    let cancelled=false;
+    (async()=>{
+      try{
+        const to=addDays(todayStr(),ORDER_ALERT_DAYS);
+        const[norm,extra,masters,st]=await Promise.all([
+          rpc("ol_list_orders",{p_admin_hash:"",p_from:todayStr(),p_to:to,p_extra:false}),
+          rpc("ol_list_orders",{p_admin_hash:"",p_from:todayStr(),p_to:to,p_extra:true}).catch(()=>[]),
+          rpc("ol_list_masters",{p_admin_hash:""}),
+          rpc("aps_get_item_stats",{p_admin_hash:adminHash,p_days_back:180}).catch(()=>[])
+        ]);
+        if(cancelled)return;
+        const products=masters?.products||[];
+        const linkMissing=products.length>0&&!products.some(p=>"aps_item_id" in p);
+        setData({orders:[...(norm||[]),...(extra||[])],products,linkMissing});
+        const rb={};(st||[]).forEach(s=>{if(Number(s.qty_per_hour)>0)rb[s.item_id]=Number(s.qty_per_hour)});
+        setRates(rb);
+      }catch(e){if(!cancelled)setData({error:String(e?.message||e)})}
+    })();
+    return()=>{cancelled=true};
+  },[adminHash,tick]);
+
+  const prodDays=useMemo(()=>loadProdDays(),[tick]);
+  const result=useMemo(()=>{
+    if(!data||data.error||data.linkMissing)return null;
+    return computeOrderShortages({orders:data.orders,olProducts:data.products,items,plans,invProducts:invData?.products||[],prodDays,useSafety:true,today});
+  },[data,items,plans,invData,prodDays,today]);
+
+  if(!data)return null;
+  // 발주서 기능을 안 쓰는 경우(테이블 없음)엔 아무것도 안 보여줌
+  if(data.error)return /ol_list_orders|ol_list_masters|PGRST202|does not exist/i.test(data.error)?null:
+    <div className="aps-oa aps-oa-muted">📦 발주 부족 알림: 발주서를 불러오지 못했습니다 <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>setTick(t=>t+1)}>다시 시도</button></div>;
+  if(data.linkMissing)return <div className="aps-oa aps-oa-muted">📦 발주 부족 알림을 쓰려면 Supabase SQL Editor에서 <b>setup_orders_aps_link.sql</b> 을 1회 실행한 뒤, 자동 리스트 생성기 제품리스트에서 제품마다 APS 품목을 연결하세요.</div>;
+  if(!result)return null;
+  const orderCount=data.orders.filter(o=>String(o.due_date).slice(0,10)>=today).length;
+  if(orderCount===0)return null;
+
+  const{rows,unlinked,unregistered,deletedLink}=result;
+  const missCount=unlinked.length+unregistered.length+deletedLink.length;
+  const invOld=invData?.savedAt&&isoToKstDateStr(invData.savedAt)<today;
+  const noInv=!invData?.products?.length;
+  const byDue={};rows.forEach(r=>{(byDue[r.due]=byDue[r.due]||[]).push(r)});
+  const dues=Object.keys(byDue).sort();
+  const lateCount=rows.filter(r=>r.late).length;
+
+  const add=(r,day)=>{
+    const slot=suggestPlanSlot({item:r.item,day,qty:r.short,lines,plans,settings,rate:rates[r.item.id]||Number(r.item.units_per_hour)||0});
+    onAddPlan({item_id:r.item.id,qty:r.short,line_id:slot.line_id,start_at:slot.start_at,end_at:slot.end_at,
+      memo:`${fmtMD(r.due)} 입고 발주분`,day,_hint:slot.hasRate?"":"생산 속도 기록이 없어 종료 시각을 1시간으로 넣었습니다. 확인해 주세요."});
+  };
+
+  return <div className={"aps-oa"+(rows.length?" aps-oa-warn":" aps-oa-ok")}>
+    <div className="aps-oa-head" onClick={()=>setOpen(v=>!v)}>
+      <span style={{fontWeight:800}}>{rows.length?`⚠ 발주 대비 생산 필요 ${rows.length}건`:"✅ 발주 대비 재고 충분"}</span>
+      <span className="aps-oa-sub">앞으로 {ORDER_ALERT_DAYS}일 입고 발주 {orderCount}건 · 안전재고는 남기고 계산{lateCount?` · ⛔ 늦음 ${lateCount}`:""}</span>
+      {missCount>0&&<span className="aps-oa-chip" onClick={e=>{e.stopPropagation();setOpen(true);setShowUnlinked(v=>!v)}}>🔗 APS 연결 안 된 발주 제품 {missCount}개</span>}
+      <span style={{flex:1}}/>
+      <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={e=>{e.stopPropagation();setTick(t=>t+1)}} title="발주서 다시 불러오기">↻</button>
+      <span className="aps-oa-tog">{open?"접기 ▲":"펼치기 ▼"}</span>
+    </div>
+    {open&&<div className="aps-oa-body">
+      {(invOld||noInv)&&<div className="aps-oa-note">⚠ {noInv?"재고시트가 비어 있어 재고를 0으로 계산했습니다.":`재고시트가 ${fmtMD(isoToKstDateStr(invData.savedAt))} 기준입니다. 오늘 재고를 올리면 더 정확합니다.`}</div>}
+      {showUnlinked&&missCount>0&&<div className="aps-oa-miss">
+        <div style={{fontWeight:700,marginBottom:4}}>계산에서 빠진 발주 제품 — 자동 리스트 생성기 → 📦 제품리스트에서 "🔗 APS 품목"을 연결하세요</div>
+        {[["APS 품목 연결 안 됨",unlinked],["제품리스트에 없는 상품코드",unregistered],["연결한 APS 품목이 삭제됨",deletedLink]].filter(([,l])=>l.length).map(([t,l])=><div key={t} style={{marginTop:4}}>
+          <span style={{color:"var(--muted)"}}>{t}: </span>{l.map(x=><span key={x.code} className="aps-oa-tag">{x.name||"(이름 없음)"} <span style={{opacity:.6,fontFamily:"monospace"}}>{x.code}</span></span>)}
+        </div>)}
+        <a href="orders.html#products" target="_blank" rel="noopener" style={{display:"inline-block",marginTop:6,fontSize:12}}>자동 리스트 생성기 열기 ↗</a>
+      </div>}
+      {rows.length===0&&<div style={{fontSize:13,color:"var(--muted)",padding:"4px 2px"}}>연결된 제품은 모두 재고(안전재고 제외)와 잡힌 계획으로 입고일 전에 채워집니다.</div>}
+      {dues.map(due=><div key={due} className="aps-oa-day">
+        <div className="aps-oa-dayhd">📦 {fmtMDDow(due)} 입고 — 생산 필요 {byDue[due].length}건</div>
+        {byDue[due].map(r=><div key={r.item.id+":"+due} className={"aps-oa-row"+(r.late?" late":"")}>
+          <div className="aps-oa-nm">
+            <b>{r.item.name}</b>{(r.item.spec||"").trim()&&<span style={{color:"var(--muted)"}}> · {r.item.spec}</span>}
+            <div className="aps-oa-calc" title={r.sources.map(s=>`${s.vendor||""} ${s.center||""} 발주 ${s.order_no}${s.extra?" (추가)":""}: ${s.name} ${fmtNum(s.qty)}개 ÷ ${s.per} = ${fmtNum(s.boxes)}박스`).join("\n")}>
+              필요 {fmtNum(Math.round(r.need*100)/100)}박스{r.cumDemand>r.need+1e-9?` (앞 입고일 포함 누적 ${fmtNum(Math.round(r.cumDemand*100)/100)})`:""}
+              {" · "}재고 {r.stockKnown?fmtNum(r.stock):"0 (재고시트에 없음)"}{r.safety>0&&r.stock>0?` 중 안전재고 ${fmtNum(r.safety)} 남기고 ${fmtNum(r.avail)} 사용`:""}{r.safety>0&&r.stock<=0?` (안전재고 ${fmtNum(r.safety)})`:""}
+              {r.planned>0?` · 마감 전 끝나는 계획 ${fmtNum(r.planned)}`:""}
+            </div>
+          </div>
+          <div className="aps-oa-short">{fmtNum(r.short)}박스 부족</div>
+          <div className="aps-oa-btns">
+            {r.late?<span className="aps-oa-late">⛔ 늦음 (마감 {fmtMDDow(r.deadline)})</span>:<>
+              {r.recOk&&<button className="aps-btn aps-btn-primary aps-btn-sm" onClick={()=>add(r,r.recommend)} title="입고 2생산일 전 (권장)">권장 {fmtMDDow(r.recommend)}에 추가</button>}
+              <button className={"aps-btn aps-btn-sm "+(r.recOk?"aps-btn-secondary":"aps-btn-primary")} onClick={()=>add(r,r.deadline)} title="입고 1생산일 전 (늦어도 이날까지)">{r.recOk?"마감":"⚠ 마감"} {fmtMDDow(r.deadline)}에 추가</button>
+            </>}
+            {r.late&&<button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>add(r,today)}>오늘 추가</button>}
+          </div>
+        </div>)}
+      </div>)}
+    </div>}
+  </div>;
+}
+
 function PlansTab({adminHash}){
   const[plans,setPlans]=useState([]);
   const[items,setItems]=useState([]);
@@ -3984,6 +4219,7 @@ function PlansTab({adminHash}){
   const[showSettings,setShowSettings]=useState(false);
   const[showAuto,setShowAuto]=useState(false);
   const[showWO,setShowWO]=useState(false);
+  const[prefill,setPrefill]=useState(null); // 발주 부족 알림 → 계획 추가 창 미리 채움
   // 재고시트 데이터 (PNG export 시 원육 표시용) — PC/모바일 동기화
   const[invData,setInvData]=useState(()=>loadStoredInventory());
   useEffect(()=>{
@@ -4443,7 +4679,7 @@ function PlansTab({adminHash}){
         title={allDates?"전체 날짜 모드에서는 사용 불가 (날짜를 선택하세요)":`${dayStr} 라인별 작업지시서 (작업 순서·원육·작업 기준·지시사항·기록 칸)`}>📋 작업지시서</button>
       <button className="aps-btn aps-btn-secondary" onClick={()=>setShowAuto(true)} disabled={loading||allDates}
         title={allDates?"전체 날짜 모드에서는 사용 불가 (날짜를 선택하세요)":`${dayStr} 계획을 재고·요일별 매출·생산능력으로 자동 생성`}>🤖 자동 생성</button>
-      <button className="aps-btn aps-btn-primary" onClick={()=>{setEditing(null);setShowForm(true)}} disabled={items.filter(i=>i.type!=="material").length===0}>+ 생산계획 추가</button>
+      <button className="aps-btn aps-btn-primary" onClick={()=>{setEditing(null);setPrefill(null);setShowForm(true)}} disabled={items.filter(i=>i.type!=="material").length===0}>+ 생산계획 추가</button>
     </div>
 
     <div className="aps-toolbar" style={{marginTop:-4}}>
@@ -4462,6 +4698,9 @@ function PlansTab({adminHash}){
           : `리스트·간트 모두 ${dayStr}`}
       </span>
     </div>
+
+    {!loading&&<OrderShortagePanel adminHash={adminHash} items={items} lines={lines} plans={plans} settings={settings} invData={invData}
+      onAddPlan={pf=>{setDayStr(pf.day);setAllDates(false);setEditing(null);setPrefill(pf);setShowForm(true)}}/>}
 
     {loading?<Loader/>:
       <div className={invPanelOpen?"aps-plans-layout":""}>
@@ -4588,7 +4827,7 @@ function PlansTab({adminHash}){
       </div>
     }
 
-    {showForm&&<PlanForm adminHash={adminHash} items={items} lines={lines} settings={settings} initial={editing} defaultDate={allDates?todayStr():dayStr} onCancel={()=>setShowForm(false)} onSaved={()=>{setShowForm(false);load()}}/>}
+    {showForm&&<PlanForm key={editing?"e"+editing.id:prefill?"p"+prefill.item_id+prefill.day:"new"} adminHash={adminHash} items={items} lines={lines} settings={settings} initial={editing} prefill={editing?null:prefill} defaultDate={allDates?todayStr():dayStr} onCancel={()=>{setShowForm(false);setPrefill(null)}} onSaved={()=>{setShowForm(false);setPrefill(null);load()}}/>}
     {showWO&&<WorkOrderModal adminHash={adminHash} dayStr={dayStr} plans={plans} lines={lines} items={items} invData={invData} settings={settings}
       onClose={()=>setShowWO(false)} onSaved={load}/>}
     {showAuto&&<AutoPlanModal adminHash={adminHash} dayStr={dayStr} items={items} lines={lines} plans={plans} settings={settings} invData={invData}

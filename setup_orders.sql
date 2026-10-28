@@ -910,3 +910,28 @@ BEGIN
   RETURN json_build_object('id', p_id, 'sold_out', p_sold_out, 'was', was);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ═══ 🔗 APS 품목 연결 (2026-10-28, setup_orders_aps_link.sql 과 동일) ═══
+ALTER TABLE ol_products ADD COLUMN IF NOT EXISTS aps_item_id BIGINT NULL;
+-- (ol_list_masters 는 row_to_json 이라 새 컬럼이 자동으로 포함됨)
+
+CREATE OR REPLACE FUNCTION ol_set_product_aps_item(p_admin_hash TEXT, p_id BIGINT, p_aps_item_id BIGINT)
+RETURNS VOID AS $$
+BEGIN
+  -- 인증 없음 (2026-10-13: 비밀번호 없이 접근 허용)
+  UPDATE ol_products SET aps_item_id = p_aps_item_id, updated_at = now() WHERE id = p_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 제품 폼의 "APS 품목" 선택 목록 (제품/반제품만, 이름·코드·규격만 반환)
+CREATE OR REPLACE FUNCTION ol_list_aps_items(p_admin_hash TEXT)
+RETURNS JSON AS $$
+BEGIN
+  RETURN (
+    SELECT COALESCE(json_agg(json_build_object(
+      'id', id, 'code', code, 'name', name, 'type', type, 'spec', spec
+    ) ORDER BY type, code), '[]'::json)
+    FROM aps_items WHERE type IN ('product','semi')
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
