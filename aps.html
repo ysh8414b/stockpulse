@@ -1964,6 +1964,53 @@ function PlanForm({adminHash,items,lines,settings,initial,prefill,defaultDate,on
   const[err,setErr]=useState("");
   const[loading,setLoading]=useState(false);
 
+  // ─── 종료 시각 자동 계산 (통계 시간당 생산량 → 품목 시간당 생산량) ───
+  const[autoEnd,setAutoEnd]=useState(!isEdit);
+  const[statRates,setStatRates]=useState(null); // {item_id:{rate,count,src}}
+  useEffect(()=>{
+    let cancelled=false;
+    (async()=>{
+      const[st180,stAll]=await Promise.all([
+        rpc("aps_get_item_stats",{p_admin_hash:adminHash,p_days_back:180}).catch(()=>[]),
+        rpc("aps_get_item_stats",{p_admin_hash:adminHash,p_days_back:null}).catch(()=>[])
+      ]);
+      if(cancelled)return;
+      const rb={};
+      for(const[src,label] of [[stAll||[],"전체 실적"],[st180||[],"최근 180일 실적"]]){
+        for(const s of src){if(Number(s.qty_per_hour)>0)rb[s.item_id]={rate:Number(s.qty_per_hour),count:s.plan_count,src:label}}
+      }
+      setStatRates(rb);
+    })();
+    return()=>{cancelled=true};
+  },[adminHash]);
+  const rateInfo=useMemo(()=>{
+    if(!itemId)return null;
+    const st=statRates?.[itemId];
+    if(st)return{rate:st.rate,label:`${st.src} ${st.count}건`};
+    const it=items.find(i=>String(i.id)===String(itemId));
+    if(Number(it?.units_per_hour)>0)return{rate:Number(it.units_per_hour),label:"품목에 입력한 값"};
+    return null;
+  },[itemId,statRates,items]);
+  const calcEnd=useMemo(()=>{
+    const q=Number(qty);
+    if(!rateInfo||!(q>0)||!startAt)return null;
+    const startIso=kstInputToIso(startAt);
+    const sMs=new Date(startIso).getTime();
+    if(!isFinite(sMs))return null;
+    const durMs=Math.max(QUARTER_MS,ceilQuarter(q/rateInfo.rate*3600000));
+    let end=sMs+durMs,lunchAdded=false;
+    const lunch=getLunch(settings);
+    if(lunch){
+      const ds=kstDayStartMs(isoToKstDateStr(startIso));
+      const lS=ds+lunch.s*3600000,lE=ds+lunch.e*3600000;
+      if(sMs<lS&&end>lS){end+=lE-lS;lunchAdded=true}
+    }
+    return{input:isoToKstInput(new Date(end).toISOString()),hours:durMs/3600000,lunchAdded};
+  },[rateInfo,qty,startAt,settings]);
+  useEffect(()=>{
+    if(autoEnd&&calcEnd&&calcEnd.input!==endAt)setEndAt(calcEnd.input);
+  },[autoEnd,calcEnd]);
+
   // ─── 원자재 소요/재고 카드용 ───
   // 선택된 품목의 BOM(자식 = 원자재 or 반제품). BOM 재귀 조회를 위해 필요한 부모 BOM들 모두 캐시
   const[bomByParent,setBomByParent]=useState({}); // {parentId: [bomRow]}
@@ -2192,8 +2239,25 @@ function PlanForm({adminHash,items,lines,settings,initial,prefill,defaultDate,on
         </div>
         <div>
           <div className="aps-form-label">종료 시각 * <span style={{color:"var(--muted)",fontWeight:400}}>(KST)</span></div>
-          <input className="aps-input" type="datetime-local" value={endAt} onChange={e=>setEndAt(e.target.value)}/>
+          <input className="aps-input" type="datetime-local" value={endAt} onChange={e=>{setEndAt(e.target.value);setAutoEnd(false)}}/>
         </div>
+        {itemId&&<div style={{gridColumn:"1 / -1",fontSize:12,padding:"8px 10px",borderRadius:8,lineHeight:1.5,
+          background:rateInfo?"rgba(6,182,212,.08)":"rgba(148,163,184,.08)",border:`1px solid ${rateInfo?"rgba(6,182,212,.35)":"var(--border)"}`}}>
+          {rateInfo?<>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+              <span>⏱ 시간당 <b>{fmtNum(Math.round(rateInfo.rate*10)/10)}</b>{selectedItem?.unit||""} <span style={{color:"var(--muted)"}}>({rateInfo.label})</span></span>
+              {calcEnd&&<span>→ 약 <b>{fmtHours(calcEnd.hours)}</b>{calcEnd.lunchAdded&&<span style={{color:"var(--muted)"}}> + 🍱 점심</span>}</span>}
+              <label style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:4,cursor:"pointer"}}>
+                <input type="checkbox" checked={autoEnd} onChange={e=>setAutoEnd(e.target.checked)}/>종료 시각 자동 계산
+              </label>
+            </div>
+            {!autoEnd&&calcEnd&&calcEnd.input!==endAt&&<div style={{marginTop:4,color:"var(--muted)"}}>
+              계산한 종료 시각: {calcEnd.input.replace("T"," ")} <button type="button" className="aps-btn aps-btn-secondary" style={{padding:"2px 8px",fontSize:11,marginLeft:4}} onClick={()=>setAutoEnd(true)}>이걸로</button>
+            </div>}
+          </>:<span style={{color:"var(--muted)"}}>
+            {statRates===null?"시간당 생산량 불러오는 중…":"⏱ 이 품목은 완료 실적도, 품목에 입력한 시간당 생산량도 없어 종료 시각을 직접 입력해야 합니다. (📦 품목에서 시간당 생산량을 넣으면 자동 계산)"}
+          </span>}
+        </div>}
         <div style={{gridColumn:"1 / -1"}}>
           <div className="aps-form-label">메모</div>
           <textarea className="aps-input" value={memo} onChange={e=>setMemo(e.target.value)} maxLength={500} rows={2} style={{resize:"vertical"}}/>
@@ -4482,6 +4546,30 @@ function suggestPlanSlot({item,day,qty,lines,plans,settings,rate}){
   return {line_id:best.lid,start_at:new Date(best.start).toISOString(),end_at:new Date(end).toISOString(),hasRate:rate>0};
 }
 
+// 순서 바꾸기 → 두 계획의 시간 자리도 맞바꿈 (각자 작업 시간 유지, 점심 제외/재반영, 둘 사이 간격 유지)
+function swapPlanTimes(a,b,settings){
+  if(!a||!b||a.status!=="planned"||b.status!=="planned")return null;
+  if(!a.start_at||!a.end_at||!b.start_at||!b.end_at)return null;
+  if(isoToKstDateStr(a.start_at)!==isoToKstDateStr(b.start_at))return null;
+  const ms=p=>[new Date(p.start_at).getTime(),new Date(p.end_at).getTime()];
+  let[first,second]=ms(a)[0]<=ms(b)[0]?[a,b]:[b,a];
+  const[fS,fE]=ms(first),[sS,sE]=ms(second);
+  const lunch=getLunch(settings);
+  const ds=kstDayStartMs(isoToKstDateStr(first.start_at));
+  const lS=lunch?ds+lunch.s*3600000:0,lE=lunch?ds+lunch.e*3600000:0;
+  const lunchIn=(s,e)=>lunch?Math.max(0,Math.min(e,lE)-Math.max(s,lS)):0;
+  const work=(s,e)=>Math.max(QUARTER_MS,(e-s)-lunchIn(s,e));
+  const skip=t=>(lunch&&t>=lS&&t<lE)?lE:t;
+  const place=(s,w)=>{s=skip(s);let e=s+w;if(lunch&&s<lS&&e>lS)e+=lE-lS;return[s,e]};
+  const gap=Math.max(0,(sS-fE)-lunchIn(fE,sS));
+  const[nS1,nE1]=place(fS,work(sS,sE));       // 뒤에 있던 계획이 앞 자리로
+  const[nS2,nE2]=place(nE1+gap,work(fS,fE)); // 앞에 있던 계획이 그 뒤로
+  return[
+    {plan:second,start_at:new Date(nS1).toISOString(),end_at:new Date(nE1).toISOString()},
+    {plan:first,start_at:new Date(nS2).toISOString(),end_at:new Date(nE2).toISOString()}
+  ];
+}
+
 function OrderShortagePanel({adminHash,items,lines,plans,settings,invData,onAddPlan}){
   const[data,setData]=useState(null); // {orders, products, linkMissing} | {error}
   const[rates,setRates]=useState({});
@@ -4842,11 +4930,20 @@ function PlansTab({adminHash}){
     }catch(e){alert("삭제 실패: "+e.message)}
   };
 
-  const movePlan=async(p,direction)=>{
+  const[swapTimes,setSwapTimes]=useState(()=>{try{return localStorage.getItem("aps-swap-times")!=="0"}catch(e){return true}});
+  useEffect(()=>{try{localStorage.setItem("aps-swap-times",swapTimes?"1":"0")}catch(e){}},[swapTimes]);
+  const movePlan=async(p,direction,neighbor)=>{
     try{
       await rpc("aps_move_plan_order",{p_admin_hash:adminHash,p_id:p.id,p_direction:direction});
+      const sw=swapTimes?swapPlanTimes(p,neighbor,settings):null;
+      if(sw){
+        for(const{plan:q,start_at,end_at} of sw){
+          await rpc("aps_upsert_plan",{p_admin_hash:adminHash,p_id:q.id,p_item_id:q.item_id,p_line_id:q.line_id,p_qty:q.qty,
+            p_start_at:start_at,p_end_at:end_at,p_status:q.status,p_memo:q.memo||""});
+        }
+      }
       load();
-    }catch(e){alert("순서 변경 실패: "+e.message)}
+    }catch(e){alert("순서 변경 실패: "+e.message);load()}
   };
 
   // 생산계획 PNG 저장 (전용 오프스크린 ExportPlansView 렌더 → html2canvas 캡처)
@@ -5105,6 +5202,10 @@ function PlansTab({adminHash}){
         <div className="aps-list-main">
         {listFiltered.length===0?
         <Empty emoji="📅" text={plans.length===0?"생산계획이 없습니다. 우측 상단에서 추가하세요.":(allDates?"해당 상태의 계획이 없습니다":`${dayStr}에 해당 상태의 계획이 없습니다`)}/>:
+        <>
+        <label style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:12,color:"var(--muted)",marginBottom:6,cursor:"pointer"}} title="같은 날·둘 다 '계획' 상태일 때 ▲▼로 순서를 바꾸면 두 계획의 시간 자리도 맞바꿉니다 (각자 작업 시간·점심 반영)">
+          <input type="checkbox" checked={swapTimes} onChange={e=>setSwapTimes(e.target.checked)}/>▲▼ 순서 바꾸면 시간도 함께 바꾸기
+        </label>
         <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8}}>
         <table className="aps-table">
           <thead><tr>
@@ -5148,9 +5249,9 @@ function PlansTab({adminHash}){
                   return <tr key={p.id}>
                     <td className="center" style={{fontSize:"11px",boxShadow:`inset 6px 0 0 ${lc.base}`}}>
                       <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
-                        <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>movePlan(p,"up")} disabled={isFirst} style={{padding:"2px 8px",lineHeight:1,opacity:isFirst?0.3:1}} title="위로">▲</button>
+                        <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>movePlan(p,"up",g.plans[idx-1])} disabled={isFirst} style={{padding:"2px 8px",lineHeight:1,opacity:isFirst?0.3:1}} title="위로">▲</button>
                         <div style={{color:"var(--muted)"}}>#{p.id}</div>
-                        <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>movePlan(p,"down")} disabled={isLast} style={{padding:"2px 8px",lineHeight:1,opacity:isLast?0.3:1}} title="아래로">▼</button>
+                        <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>movePlan(p,"down",g.plans[idx+1])} disabled={isLast} style={{padding:"2px 8px",lineHeight:1,opacity:isLast?0.3:1}} title="아래로">▼</button>
                       </div>
                     </td>
                     <td>
@@ -5198,6 +5299,7 @@ function PlansTab({adminHash}){
           </tbody>
         </table>
       </div>
+        </>
         }
         </div>
       </div>
