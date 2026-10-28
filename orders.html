@@ -4692,7 +4692,7 @@ function FzOutFloorSheet({groups,date,prefix,vendor,onlyOut,locColor,print,refCb
       </div>
     </div>
     {!groups.length&&<div style={{padding:"30px 0",textAlign:"center",color:C.muted}}>선택한 생산지점이 없습니다</div>}
-    {groups.map(g=><div key={g.floor} data-shipcut="1" style={{border:"1px solid #cbd5e1",borderLeft:"6px solid #1d4ed8",borderRadius:8,marginBottom:18,overflow:"hidden"}}>
+    {groups.map(g=><div key={g.floor} data-shipcut="1" style={{border:"1px solid #cbd5e1",borderRadius:8,marginBottom:18,overflow:"hidden"}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 14px",background:"#eff6ff",borderBottom:"1px solid #cbd5e1",flexWrap:"wrap"}}>
         <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap"}}>
           <span style={{fontSize:22,fontWeight:900,color:"#1d4ed8"}}>🏭 {g.floor}</span>
