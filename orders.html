@@ -3511,7 +3511,7 @@ function ShipSheetPreview({data,date,dateTo,prefix,print,refCb}){
         </div>
         {sec.groups.map((g,gi)=>{
           const runs=runsOf(g.rows,r=>r.expiry);
-          return <div key={g.site} data-shipcut="1" data-shipsite={g.site} style={{border:"1px solid #d7dde5",borderLeft:`6px solid ${ac.main}`,borderRadius:8,marginBottom:16,overflow:"hidden"}}>
+          return <div key={g.site} data-shipcut="1" data-shipsite={g.site} style={{border:"1px solid #d7dde5",borderRadius:8,marginBottom:16,overflow:"hidden"}}>
             <div className="ol-ship-sitehd" style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 14px",background:ac.soft,borderBottom:"1px solid #d7dde5"}}>
               <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap",minWidth:0}}>
                 <span className="ol-ship-site" style={{fontSize:20,fontWeight:900,color:ac.main}}>{g.site}</span>
