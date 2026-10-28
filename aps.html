@@ -29,6 +29,7 @@
     .aps-table th.center,.aps-table td.center{text-align:center}
     .aps-input{width:100%;padding:8px 12px;border-radius:7px;border:1px solid var(--inp-bd);background:var(--inp-bg);color:var(--text);font-size:13px;outline:none;font-family:inherit;box-sizing:border-box;transition:border-color .15s}
     .aps-input:focus{border-color:rgba(6,182,212,0.4)}
+    .aps-label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:0 0 4px}
     .aps-select{padding:8px 12px;border-radius:7px;border:1px solid var(--inp-bd);background:var(--inp-bg);color:var(--text);font-size:13px;outline:none;font-family:inherit;cursor:pointer;box-sizing:border-box}
     .aps-btn{padding:8px 16px;border-radius:7px;border:none;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s}
     .aps-btn-primary{background:linear-gradient(135deg,#06b6d4,#8b5cf6);color:#fff}
@@ -3240,7 +3241,51 @@ function nthProdDayAfter(targetDay,n,prodDays){
 
 const FILL_MIN_HOURS=1;              // 여유 생산 최소 분량 (시간)
 const FILL_MIN_PART_MS=30*60*1000;   // 여유 생산이 들어갈 최소 남은 시간
-function computeAutoPlan({targetDay,items,lines,plans,invProducts,dowMap,rateByItem,settings,opts,groupByItem}){
+// ═══ 🔮 수요 (ML 예측 + 🎉 행사) ═══
+// demand = {fc:{code:{date:{qty,promo}}}, promo:{code:[{start,end,kind,mult}]}}
+// 하루 수요 = ML 예측 (있으면) → 없으면 요일 평균. 행사 기간이면 배수 곱함
+// (예측을 만든 뒤에 새로 넣은 행사만 곱함 — 예측에 이미 행사가 들어 있으면 두 번 곱하지 않음)
+function demandPromoOf(demand,code,d){
+  const arr=demand?.promo?.[code];
+  if(!arr)return null;
+  for(const p of arr)if(p.start<=d&&d<=p.end)return p;
+  return null;
+}
+function demandOn({fc,fcd,promo},d){
+  const v=fcd?.[d];
+  if(v&&!(v.promo&&!promo)){
+    let q=Number(v.qty)||0;
+    if(!v.promo&&promo?.mult)q*=promo.mult;
+    return q;
+  }
+  let q=fc?Number(fc[isoDowOf(d)]||0):0;
+  if(promo?.mult)q*=promo.mult;
+  return q;
+}
+function demandAvg(fcd){
+  const vals=Object.values(fcd||{}).filter(v=>!v.promo).map(v=>Number(v.qty)||0);
+  return vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:0;
+}
+// 행사 목록 → 품목코드별 [{start,end,kind,mult}] (배수: 직접 입력 > 그 행사 실제 > 같은 상품 지난 행사 평균)
+function buildPromoMap(promos){
+  const past={};
+  (promos||[]).forEach(p=>{if(Number(p.actual_uplift)>0)(past[p.code]=past[p.code]||[]).push(Number(p.actual_uplift))});
+  const map={};
+  (promos||[]).forEach(p=>{
+    const avg=past[p.code]?past[p.code].reduce((a,b)=>a+b,0)/past[p.code].length:null;
+    const mult=Number(p.uplift)>0?Number(p.uplift):(Number(p.actual_uplift)>0?Number(p.actual_uplift):avg);
+    (map[p.code]=map[p.code]||[]).push({id:p.id,start:String(p.start_date).slice(0,10),end:String(p.end_date).slice(0,10),kind:p.kind,mult:mult||null,
+      multSrc:Number(p.uplift)>0?"입력":(mult?"지난 행사":"")});
+  });
+  return map;
+}
+function buildForecastMap(rows){
+  const map={};
+  (rows||[]).forEach(r=>{(map[r.code]=map[r.code]||{})[String(r.date).slice(0,10)]={qty:Number(r.qty)||0,promo:!!r.promo,lo:r.qty_lo,hi:r.qty_hi,model:r.model}});
+  return map;
+}
+
+function computeAutoPlan({targetDay,items,lines,plans,invProducts,dowMap,rateByItem,settings,opts,groupByItem,demand}){
   const today=todayStr();
   const lead=Math.max(0,parseInt(opts.lead)||0);
   const cover=Math.max(1,parseInt(opts.cover)||1);
@@ -3266,10 +3311,13 @@ function computeAutoPlan({targetDay,items,lines,plans,invProducts,dowMap,rateByI
     const eligible=lineIds.filter(id=>autoLineIds.has(id));
     if(eligible.length===0){skipped.push({item:it,reason:"자동계획 허용 라인 없음",kind:"noauto"});continue}
     const fc=dowMap[it.code];
-    if(!fc||fc.slice(1).every(v=>!(v>0))){skipped.push({item:it,reason:"매출 데이터 없음",kind:"nosales"});continue}
+    const fcd=demand?.fc?.[it.code]||null; // 🔮 ML 예측 {날짜:{qty,promo}}
+    const hasDow=!!fc&&!fc.slice(1).every(v=>!(v>0));
+    if(!hasDow&&!fcd){skipped.push({item:it,reason:"매출 데이터 없음",kind:"nosales"});continue}
     if(!(it.code in stockByCode)){skipped.push({item:it,reason:"재고시트에 없음",kind:"nostock"});continue}
     const floor=opts.useSafety?Number(it.safety_stock||0):0;
-    const f=(d)=>Number(fc[isoDowOf(d)]||0);
+    const promoOf=(d)=>demandPromoOf(demand,it.code,d);
+    const f=(d)=>demandOn({fc,fcd,promo:promoOf(d)},d);
 
     // 기존 계획 입고 (계획/진행중, 종료일 기준. 오늘 이전에 끝났어야 할 계획은 지연·반영 여부를 알 수 없어 제외)
     const incoming={};
@@ -3293,8 +3341,10 @@ function computeAutoPlan({targetDay,items,lines,plans,invProducts,dowMap,rateByI
       if(firstShort===null&&stock<floor)firstShort=d;
       if(d<targetDay&&stock<0)stock=0; // 지나간 품절은 이월하지 않음 (못 판 수요)
     }
-    const avgDaily=fc.slice(1).reduce((a,b)=>a+(Number(b)||0),0)/7;
-    const base={item:it,stockNow,startStock,firstShort,avgDaily,floor,eligible,targetDemand:f(targetDay)};
+    const avgDaily=hasDow?fc.slice(1).reduce((a,b)=>a+(Number(b)||0),0)/7:demandAvg(fcd);
+    const tp=promoOf(targetDay);
+    const base={item:it,stockNow,startStock,firstShort,avgDaily,floor,eligible,targetDemand:f(targetDay),
+      targetPromo:tp?(tp.kind||"행사"):null,demandSrc:fcd&&fcd[targetDay]?"ml":"dow"};
     const rs=rateByItem[it.id];
     const rate=rs?.rate>0?rs.rate:(Number(it.units_per_hour)>0?Number(it.units_per_hour):0);
     const rateSrc=rs?.rate>0?`실적 ${rs.count}건`:"수동 입력";
@@ -3503,6 +3553,7 @@ const AI_PLAN_SYSTEM=`당신은 식육 가공 공장의 생산계획 담당자�
 - 라인 시간·점심·겹침 계산은 프로그램이 다시 하므로 시간은 제안하지 마세요.
 - 수정할 이유가 뚜렷하지 않으면 바꾸지 마세요. 제안은 많아야 10개.
 - 사용자 지시가 있으면 그것을 가장 우선하세요(예: 특정 라인을 쉬라는 지시 → line_off).
+- promotions(행사 기간·예상 배수)와 ml_forecast_daily_by_code(머신러닝 하루 판매 예측)가 있으면 요일 평균보다 우선하는 판매 근거로 쓰세요. 행사가 끝난 직후는 판매가 평소보다 줄 수 있습니다.
 - factory_rules는 생산관리자가 확정한 이 공장의 규칙입니다. 반드시 지키고, 규칙 때문에 바꾼 제안은 reason에 그 규칙을 밝히세요.
 - past_feedback은 지난 제안에 대한 관리자의 반응입니다. 관리자가 뺀(rejected) 제안과 비슷한 제안은 그 이유가 이번에 해당하지 않을 때만 하세요. 관리자가 나중에 수량을 고친 기록(edited_after)은 그쪽 수량 감각을 참고하세요.
 - reason, summary, warnings는 한국어로 짧고 구체적으로(숫자 근거 포함).
@@ -3520,7 +3571,7 @@ function aiFeedbackForPrompt(feedback){
   return rejected.concat(edited);
 }
 
-function buildAiPlanInput({base,items,lines,plans,dowMap,settings,opts,note,notes,feedback}){
+function buildAiPlanInput({base,items,lines,plans,dowMap,demand,settings,opts,note,notes,feedback}){
   const r1=(v)=>Math.round(Number(v||0)*10)/10;
   const lineName=(id)=>lines.find(l=>l.id===id)?.name||String(id);
   const plan=base.rows.map(r=>({day:r.day,item_id:r.item.id,name:r.item.name,unit:r.item.unit||"",qty:r.qty,need:r.need,
@@ -3533,6 +3584,12 @@ function buildAiPlanInput({base,items,lines,plans,dowMap,settings,opts,note,note
   const sales_by_dow={};
   codes.forEach(c=>{const f=dowMap[c];if(f)sales_by_dow[c]=f.slice(1).map(r1)});
   const daySet=new Set(base.days);
+  // 🎉 행사 + 🔮 예측 (기간 앞뒤 2주, 관련 품목만)
+  const d0=addDays(base.days[0],-3),d1=addDays(base.days[base.days.length-1],14);
+  const promotions=[];
+  codes.forEach(c=>(demand?.promo?.[c]||[]).forEach(p=>{if(p.end>=d0&&p.start<=d1)promotions.push({code:c,from:p.start,to:p.end,kind:p.kind,expected_multiplier:p.mult?r1(p.mult):null})}));
+  const forecast_daily={};
+  if(demand?.fc)codes.forEach(c=>{const f=demand.fc[c];if(!f)return;const o={};Object.keys(f).filter(d=>d>=base.days[0]&&d<=d1).sort().slice(0,21).forEach(d=>{o[d]=r1(f[d].qty)});if(Object.keys(o).length)forecast_daily[c]=o});
   const existing=plans.filter(p=>p.status!=="canceled"&&p.start_at&&daySet.has(isoToKstDateStr(p.start_at))).slice(0,60).map(p=>({
     day:isoToKstDateStr(p.start_at),line:lineName(p.line_id),item:p.item_name,qty:p.qty,
     time:fmtKstTime(p.start_at)+"~"+fmtKstTime(p.end_at),status:STATUS_LABEL[p.status]||p.status}));
@@ -3543,6 +3600,8 @@ function buildAiPlanInput({base,items,lines,plans,dowMap,settings,opts,note,note
     lines:lines.map(l=>({line_id:l.id,name:l.name,auto_plan:!!l.auto_plan})),
     draft_plan:plan,not_planned,
     sales_by_dow_mon_to_sun:sales_by_dow,
+    promotions,
+    ml_forecast_daily_by_code:demand?.fc?forecast_daily:null,
     existing_plans_in_days:existing,
     factory_rules:(notes||[]).filter(n=>n.enabled!==false).slice(0,40).map(n=>String(n.content).slice(0,300)),
     past_feedback:aiFeedbackForPrompt(feedback),
@@ -3646,7 +3705,7 @@ function RejectNoteInput({value,onChange}){
     style={{marginTop:4,width:"100%",boxSizing:"border-box",padding:"4px 8px",fontSize:11}}/>;
 }
 
-function AiReviewPanel({adminHash,base,items,lines,plans,dowMap,settings,opts,ai,setAi,off,setOff,rejNote,setRejNote}){
+function AiReviewPanel({adminHash,base,items,lines,plans,dowMap,demand,settings,opts,ai,setAi,off,setOff,rejNote,setRejNote}){
   const[notes,setNotes]=useState(null);       // 📒 공장 규칙 노트 (null = 아직/SQL 없음)
   const[notesErr,setNotesErr]=useState("");
   const[feedback,setFeedback]=useState([]);   // 📝 최근 60일 제안 기록
@@ -3707,7 +3766,7 @@ function AiReviewPanel({adminHash,base,items,lines,plans,dowMap,settings,opts,ai
     if(!base||busy)return;
     setBusy(true);setErr("");setSec(0);
     try{
-      const input=buildAiPlanInput({base,items,lines,plans,dowMap,settings,opts,note:note.trim(),notes,feedback});
+      const input=buildAiPlanInput({base,items,lines,plans,dowMap,demand,settings,opts,note:note.trim(),notes,feedback});
       const msgs=[{role:"system",content:AI_PLAN_SYSTEM},{role:"user",content:JSON.stringify(input)}];
       let raw;
       try{raw=await callAiJson(adminHash,msgs,4096,setSec)}
@@ -3821,7 +3880,7 @@ function AiReviewPanel({adminHash,base,items,lines,plans,dowMap,settings,opts,ai
 
 function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLinesChanged,onCreated,onCancel}){
   const[opts,setOpts]=useState(()=>{
-    const def={lead:2,cover:5,useSafety:true,changeoverMin:0,weeks:8,prodDays:[1,2,3,4,5],fill:true,fillDays:14,days:1,groupSimilar:true,sameChangeoverMin:0};
+    const def={lead:2,cover:5,useSafety:true,changeoverMin:0,weeks:8,prodDays:[1,2,3,4,5],fill:true,fillDays:14,days:1,groupSimilar:true,sameChangeoverMin:0,useForecast:true};
     try{return {...def,...JSON.parse(localStorage.getItem("aps-autoplan-opts-v2")||"{}")}}catch(e){return def}
   });
   useEffect(()=>{try{localStorage.setItem("aps-autoplan-opts-v2",JSON.stringify(opts))}catch(e){}},[opts]);
@@ -3829,6 +3888,9 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
   const[dow,setDow]=useState(null);       // {start,end,map:{code:[_,월..일]}}
   const[rates,setRates]=useState({});
   const[groupByItem,setGroupByItem]=useState(null); // {item_id:{id:원육 id,name}} — BOM에서 가장 많이 들어가는 원자재
+  const[fcRows,setFcRows]=useState(null);   // 🔮 aps_forecast (null = SQL 미실행/실패)
+  const[fcRun,setFcRun]=useState(null);
+  const[promoRows,setPromoRows]=useState([]); // 🎉 aps_promotions
   const[loadErr,setLoadErr]=useState("");
   const[fetching,setFetching]=useState(true);
   const[localLines,setLocalLines]=useState(lines);
@@ -3849,6 +3911,17 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
           rpc("aps_get_material_requirements",{p_admin_hash:adminHash}).catch(()=>null)
         ]);
         if(cancelled)return;
+        // 🔮 예측 + 🎉 행사 (setup_aps_forecast.sql 미실행이면 조용히 요일 평균만)
+        const t0=todayStr();
+        const[fr,fruns,prs]=await Promise.all([
+          rpc("aps_get_forecast",{p_admin_hash:adminHash,p_from:t0,p_to:addDays(t0,60)}).catch(()=>null),
+          rpc("aps_get_forecast_runs",{p_admin_hash:adminHash,p_limit:1}).catch(()=>null),
+          rpc("aps_list_promotions",{p_admin_hash:adminHash,p_from:addDays(t0,-400),p_to:addDays(t0,90)}).catch(()=>[])
+        ]);
+        if(cancelled)return;
+        setFcRows(Array.isArray(fr)?fr:null);
+        setFcRun(Array.isArray(fruns)&&fruns[0]?fruns[0]:null);
+        setPromoRows(Array.isArray(prs)?prs:[]);
         if(Array.isArray(mreq)){
           const best={};
           for(const m of mreq)for(const src of (m.sources||[])){
@@ -3878,6 +3951,10 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
     return()=>{cancelled=true};
   },[adminHash,opts.weeks]);
 
+  const demand=useMemo(()=>({
+    fc:opts.useForecast!==false&&fcRows?.length?buildForecastMap(fcRows):null,
+    promo:buildPromoMap(promoRows)
+  }),[fcRows,promoRows,opts.useForecast]);
   const isPast=dayStr<todayStr();
   const autoTriggerEnd=nthProdDayAfter(dayStr,Math.max(0,parseInt(opts.lead)||0),opts.prodDays);
   const notProdDay=!(opts.prodDays||[1,2,3,4,5]).includes(isoDowOf(dayStr));
@@ -3886,16 +3963,16 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
   const[aiRejNote,setAiRejNote]=useState({});     // 뺀 제안의 이유 {"c"+i: 문자열}
   const baseResult=useMemo(()=>{
     if(!dow||isPast)return null;
-    return computeAutoPlanRange({targetDay:dayStr,items,lines:localLines,plans,invProducts:invData?.products||[],dowMap:dow.map,rateByItem:rates,settings,opts,groupByItem});
-  },[dow,rates,groupByItem,dayStr,items,localLines,plans,invData,settings,opts,isPast]);
+    return computeAutoPlanRange({targetDay:dayStr,items,lines:localLines,plans,invProducts:invData?.products||[],dowMap:dow.map,rateByItem:rates,settings,opts,groupByItem,demand});
+  },[dow,rates,groupByItem,dayStr,items,localLines,plans,invData,settings,opts,isPast,demand]);
   const result=useMemo(()=>{
     if(!baseResult||!ai)return baseResult;
     const aiAdj={},aiLineOff={};
     ai.changes.forEach(c=>{if(!c.bad&&!aiOff.has("c"+c.i))(aiAdj[c.day]=aiAdj[c.day]||{})[c.item_id]={qty:c.qty,reason:c.reason}});
     ai.lineOff.forEach(c=>{if(!c.bad&&!aiOff.has("l"+c.i))(aiLineOff[c.day]=aiLineOff[c.day]||[]).push(c.line_id)});
     if(!Object.keys(aiAdj).length&&!Object.keys(aiLineOff).length)return baseResult;
-    return computeAutoPlanRange({targetDay:dayStr,items,lines:localLines,plans,invProducts:invData?.products||[],dowMap:dow.map,rateByItem:rates,settings,opts:{...opts,aiAdj,aiLineOff},groupByItem});
-  },[baseResult,ai,aiOff,dow,rates,groupByItem,dayStr,items,localLines,plans,invData,settings,opts]);
+    return computeAutoPlanRange({targetDay:dayStr,items,lines:localLines,plans,invProducts:invData?.products||[],dowMap:dow.map,rateByItem:rates,settings,opts:{...opts,aiAdj,aiLineOff},groupByItem,demand});
+  },[baseResult,ai,aiOff,dow,rates,groupByItem,dayStr,items,localLines,plans,invData,settings,opts,demand]);
   useEffect(()=>setUnchecked(new Set()),[result]);
 
   const toggleLine=async(l)=>{
@@ -3957,6 +4034,13 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
       <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.6,marginBottom:12}}>
         재고시트 재고 − 요일별 평균 매출 + 기존 계획으로 하루씩 재고를 예측합니다. <b>{fmtMD(addDays(dayStr,1))}~{fmtMD(autoTriggerEnd)}(생산일 {opts.lead}일)</b> 안에 재고가 {opts.useSafety?"안전재고":"0"} 아래로 떨어질 제품을 이날 생산하고, 이날부터 <b>{opts.cover}일치</b>(부족일이 더 뒤면 그날까지) 재고가 {opts.useSafety?"안전재고":"0"} 이상 유지되는 양을 만듭니다.{opts.fill?<> 그러고도 라인 시간이 남으면 <b>재고 일수가 적은 제품부터</b> 재고가 하루 평균 판매 <b>{opts.fillDays}일치</b>가 될 때까지 채웁니다(여유 생산, 1시간 이상 분량일 때만).</>:null}{opts.groupSimilar!==false?" 주 원육(BOM에서 가장 많이 들어가는 원자재)이 같은 제품은 같은 라인에 이어서 배치해 전환을 줄입니다.":""} 시간은 📈 통계 탭의 실제 생산 속도(없으면 품목의 시간당 생산량)로 계산합니다.
       </div>
+      <div style={{fontSize:12,marginBottom:10,padding:"7px 10px",borderRadius:8,background:"rgba(139,92,246,0.07)",border:"1px solid rgba(139,92,246,0.25)",lineHeight:1.6}}>
+        <b>하루 판매량 기준:</b>{" "}
+        {demand.fc?<>🔮 ML 예측 {Object.keys(demand.fc).length}개 상품{fcRun?` (${fmtKstDateTime(fcRun.run_at)} 실행 · 매출 ${fmtMD(String(fcRun.data_end).slice(0,10))}까지 학습)`:""} · 예측이 없는 상품·날짜는 요일 평균</>
+          :<>요일 평균{fcRows===null?" (🔮 예측 미설정 — setup_aps_forecast.sql)":fcRows.length===0?" (🔮 예측 아직 없음)":" (🔮 예측 끔)"}</>}
+        {(()=>{const n=Object.values(demand.promo).flat().filter(p=>p.end>=dayStr&&p.start<=addDays(dayStr,30)).length;
+          return n?<> · 🎉 앞으로 30일 행사 <b>{n}건</b> 반영</>:<> · 🎉 예정된 행사 없음</>})()}
+      </div>
 
       <div style={{display:"flex",flexWrap:"wrap",gap:"8px 16px",alignItems:"center",padding:"10px 12px",border:"1px solid var(--div2)",borderRadius:8,marginBottom:10,fontSize:12}}>
         <label style={{display:"flex",alignItems:"center",gap:6}}>생성 기간 {numIn("days",{min:1,max:20})}생산일</label>
@@ -3966,6 +4050,10 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
         <label style={{display:"flex",alignItems:"center",gap:6}}>매출 기준 최근 {numIn("weeks",{min:1,max:52})}주</label>
         <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
           <input type="checkbox" checked={!!opts.useSafety} onChange={e=>setOpt("useSafety",e.target.checked)}/> 안전재고 밑으로 떨어지면 부족
+        </label>
+        <label style={{display:"flex",alignItems:"center",gap:6,cursor:fcRows?.length?"pointer":"default",opacity:fcRows?.length?1:0.55}}
+          title={fcRows?.length?"💰 매출 → 🔮 예측 탭의 ML 예측을 하루 수요로 사용 (없는 날·상품은 요일 평균)":"아직 예측이 없습니다 — 💰 매출 → 🔮 예측 탭 안내 참고"}>
+          <input type="checkbox" disabled={!fcRows?.length} checked={opts.useForecast!==false&&!!fcRows?.length} onChange={e=>setOpt("useForecast",e.target.checked)}/> 🔮 ML 수요 예측 사용
         </label>
         <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
           <input type="checkbox" checked={!!opts.fill} onChange={e=>setOpt("fill",e.target.checked)}/> 라인이 남으면 여유 생산
@@ -4012,7 +4100,7 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
        !(invData?.products||[]).length?<div className="aps-err">재고시트가 비어 있습니다. 📋 재고 시트 탭에서 재고를 먼저 업로드하세요.</div>:
        autoLines.length===0?<div className="aps-err">자동계획을 허용한 라인이 없습니다. 위에서 라인을 눌러 허용하세요.</div>:
       <>
-        <AiReviewPanel adminHash={adminHash} base={baseResult} items={items} lines={localLines} plans={plans} dowMap={dow.map} settings={settings} opts={opts} ai={ai} setAi={setAi} off={aiOff} setOff={setAiOff} rejNote={aiRejNote} setRejNote={setAiRejNote}/>
+        <AiReviewPanel adminHash={adminHash} base={baseResult} items={items} lines={localLines} plans={plans} dowMap={dow.map} demand={demand} settings={settings} opts={opts} ai={ai} setAi={setAi} off={aiOff} setOff={setAiOff} rejNote={aiRejNote} setRejNote={setAiRejNote}/>
         {result.rows.length===0?
           <Empty emoji="✅" text={result.days.length>1?"이 기간에 자동으로 넣을 계획이 없습니다":`${dayStr}에 자동으로 넣을 계획이 없습니다`}/>:
           <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8}}>
@@ -4041,7 +4129,7 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
                     <td className="center"><input type="checkbox" checked={!unchecked.has(r.key)} onChange={()=>setUnchecked(prev=>{const n=new Set(prev);n.has(r.key)?n.delete(r.key):n.add(r.key);return n})}/></td>
                     <td><div style={{fontWeight:600}}>{r.item.name}</div><div style={{fontSize:11,color:"var(--muted)",fontFamily:"monospace"}}>{r.item.code} · {fmtNum(Math.round(r.rate*10)/10)}/시간 ({r.rateSrc})</div>{r.ai&&<div style={{fontSize:11,color:"#8b5cf6",marginTop:2}} title={r.ai.reason}>🧠 AI {r.ai.from>0?`${fmtNum(r.ai.from)} → ${fmtNum(r.need)}`:"추가"}{r.ai.reason?` · ${r.ai.reason.length>40?r.ai.reason.slice(0,40)+"…":r.ai.reason}`:""}</div>}{r.groupName&&<div style={{fontSize:11,color:"var(--text-sub)",marginTop:2}}>🥩 {r.groupName}{r.sameAsPrev&&<span style={{marginLeft:6,fontSize:10,fontWeight:700,color:"#06b6d4"}}>🔗 이어서</span>}</div>}</td>
                     <td className="right">{fmtNum(r.stockNow)}{r.startStock!==r.stockNow&&<div style={{fontSize:10,color:"var(--muted)"}}>당일 예상 {fmtNum(Math.round(r.startStock))}</div>}</td>
-                    <td className="right hide-mobile">{fmtNum(Math.round(r.avgDaily*10)/10)}<div style={{fontSize:10,color:"var(--muted)"}}>이날 {fmtNum(Math.round(r.targetDemand*10)/10)}</div></td>
+                    <td className="right hide-mobile">{fmtNum(Math.round(r.avgDaily*10)/10)}<div style={{fontSize:10,color:"var(--muted)"}}>이날 {fmtNum(Math.round(r.targetDemand*10)/10)}{r.demandSrc==="ml"?" 🔮":""}{r.targetPromo?<span style={{color:"#f59e0b",fontWeight:700}}> 🎉{r.targetPromo}</span>:null}</div></td>
                     {r.fill?
                       <td className="center"><span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:8,background:"rgba(16,185,129,0.15)",color:"#10b981"}}>여유 생산</span><div style={{fontSize:10,color:"var(--muted)",marginTop:2}}>재고 {Math.round(r.coverDays*10)/10}일치</div></td>:
                       <td className="center" style={{color:urgent?"#ef4444":"#f59e0b",fontWeight:700}}>{r.firstShort?<>{fmtMD(r.firstShort)}{urgent?" ⚠":""}</>:<span style={{color:"var(--muted)",fontWeight:500}}>–</span>}</td>}
@@ -6974,6 +7062,329 @@ function SalesDatesView({adminHash,refreshKey,onChanged}){
   </div>;
 }
 
+// ═══ 🎉 행사 관리 (setup_aps_forecast.sql) ═══
+const PROMO_KINDS=["할인","1+1","기획전","타임딜","기타"];
+function promoState(p,today){
+  const s=String(p.start_date).slice(0,10),e=String(p.end_date).slice(0,10);
+  return e<today?"past":s>today?"upcoming":"now";
+}
+function promoDays(s,e){
+  if(!s||!e)return 0;
+  return Math.round((Date.parse(e)-Date.parse(s))/86400000)+1;
+}
+function sqlMissingMsg(e,fn){
+  const m=String(e?.message||e);
+  return m.includes(fn)||m.includes("aps_promotions")||m.includes("aps_forecast")
+    ?"Supabase SQL Editor에서 setup_aps_forecast.sql 을 먼저 실행해주세요."
+    :m.slice(0,200);
+}
+
+function PromoForm({adminHash,promo,items,pastAvg,onSaved,onCancel}){
+  const[f,setF]=useState(()=>({
+    code:promo?.code||"",name:promo?.name||"",
+    start:promo?String(promo.start_date).slice(0,10):todayStr(),
+    end:promo?String(promo.end_date).slice(0,10):addDays(todayStr(),6),
+    kind:promo?.kind||"할인",
+    disc:promo?.discount_pct??"",uplift:promo?.uplift??"",memo:promo?.memo||""
+  }));
+  const[q,setQ]=useState("");
+  const[err,setErr]=useState("");
+  const[saving,setSaving]=useState(false);
+  const set=(k,v)=>setF(o=>({...o,[k]:v}));
+  const products=useMemo(()=>(items||[]).filter(it=>it.type!=="material"&&it.code)
+    .sort((a,b)=>String(a.name).localeCompare(String(b.name),"ko")),[items]);
+  const shown=useMemo(()=>{
+    const k=q.trim().toLowerCase();
+    const list=k?products.filter(it=>(it.name+" "+it.code).toLowerCase().includes(k)):products;
+    return list.slice(0,200);
+  },[products,q]);
+  const days=promoDays(f.start,f.end);
+  const past=pastAvg[f.code];
+  const save=async()=>{
+    setErr("");
+    if(!f.code.trim())return setErr("상품을 고르세요");
+    if(!f.start||!f.end||f.end<f.start)return setErr("기간을 확인하세요 (끝 날짜가 시작보다 빠름)");
+    const up=f.uplift===""?null:Number(f.uplift);
+    if(up!=null&&!(up>0))return setErr("예상 배수는 0보다 커야 합니다 (예: 2 = 평소의 2배)");
+    setSaving(true);
+    try{
+      await rpc("aps_upsert_promotion",{p_admin_hash:adminHash,p_id:promo?.id??null,p_code:f.code.trim(),p_name:f.name,
+        p_start:f.start,p_end:f.end,p_kind:f.kind,p_discount_pct:f.disc===""?null:Number(f.disc),p_uplift:up,p_memo:f.memo});
+      onSaved();
+    }catch(e){setErr(sqlMissingMsg(e,"aps_upsert_promotion"));setSaving(false)}
+  };
+  return <div className="aps-modal-bg" onClick={onCancel}>
+    <div className="aps-modal" onClick={e=>e.stopPropagation()} style={{maxWidth:560}}>
+      <div style={{fontWeight:700,fontSize:16,marginBottom:12}}>🎉 {promo?"행사 수정":"행사 추가"}</div>
+      <label className="aps-label">상품</label>
+      {f.code?<div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,padding:"8px 10px",border:"1px solid #f59e0b",borderRadius:8,background:"rgba(245,158,11,0.08)"}}>
+        <b>{f.name||f.code}</b><span style={{fontSize:11,color:"var(--muted)"}}>{f.code}</span>
+        <div style={{flex:1}}></div>
+        <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>{set("code","");set("name","")}}>다시 고르기</button>
+      </div>:<>
+        <input className="aps-input" placeholder="상품명·코드 검색" value={q} onChange={e=>setQ(e.target.value)} autoFocus style={{marginBottom:6}}/>
+        <div style={{maxHeight:180,overflowY:"auto",border:"1px solid var(--div2)",borderRadius:8,marginBottom:8}}>
+          {shown.length===0&&<div style={{padding:10,fontSize:12,color:"var(--muted)"}}>검색 결과 없음</div>}
+          {shown.map(it=><div key={it.id} onClick={()=>setF(o=>({...o,code:it.code,name:it.name}))}
+            style={{padding:"6px 10px",cursor:"pointer",fontSize:13,borderBottom:"1px solid var(--div2)",display:"flex",gap:8}}>
+            <span>{it.name}</span><span style={{color:"var(--muted)",fontSize:11}}>{it.code}</span>
+            {pastAvg[it.code]&&<span style={{marginLeft:"auto",fontSize:11,color:"#f59e0b"}}>지난 행사 ×{pastAvg[it.code].toFixed(1)}</span>}
+          </div>)}
+        </div>
+      </>}
+      <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+        <div style={{flex:"1 1 140px"}}><label className="aps-label">시작</label><input className="aps-input" type="date" value={f.start} onChange={e=>set("start",e.target.value)}/></div>
+        <div style={{flex:"1 1 140px"}}><label className="aps-label">끝 (마지막 날 포함)</label><input className="aps-input" type="date" value={f.end} onChange={e=>set("end",e.target.value)}/></div>
+      </div>
+      <div style={{fontSize:12,color:"var(--muted)",margin:"4px 0 10px"}}>{days>0?`${days}일 · ${fmtMDDow(f.start)} ~ ${fmtMDDow(f.end)}`:"기간을 확인하세요"}</div>
+      <label className="aps-label">종류</label>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+        {PROMO_KINDS.map(k=><button key={k} type="button" onClick={()=>set("kind",k)}
+          className={"aps-btn aps-btn-sm "+(f.kind===k?"":"aps-btn-secondary")}>{k}</button>)}
+      </div>
+      <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+        <div style={{flex:"1 1 140px"}}><label className="aps-label">할인율 % (선택)</label>
+          <input className="aps-input" type="number" min="0" max="100" value={f.disc} onChange={e=>set("disc",e.target.value)} placeholder="예: 20"/></div>
+        <div style={{flex:"1 1 180px"}}><label className="aps-label">예상 배수 (선택)</label>
+          <input className="aps-input" type="number" min="0" step="0.1" value={f.uplift} onChange={e=>set("uplift",e.target.value)}
+            placeholder={past?`비우면 지난 행사 실제 ×${past.toFixed(1)}`:"예: 2 = 평소의 2배"}/></div>
+      </div>
+      <div style={{fontSize:11,color:"var(--muted)",lineHeight:1.6,margin:"4px 0 10px"}}>
+        예상 배수를 비워 두면 이 상품의 지난 행사 실제 효과를 쓰고, 그것도 없으면 머신러닝이 다른 상품 행사에서 배운 효과를 씁니다. 행사가 끝나면 실제 몇 배 팔렸는지 자동으로 계산돼 표에 나옵니다.
+      </div>
+      <label className="aps-label">메모</label>
+      <input className="aps-input" value={f.memo} onChange={e=>set("memo",e.target.value)} placeholder="예: 쿠팡 기획전, 와우 전용"/>
+      {err&&<div style={{color:"#ef4444",fontSize:12,marginTop:8}}>{err}</div>}
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
+        <button className="aps-btn aps-btn-secondary" onClick={onCancel}>취소</button>
+        <button className="aps-btn" onClick={save} disabled={saving}>{saving?"저장 중...":"저장"}</button>
+      </div>
+    </div>
+  </div>;
+}
+
+function PromotionsView({adminHash}){
+  const[promos,setPromos]=useState([]);
+  const[items,setItems]=useState([]);
+  const[err,setErr]=useState("");
+  const[loading,setLoading]=useState(true);
+  const[editing,setEditing]=useState(null); // null | {} (new) | promo
+  const[filter,setFilter]=useState("active");
+  const[q,setQ]=useState("");
+  const[askDel,setAskDel]=useState(null);
+  const today=todayStr();
+  const load=useCallback(async()=>{
+    setLoading(true);setErr("");
+    try{
+      const[p,it]=await Promise.all([
+        rpc("aps_list_promotions",{p_admin_hash:adminHash,p_from:null,p_to:null}),
+        rpc("aps_list_items",{p_admin_hash:adminHash}).catch(()=>[])
+      ]);
+      setPromos(Array.isArray(p)?p:[]);setItems(Array.isArray(it)?it:[]);
+    }catch(e){setErr(sqlMissingMsg(e,"aps_list_promotions"))}
+    setLoading(false);
+  },[adminHash]);
+  useEffect(()=>{load()},[load]);
+  const pastAvg=useMemo(()=>{
+    const g={};promos.forEach(p=>{if(Number(p.actual_uplift)>0)(g[p.code]=g[p.code]||[]).push(Number(p.actual_uplift))});
+    const o={};Object.keys(g).forEach(c=>{o[c]=g[c].reduce((a,b)=>a+b,0)/g[c].length});return o;
+  },[promos]);
+  const counts=useMemo(()=>{
+    const c={now:0,upcoming:0,past:0};promos.forEach(p=>c[promoState(p,today)]++);return c;
+  },[promos,today]);
+  const shown=useMemo(()=>{
+    const k=q.trim().toLowerCase();
+    const order={now:0,upcoming:1,past:2};
+    return promos.filter(p=>{
+      const st=promoState(p,today);
+      if(filter==="active"&&st==="past")return false;
+      if(filter==="past"&&st!=="past")return false;
+      return !k||(String(p.name)+" "+p.code+" "+(p.memo||"")+" "+p.kind).toLowerCase().includes(k);
+    }).sort((a,b)=>{
+      const sa=promoState(a,today),sb=promoState(b,today);
+      if(sa!==sb)return order[sa]-order[sb];
+      return sa==="past"?String(b.start_date).localeCompare(String(a.start_date)):String(a.start_date).localeCompare(String(b.start_date));
+    });
+  },[promos,filter,q,today]);
+  const del=async(p)=>{
+    try{await rpc("aps_delete_promotion",{p_admin_hash:adminHash,p_id:p.id});setAskDel(null);load()}
+    catch(e){setErr(sqlMissingMsg(e,"aps_delete_promotion"))}
+  };
+  const ST={now:{t:"진행 중",c:"#22c55e"},upcoming:{t:"예정",c:"#f59e0b"},past:{t:"끝남",c:"var(--muted)"}};
+  return <div>
+    <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.6,marginBottom:10,padding:"8px 12px",border:"1px solid var(--div2)",borderRadius:8}}>
+      행사(할인·1+1·기획전 등)가 들어가는 상품과 기간을 적어 두면 🔮 수요 예측과 🤖 자동 생성이 그 기간 판매가 늘어나는 걸 반영합니다.
+      행사 기간 판매는 평소 평균에서 빠지므로 평소 기준도 덜 흔들립니다. 행사가 끝나면 <b>실제 몇 배 팔렸는지</b>가 다음 예측 때 자동 계산됩니다.
+    </div>
+    <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:10}}>
+      <button className="aps-btn" onClick={()=>setEditing({})}>+ 행사 추가</button>
+      <div className="aps-view-toggle">
+        <button className={filter==="active"?"on":""} onClick={()=>setFilter("active")}>진행·예정 {counts.now+counts.upcoming}</button>
+        <button className={filter==="past"?"on":""} onClick={()=>setFilter("past")}>지난 행사 {counts.past}</button>
+        <button className={filter==="all"?"on":""} onClick={()=>setFilter("all")}>전체 {promos.length}</button>
+      </div>
+      <input className="aps-input" placeholder="상품·메모 검색" value={q} onChange={e=>setQ(e.target.value)} style={{width:180,padding:"6px 10px"}}/>
+    </div>
+    {err&&<div style={{color:"#ef4444",fontSize:13,marginBottom:10}}>{err}</div>}
+    {loading?<div style={{padding:20,color:"var(--muted)"}}>불러오는 중...</div>
+    :shown.length===0?<div style={{padding:24,textAlign:"center",color:"var(--muted)",border:"1px dashed var(--div2)",borderRadius:10}}>
+      {promos.length===0?"등록된 행사가 없습니다. + 행사 추가로 시작하세요.":"조건에 맞는 행사가 없습니다."}</div>
+    :<div style={{overflowX:"auto"}}><table className="aps-table" style={{minWidth:760}}>
+      <thead><tr><th>상태</th><th>상품</th><th>기간</th><th>종류</th><th className="right">예상 배수</th><th className="right" title="행사 기간 판매 ÷ 행사 전 평소 같은 요일 평균">실제 효과</th><th>메모</th><th></th></tr></thead>
+      <tbody>{shown.map(p=>{
+        const st=promoState(p,today);
+        const s=String(p.start_date).slice(0,10),e=String(p.end_date).slice(0,10);
+        return <tr key={p.id} style={{opacity:st==="past"?0.8:1}}>
+          <td><span style={{fontSize:11,fontWeight:700,color:ST[st].c,whiteSpace:"nowrap"}}>● {ST[st].t}</span></td>
+          <td><div style={{fontWeight:600}}>{p.name||p.code}</div><div style={{fontSize:11,color:"var(--muted)"}}>{p.code}</div></td>
+          <td style={{whiteSpace:"nowrap"}}>{fmtMDDow(s)} ~ {fmtMDDow(e)}<div style={{fontSize:11,color:"var(--muted)"}}>{promoDays(s,e)}일{st==="upcoming"?` · ${promoDays(today,s)-1}일 뒤 시작`:""}</div></td>
+          <td>{p.kind}{p.discount_pct!=null&&<div style={{fontSize:11,color:"var(--muted)"}}>{Number(p.discount_pct)}% 할인</div>}</td>
+          <td className="right">{Number(p.uplift)>0?<b>×{Number(p.uplift).toFixed(1)}</b>:<span style={{fontSize:11,color:"var(--muted)"}}>{pastAvg[p.code]?`자동 ×${pastAvg[p.code].toFixed(1)}`:"자동"}</span>}</td>
+          <td className="right">{Number(p.actual_uplift)>0?<><b style={{color:Number(p.actual_uplift)>=1?"#22c55e":"#ef4444"}}>×{Number(p.actual_uplift).toFixed(2)}</b><div style={{fontSize:10,color:"var(--muted)"}}>{p.actual_days}일 기준</div></>
+            :<span style={{fontSize:11,color:"var(--muted)"}}>{st==="upcoming"?"–":"계산 대기"}</span>}</td>
+          <td style={{fontSize:12,maxWidth:180}}>{p.memo}</td>
+          <td style={{whiteSpace:"nowrap",textAlign:"right"}}>
+            {askDel===p.id?<>
+              <span style={{fontSize:12,marginRight:6}}>삭제할까요?</span>
+              <button className="aps-btn aps-btn-danger aps-btn-sm" onClick={()=>del(p)}>삭제</button>{" "}
+              <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>setAskDel(null)}>취소</button>
+            </>:<>
+              <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>setEditing(p)}>수정</button>{" "}
+              <button className="aps-btn aps-btn-danger aps-btn-sm" onClick={()=>setAskDel(p.id)}>삭제</button>
+            </>}
+          </td>
+        </tr>;
+      })}</tbody>
+    </table></div>}
+    {editing&&<PromoForm adminHash={adminHash} promo={editing.id?editing:null} items={items} pastAvg={pastAvg}
+      onSaved={()=>{setEditing(null);load()}} onCancel={()=>setEditing(null)}/>}
+  </div>;
+}
+
+// ═══ 🔮 수요 예측 보기 (forecast_aps.py → aps_forecast) ═══
+const fmtPct=(v)=>v==null?"–":(v*100).toFixed(1)+"%";
+const fmtFc=(v)=>{const n=Number(v)||0;return n>=10?String(Math.round(n)):(Math.round(n*10)/10).toString()};
+function ForecastView({adminHash}){
+  const[runs,setRuns]=useState([]);
+  const[rows,setRows]=useState([]);
+  const[err,setErr]=useState("");
+  const[loading,setLoading]=useState(true);
+  const[q,setQ]=useState("");
+  const[nDays,setNDays]=useState(14);
+  const today=todayStr();
+  useEffect(()=>{
+    let c=false;
+    (async()=>{
+      setLoading(true);setErr("");
+      try{
+        const[r,f]=await Promise.all([
+          rpc("aps_get_forecast_runs",{p_admin_hash:adminHash,p_limit:10}),
+          rpc("aps_get_forecast",{p_admin_hash:adminHash,p_from:today,p_to:addDays(today,40)})
+        ]);
+        if(c)return;
+        setRuns(Array.isArray(r)?r:[]);setRows(Array.isArray(f)?f:[]);
+      }catch(e){if(!c)setErr(sqlMissingMsg(e,"aps_get_forecast"))}
+      if(!c)setLoading(false);
+    })();
+    return()=>{c=true};
+  },[adminHash,today]);
+  const run=runs[0]||null;
+  const ev=run?.metrics?.eval||null;
+  const prodM=run?.metrics?.products||{};
+  const dates=useMemo(()=>{
+    const all=[...new Set(rows.map(r=>String(r.date).slice(0,10)))].sort();
+    return all.slice(0,nDays);
+  },[rows,nDays]);
+  const products=useMemo(()=>{
+    const g={};
+    rows.forEach(r=>{
+      const d=String(r.date).slice(0,10);
+      const o=g[r.code]=g[r.code]||{code:r.code,name:r.name,by:{},ml:0,n:0};
+      o.by[d]=r;if(r.model==="ml")o.ml++;o.n++;
+    });
+    const k=q.trim().toLowerCase();
+    return Object.values(g).map(o=>{
+      let sum=0,base=0,promo=false;
+      dates.forEach(d=>{const r=o.by[d];if(r){sum+=Number(r.qty)||0;base+=Number(r.base)||0;if(r.promo)promo=true}});
+      return {...o,sum,base,promo,model:o.ml>o.n/2?"ml":"base"};
+    }).filter(o=>!k||(o.name+" "+o.code).toLowerCase().includes(k)).sort((a,b)=>b.sum-a.sum);
+  },[rows,dates,q]);
+
+  if(loading)return <div style={{padding:20,color:"var(--muted)"}}>불러오는 중...</div>;
+  if(err)return <div style={{color:"#ef4444",fontSize:13,padding:12}}>{err}</div>;
+  if(!run)return <div style={{padding:16,border:"1px dashed var(--div2)",borderRadius:10,fontSize:13,lineHeight:1.8}}>
+    <b>🔮 아직 예측이 만들어지지 않았습니다.</b><br/>
+    예측은 매일 새벽 5:30에 GitHub에서 자동으로 돌아갑니다(매출 데이터로 머신러닝 모델을 학습). 지금 바로 만들려면:<br/>
+    1. GitHub 저장소 → <b>Actions</b> 탭 → <b>APS 수요 예측</b> → <b>Run workflow</b><br/>
+    2. 2~3분 뒤 이 화면을 새로고침
+  </div>;
+
+  const improve=ev&&ev.base>0&&ev.final!=null?(ev.base-ev.final)/ev.base:null;
+  const card=(t,v,sub,color)=><div style={{flex:"1 1 170px",padding:"10px 12px",border:"1px solid var(--div2)",borderRadius:10}}>
+    <div style={{fontSize:11,color:"var(--muted)",fontWeight:600}}>{t}</div>
+    <div style={{fontSize:20,fontWeight:800,marginTop:4,color:color||"var(--text)"}}>{v}</div>
+    {sub&&<div style={{fontSize:11,color:"var(--muted)",marginTop:2,lineHeight:1.5}}>{sub}</div>}
+  </div>;
+  return <div>
+    <div style={{fontSize:12,color:"var(--muted)",marginBottom:10,lineHeight:1.6}}>
+      마지막 예측 <b>{fmtKstDateTime(run.run_at)}</b> · 매출 {String(run.data_start).slice(0,10)} ~ <b>{String(run.data_end).slice(0,10)}</b> ({run.n_days}일) 학습 · 상품 {run.n_products}개
+      {run.metrics?.learned_promos?` · 지난 행사 ${run.metrics.learned_promos}건 효과 학습`:""}
+      {run.status!=="ok"&&<div style={{color:"#f59e0b",fontWeight:600}}>⚠ {run.message||"ML 대신 요일 평균(행사 반영)으로 예측했습니다"}</div>}
+      {String(run.data_end).slice(0,10)<addDays(today,-3)&&<div style={{color:"#f59e0b"}}>⚠ 최근 매출이 업로드되지 않았습니다 — 매출을 올리면 다음 예측부터 반영됩니다</div>}
+    </div>
+    {ev&&<>
+      <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:6}}>
+        {card("기존 방식 오차 (요일 평균)",fmtPct(ev.base),`${fmtMD(ev.from)}~${fmtMD(ev.to)}을 모르는 척 맞혀본 결과`)}
+        {card("새 예측 오차",fmtPct(ev.final),improve!=null?(improve>0?`기존보다 ${(improve*100).toFixed(0)}% 덜 틀림`:"기존 방식과 비슷하거나 더 틀림 — 데이터가 더 쌓이면 나아집니다"):null,improve>0?"#22c55e":"#f59e0b")}
+        {ev.promo&&card("행사일 오차",`${fmtPct(ev.promo.base)} → ${fmtPct(ev.promo.final)}`,`행사일 ${ev.promo_n}건 (기존 → 새 예측)`,ev.promo.final<ev.promo.base?"#22c55e":"#f59e0b")}
+        {card("범위 안에 든 비율",ev.coverage!=null?Math.round(ev.coverage*100)+"%":"–","실제 판매가 '적게~많이' 범위 안에 든 비율 (목표 70%)")}
+      </div>
+      <div style={{fontSize:11,color:"var(--muted)",marginBottom:12,lineHeight:1.6}}>
+        오차 = 날짜·상품마다 |예측 − 실제|를 더해 실제 판매 합계로 나눈 값 (낮을수록 정확). 상품마다 지난 4주 시험에서 더 정확했던 쪽(🔮 ML / 📊 요일 평균)을 씁니다.
+        {runs.length>1&&<> · 최근 실행 오차: {runs.slice(0,6).reverse().map(r=>r.metrics?.eval?.final!=null?fmtPct(r.metrics.eval.final):"–").join(" → ")}</>}
+      </div>
+    </>}
+    <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
+      <input className="aps-input" placeholder="상품 검색" value={q} onChange={e=>setQ(e.target.value)} style={{width:180,padding:"6px 10px"}}/>
+      <div className="aps-view-toggle">
+        {[7,14,28].map(n=><button key={n} className={nDays===n?"on":""} onClick={()=>setNDays(n)}>{n}일</button>)}
+      </div>
+      <span style={{fontSize:11,color:"var(--muted)"}}>단위: 박스 · <span style={{background:"rgba(245,158,11,0.18)",padding:"0 4px",borderRadius:3}}>주황</span> = 행사일 · 숫자에 마우스를 올리면 적게~많이 범위</span>
+    </div>
+    {products.length===0?<div style={{padding:20,color:"var(--muted)"}}>표시할 예측이 없습니다 (예측 날짜가 모두 지났으면 매출을 올리고 예측을 다시 돌려주세요)</div>
+    :<div style={{overflowX:"auto",border:"1px solid var(--div2)",borderRadius:8}}>
+      <table className="aps-table" style={{minWidth:420+dates.length*44,margin:0}}>
+        <thead><tr>
+          <th style={{position:"sticky",left:0,background:"var(--bg)",zIndex:1,minWidth:170}}>상품</th>
+          <th className="right" title={`${dates.length}일 합계`}>{dates.length}일 합</th>
+          <th className="right" title="기존 방식(최근 8주 같은 요일 평균) 합계">기존</th>
+          {dates.map(d=>{const w=isoDowOf(d);return <th key={d} className="right" style={{fontSize:10,whiteSpace:"nowrap",color:w===7?"#ef4444":w===6?"#3b82f6":undefined}}>{fmtMD(d)}<br/>{DOW_LABEL[w-1]}</th>})}
+        </tr></thead>
+        <tbody>{products.map(o=>{
+          const m=prodM[o.code];
+          const diff=o.base>0?(o.sum-o.base)/o.base:null;
+          return <tr key={o.code}>
+            <td style={{position:"sticky",left:0,background:"var(--bg)",zIndex:1}}>
+              <div style={{fontWeight:600,fontSize:13}}>{o.name||o.code}{o.promo&&<span style={{color:"#f59e0b",fontSize:11}}> 🎉</span>}</div>
+              <div style={{fontSize:10,color:"var(--muted)"}} title={m?`지난 4주 시험 오차 — ML ${fmtPct(m.ml)} · 요일평균(행사반영) ${fmtPct(m.clean)} · 기존 ${fmtPct(m.base)}`:""}>
+                {o.code} · {o.model==="ml"?"🔮 ML":"📊 평균"}{m?` · 오차 ${fmtPct(o.model==="ml"?m.ml:m.clean)}`:""}
+              </div>
+            </td>
+            <td className="right"><b>{fmtFc(o.sum)}</b></td>
+            <td className="right" style={{fontSize:12,color:"var(--muted)"}}>{fmtFc(o.base)}{diff!=null&&Math.abs(diff)>=0.1&&<div style={{fontSize:10,color:diff>0?"#22c55e":"#ef4444"}}>{diff>0?"▲":"▼"}{Math.abs(diff*100).toFixed(0)}%</div>}</td>
+            {dates.map(d=>{const r=o.by[d];
+              if(!r)return <td key={d}></td>;
+              const v=Number(r.qty)||0;
+              return <td key={d} className="right" title={`${fmtMDDow(d)} 예상 ${fmtFc(v)} (적게 ${fmtFc(r.qty_lo)} ~ 많이 ${fmtFc(r.qty_hi)})${r.promo?" · 🎉 행사":""} · 기존 ${fmtFc(r.base)}`}
+                style={{fontSize:12,background:r.promo?"rgba(245,158,11,0.18)":undefined,color:v<0.05?"var(--dimmer)":undefined,fontWeight:r.promo?700:400}}>{v<0.05?"·":fmtFc(v)}</td>;
+            })}
+          </tr>;
+        })}</tbody>
+      </table>
+    </div>}
+  </div>;
+}
+
 function SalesTab({adminHash}){
   const[busy,setBusy]=useState(false);
   const[err,setErr]=useState("");
@@ -6985,7 +7396,7 @@ function SalesTab({adminHash}){
   const[matchedOnly,setMatchedOnly]=useState(false); // 재고시트 매칭만
   const[sortKey,setSortKey]=useState("avg");         // avg | code | shortage | stock
   const[inv,setInv]=useState(()=>loadStoredInventory());
-  const[salesView,setSalesView]=useState(()=>{try{return localStorage.getItem("aps-sales-view")==="date"?"date":"item"}catch(e){return "item"}});
+  const[salesView,setSalesView]=useState(()=>{try{const v=localStorage.getItem("aps-sales-view");return ["date","promo","forecast"].includes(v)?v:"item"}catch(e){return "item"}});
   useEffect(()=>{try{localStorage.setItem("aps-sales-view",salesView)}catch(e){}},[salesView]);
   const[expanded,setExpanded]=useState(null);   // 주×요일 표를 펼친 상품코드
   const[dowWeeks,setDowWeeks]=useState(()=>loadAutoPlanWeeks());
@@ -7231,6 +7642,8 @@ function SalesTab({adminHash}){
       <div className="aps-view-toggle">
         <button className={salesView==="item"?"on":""} onClick={()=>setSalesView("item")}>📦 상품별</button>
         <button className={salesView==="date"?"on":""} onClick={()=>setSalesView("date")}>📅 날짜별</button>
+        <button className={salesView==="promo"?"on":""} onClick={()=>setSalesView("promo")}>🎉 행사</button>
+        <button className={salesView==="forecast"?"on":""} onClick={()=>setSalesView("forecast")}>🔮 예측</button>
       </div>
       {salesView==="item"&&<span style={{fontSize:12,color:"var(--muted)",display:"flex",alignItems:"center",gap:6}}>
         상품을 누르면 주×요일 매출표가 열립니다 · 요일 평균 기준
@@ -7241,7 +7654,7 @@ function SalesTab({adminHash}){
       </span>}
     </div>
 
-    {salesView==="date"?<SalesDatesView adminHash={adminHash} refreshKey={refreshKey} onChanged={loadAll}/>:<>
+    {salesView==="promo"?<PromotionsView adminHash={adminHash}/>:salesView==="forecast"?<ForecastView adminHash={adminHash}/>:salesView==="date"?<SalesDatesView adminHash={adminHash} refreshKey={refreshKey} onChanged={loadAll}/>:<>
     {/* 필터 / 정렬 툴바 */}
     <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:10}}>
       <div style={{display:"flex",gap:4,alignItems:"center"}}>

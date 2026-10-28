@@ -1381,6 +1381,24 @@
 - 운영 순서: (1) Supabase에서 `setup_aps_ai.sql` 실행 → (2) console.groq.com에서 API 키 발급(크롤러용 GROQ_API_KEY 재사용 가능) → (3) 📅 생산계획 → 🤖 자동 생성 → 🧠 AI 검토에 키 저장 → 요청
 - 한계: Groq 무료 한도(분당·일당 토큰)를 넘으면 429 안내. 품목이 매우 많으면 제외 목록은 40개까지만 보냄. 회의록·발주서·로스 데이터는 아직 AI에 안 보냄(필요하면 "추가 지시"에 적기). 나중에 Claude/GPT로 바꾸려면 `aps_ai_request`의 URL·모델만 교체
 
+### APS — 🎉 행사 관리 + 🔮 수요 예측 머신러닝 (2026-10-28)
+- 사용자 요청: 상황을 학습해 계획을 짜는 관리 AI의 1단계로 수요 예측 ML + 제품별 행사 입력 ("행사 품목 때문에 표준편차가 커진다")
+- **`setup_aps_forecast.sql`** (신규, 1회 실행): `aps_promotions`(code·name·start/end_date·kind·discount_pct·uplift(예상 배수, NULL=자동)·memo·actual_uplift/actual_days(스크립트가 채움)), `aps_forecast`(date·code PK, qty·qty_lo·qty_hi(하위/상위 15%)·base(기존 요일 평균)·promo·model ml|base·run_id), `aps_forecast_runs`(실행 기록 + metrics JSONB). 모두 RLS + 정책 없음. RPC `aps_list_promotions`/`aps_upsert_promotion`/`aps_delete_promotion`/`aps_get_forecast(from,to)`/`aps_get_forecast_runs(limit)` (모두 `aps_assert_admin`). 쓰기는 GitHub Actions가 service key로 직접
+- **`forecast_aps.py`** + **`.github/workflows/forecast.yml`**(매일 KST 05:30 + 수동 Run workflow, `SUPABASE_URL`/`SUPABASE_KEY` 기존 Secrets 사용, pip: requests numpy pandas lightgbm holidays):
+  - 매출 업로드된 날만 학습(업로드됐는데 안 팔림 = 0, 파일 없는 날 = 제외). 최근 90일 판매 있는 상품만 예측, 마지막 매출일 다음날부터 28일
+  - **평소 기준 = 행사일 + 설날·추석 2주 전~5일 뒤를 뺀 날** — 합성 데이터 시험에서 추석 대목·행사가 평소 평균을 부풀려 행사 배수가 두 번 곱해지던 문제 발견 후 도입
+  - LightGBM(native API, scikit-learn 불필요) 한 모델로 전 상품 학습: 목표 = 판매 ÷ 평소 28일 평균(스케일), 가중치 = 스케일. 특징: 며칠 뒤(h), 요일, 같은 요일 평균(전체/평소), 14·28일 평균, 표준편차, 마지막 값, 최근 행사 비율, 행사 여부·며칠째·길이·할인율·종류·배수 힌트, 공휴일·전날/다음날(3일), 설날·추석까지/이후 일수(21일), 판매 기간. **상품코드·일·월은 뺌**(`FC_DROP`, 몇 달 데이터로는 외워버림 — 시험에서 확인)
+  - 행사 배수 힌트 = 직접 입력 → 같은 상품 지난 행사 실제 배수 평균 → 전체 중간값. 실제 배수 = 행사 기간 판매 ÷ 행사 직전 평소 같은 요일 평균 → `aps_promotions.actual_uplift`에 기록
+  - 정확도 비교: 마지막 4주를 모르는 척 1~14일 앞을 맞혀 오차율(Σ|예측−실제|÷Σ실제) — 기존(8주 요일 평균) / 행사반영 평균 / ML. 상품마다 ML과 행사반영 평균 중 더 정확한 쪽 사용(`model`). 행사 학습 데이터 30건 미만이면 행사일은 평균×배수. 매출 35일 미만·lightgbm 없음 → 행사반영 평균만(`baseline_only`)
+  - 범위(qty_lo/hi) = 분위수 모델(0.15/0.85). 한 번도 업로드 안 된 요일(일요일 등)은 0. 실행 기록 60개 보관
+  - 로컬 시험: `python forecast_aps.py --csv sales.csv --promos promos.csv --dry-run`
+- **합성 데이터 시험 결과**(40상품 · 6/1~10/27 · 월~토 · 추석 · 행사 27건): 노이즈 작은 데이터 오차 기존 38.3% → 31.8%, 행사일 52.9% → 23.3% / 노이즈 큰 데이터 67.2% → 60.8%(행사일은 오히려 나빠짐 — 하루 4박스 수준 상품은 운이 지배). **실제 매출로는 아직 미실행**
+- **aps.html**: 💰 매출 탭 보기에 `🎉 행사`(`PromotionsView` — 진행·예정/지난 필터, 실제 효과 ×N 표시, `PromoForm` 상품 검색·기간·종류 칩·할인율·예상 배수, 삭제는 그 자리 확인) / `🔮 예측`(`ForecastView` — 마지막 실행·학습 기간, 기존 vs 새 예측 오차·행사일 오차·범위 적중률 카드, 최근 실행 오차 추이, 상품×날짜 표 7/14/28일, 행사일 주황, 마우스 올리면 범위) 추가. localStorage `aps-sales-view`에 promo/forecast 허용. `.aps-label` CSS 추가
+- **🤖 자동 생성 연동**: `computeAutoPlan`에 `demand={fc,promo}` — 하루 수요 = ML 예측(`demandOn`) → 없으면 요일 평균, 행사 기간이면 배수 곱함(예측에 이미 행사가 들어 있으면 안 곱함, 예측 뒤 새로 넣은 행사만 곱함, 예측엔 행사인데 행사가 삭제됐으면 요일 평균). 매출 요일 평균이 없어도 예측 있으면 후보. 옵션 "🔮 ML 수요 예측 사용"(기본 켜짐, `opts.useForecast`), 모달에 수요 기준·실행 시각·30일 행사 건수 안내, 표 "이날 N 🔮 🎉1+1". 🧠 AI 검토 입력에 `promotions`·`ml_forecast_daily_by_code` 추가 + 시스템 지시 1줄
+- 브라우저(가짜 RPC)로 예측·행사 화면, 행사 저장 호출, 수요 계산, 자동 생성(예측·행사 있을 때 70/39박스, 없을 때 0) 확인. 실제 DB·Actions 실행은 미확인
+- 운영 순서: (1) Supabase에서 `setup_aps_forecast.sql` 실행 → (2) 커밋·푸시 → GitHub Actions → APS 수요 예측 → Run workflow → (3) 💰 매출 → 🔮 예측에서 오차 비교 확인 → (4) 🎉 행사에 예정 행사 입력(예측은 다음 실행부터, 🤖 자동 생성은 즉시 배수 반영)
+- 한계: 추석은 1번(2026-09)만 학습 — 설날·내년 추석은 그 1번에서 추정. 행사 배수를 모르는 첫 행사는 다른 상품 평균. 새벽 실행이라 매출을 올린 당일 예측엔 반영 안 됨(수동 Run workflow). 안전재고는 아직 예측 범위(qty_hi)를 쓰지 않음(다음 단계 후보)
+
 ### APS — 생산계획 추가 시 종료 시각 자동 계산 (2026-10-28)
 - 사용자 요청: 계획 잡을 때 통계·시간당 생산량을 참고해 시간도 입력되게
 - `PlanForm`: 마운트 시 `aps_get_item_stats`(180일 + 전체) 조회 → 품목 시간당 생산량 = 최근 180일 실적 → 전체 실적 → 품목 `units_per_hour` 순(🤖 자동 생성과 같은 기준)

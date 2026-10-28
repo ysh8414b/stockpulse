@@ -1,0 +1,25 @@
+name: APS 수요 예측
+
+on:
+  schedule:
+    # 매일 한국시간 05:30 (UTC 20:30 전날) — 출근 전에 새 예측 준비
+    - cron: '30 20 * * *'
+  # 매출을 올린 직후 바로 돌리고 싶을 때: Actions 탭 → APS 수요 예측 → Run workflow
+  workflow_dispatch:
+
+jobs:
+  forecast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: 패키지 설치
+        run: pip install requests numpy pandas lightgbm holidays
+      - name: 예측 실행
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python forecast_aps.py
