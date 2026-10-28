@@ -1560,7 +1560,10 @@ function ExtensionHelp({ext,onClose}){
   };
   return <div>
     <h3 style={{margin:"0 0 10px",fontSize:17}}>🧩 쿠팡 가격 갱신·시장조사 확장 프로그램</h3>
-    {ext?<div className="ol-ok">✓ 설치되어 있습니다 (버전 {ext.version})</div>:
+    {ext&&verLt(ext.version,EXT_LATEST)?<div className="ol-err" style={{fontSize:14,lineHeight:1.6}}>
+        ⛔ <b>확장 프로그램이 예전 버전(v{ext.version})이라 가격 갱신을 할 수 없습니다.</b><br/>
+        아래 ① 버튼으로 새 파일(v{EXT_LATEST})을 받아 <b>원래 설치한 coupang-price 폴더에 덮어쓰고</b>, <code>chrome://extensions</code>에서 ↻(새로고침)을 누른 뒤 이 페이지를 새로고침하세요.</div>:
+     ext?<div className="ol-ok">✓ 설치되어 있습니다 (버전 {ext.version}, 최신)</div>:
       <div className="ol-warn" style={{fontSize:13}}>아직 이 브라우저에 설치되지 않았습니다 (설치했다면 이 페이지를 새로고침하세요)</div>}
     <ol style={{fontSize:13,lineHeight:1.8,paddingLeft:20,margin:"10px 0"}}>
       <li><button className="ol-btn ol-btn-primary ol-btn-sm" disabled={busy} onClick={download}>{busy?"만드는 중…":"📦 확장 프로그램 파일 받기 (zip)"}</button> → 받은 zip을 <b>압축 풀기</b> (예: 문서 폴더)</li>
@@ -1978,8 +1981,9 @@ function PriceView({adminHash}){
     window.postMessage({__olpage:true,type:"ping"},location.origin);
     return()=>window.removeEventListener("message",onMsg);
   },[]);
+  const extOld=!!ext&&verLt(ext.version,EXT_LATEST);
   const startRun=(list,prev)=>{
-    if(!ext){setShowExt(true);return}
+    if(!ext||extOld){setShowExt(true);return}
     const jobs=prev?prev.jobs.filter(j=>!prev.done[j.id]):list.filter(p=>/coupang\.com/i.test(p.coupang_url||"")).map(p=>({id:p.id,url:p.coupang_url}));
     if(!jobs.length){setMsg({t:"err",s:"쿠팡 링크가 있는 상품이 없습니다."});return}
     setRun(prev?{...prev,status:"running"}:{jobs,total:jobs.length,done:{},status:"running",currentId:null});
@@ -1993,8 +1997,7 @@ function PriceView({adminHash}){
     return own.length?own:[...new Set(runTargets.map(p=>p.vendor).filter(Boolean))];
   };
   const runFast=async()=>{
-    if(!ext){setShowExt(true);return}
-    if(verLt(ext.version,FAST_EXT_MIN)){setMsg({t:"err",s:`⚡ 빠른 확인은 확장 프로그램 v${FAST_EXT_MIN} 이상이 필요합니다 (지금 v${ext.version}) — 🧩 버튼에서 새 파일을 받아 덮어쓰고 ↻ 새로고침하세요.`});return}
+    if(!ext||extOld){setShowExt(true);return}
     const list=runTargets;
     const qs=fastQueries();
     if(!list.length||!qs.length)return;
@@ -2078,7 +2081,7 @@ function PriceView({adminHash}){
         {(sheetF!=="all"||q||onlyDisc)?"지금 보이는 상품만 갱신합니다 · ":""}예상 {Math.ceil(runTargets.length*(gap+4)/60)}분
       </span>
       <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setShowExt(true)}>{ext?`🧩 확장 v${ext.version}`:"🧩 확장 프로그램 설치"}</button>
-      {ext&&verLt(ext.version,EXT_LATEST)&&<div style={{flexBasis:"100%",fontSize:12,color:"#f59e0b"}}>⚠ 확장 프로그램이 예전 버전(v{ext.version})입니다 — 🧩 버튼에서 새 파일(v{EXT_LATEST})을 받아 같은 폴더에 덮어쓰고, 확장 프로그램 관리 화면에서 ↻ 새로고침하세요. 예전 버전은 쿠팡 차단 화면을 알아보지 못합니다.</div>}
+      {extOld&&<div style={{flexBasis:"100%",fontSize:13,color:"#ef4444",fontWeight:600}}>⛔ 확장 프로그램이 예전 버전(v{ext.version})이라 가격 갱신이 막혀 있습니다 — 🧩 버튼에서 새 파일(v{EXT_LATEST})을 받아 같은 폴더에 덮어쓰고, 확장 프로그램 관리 화면에서 ↻ 새로고침한 뒤 이 페이지를 새로고침하세요.</div>}
     </div>}
     {items.length>0&&<div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",margin:"-4px 0 12px",fontSize:12,color:"var(--muted)"}}>
       <span>⚡ 빠른 확인 검색어</span>
