@@ -1358,6 +1358,20 @@
   - 노드 검증: 1라인 5제품(원육 2종) 전환 4회 → 1회, 2라인 3회 → 0회
   - 한계: 날짜가 바뀌면 전날 마지막 원육은 이어받지 않음(매일 근무 시작부터 새로). 원육 외 기준(양념 등)은 없음
 
+### APS — 🧠 AI 검토 (자동 생성 + Groq) (2026-10-28)
+- 사용자 요청: 규칙만으로 계획을 짜는 것보다 AI가 같이 보면 더 정교해질 것 같다 → 무료인 Groq로 먼저 붙임 (Claude/GPT API는 유료)
+- 구조: **규칙 초안 → AI 검토(제안) → 사람이 고름 → 규칙이 다시 계산**. AI는 계획을 직접 저장하지 않고, 시간·라인·점심 계산은 항상 `computeAutoPlan`이 함
+- **`setup_aps_ai.sql`** (신규, 1회 실행): `pg_net` 확장 + `aps_secrets`(RLS, anon/authenticated 권한 회수) — Groq 키는 Supabase 안에만 저장(페이지 코드에 키 없음). RPC: `aps_ai_status`(키 유무·모델, 키 값은 안 돌려줌), `aps_ai_set_key`(빈 값 = 삭제), `aps_ai_request(hash, messages, max_tokens)` → `net.http_post`로 Groq `chat/completions`(기본 `llama-3.3-70b-versatile`, JSON 모드, temperature 0.2, 90초) 요청 id 반환, `aps_ai_result(hash, id)` → `net._http_response` 조회(없으면 `{pending:true}`). 모두 `aps_assert_admin` 검사. 모델 변경은 `aps_secrets`에 `groq_model` 행
+  - 비동기인 이유: Supabase anon 요청은 몇 초면 끊기므로 동기 HTTP 호출 대신 요청 id → 1.5초마다 결과 확인(최대 100초, `callAiJson`)
+- **`aps.html`**:
+  - `computeAutoPlan`에 `opts.aiAdj`(`{날짜:{품목id:{qty,reason}}}` — qty 0 = 그날 빼기, 계획에 없던 품목은 추가)와 `opts.aiLineOff`(`{날짜:[라인id]}` — 그날 자동계획에서 제외) 반영. 추가·변경 품목은 부족 생산 후보로 들어가 기존 배정·시간 검사를 그대로 거침(AI가 추가한 부족일 없는 품목은 후보 맨 뒤). 생산 속도 없는 품목은 "반영 불가", 빼기는 제외 목록 `🧠 AI 제안으로 제외`
+  - `AiReviewPanel`(자동 생성 창 결과 위, 접기 상태 localStorage `aps-ai-open`): Groq 키 등록칸(비밀번호 입력, 🔑 키 변경) / "추가 지시" 입력(예: 내일 2라인 점검, 갈비 행사) / 🧠 AI 검토 요청 → 총평·제안 목록(수량 변경·빼기·추가·라인 쉬기, 체크로 켜고 끔)·확인할 점. 표 행에 `🧠 AI 130 → 120 · 이유`
+  - `buildAiPlanInput`: 초안 행(재고·당일 예상·하루 평균·안전재고·부족일·속도), 제외 품목 최대 40개, 관련 품목 요일별 평균 판매, 기간 안 기존 계획, 근무·점심, 규칙 옵션, 사용자 지시를 JSON으로 전달. 시스템 지시에 "데이터에 없는 명절·행사·발주 지어내지 말 것, 입력에 있는 id만, 제안 10개 이하"
+  - `validateAiPlan`: 기간 밖 날짜·후보에 없는 품목·없는 라인·이상한 수량은 "반영 안 함 — 이유"로 표시만. 초안과 같은 수량 제안은 버림. AI 검토 뒤에 옵션이 바뀌면 "다시 검토하세요" 경고
+  - 가짜 데이터·가짜 AI 응답으로 계산(130→120, 빼기, 추가, 1라인 쉬기)과 화면 확인. **실제 Groq 호출은 미확인**(SQL 실행 + 키 등록 후 첫 사용 필요)
+- 운영 순서: (1) Supabase에서 `setup_aps_ai.sql` 실행 → (2) console.groq.com에서 API 키 발급(크롤러용 GROQ_API_KEY 재사용 가능) → (3) 📅 생산계획 → 🤖 자동 생성 → 🧠 AI 검토에 키 저장 → 요청
+- 한계: Groq 무료 한도(분당·일당 토큰)를 넘으면 429 안내. 품목이 매우 많으면 제외 목록은 40개까지만 보냄. 회의록·발주서·로스 데이터는 아직 AI에 안 보냄(필요하면 "추가 지시"에 적기). 나중에 Claude/GPT로 바꾸려면 `aps_ai_request`의 URL·모델만 교체
+
 ### APS — 점심시간 설정 (2026-10-15)
 - 사용자 요청: 점심시간을 지정해서 생산 시간에서 빼고 싶다
 - `aps_settings`에 `lunch_start` / `lunch_end` ("HH:MM", 빈 값 = 점심 없음) — 기존 `aps_set_setting`/`aps_get_settings` 재사용, SQL 변경 없음

@@ -3176,7 +3176,11 @@ function computeAutoPlan({targetDay,items,lines,plans,invProducts,dowMap,rateByI
   // "소진 N일 전" = 생산 요일 기준 N일 (금요일 + 2일 = 월·화, 주말은 건너뜀)
   const triggerEnd=nthProdDayAfter(targetDay,lead,opts.prodDays);
   const simEnd=coverEnd>triggerEnd?coverEnd:triggerEnd;
-  const autoLineIds=new Set(lines.filter(l=>l.auto_plan).map(l=>l.id));
+  // 🧠 AI 제안: 그날 쓰지 않을 라인 / 품목별 수량 조정 (규칙 계산 위에 얹고, 배정은 규칙이 다시 검사)
+  const lineOff=new Set(((opts.aiLineOff||{})[targetDay]||[]).map(Number));
+  const aiAdj=(opts.aiAdj||{})[targetDay]||{};
+  const autoLineIds=new Set(lines.filter(l=>l.auto_plan&&!lineOff.has(l.id)).map(l=>l.id));
+  const info={};
   const stockByCode={};(invProducts||[]).forEach(p=>{if(p.code)stockByCode[p.code]=Number(p.box||0)});
 
   const fillOn=!!opts.fill;
@@ -3221,6 +3225,7 @@ function computeAutoPlan({targetDay,items,lines,plans,invProducts,dowMap,rateByI
     const rs=rateByItem[it.id];
     const rate=rs?.rate>0?rs.rate:(Number(it.units_per_hour)>0?Number(it.units_per_hour):0);
     const rateSrc=rs?.rate>0?`실적 ${rs.count}건`:"수동 입력";
+    info[it.id]={base,rate,rateSrc};
     let enoughReason=null,need=0;
     if(firstShort===null||firstShort>triggerEnd){
       enoughReason=firstShort?`재고 충분 (${fmtMD(firstShort)}에 ${floor>0?"안전재고 미달":"소진"} 예상)`:`${fmtMD(simEnd)}까지 재고 충분`;
@@ -3244,8 +3249,26 @@ function computeAutoPlan({targetDay,items,lines,plans,invProducts,dowMap,rateByI
     if(!(rate>0)){skipped.push({...base,need,reason:"생산 속도 정보 없음 (통계 실적 또는 시간당 생산량 입력 필요)",kind:"norate"});continue}
     candidates.push({...base,need,rate,rateSrc});
   }
-  // 급한 순: 소진일 빠른 순 → 하루 평균 판매 많은 순
-  candidates.sort((a,b)=>a.firstShort.localeCompare(b.firstShort)||b.avgDaily-a.avgDaily);
+  // 🧠 AI 수량 조정 적용: qty 0 = 이날 빼기, 그 외 = 그 수량으로 (생산 속도·라인이 있는 품목만)
+  const aiIds=Object.keys(aiAdj).map(Number);
+  if(aiIds.length){
+    const touched=new Set();
+    for(const id of aiIds){
+      const a=aiAdj[id];const inf=info[id];
+      if(!inf)continue; // 라인·매출·재고 정보가 없는 품목은 반영 불가
+      const qty=Math.max(0,Math.round(Number(a.qty)||0));
+      const prev=candidates.find(c=>c.item.id===id)||fillPool.find(c=>c.item.id===id);
+      const prevNeed=prev?prev.need:0;
+      for(const arr of [candidates,fillPool]){const i=arr.findIndex(c=>c.item.id===id);if(i>=0)arr.splice(i,1)}
+      touched.add(id);
+      if(qty<=0){skipped.push({...inf.base,need:prevNeed,reason:"🧠 AI 제안으로 제외 — "+(a.reason||""),kind:"ai"});continue}
+      if(!(inf.rate>0)){skipped.push({...inf.base,need:qty,reason:"🧠 AI 제안 반영 불가 — 생산 속도 정보 없음",kind:"ai"});continue}
+      candidates.push({...inf.base,need:qty,rate:inf.rate,rateSrc:inf.rateSrc,ai:{reason:a.reason||"",from:prevNeed}});
+    }
+    for(let i=skipped.length-1;i>=0;i--){if(touched.has(skipped[i].item.id)&&skipped[i].kind!=="ai")skipped.splice(i,1)}
+  }
+  // 급한 순: 소진일 빠른 순 → 하루 평균 판매 많은 순 (AI가 추가한, 부족일 없는 품목은 뒤로)
+  candidates.sort((a,b)=>(a.firstShort||"9999").localeCompare(b.firstShort||"9999")||b.avgDaily-a.avgDaily);
   // 여유 생산: 재고 일수가 적은 순 → 하루 평균 판매 많은 순
   fillPool.sort((a,b)=>a.coverDays-b.coverDays||b.avgDaily-a.avgDaily);
 
@@ -3266,7 +3289,7 @@ function computeAutoPlan({targetDay,items,lines,plans,invProducts,dowMap,rateByI
   const csFor=(usedFlag,prevG,g)=>!usedFlag?0:(g!=null&&g===prevG?Math.min(sameMs,changeoverMs):changeoverMs);
   const cursor={},used={},lineStart={},lineUsed0={},prevGroup0={},lineGroups={};
   for(const l of lines){
-    if(!l.auto_plan)continue;
+    if(!autoLineIds.has(l.id))continue;
     let c=winStart,lastEnd=-Infinity,lastItem=null;
     lineGroups[l.id]=new Set();
     for(const p of plans){
@@ -3392,6 +3415,212 @@ function computeAutoPlanRange(args){
   return{rows,skipped,days:dayList,coverEnd:first.coverEnd,triggerEnd:first.triggerEnd,switches};
 }
 
+// ═══ 🧠 AI 검토 (Groq, setup_aps_ai.sql) ═══
+// 규칙 초안 + 근거 데이터를 AI에 보내 "수량 조정 / 빼기 / 추가 / 라인 쉬기" 제안을 받고,
+// 사람이 고른 제안만 computeAutoPlan에 다시 넣어 규칙이 시간·라인을 검사한다. AI가 직접 저장하지 않음.
+const AI_PLAN_SYSTEM=`당신은 식육 가공 공장의 생산계획 담당자를 돕는 검토자입니다.
+규칙 엔진이 만든 생산계획 초안과 근거 데이터(재고, 요일별 평균 판매, 안전재고, 생산 속도, 라인)를 받습니다.
+초안을 검토해 꼭 필요한 수정만 제안하세요.
+
+절대 규칙:
+- 주어진 데이터와 "사용자 지시"에 있는 사실만 사용하세요. 명절·행사·발주·고장·날씨 등 데이터에 없는 일을 지어내지 마세요.
+- item_id, line_id, day는 반드시 입력에 있는 값만 쓰세요.
+- 수량(qty)은 품목 단위(대부분 박스)의 정수입니다. 0이면 그날 계획에서 빼라는 뜻입니다.
+- 계획에 없는 품목을 추가하려면 not_planned 목록에 있는 item_id만 쓰세요.
+- 라인 시간·점심·겹침 계산은 프로그램이 다시 하므로 시간은 제안하지 마세요.
+- 수정할 이유가 뚜렷하지 않으면 바꾸지 마세요. 제안은 많아야 10개.
+- 사용자 지시가 있으면 그것을 가장 우선하세요(예: 특정 라인을 쉬라는 지시 → line_off).
+- reason, summary, warnings는 한국어로 짧고 구체적으로(숫자 근거 포함).
+
+반드시 아래 JSON 하나만 출력:
+{"summary":"한두 문장 총평","changes":[{"day":"YYYY-MM-DD","item_id":0,"qty":0,"reason":"..."}],"line_off":[{"day":"YYYY-MM-DD","line_id":0,"reason":"..."}],"warnings":["사람이 확인할 점"]}`;
+
+function buildAiPlanInput({base,items,lines,plans,dowMap,settings,opts,note}){
+  const r1=(v)=>Math.round(Number(v||0)*10)/10;
+  const lineName=(id)=>lines.find(l=>l.id===id)?.name||String(id);
+  const plan=base.rows.map(r=>({day:r.day,item_id:r.item.id,name:r.item.name,unit:r.item.unit||"",qty:r.qty,need:r.need,
+    line:lineName(r.lineId),time:fmtKstTime(new Date(r.startMs).toISOString())+"~"+fmtKstTime(new Date(r.endMs).toISOString()),
+    stock_now:r1(r.stockNow),stock_at_day_start:r1(r.startStock),avg_daily_sales:r1(r.avgDaily),safety:r1(r.item.safety_stock),
+    shortage_day:r.fill?null:r.firstShort,type:r.fill?"여유 생산":"부족 생산",per_hour:r1(r.rate)}));
+  const not_planned=base.skipped.filter(s=>["enough","notime","norate","ai"].includes(s.kind)).slice(0,40).map(s=>({
+    item_id:s.item.id,name:s.item.name,reason:s.reason,stock_now:r1(s.stockNow),avg_daily_sales:r1(s.avgDaily),safety:r1(s.item.safety_stock),per_hour:r1(s.rate)}));
+  const codes=new Set([...base.rows.map(r=>r.item.code),...base.skipped.map(s=>s.item.code)]);
+  const sales_by_dow={};
+  codes.forEach(c=>{const f=dowMap[c];if(f)sales_by_dow[c]=f.slice(1).map(r1)});
+  const daySet=new Set(base.days);
+  const existing=plans.filter(p=>p.status!=="canceled"&&p.start_at&&daySet.has(isoToKstDateStr(p.start_at))).slice(0,60).map(p=>({
+    day:isoToKstDateStr(p.start_at),line:lineName(p.line_id),item:p.item_name,qty:p.qty,
+    time:fmtKstTime(p.start_at)+"~"+fmtKstTime(p.end_at),status:STATUS_LABEL[p.status]||p.status}));
+  return {
+    today:todayStr(),days:base.days.map(d=>d+"("+DOW_LABEL[isoDowOf(d)-1]+")"),
+    work_hours:`${settings.work_start_hour}~${settings.work_end_hour}시`+(getLunch(settings)?`, 점심 ${getLunch(settings).label}`:""),
+    rule_options:{shortage_lead_prod_days:Number(opts.lead),cover_days:Number(opts.cover),floor:opts.useSafety?"안전재고":"0",fill_up_to_days:opts.fill?Number(opts.fillDays):null},
+    lines:lines.map(l=>({line_id:l.id,name:l.name,auto_plan:!!l.auto_plan})),
+    draft_plan:plan,not_planned,
+    sales_by_dow_mon_to_sun:sales_by_dow,
+    existing_plans_in_days:existing,
+    user_note:note||""
+  };
+}
+
+// AI 응답 검사: 입력에 없는 값·이상한 수량은 반영하지 않고 이유를 붙여 보여줌
+function validateAiPlan(raw,{base,lines}){
+  const days=new Set(base.days);
+  const known={};
+  base.rows.forEach(r=>{known[r.item.id]=r.item});
+  base.skipped.forEach(s=>{if(["enough","notime","norate","ai"].includes(s.kind))known[s.item.id]=s.item});
+  const lineIds=new Set(lines.map(l=>l.id));
+  const changes=(Array.isArray(raw?.changes)?raw.changes:[]).slice(0,20).map((c,i)=>{
+    const id=Number(c.item_id),qty=Number(c.qty);
+    const day=String(c.day||"").slice(0,10);
+    let bad="";
+    if(!days.has(day))bad="기간에 없는 날짜";
+    else if(!known[id])bad="계획 후보에 없는 품목";
+    else if(!Number.isFinite(qty)||qty<0)bad="수량이 올바르지 않음";
+    const cur=base.rows.find(r=>r.day===day&&r.item.id===id);
+    return {i,day,item_id:id,item:known[id]||null,qty:Math.round(qty||0),from:cur?cur.qty:0,reason:String(c.reason||"").slice(0,300),bad};
+  }).filter(c=>c.bad||c.qty!==c.from);
+  const lineOff=(Array.isArray(raw?.line_off)?raw.line_off:[]).slice(0,10).map((c,i)=>{
+    const day=String(c.day||"").slice(0,10),id=Number(c.line_id);
+    let bad="";
+    if(!days.has(day))bad="기간에 없는 날짜";else if(!lineIds.has(id))bad="없는 라인";
+    return {i,day,line_id:id,line:lines.find(l=>l.id===id)||null,reason:String(c.reason||"").slice(0,300),bad};
+  });
+  return {
+    summary:String(raw?.summary||"").slice(0,600),
+    warnings:(Array.isArray(raw?.warnings)?raw.warnings:[]).slice(0,8).map(w=>String(w).slice(0,300)),
+    changes,lineOff
+  };
+}
+
+async function callAiJson(adminHash,messages,maxTokens,onTick){
+  const id=await rpc("aps_ai_request",{p_admin_hash:adminHash,p_messages:messages,p_max_tokens:maxTokens||2048});
+  const t0=Date.now();
+  while(Date.now()-t0<100000){
+    await new Promise(r=>setTimeout(r,1500));
+    onTick&&onTick(Math.round((Date.now()-t0)/1000));
+    const res=await rpc("aps_ai_result",{p_admin_hash:adminHash,p_id:id});
+    if(!res||res.pending)continue;
+    if(res.timed_out)throw new Error("AI 응답 시간이 초과됐습니다. 잠시 뒤 다시 시도하세요.");
+    if(res.error)throw new Error("호출 실패: "+res.error);
+    let body=null;try{body=JSON.parse(res.content||"")}catch(e){}
+    if(res.status!==200){
+      const m=body?.error?.message||String(res.content||"").slice(0,200);
+      if(res.status===401)throw new Error("Groq API 키가 올바르지 않습니다. 키를 다시 등록하세요.");
+      if(res.status===429)throw new Error("Groq 무료 한도를 넘었습니다. 잠시(1분~하루) 뒤 다시 시도하세요. ("+m+")");
+      throw new Error(`AI 오류 ${res.status}: ${m}`);
+    }
+    const txt=body?.choices?.[0]?.message?.content||"";
+    try{return JSON.parse(txt)}catch(e){
+      const mm=txt.match(/\{[\s\S]*\}/);
+      if(mm)try{return JSON.parse(mm[0])}catch(e2){}
+      throw new Error("AI 응답을 읽지 못했습니다. 다시 시도하세요.");
+    }
+  }
+  throw new Error("AI 응답을 100초 동안 받지 못했습니다.");
+}
+
+function aiErrText(e){
+  const m=String(e?.message||e);
+  if(/aps_ai_(status|request|result|set_key)/.test(m)&&/(function|Could not find|PGRST202)/i.test(m))return"Supabase에서 setup_aps_ai.sql 을 먼저 실행해주세요.";
+  if(m.includes("no_ai_key"))return"Groq API 키가 등록되지 않았습니다. 아래에서 키를 등록하세요.";
+  if(/schema "net"|net\.http_post/.test(m))return"Supabase에 pg_net 확장이 없습니다. setup_aps_ai.sql 을 다시 실행하거나 Database → Extensions에서 pg_net을 켜세요.";
+  return m.slice(0,300);
+}
+
+function AiReviewPanel({adminHash,base,items,lines,plans,dowMap,settings,opts,ai,setAi,off,setOff}){
+  const[status,setStatus]=useState(null); // {has_key,model} | {err}
+  const[open,setOpen]=useState(()=>{try{return localStorage.getItem("aps-ai-open")!=="0"}catch(e){return true}});
+  useEffect(()=>{try{localStorage.setItem("aps-ai-open",open?"1":"0")}catch(e){}},[open]);
+  const[note,setNote]=useState("");
+  const[busy,setBusy]=useState(false);
+  const[sec,setSec]=useState(0);
+  const[err,setErr]=useState("");
+  const[keyIn,setKeyIn]=useState("");
+  const[showKey,setShowKey]=useState(false);
+  const loadStatus=useCallback(()=>{
+    rpc("aps_ai_status",{p_admin_hash:adminHash}).then(s=>setStatus(s||{})).catch(e=>setStatus({err:aiErrText(e)}));
+  },[adminHash]);
+  useEffect(()=>{loadStatus()},[loadStatus]);
+
+  const saveKey=async()=>{
+    setErr("");
+    try{await rpc("aps_ai_set_key",{p_admin_hash:adminHash,p_key:keyIn.trim()});setKeyIn("");setShowKey(false);loadStatus()}
+    catch(e){setErr(aiErrText(e))}
+  };
+  const ask=async()=>{
+    if(!base||busy)return;
+    setBusy(true);setErr("");setSec(0);
+    try{
+      const input=buildAiPlanInput({base,items,lines,plans,dowMap,settings,opts,note:note.trim()});
+      const raw=await callAiJson(adminHash,[
+        {role:"system",content:AI_PLAN_SYSTEM},
+        {role:"user",content:JSON.stringify(input)}
+      ],2048,setSec);
+      setOff(new Set());
+      setAi({...validateAiPlan(raw,{base,lines}),baseRef:base});
+    }catch(e){setErr(aiErrText(e))}
+    setBusy(false);
+  };
+  const toggle=(k)=>setOff(prev=>{const n=new Set(prev);n.has(k)?n.delete(k):n.add(k);return n});
+  const usable=ai?[...ai.changes.filter(c=>!c.bad).map(c=>"c"+c.i),...ai.lineOff.filter(c=>!c.bad).map(c=>"l"+c.i)]:[];
+  const onCount=usable.filter(k=>!off.has(k)).length;
+
+  return <div style={{border:"1px solid rgba(139,92,246,0.45)",borderRadius:8,marginBottom:10,background:"rgba(139,92,246,0.05)"}}>
+    <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",cursor:"pointer"}} onClick={()=>setOpen(v=>!v)}>
+      <b style={{fontSize:13}}>{open?"▾":"▸"} 🧠 AI 검토</b>
+      <span style={{fontSize:11,color:"var(--muted)"}}>규칙 초안을 AI가 검토해 수정안을 제안 · 고른 것만 반영 · 시간·라인은 규칙이 다시 계산</span>
+      <div style={{flex:1}}></div>
+      {ai&&<span style={{fontSize:11,fontWeight:700,color:"#8b5cf6"}}>제안 {onCount}/{usable.length} 반영 중</span>}
+    </div>
+    {open&&<div style={{padding:"0 12px 12px",fontSize:12}}>
+      {status?.err?<div className="aps-err" style={{marginBottom:8}}>{status.err}</div>:
+       status&&!status.has_key?<div style={{marginBottom:8,color:"#f59e0b",fontWeight:600}}>Groq API 키가 아직 없습니다. 키를 등록하세요 (console.groq.com → API Keys, 무료).</div>:null}
+      {status&&!status.err&&(showKey||!status.has_key)&&<div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
+        <input className="aps-input" type="password" autoComplete="off" placeholder="gsk_로 시작하는 Groq API 키" value={keyIn} onChange={e=>setKeyIn(e.target.value)} style={{flex:"1 1 260px",padding:"5px 8px"}}/>
+        <button className="aps-btn aps-btn-primary aps-btn-sm" onClick={saveKey} disabled={!keyIn.trim()}>키 저장</button>
+        {status.has_key&&<button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>setShowKey(false)}>취소</button>}
+        <span style={{fontSize:11,color:"var(--muted)",flexBasis:"100%"}}>키는 Supabase 안에만 저장되고 화면·브라우저에는 다시 보이지 않습니다.</span>
+      </div>}
+      {status?.has_key&&<>
+        <textarea className="aps-input" rows={2} value={note} onChange={e=>setNote(e.target.value)}
+          placeholder="추가 지시 (선택) — 예: 내일 2라인 점검이라 못 씀 / 다음 주 갈비 행사로 갈비류 넉넉히 / 돌돌우삼겹은 이번 주 40박스만"
+          style={{width:"100%",boxSizing:"border-box",resize:"vertical",padding:"6px 8px",fontSize:12,marginBottom:6}}/>
+        <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+          <button className="aps-btn aps-btn-primary aps-btn-sm" onClick={ask} disabled={busy||!base} style={{background:"#8b5cf6",borderColor:"#8b5cf6"}}>{busy?`AI 검토 중... ${sec}초`:ai?"🧠 다시 검토":"🧠 AI 검토 요청"}</button>
+          {ai&&<button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>{setAi(null);setOff(new Set())}}>AI 제안 모두 빼기</button>}
+          <span style={{fontSize:11,color:"var(--dimmer)"}}>모델 {status.model} · Groq 무료</span>
+          <button className="aps-btn aps-btn-secondary aps-btn-sm" style={{marginLeft:"auto"}} onClick={()=>setShowKey(v=>!v)}>🔑 키 변경</button>
+        </div>
+      </>}
+      {err&&<div className="aps-err" style={{marginTop:8}}>{err}</div>}
+      {ai&&<div style={{marginTop:10,display:"flex",flexDirection:"column",gap:6}}>
+        {ai.baseRef!==base&&<div style={{color:"#f59e0b",fontWeight:600}}>⚠ AI 검토 뒤에 옵션·라인이 바뀌었습니다. 제안이 지금 초안과 안 맞을 수 있으니 다시 검토하세요.</div>}
+        {ai.summary&&<div style={{padding:"8px 10px",borderRadius:6,background:"var(--card-bg)",lineHeight:1.6}}>💬 {ai.summary}</div>}
+        {ai.changes.length===0&&ai.lineOff.length===0&&<div style={{color:"var(--muted)"}}>✅ AI가 바꿀 곳이 없다고 봤습니다.</div>}
+        {ai.lineOff.map(c=>{const k="l"+c.i;return <label key={k} style={{display:"flex",gap:8,alignItems:"flex-start",padding:"6px 8px",borderRadius:6,border:"1px solid var(--div2)",opacity:c.bad||off.has(k)?0.5:1,cursor:c.bad?"default":"pointer"}}>
+          <input type="checkbox" disabled={!!c.bad} checked={!c.bad&&!off.has(k)} onChange={()=>toggle(k)} style={{marginTop:2}}/>
+          <div><b>🏭 {fmtMD(c.day)} {c.line?.name||c.line_id} 쉬기</b>{c.bad&&<span style={{color:"#ef4444",marginLeft:6}}>반영 안 함 — {c.bad}</span>}<div style={{color:"var(--text-sub)"}}>{c.reason}</div></div>
+        </label>})}
+        {ai.changes.map(c=>{const k="c"+c.i;const verb=c.bad?"":c.from===0?"추가":c.qty===0?"빼기":"수량 변경";
+          return <label key={k} style={{display:"flex",gap:8,alignItems:"flex-start",padding:"6px 8px",borderRadius:6,border:"1px solid var(--div2)",opacity:c.bad||off.has(k)?0.5:1,cursor:c.bad?"default":"pointer"}}>
+          <input type="checkbox" disabled={!!c.bad} checked={!c.bad&&!off.has(k)} onChange={()=>toggle(k)} style={{marginTop:2}}/>
+          <div style={{flex:1}}>
+            <b>{fmtMD(c.day)} {c.item?.name||("품목 "+c.item_id)}</b>
+            {!c.bad&&<span style={{marginLeft:6}}><span style={{fontSize:10,fontWeight:700,padding:"1px 6px",borderRadius:6,background:c.qty===0?"rgba(239,68,68,0.15)":c.from===0?"rgba(16,185,129,0.15)":"rgba(139,92,246,0.15)",color:c.qty===0?"#ef4444":c.from===0?"#10b981":"#8b5cf6"}}>{verb}</span> {fmtNum(c.from)} → <b>{fmtNum(c.qty)}</b> {c.item?.unit||""}</span>}
+            {c.bad&&<span style={{color:"#ef4444",marginLeft:6}}>반영 안 함 — {c.bad}</span>}
+            <div style={{color:"var(--text-sub)"}}>{c.reason}</div>
+          </div>
+        </label>})}
+        {ai.warnings.length>0&&<div style={{padding:"6px 10px",borderRadius:6,background:"rgba(245,158,11,0.1)",color:"var(--text-sub)",lineHeight:1.6}}>
+          {ai.warnings.map((w,i)=><div key={i}>⚠ {w}</div>)}
+        </div>}
+        <div style={{fontSize:11,color:"var(--muted)"}}>AI 제안은 참고용입니다. 아래 표는 체크한 제안을 넣어 규칙이 다시 계산한 결과이고, 라인 시간이 모자라면 일부만 들어갈 수 있습니다.</div>
+      </div>}
+    </div>}
+  </div>;
+}
+
 function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLinesChanged,onCreated,onCancel}){
   const[opts,setOpts]=useState(()=>{
     const def={lead:2,cover:5,useSafety:true,changeoverMin:0,weeks:8,prodDays:[1,2,3,4,5],fill:true,fillDays:14,days:1,groupSimilar:true,sameChangeoverMin:0};
@@ -3454,10 +3683,20 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
   const isPast=dayStr<todayStr();
   const autoTriggerEnd=nthProdDayAfter(dayStr,Math.max(0,parseInt(opts.lead)||0),opts.prodDays);
   const notProdDay=!(opts.prodDays||[1,2,3,4,5]).includes(isoDowOf(dayStr));
-  const result=useMemo(()=>{
+  const[ai,setAi]=useState(null);           // 🧠 AI 검토 결과 (validateAiPlan)
+  const[aiOff,setAiOff]=useState(()=>new Set()); // 체크 해제한 제안 ("c"+i / "l"+i)
+  const baseResult=useMemo(()=>{
     if(!dow||isPast)return null;
     return computeAutoPlanRange({targetDay:dayStr,items,lines:localLines,plans,invProducts:invData?.products||[],dowMap:dow.map,rateByItem:rates,settings,opts,groupByItem});
   },[dow,rates,groupByItem,dayStr,items,localLines,plans,invData,settings,opts,isPast]);
+  const result=useMemo(()=>{
+    if(!baseResult||!ai)return baseResult;
+    const aiAdj={},aiLineOff={};
+    ai.changes.forEach(c=>{if(!c.bad&&!aiOff.has("c"+c.i))(aiAdj[c.day]=aiAdj[c.day]||{})[c.item_id]={qty:c.qty,reason:c.reason}});
+    ai.lineOff.forEach(c=>{if(!c.bad&&!aiOff.has("l"+c.i))(aiLineOff[c.day]=aiLineOff[c.day]||[]).push(c.line_id)});
+    if(!Object.keys(aiAdj).length&&!Object.keys(aiLineOff).length)return baseResult;
+    return computeAutoPlanRange({targetDay:dayStr,items,lines:localLines,plans,invProducts:invData?.products||[],dowMap:dow.map,rateByItem:rates,settings,opts:{...opts,aiAdj,aiLineOff},groupByItem});
+  },[baseResult,ai,aiOff,dow,rates,groupByItem,dayStr,items,localLines,plans,invData,settings,opts]);
   useEffect(()=>setUnchecked(new Set()),[result]);
 
   const toggleLine=async(l)=>{
@@ -3492,7 +3731,7 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
   const skippedGroups=useMemo(()=>{
     const g={};(result?.skipped||[]).forEach(s=>{(g[s.kind]=g[s.kind]||[]).push(s)});return g;
   },[result]);
-  const SKIP_LABEL={notime:"⏱ 시간 부족",norate:"⚠ 생산 속도 없음",nostock:"📋 재고시트에 없음",nosales:"💰 매출 없음",noauto:"🚫 허용 라인 없음",noline:"🏭 라인 미지정",enough:"✓ 생산 불필요"};
+  const SKIP_LABEL={ai:"🧠 AI 제안으로 제외",notime:"⏱ 시간 부족",norate:"⚠ 생산 속도 없음",nostock:"📋 재고시트에 없음",nosales:"💰 매출 없음",noauto:"🚫 허용 라인 없음",noline:"🏭 라인 미지정",enough:"✓ 생산 불필요"};
   const sheetDate=invData?.savedAt?isoToKstDateStr(invData.savedAt):"";
   const numIn=(k,props)=><input className="aps-input" type="number" value={opts[k]} onChange={e=>setOpt(k,e.target.value)} style={{width:64,padding:"5px 8px"}} {...props}/>;
 
@@ -3561,6 +3800,7 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
        !(invData?.products||[]).length?<div className="aps-err">재고시트가 비어 있습니다. 📋 재고 시트 탭에서 재고를 먼저 업로드하세요.</div>:
        autoLines.length===0?<div className="aps-err">자동계획을 허용한 라인이 없습니다. 위에서 라인을 눌러 허용하세요.</div>:
       <>
+        <AiReviewPanel adminHash={adminHash} base={baseResult} items={items} lines={localLines} plans={plans} dowMap={dow.map} settings={settings} opts={opts} ai={ai} setAi={setAi} off={aiOff} setOff={setAiOff}/>
         {result.rows.length===0?
           <Empty emoji="✅" text={result.days.length>1?"이 기간에 자동으로 넣을 계획이 없습니다":`${dayStr}에 자동으로 넣을 계획이 없습니다`}/>:
           <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8}}>
@@ -3587,12 +3827,12 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
                   </td></tr>}
                   <tr style={{opacity:unchecked.has(r.key)?0.45:1}}>
                     <td className="center"><input type="checkbox" checked={!unchecked.has(r.key)} onChange={()=>setUnchecked(prev=>{const n=new Set(prev);n.has(r.key)?n.delete(r.key):n.add(r.key);return n})}/></td>
-                    <td><div style={{fontWeight:600}}>{r.item.name}</div><div style={{fontSize:11,color:"var(--muted)",fontFamily:"monospace"}}>{r.item.code} · {fmtNum(Math.round(r.rate*10)/10)}/시간 ({r.rateSrc})</div>{r.groupName&&<div style={{fontSize:11,color:"var(--text-sub)",marginTop:2}}>🥩 {r.groupName}{r.sameAsPrev&&<span style={{marginLeft:6,fontSize:10,fontWeight:700,color:"#06b6d4"}}>🔗 이어서</span>}</div>}</td>
+                    <td><div style={{fontWeight:600}}>{r.item.name}</div><div style={{fontSize:11,color:"var(--muted)",fontFamily:"monospace"}}>{r.item.code} · {fmtNum(Math.round(r.rate*10)/10)}/시간 ({r.rateSrc})</div>{r.ai&&<div style={{fontSize:11,color:"#8b5cf6",marginTop:2}} title={r.ai.reason}>🧠 AI {r.ai.from>0?`${fmtNum(r.ai.from)} → ${fmtNum(r.need)}`:"추가"}{r.ai.reason?` · ${r.ai.reason.length>40?r.ai.reason.slice(0,40)+"…":r.ai.reason}`:""}</div>}{r.groupName&&<div style={{fontSize:11,color:"var(--text-sub)",marginTop:2}}>🥩 {r.groupName}{r.sameAsPrev&&<span style={{marginLeft:6,fontSize:10,fontWeight:700,color:"#06b6d4"}}>🔗 이어서</span>}</div>}</td>
                     <td className="right">{fmtNum(r.stockNow)}{r.startStock!==r.stockNow&&<div style={{fontSize:10,color:"var(--muted)"}}>당일 예상 {fmtNum(Math.round(r.startStock))}</div>}</td>
                     <td className="right hide-mobile">{fmtNum(Math.round(r.avgDaily*10)/10)}<div style={{fontSize:10,color:"var(--muted)"}}>이날 {fmtNum(Math.round(r.targetDemand*10)/10)}</div></td>
                     {r.fill?
                       <td className="center"><span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:8,background:"rgba(16,185,129,0.15)",color:"#10b981"}}>여유 생산</span><div style={{fontSize:10,color:"var(--muted)",marginTop:2}}>재고 {Math.round(r.coverDays*10)/10}일치</div></td>:
-                      <td className="center" style={{color:urgent?"#ef4444":"#f59e0b",fontWeight:700}}>{fmtMD(r.firstShort)}{urgent?" ⚠":""}</td>}
+                      <td className="center" style={{color:urgent?"#ef4444":"#f59e0b",fontWeight:700}}>{r.firstShort?<>{fmtMD(r.firstShort)}{urgent?" ⚠":""}</>:<span style={{color:"var(--muted)",fontWeight:500}}>–</span>}</td>}
                     <td className="right" style={{fontWeight:700}}>{fmtNum(r.qty)} {r.item.unit}{r.partial&&<div style={{fontSize:10,color:"#ef4444",fontWeight:600}}>필요 {fmtNum(r.need)} · 시간 부족</div>}</td>
                     <td className="center"><span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:8,background:c.bg,color:c.base}}>{lineName(r.lineId)}</span></td>
                     <td className="center" style={{fontSize:12,whiteSpace:"nowrap"}}>{fmtKstTime(new Date(r.startMs).toISOString())}~{fmtKstTime(new Date(r.endMs).toISOString())}{r.overLunch&&<div style={{fontSize:10,color:"var(--muted)"}}>🍱 점심 제외</div>}</td>
@@ -3611,8 +3851,8 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
             {Object.keys(SKIP_LABEL).filter(k=>skippedGroups[k]).map(k=><div key={k}>
               <div style={{fontSize:12,fontWeight:700,marginBottom:4}}>{SKIP_LABEL[k]} ({skippedGroups[k].length})</div>
               <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
-                {skippedGroups[k].map(s=><span key={s.item.id} title={s.reason} style={{fontSize:11,padding:"2px 8px",borderRadius:6,border:"1px solid var(--div2)",color:"var(--text-sub)"}}>
-                  {s.item.name}{k==="enough"||k==="notime"||k==="norate"?<span style={{color:"var(--muted)"}}> — {s.reason}</span>:null}
+                {skippedGroups[k].map(s=><span key={s.item.id+":"+(s.day||"")} title={s.reason} style={{fontSize:11,padding:"2px 8px",borderRadius:6,border:"1px solid var(--div2)",color:"var(--text-sub)"}}>
+                  {s.item.name}{k==="enough"||k==="notime"||k==="norate"||k==="ai"?<span style={{color:"var(--muted)"}}> — {s.reason}</span>:null}
                 </span>)}
               </div>
             </div>)}
