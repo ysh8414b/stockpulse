@@ -1322,6 +1322,20 @@ function LineForm({adminHash,initial,onSaved,onCancel}){
 function LinesTab({adminHash}){
   const[lines,setLines]=useState([]);
   const[loading,setLoading]=useState(true);
+  const[depts,setDepts]=useState([]); // 👥 인원 탭 부서 목록
+  useEffect(()=>{
+    rpc("aps_list_staff",{p_admin_hash:adminHash,p_only_active:true})
+      .then(r=>setDepts([...new Set((r||[]).map(s=>s.department).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"ko"))))
+      .catch(()=>setDepts([]));
+  },[adminHash]);
+  const hasDeptCol=lines.some(l=>Object.prototype.hasOwnProperty.call(l,"staff_depts"));
+  const toggleDept=async(l,d)=>{
+    const cur=Array.isArray(l.staff_depts)?l.staff_depts:[];
+    const next=cur.includes(d)?cur.filter(x=>x!==d):[...cur,d];
+    setLines(prev=>prev.map(x=>x.id===l.id?{...x,staff_depts:next}:x));
+    try{await rpc("aps_set_line_staff_depts",{p_admin_hash:adminHash,p_line_id:l.id,p_depts:next});invalidateSpeedModel()}
+    catch(e){alert("저장 실패 — Supabase에서 setup_aps_speed.sql 을 실행해주세요.");load()}
+  };
   const[editing,setEditing]=useState(null);
   const[showForm,setShowForm]=useState(false);
 
@@ -1372,6 +1386,7 @@ function LinesTab({adminHash}){
             <th>라인 이름</th>
             <th className="hide-mobile">메모</th>
             <th className="center" style={{width:120}}>자동계획</th>
+            {depts.length>0&&<th title="⚡ 속도 예측에 쓰는 출근 인원 — 이 라인에서 일하는 👥 인원 부서. 아무것도 안 고르면 전체 출근 인원">인원 부서</th>}
             <th className="center" style={{width:140}}>작업</th>
           </tr></thead>
           <tbody>
@@ -1383,6 +1398,14 @@ function LinesTab({adminHash}){
                 <button className={"aps-btn aps-btn-sm "+(l.auto_plan?"aps-btn-primary":"aps-btn-secondary")} onClick={()=>toggleAuto(l)}
                   title="켜면 🤖 자동 생성 시 이 라인에 계획을 배정합니다">{l.auto_plan?"🤖 허용":"허용 안 함"}</button>
               </td>
+              {depts.length>0&&<td>
+                {hasDeptCol?<div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                  {depts.map(d=>{const on=(l.staff_depts||[]).includes(d);
+                    return <button key={d} type="button" onClick={()=>toggleDept(l,d)}
+                      style={{padding:"2px 8px",borderRadius:12,fontSize:11,fontWeight:600,cursor:"pointer",border:"1px solid "+(on?"#06b6d4":"var(--div2)"),background:on?"rgba(6,182,212,0.15)":"transparent",color:on?"#06b6d4":"var(--muted)"}}>{d}</button>})}
+                  {!(l.staff_depts||[]).length&&<span style={{fontSize:11,color:"var(--dimmer)",alignSelf:"center"}}>전체</span>}
+                </div>:<span style={{fontSize:11,color:"var(--muted)"}}>setup_aps_speed.sql 실행 필요</span>}
+              </td>}
               <td className="center">
                 <div style={{display:"flex",gap:4,justifyContent:"center"}}>
                   <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>{setEditing(l);setShowForm(true)}}>수정</button>
@@ -1993,14 +2016,20 @@ function PlanForm({adminHash,items,lines,settings,initial,prefill,defaultDate,pl
     })();
     return()=>{cancelled=true};
   },[adminHash]);
+  const[speed,setSpeed]=useState(null);
+  useEffect(()=>{let c=false;loadSpeedModel(adminHash,settings).then(m=>{if(!c)setSpeed(m)}).catch(()=>{});return()=>{c=true}},[adminHash]);
   const rateInfo=useMemo(()=>{
     if(!itemId)return null;
+    if(speed?.use){
+      const sp=speed.predict(Number(itemId),lineId?Number(lineId):null,String(startAt||"").slice(0,10)||todayStr(),Number(qty)||null);
+      if(sp)return{rate:sp.rate,label:sp.label};
+    }
     const st=statRates?.[itemId];
     if(st)return{rate:st.rate,label:`${st.src} ${st.count}건`};
     const it=items.find(i=>String(i.id)===String(itemId));
     if(Number(it?.units_per_hour)>0)return{rate:Number(it.units_per_hour),label:"품목에 입력한 값"};
     return null;
-  },[itemId,statRates,items]);
+  },[itemId,statRates,items,speed,lineId,startAt,qty]);
   const calcEnd=useMemo(()=>{
     const q=Number(qty);
     if(!rateInfo||!(q>0)||!startAt)return null;
@@ -3241,6 +3270,174 @@ function nthProdDayAfter(targetDay,n,prodDays){
 
 const FILL_MIN_HOURS=1;              // 여유 생산 최소 분량 (시간)
 const FILL_MIN_PART_MS=30*60*1000;   // 여유 생산이 들어갈 최소 남은 시간
+// ═══ ⚡ 생산 속도 모델 (📈 통계 → ⚡ 속도 분석) ═══
+// 완료된 계획의 실제 시작·종료·수량으로 "시간당 생산량"을 배움.
+//   log(시간당 생산량) = 기본 + 품목 + 라인 + β·log(출근 인원 ÷ 평소 인원) + γ·log(수량 ÷ 그 품목 평소 수량)
+// 가중 릿지 회귀 (실적이 적은 품목·라인은 전체 평균 쪽으로 당겨짐). 점심시간은 작업 시간에서 뺌.
+// 마지막 25%(최근 실적)를 모르는 척 맞혀보고, 기존 방식(품목 평균)보다 정확할 때만 계획에 사용.
+const SPEED_MIN_PLANS=20;
+function speedLunchOverlapMs(sMs,eMs,lunch){
+  if(!lunch||!(eMs>sMs))return 0;
+  let tot=0,d=isoToKstDateStr(new Date(sMs).toISOString());
+  for(let k=0;k<7;k++,d=addDays(d,1)){
+    const ds=kstDayStartMs(d);
+    if(ds>eMs)break;
+    tot+=Math.max(0,Math.min(eMs,ds+lunch.e*3600000)-Math.max(sMs,ds+lunch.s*3600000));
+  }
+  return tot;
+}
+function speedMedian(a){if(!a.length)return null;const s=a.slice().sort((x,y)=>x-y),m=s.length>>1;return s.length%2?s[m]:(s[m-1]+s[m])/2}
+function speedHeadcount(ctx,day,lineId){
+  if(!ctx.staff.length)return null;
+  const depts=ctx.lineDepts[lineId]||[];
+  const off=ctx.offByDate[day];
+  let n=0;
+  for(const s of ctx.staff){
+    if(s.active===false)continue;
+    if(depts.length&&!depts.includes(s.department))continue;
+    if(off&&off.has(s.id))continue;
+    n++;
+  }
+  return n;
+}
+// 가중 릿지: (XᵀWX + Λ) b = XᵀWy  — 가우스 소거
+function speedSolve(rows,ys,ws,lambdas){
+  const k=lambdas.length;
+  const A=Array.from({length:k},()=>new Float64Array(k+1));
+  for(let r=0;r<rows.length;r++){
+    const x=rows[r],w=ws[r],y=ys[r];
+    const nz=[];for(let i=0;i<k;i++)if(x[i]!==0)nz.push(i);
+    for(const i of nz){
+      A[i][k]+=w*x[i]*y;
+      for(const j of nz)A[i][j]+=w*x[i]*x[j];
+    }
+  }
+  for(let i=0;i<k;i++)A[i][i]+=lambdas[i];
+  for(let c=0;c<k;c++){
+    let p=c;for(let r=c+1;r<k;r++)if(Math.abs(A[r][c])>Math.abs(A[p][c]))p=r;
+    if(Math.abs(A[p][c])<1e-12)continue;
+    [A[c],A[p]]=[A[p],A[c]];
+    for(let r=0;r<k;r++){
+      if(r===c)continue;
+      const f=A[r][c]/A[c][c];
+      if(f!==0)for(let j=c;j<=k;j++)A[r][j]-=f*A[c][j];
+    }
+  }
+  return Array.from({length:k},(_,i)=>Math.abs(A[i][i])<1e-12?0:A[i][k]/A[i][i]);
+}
+function speedFit(samples){
+  const items=[...new Set(samples.map(s=>s.itemId))];
+  const lines=[...new Set(samples.map(s=>s.lineKey))];
+  const iIdx={},lIdx={};items.forEach((v,i)=>iIdx[v]=1+i);lines.forEach((v,i)=>lIdx[v]=1+items.length+i);
+  const S=1+items.length+lines.length,B=S+1,K=S+2;
+  // 평소 인원(라인별 중간값), 평소 수량(품목별 중간값)
+  const nRef={},qRef={};
+  lines.forEach(l=>{nRef[l]=speedMedian(samples.filter(s=>s.lineKey===l&&s.n>0).map(s=>s.n))});
+  items.forEach(it=>{qRef[it]=speedMedian(samples.filter(s=>s.itemId===it).map(s=>s.q))});
+  const feat=(s)=>{
+    const x=new Array(K).fill(0);x[0]=1;
+    if(iIdx[s.itemId])x[iIdx[s.itemId]]=1;
+    if(lIdx[s.lineKey])x[lIdx[s.lineKey]]=1;
+    const nr=nRef[s.lineKey];x[S]=s.n>0&&nr>0?Math.log(s.n/nr):0;
+    const qr=qRef[s.itemId];x[B]=s.q>0&&qr>0?Math.log(s.q/qr):0;
+    return x;
+  };
+  const wMean=samples.reduce((a,s)=>a+Math.min(s.h,8),0)/samples.length||1;
+  const lam=[0,...items.map(()=>0.5),...lines.map(()=>3),0.3,0.3];
+  const b=speedSolve(samples.map(feat),samples.map(s=>Math.log(s.q/s.h)),samples.map(s=>Math.min(s.h,8)/wMean),lam);
+  // 인원이 줄면 빨라진다 / 수량 효과가 너무 큰 결과는 데이터 부족으로 보고 막음
+  b[S]=Math.max(0,Math.min(1.5,b[S]));b[B]=Math.max(-0.5,Math.min(0.5,b[B]));
+  const count={};samples.forEach(s=>count[s.itemId]=(count[s.itemId]||0)+1);
+  const predictLog=(s)=>{const x=feat(s);let v=0;for(let i=0;i<K;i++)v+=x[i]*b[i];return v};
+  return{b,items,lines,iIdx,lIdx,S,B,nRef,qRef,count,predictLog};
+}
+function fitSpeedModel({plans,staff,lines,att,settings,items}){
+  const lunch=getLunch(settings||{});
+  const ctx={staff:(staff||[]).filter(s=>s.active!==false),lineDepts:{},offByDate:{}};
+  (lines||[]).forEach(l=>{ctx.lineDepts[l.id]=Array.isArray(l.staff_depts)?l.staff_depts:[]});
+  (att||[]).forEach(a=>{if(a.status&&a.status!=="work"){const d=String(a.date).slice(0,10);(ctx.offByDate[d]=ctx.offByDate[d]||new Set()).add(a.staff_id)}});
+  const attendanceDays=Object.keys(ctx.offByDate).length;
+  let samples=[];
+  for(const p of plans||[]){
+    const q=Number(p.actual_qty??p.qty);
+    const sMs=Date.parse(p.actual_start_at),eMs=Date.parse(p.actual_end_at);
+    if(!(q>0)||!(eMs>sMs))continue;
+    const lunchMs=speedLunchOverlapMs(sMs,eMs,lunch);
+    const h=(eMs-sMs-lunchMs)/3600000;
+    if(h<0.1||h>14)continue;
+    const day=isoToKstDateStr(p.actual_start_at);
+    samples.push({id:p.id,itemId:p.item_id,itemName:p.item_name,unit:p.item_unit,lineId:p.line_id,lineKey:p.line_id??"none",lineName:p.line_name||"미지정",
+      q,h,elapsed:(eMs-sMs)/3600000,lunchH:lunchMs/3600000,day,end:eMs,n:speedHeadcount(ctx,day,p.line_id)});
+  }
+  // 버튼 누르는 걸 잊은 것 같은 실적(같은 품목 중간 속도의 4배 이상 차이)은 뺌
+  const byItem={};samples.forEach(s=>(byItem[s.itemId]=byItem[s.itemId]||[]).push(s.q/s.h));
+  const medRate={};Object.keys(byItem).forEach(k=>medRate[k]=speedMedian(byItem[k]));
+  const before=samples.length;
+  samples=samples.filter(s=>byItem[s.itemId].length<3||(s.q/s.h<=medRate[s.itemId]*4&&s.q/s.h>=medRate[s.itemId]/4));
+  const removed=before-samples.length;
+  const base={n:samples.length,removed,attendanceDays,staffCount:ctx.staff.length,use:false,eval:null};
+  if(samples.length<SPEED_MIN_PLANS)return{...base,ok:false,reason:`완료 실적 ${samples.length}건 — ${SPEED_MIN_PLANS}건 이상 쌓이면 분석합니다`};
+
+  // 시험: 최근 25%를 모르는 척 맞혀봄 (기존 방식 = 품목별 Σ수량 ÷ Σ(종료−시작), 지금 📈 통계와 같은 값)
+  samples.sort((a,b)=>a.end-b.end);
+  const nTest=Math.max(5,Math.round(samples.length*0.25));
+  const train=samples.slice(0,samples.length-nTest),test=samples.slice(samples.length-nTest);
+  const m0=speedFit(train);
+  const cur={};train.forEach(s=>{const c=cur[s.itemId]=cur[s.itemId]||{q:0,h:0};c.q+=s.q;c.h+=s.elapsed});
+  let eCur=0,eMod=0,act=0,nEval=0;
+  for(const s of test){
+    const c=cur[s.itemId];if(!c||!m0.count[s.itemId])continue;
+    const pc=s.q/(c.q/c.h)+s.lunchH; // 기존: 시간당 생산량으로 나눈 뒤 점심 더함 (계획 추가 화면과 같음)
+    const pm=s.q/Math.exp(m0.predictLog(s))+s.lunchH;
+    eCur+=Math.abs(pc-s.elapsed);eMod+=Math.abs(pm-s.elapsed);act+=s.elapsed;nEval++;
+  }
+  const ev=nEval>=5&&act>0?{current:eCur/act,model:eMod/act,n:nEval,from:test[0].day,to:test[test.length-1].day}:null;
+
+  const m=speedFit(samples);
+  const lineEffect={};m.lines.forEach(l=>{lineEffect[l]=Math.exp(m.b[m.lIdx[l]])-1});
+  const staffBeta=m.b[m.S],batchBeta=m.b[m.B];
+  const itemRows=m.items.map(it=>{
+    const ss=samples.filter(s=>s.itemId===it);
+    const q=ss.reduce((a,s)=>a+s.q,0),el=ss.reduce((a,s)=>a+s.elapsed,0);
+    return{itemId:it,name:ss[0].itemName,unit:ss[0].unit,count:ss.length,
+      model:Math.exp(m.b[0]+m.b[m.iIdx[it]]),current:el>0?q/el:null,qRef:m.qRef[it]};
+  }).sort((a,b)=>b.count-a.count);
+  const lineName={};samples.forEach(s=>lineName[s.lineKey]=s.lineName);
+  const predict=(itemId,lineId,day,qty)=>{
+    if(!m.count[itemId])return null;
+    const lineKey=lineId??"none";
+    const n=speedHeadcount(ctx,day,lineId);
+    const q=Number(qty)>0?Number(qty):m.qRef[itemId];
+    const rate=Math.exp(m.predictLog({itemId,lineKey,n,q}));
+    if(!(rate>0)||!isFinite(rate))return null;
+    const nr=m.nRef[lineKey];
+    return{rate,n,nRef:nr,label:`⚡ 속도 모델${lineName[lineKey]?" · "+lineName[lineKey]:""}${n!=null?` · 출근 ${n}명`:""}`};
+  };
+  const use=!!ev&&ev.model<=ev.current;
+  return{...base,ok:true,use,eval:ev,staffBeta,batchBeta,lineEffect,lineName,nRef:m.nRef,itemRows,predict,
+    reason:ev?(use?"":"지난 실적 시험에서 아직 기존 방식(품목 평균)이 더 정확해서 계획에는 기존 방식을 씁니다"):"시험할 최근 실적이 부족해 계획에는 기존 방식을 씁니다"};
+}
+// 화면 여러 곳에서 쓰므로 5분 캐시
+let _speedCache=null;
+async function loadSpeedModel(adminHash,settings,force){
+  if(!force&&_speedCache&&_speedCache.hash===adminHash&&Date.now()-_speedCache.at<5*60000)return _speedCache.model;
+  const[plans,staff,lines,items]=await Promise.all([
+    rpc("aps_get_done_plans_all",{p_admin_hash:adminHash,p_days_back:null}).catch(()=>[]),
+    rpc("aps_list_staff",{p_admin_hash:adminHash,p_only_active:false}).catch(()=>[]),
+    rpc("aps_list_lines",{p_admin_hash:adminHash}).catch(()=>[]),
+    rpc("aps_list_items",{p_admin_hash:adminHash}).catch(()=>[])
+  ]);
+  let att=[];
+  const ds=(plans||[]).map(p=>p.actual_start_at&&isoToKstDateStr(p.actual_start_at)).filter(Boolean).sort();
+  const from=ds.length?ds[0]:todayStr(),to=addDays(todayStr(),60);
+  att=await rpc("aps_get_attendance_range",{p_admin_hash:adminHash,p_start:from,p_end:to}).catch(()=>[]);
+  const model=fitSpeedModel({plans:plans||[],staff:staff||[],lines:lines||[],att:att||[],settings,items});
+  model.hasDeptColumn=(lines||[]).some(l=>Object.prototype.hasOwnProperty.call(l,"staff_depts"));
+  _speedCache={hash:adminHash,at:Date.now(),model};
+  return model;
+}
+function invalidateSpeedModel(){_speedCache=null}
+
 // ═══ 🔮 수요 (ML 예측 + 🎉 행사) ═══
 // demand = {fc:{code:{date:{qty,promo}}}, promo:{code:[{start,end,kind,mult}]}}
 // 하루 수요 = ML 예측 (있으면) → 없으면 요일 평균. 행사 기간이면 배수 곱함
@@ -3285,7 +3482,7 @@ function buildForecastMap(rows){
   return map;
 }
 
-function computeAutoPlan({targetDay,items,lines,plans,invProducts,dowMap,rateByItem,settings,opts,groupByItem,demand}){
+function computeAutoPlan({targetDay,items,lines,plans,invProducts,dowMap,rateByItem,settings,opts,groupByItem,demand,speed}){
   const today=todayStr();
   const lead=Math.max(0,parseInt(opts.lead)||0);
   const cover=Math.max(1,parseInt(opts.cover)||1);
@@ -3346,8 +3543,9 @@ function computeAutoPlan({targetDay,items,lines,plans,invProducts,dowMap,rateByI
     const base={item:it,stockNow,startStock,firstShort,avgDaily,floor,eligible,targetDemand:f(targetDay),
       targetPromo:tp?(tp.kind||"행사"):null,demandSrc:fcd&&fcd[targetDay]?"ml":"dow"};
     const rs=rateByItem[it.id];
-    const rate=rs?.rate>0?rs.rate:(Number(it.units_per_hour)>0?Number(it.units_per_hour):0);
-    const rateSrc=rs?.rate>0?`실적 ${rs.count}건`:"수동 입력";
+    const sp0=speed?.use?speed.predict(it.id,eligible[0],targetDay,null):null;
+    const rate=sp0?sp0.rate:rs?.rate>0?rs.rate:(Number(it.units_per_hour)>0?Number(it.units_per_hour):0);
+    const rateSrc=sp0?"속도 모델":rs?.rate>0?`실적 ${rs.count}건`:"수동 입력";
     info[it.id]={base,rate,rateSrc};
     let enoughReason=null,need=0;
     if(firstShort===null||firstShort>triggerEnd){
@@ -3441,18 +3639,22 @@ function computeAutoPlan({targetDay,items,lines,plans,invProducts,dowMap,rateByI
       if(best===null||start<best.start||(start===best.start&&has&&!best.has))best={lid,start,has};
     }
     if(!best||best.start>=winEnd)return false;
-    const fullMs=ceilQuarter(c.need/c.rate*3600000);
+    // ⚡ 속도 모델: 고른 라인·그날 출근 인원·수량에 맞는 속도
+    const sp=speed?.use?speed.predict(c.item.id,best.lid,targetDay,c.need):null;
+    const rate=sp?sp.rate:c.rate;
+    const rateSrc=sp?`속도 모델${sp.n!=null?` · 출근 ${sp.n}명`:""}`:c.rateSrc;
+    const fullMs=ceilQuarter(c.need/rate*3600000);
     let qty=c.need,end=endAfterWork(best.start,Math.max(QUARTER_MS,fullMs));
     if(end>winEnd){
       const avail=workMsBetween(best.start,winEnd);
-      const fit=Math.floor(avail/3600000*c.rate);
+      const fit=Math.floor(avail/3600000*rate);
       if(fit<1||avail<QUARTER_MS)return false;
       if(fill&&avail<FILL_MIN_PART_MS)return false; // 여유 생산은 30분 미만 자투리에 넣지 않음
       qty=fit;end=winEnd;
     }
     cursor[best.lid]=end;used[best.lid]=true;
     if(g!=null)lineGroups[best.lid].add(g);
-    assigned.push({...c,key:targetDay+":"+c.item.id,day:targetDay,fill,lineId:best.lid,qty,group:g,groupName:g!=null?groupByItem[c.item.id].name:"",prio:seqNo++});
+    assigned.push({...c,rate,rateSrc,key:targetDay+":"+c.item.id,day:targetDay,fill,lineId:best.lid,qty,group:g,groupName:g!=null?groupByItem[c.item.id].name:"",prio:seqNo++});
     return true;
   };
   for(const c of candidates){
@@ -3891,6 +4093,8 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
   const[fcRows,setFcRows]=useState(null);   // 🔮 aps_forecast (null = SQL 미실행/실패)
   const[fcRun,setFcRun]=useState(null);
   const[promoRows,setPromoRows]=useState([]); // 🎉 aps_promotions
+  const[speed,setSpeed]=useState(null);       // ⚡ 속도 모델
+  useEffect(()=>{let c=false;loadSpeedModel(adminHash,settings).then(m=>{if(!c)setSpeed(m)}).catch(()=>{});return()=>{c=true}},[adminHash]);
   const[loadErr,setLoadErr]=useState("");
   const[fetching,setFetching]=useState(true);
   const[localLines,setLocalLines]=useState(lines);
@@ -3963,16 +4167,16 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
   const[aiRejNote,setAiRejNote]=useState({});     // 뺀 제안의 이유 {"c"+i: 문자열}
   const baseResult=useMemo(()=>{
     if(!dow||isPast)return null;
-    return computeAutoPlanRange({targetDay:dayStr,items,lines:localLines,plans,invProducts:invData?.products||[],dowMap:dow.map,rateByItem:rates,settings,opts,groupByItem,demand});
-  },[dow,rates,groupByItem,dayStr,items,localLines,plans,invData,settings,opts,isPast,demand]);
+    return computeAutoPlanRange({targetDay:dayStr,items,lines:localLines,plans,invProducts:invData?.products||[],dowMap:dow.map,rateByItem:rates,settings,opts,groupByItem,demand,speed});
+  },[dow,rates,groupByItem,dayStr,items,localLines,plans,invData,settings,opts,isPast,demand,speed]);
   const result=useMemo(()=>{
     if(!baseResult||!ai)return baseResult;
     const aiAdj={},aiLineOff={};
     ai.changes.forEach(c=>{if(!c.bad&&!aiOff.has("c"+c.i))(aiAdj[c.day]=aiAdj[c.day]||{})[c.item_id]={qty:c.qty,reason:c.reason}});
     ai.lineOff.forEach(c=>{if(!c.bad&&!aiOff.has("l"+c.i))(aiLineOff[c.day]=aiLineOff[c.day]||[]).push(c.line_id)});
     if(!Object.keys(aiAdj).length&&!Object.keys(aiLineOff).length)return baseResult;
-    return computeAutoPlanRange({targetDay:dayStr,items,lines:localLines,plans,invProducts:invData?.products||[],dowMap:dow.map,rateByItem:rates,settings,opts:{...opts,aiAdj,aiLineOff},groupByItem,demand});
-  },[baseResult,ai,aiOff,dow,rates,groupByItem,dayStr,items,localLines,plans,invData,settings,opts,demand]);
+    return computeAutoPlanRange({targetDay:dayStr,items,lines:localLines,plans,invProducts:invData?.products||[],dowMap:dow.map,rateByItem:rates,settings,opts:{...opts,aiAdj,aiLineOff},groupByItem,demand,speed});
+  },[baseResult,ai,aiOff,dow,rates,groupByItem,dayStr,items,localLines,plans,invData,settings,opts,demand,speed]);
   useEffect(()=>setUnchecked(new Set()),[result]);
 
   const toggleLine=async(l)=>{
@@ -4038,6 +4242,7 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
         <b>하루 판매량 기준:</b>{" "}
         {demand.fc?<>🔮 ML 예측 {Object.keys(demand.fc).length}개 상품{fcRun?` (${fmtKstDateTime(fcRun.run_at)} 실행 · 매출 ${fmtMD(String(fcRun.data_end).slice(0,10))}까지 학습)`:""} · 예측이 없는 상품·날짜는 요일 평균</>
           :<>요일 평균{fcRows===null?" (🔮 예측 미설정 — setup_aps_forecast.sql)":fcRows.length===0?" (🔮 예측 아직 없음)":" (🔮 예측 끔)"}</>}
+        {speed?.ok&&<> · ⚡ 작업 시간: {speed.use?<b>속도 모델</b>:"품목 평균"} ({speed.use?"라인·출근 인원·수량 반영":"속도 모델이 아직 더 정확하지 않음"})</>}
         {(()=>{const n=Object.values(demand.promo).flat().filter(p=>p.end>=dayStr&&p.start<=addDays(dayStr,30)).length;
           return n?<> · 🎉 앞으로 30일 행사 <b>{n}건</b> 반영</>:<> · 🎉 예정된 행사 없음</>})()}
       </div>
@@ -5090,7 +5295,7 @@ function PlansTab({adminHash}){
   const changeStatus=async(p,newStatus)=>{
     try{
       // aps_set_plan_status는 서버에서 actual_start_at/actual_end_at에 now() 자동 기록
-      await rpc("aps_set_plan_status",{
+      invalidateSpeedModel();await rpc("aps_set_plan_status",{
         p_admin_hash:adminHash,p_id:p.id,p_status:newStatus
       });
       if(newStatus==="canceled")await repackKeys([keyOf(p.line_id,p.start_at)]).catch(e=>console.warn("[repack]",e));
@@ -5679,7 +5884,7 @@ function DateStatsView({adminHash}){
     }
     setSaving(true);
     try{
-      await rpc("aps_update_plan_actuals",{
+      invalidateSpeedModel();await rpc("aps_update_plan_actuals",{
         p_admin_hash:adminHash,
         p_id:plan.id,
         p_actual_start_at:startIso,
@@ -5806,10 +6011,92 @@ function DateStatsView({adminHash}){
   </div>;
 }
 
+// ═══ ⚡ 속도 분석 (📈 통계 탭) ═══
+function SpeedView({adminHash}){
+  const[m,setM]=useState(null);
+  const[err,setErr]=useState("");
+  const[loading,setLoading]=useState(true);
+  const[lines,setLines]=useState([]);
+  const load=useCallback(async(force)=>{
+    setLoading(true);setErr("");
+    try{
+      const[st,ls]=await Promise.all([
+        rpc("aps_get_settings",{p_admin_hash:adminHash}).catch(()=>({})),
+        rpc("aps_list_lines",{p_admin_hash:adminHash}).catch(()=>[])
+      ]);
+      setLines(Array.isArray(ls)?ls:[]);
+      setM(await loadSpeedModel(adminHash,st||{},force));
+    }catch(e){setErr("불러오기 실패: "+String(e.message||e).slice(0,160))}
+    setLoading(false);
+  },[adminHash]);
+  useEffect(()=>{load(false)},[load]);
+  if(loading)return <Loader/>;
+  if(err)return <div style={{color:"#ef4444",fontSize:13}}>{err}</div>;
+  if(!m)return null;
+  const pct=(v)=>v==null?"–":(v*100).toFixed(1)+"%";
+  const nAll=Object.values(m.nRef||{}).filter(v=>v>0);
+  const nMid=nAll.length?speedMedian(nAll):null;
+  const perPerson=m.ok&&nMid>1?1-Math.pow((nMid-1)/nMid,m.staffBeta):null;
+  const batch2=m.ok?Math.pow(2,m.batchBeta)-1:null;
+  const improve=m.eval&&m.eval.current>0?(m.eval.current-m.eval.model)/m.eval.current:null;
+  const card=(t,v,sub,color)=><div style={{flex:"1 1 180px",padding:"10px 12px",border:"1px solid var(--div2)",borderRadius:10}}>
+    <div style={{fontSize:11,color:"var(--muted)",fontWeight:600}}>{t}</div>
+    <div style={{fontSize:20,fontWeight:800,marginTop:4,color:color||"var(--text)"}}>{v}</div>
+    {sub&&<div style={{fontSize:11,color:"var(--muted)",marginTop:2,lineHeight:1.5}}>{sub}</div>}
+  </div>;
+  const notes=[];
+  if(!m.staffCount)notes.push("👥 인원 탭에 직원이 없어 출근 인원 효과는 계산하지 않습니다.");
+  else if(!m.attendanceDays)notes.push("👥 인원 탭에 휴무 기록이 없어 매일 같은 인원으로 봅니다 — 휴무를 체크해 두면 인원이 적은 날 얼마나 느려지는지 배웁니다.");
+  if(!m.hasDeptColumn)notes.push("라인별 담당 부서를 고르려면 Supabase에서 setup_aps_speed.sql 을 실행하세요 (지금은 전체 출근 인원 사용).");
+  else if(!lines.some(l=>(l.staff_depts||[]).length))notes.push("🏭 라인 탭에서 라인마다 담당 부서를 고르면 그 부서 출근 인원으로 계산합니다 (지금은 전체 출근 인원).");
+  return <div>
+    <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.6,marginBottom:10,padding:"8px 12px",border:"1px solid var(--div2)",borderRadius:8}}>
+      완료된 계획의 <b>실제 시작·종료 시각과 수량</b>으로 품목·라인·출근 인원·한 번에 만드는 수량에 따라 시간당 생산량이 어떻게 달라지는지 배웁니다(점심시간은 작업 시간에서 뺌).
+      최근 실적 25%를 모르는 척 맞혀보고, 기존 방식(품목 평균)보다 정확하면 <b>계획 추가</b>와 <b>🤖 자동 생성</b>의 작업 시간 계산에 자동으로 씁니다.
+      <button className="aps-btn aps-btn-secondary aps-btn-sm" style={{marginLeft:8}} onClick={()=>load(true)}>↻ 다시 계산</button>
+    </div>
+    {notes.map((t,i)=><div key={i} style={{fontSize:12,color:"#f59e0b",marginBottom:6}}>⚠ {t}</div>)}
+    {!m.ok?<div style={{padding:20,textAlign:"center",color:"var(--muted)",border:"1px dashed var(--div2)",borderRadius:10}}>{m.reason}<div style={{fontSize:12,marginTop:6}}>▶ 시작 / ✓ 완료 버튼으로 실제 시각이 기록된 계획이 쌓이면 분석합니다.</div></div>:<>
+      <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:8}}>
+        {card("작업 시간 오차 (기존 품목 평균)",pct(m.eval?.current),m.eval?`${fmtMD(m.eval.from)}~${fmtMD(m.eval.to)} 실적 ${m.eval.n}건을 맞혀본 결과`:"시험할 최근 실적 부족")}
+        {card("작업 시간 오차 (속도 모델)",pct(m.eval?.model),improve!=null?(improve>0?`기존보다 ${(improve*100).toFixed(0)}% 덜 틀림 → 계획에 사용 중`:"기존보다 낫지 않음 → 계획엔 기존 방식"):null,m.use?"#22c55e":"#f59e0b")}
+        {card("출근 1명 줄면",perPerson!=null&&m.attendanceDays?`${(perPerson*100).toFixed(0)}% 느려짐`:"–",nMid?`평소 ${Math.round(nMid*10)/10}명 기준`:"출근 기록 필요")}
+        {card("한 번에 2배 만들면",batch2!=null?`시간당 ${batch2>=0?"+":""}${(batch2*100).toFixed(0)}%`:"–","준비·정리 시간 비중이 줄어드는 효과")}
+      </div>
+      <div style={{fontSize:11,color:"var(--muted)",marginBottom:14}}>
+        오차 = 계획마다 |예측 작업 시간 − 실제 작업 시간|을 더해 실제 합계로 나눈 값 · 실적 {m.n}건{m.removed?` (버튼 누르기를 잊은 것 같은 ${m.removed}건 제외)`:""} · 휴무 기록 {m.attendanceDays}일
+      </div>
+      <div style={{fontWeight:700,fontSize:14,margin:"6px 0"}}>🏭 라인별 속도</div>
+      <div style={{overflowX:"auto",marginBottom:16}}><table className="aps-table" style={{minWidth:480}}>
+        <thead><tr><th>라인</th><th className="right">평균 대비</th><th className="right">평소 인원</th><th>인원 기준</th></tr></thead>
+        <tbody>{Object.keys(m.lineEffect).map(k=>{
+          const v=m.lineEffect[k];const l=lines.find(x=>String(x.id)===String(k));
+          return <tr key={k}><td style={{fontWeight:600}}>{m.lineName[k]||k}</td>
+            <td className="right" style={{fontWeight:700,color:Math.abs(v)<0.03?"var(--muted)":v>0?"#22c55e":"#ef4444"}}>{Math.abs(v)<0.03?"비슷":(v>0?"+":"")+(v*100).toFixed(0)+"%"}</td>
+            <td className="right">{m.nRef[k]!=null?Math.round(m.nRef[k]*10)/10+"명":"–"}</td>
+            <td style={{fontSize:12,color:"var(--muted)"}}>{l&&(l.staff_depts||[]).length?l.staff_depts.join(", "):"전체 출근 인원"}</td></tr>;
+        })}</tbody>
+      </table></div>
+      <div style={{fontWeight:700,fontSize:14,margin:"6px 0"}}>📦 품목별 시간당 생산량</div>
+      <div style={{overflowX:"auto"}}><table className="aps-table" style={{minWidth:560}}>
+        <thead><tr><th>품목</th><th className="right">실적</th><th className="right" title="📈 통계와 같은 값: Σ수량 ÷ Σ(종료−시작), 점심 포함">기존 (점심 포함)</th><th className="right" title="평소 인원·평소 수량, 점심 제외 작업 시간 기준">속도 모델</th><th className="right">평소 1회 수량</th></tr></thead>
+        <tbody>{m.itemRows.map(r=><tr key={r.itemId}>
+          <td style={{fontWeight:600}}>{r.name}</td>
+          <td className="right">{r.count}건</td>
+          <td className="right" style={{color:"var(--muted)"}}>{r.current!=null?fmtNum(Math.round(r.current*10)/10):"–"}</td>
+          <td className="right"><b>{fmtNum(Math.round(r.model*10)/10)}</b> <span style={{fontSize:11,color:"var(--muted)"}}>{r.unit||""}/시간</span></td>
+          <td className="right" style={{color:"var(--muted)"}}>{r.qRef!=null?fmtNum(Math.round(r.qRef)):"–"}</td>
+        </tr>)}</tbody>
+      </table></div>
+      {!m.use&&<div style={{fontSize:12,color:"#f59e0b",marginTop:10}}>ℹ {m.reason}</div>}
+    </>}
+  </div>;
+}
+
 function StatsTab({adminHash}){
   const[viewMode,setViewMode]=useState(()=>{
     const v=localStorage.getItem("aps-stats-view-mode");
-    return v==="date"?"date":"item";
+    return v==="date"||v==="speed"?v:"item";
   });
   useEffect(()=>{localStorage.setItem("aps-stats-view-mode",viewMode)},[viewMode]);
 
@@ -5888,7 +6175,7 @@ function StatsTab({adminHash}){
     }
     setSaving(true);
     try{
-      await rpc("aps_update_plan_actuals",{
+      invalidateSpeedModel();await rpc("aps_update_plan_actuals",{
         p_admin_hash:adminHash,
         p_id:plan.id,
         p_actual_start_at:startIso,
@@ -5947,8 +6234,13 @@ function StatsTab({adminHash}){
   const viewToggle=<div className="aps-view-toggle" style={{marginBottom:14}}>
     <button className={viewMode==="item"?"on":""} onClick={()=>setViewMode("item")}>📦 품목별</button>
     <button className={viewMode==="date"?"on":""} onClick={()=>setViewMode("date")}>📅 날짜별</button>
+    <button className={viewMode==="speed"?"on":""} onClick={()=>setViewMode("speed")}>⚡ 속도 분석</button>
   </div>;
 
+  if(viewMode==="speed")return <div>
+    {viewToggle}
+    <SpeedView adminHash={adminHash}/>
+  </div>;
   if(viewMode==="date")return <div>
     {viewToggle}
     <DateStatsView adminHash={adminHash}/>
