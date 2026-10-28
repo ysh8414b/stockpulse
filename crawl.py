@@ -43,6 +43,8 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")  # service_role key (GitHub Se
 NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID", "")
 NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET", "")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+# Groq가 llama-3.3-70b-versatile을 2026-08-16에 종료 → 공식 대체 모델 (GROQ_MODEL 환경변수로 바꿀 수 있음)
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "") or "openai/gpt-oss-120b"
 DART_API_KEY = os.environ.get("DART_API_KEY", "")  # https://opendart.fss.or.kr 무료 발급
 
 # 재료 포착 TOP 10을 close 모드가 아닐 때도 강제 산출 (수동 실행/테스트용)
@@ -1661,7 +1663,7 @@ def detect_themes_with_ai(news_titles, theme_map=None):
                 "Content-Type": "application/json",
             },
             json={
-                "model": "llama-3.3-70b-versatile",
+                "model": GROQ_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
                 "response_format": {"type": "json_object"},
@@ -1873,7 +1875,7 @@ def discover_new_themes(news_titles, krx_data, theme_map):
                 "Content-Type": "application/json",
             },
             json={
-                "model": "llama-3.3-70b-versatile",
+                "model": GROQ_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.4,
                 "response_format": {"type": "json_object"},
@@ -2290,7 +2292,7 @@ market_mood: 코스피·코스닥 모두 상승이면 bullish, 모두 하락이�
                 "Content-Type": "application/json",
             },
             json={
-                "model": "llama-3.3-70b-versatile",
+                "model": GROQ_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.5,
                 "max_tokens": 4096,
@@ -2488,7 +2490,7 @@ JSON 형식:
                 "Content-Type": "application/json",
             },
             json={
-                "model": "llama-3.3-70b-versatile",
+                "model": GROQ_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.4,
                 "max_tokens": 8192,
@@ -2625,7 +2627,7 @@ JSON 형식:
                 "Content-Type": "application/json",
             },
             json={
-                "model": "llama-3.3-70b-versatile",
+                "model": GROQ_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.4,
                 "max_tokens": 4096,
@@ -3974,7 +3976,7 @@ JSON 형식으로만 답하라:
                 "Content-Type": "application/json",
             },
             json={
-                "model": "llama-3.3-70b-versatile",
+                "model": GROQ_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
                 "max_tokens": 8192,

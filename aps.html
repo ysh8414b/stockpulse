@@ -3493,10 +3493,10 @@ function validateAiPlan(raw,{base,lines}){
   };
 }
 
-async function callAiJson(adminHash,messages,maxTokens,onTick){
-  const id=await rpc("aps_ai_request",{p_admin_hash:adminHash,p_messages:messages,p_max_tokens:maxTokens||2048});
+// pg_net 요청 id의 응답을 기다림 → {status, body(JSON 파싱된 것), text}
+async function pollAi(adminHash,id,onTick,limitMs){
   const t0=Date.now();
-  while(Date.now()-t0<100000){
+  while(Date.now()-t0<(limitMs||100000)){
     await new Promise(r=>setTimeout(r,1500));
     onTick&&onTick(Math.round((Date.now()-t0)/1000));
     const res=await rpc("aps_ai_result",{p_admin_hash:adminHash,p_id:id});
@@ -3504,25 +3504,49 @@ async function callAiJson(adminHash,messages,maxTokens,onTick){
     if(res.timed_out)throw new Error("AI 응답 시간이 초과됐습니다. 잠시 뒤 다시 시도하세요.");
     if(res.error)throw new Error("호출 실패: "+res.error);
     let body=null;try{body=JSON.parse(res.content||"")}catch(e){}
-    if(res.status!==200){
-      const m=body?.error?.message||String(res.content||"").slice(0,200);
-      if(res.status===401)throw new Error("Groq API 키가 올바르지 않습니다. 키를 다시 등록하세요.");
-      if(res.status===429)throw new Error("Groq 무료 한도를 넘었습니다. 잠시(1분~하루) 뒤 다시 시도하세요. ("+m+")");
-      throw new Error(`AI 오류 ${res.status}: ${m}`);
-    }
-    const txt=body?.choices?.[0]?.message?.content||"";
-    try{return JSON.parse(txt)}catch(e){
-      const mm=txt.match(/\{[\s\S]*\}/);
-      if(mm)try{return JSON.parse(mm[0])}catch(e2){}
-      throw new Error("AI 응답을 읽지 못했습니다. 다시 시도하세요.");
-    }
+    return{status:res.status,body,text:String(res.content||"")};
   }
-  throw new Error("AI 응답을 100초 동안 받지 못했습니다.");
+  throw new Error("AI 응답을 "+Math.round((limitMs||100000)/1000)+"초 동안 받지 못했습니다.");
+}
+
+// 모델이 없어졌을 때(Groq가 모델을 종료) 고를 순서
+const GROQ_MODEL_PREF=["openai/gpt-oss-120b","qwen/qwen3.8-27b","qwen/qwen3.6-27b","openai/gpt-oss-20b"];
+const GROQ_NONCHAT=/whisper|guard|tts|orpheus|playai|compound|prompt|safeguard|embed/i; // 음성·검열 등 대화용이 아닌 모델
+function pickGroqModel(ids,current){
+  const ok=ids.filter(id=>id!==current&&!GROQ_NONCHAT.test(id));
+  for(const m of GROQ_MODEL_PREF)if(ok.includes(m))return m;
+  return ok.find(id=>/gpt-oss-120b/i.test(id))||ok.find(id=>/qwen|llama|gpt-oss|kimi|deepseek/i.test(id))||ok[0]||null;
+}
+async function listGroqModels(adminHash){
+  const id=await rpc("aps_ai_models_request",{p_admin_hash:adminHash});
+  const r=await pollAi(adminHash,id,null,40000);
+  if(r.status!==200)throw new Error("모델 목록 조회 실패 "+r.status+": "+(r.body?.error?.message||r.text.slice(0,150)));
+  return (r.body?.data||[]).filter(m=>m.active!==false&&!GROQ_NONCHAT.test(m.id)).map(m=>m.id).sort();
+}
+
+class AiModelGoneError extends Error{}
+async function callAiJson(adminHash,messages,maxTokens,onTick){
+  const id=await rpc("aps_ai_request",{p_admin_hash:adminHash,p_messages:messages,p_max_tokens:maxTokens||4096});
+  const{status,body,text}=await pollAi(adminHash,id,onTick);
+  if(status!==200){
+    const m=body?.error?.message||text.slice(0,200);
+    const code=body?.error?.code||"";
+    if(status===404||code==="model_not_found"||code==="model_decommissioned"||/does not exist|decommissioned/i.test(m))throw new AiModelGoneError(m);
+    if(status===401)throw new Error("Groq API 키가 올바르지 않습니다. 키를 다시 등록하세요.");
+    if(status===429)throw new Error("Groq 무료 한도를 넘었습니다. 잠시(1분~하루) 뒤 다시 시도하세요. ("+m+")");
+    throw new Error(`AI 오류 ${status}: ${m}`);
+  }
+  const txt=body?.choices?.[0]?.message?.content||"";
+  try{return JSON.parse(txt)}catch(e){
+    const mm=txt.match(/\{[\s\S]*\}/);
+    if(mm)try{return JSON.parse(mm[0])}catch(e2){}
+    throw new Error("AI 응답을 읽지 못했습니다. 다시 시도하세요.");
+  }
 }
 
 function aiErrText(e){
   const m=String(e?.message||e);
-  if(/aps_ai_(status|request|result|set_key)/.test(m)&&/(function|Could not find|PGRST202)/i.test(m))return"Supabase에서 setup_aps_ai.sql 을 먼저 실행해주세요.";
+  if(/aps_ai_(status|request|result|set_key|set_model|models_request)/.test(m)&&/(function|Could not find|PGRST202)/i.test(m))return"Supabase에서 setup_aps_ai.sql 을 먼저 실행해주세요.";
   if(m.includes("no_ai_key"))return"Groq API 키가 등록되지 않았습니다. 아래에서 키를 등록하세요.";
   if(/schema "net"|net\.http_post/.test(m))return"Supabase에 pg_net 확장이 없습니다. setup_aps_ai.sql 을 다시 실행하거나 Database → Extensions에서 pg_net을 켜세요.";
   return m.slice(0,300);
@@ -3538,6 +3562,17 @@ function AiReviewPanel({adminHash,base,items,lines,plans,dowMap,settings,opts,ai
   const[err,setErr]=useState("");
   const[keyIn,setKeyIn]=useState("");
   const[showKey,setShowKey]=useState(false);
+  const[models,setModels]=useState(null); // 모델 목록 (불러왔을 때만)
+  const[notice,setNotice]=useState("");
+  const loadModels=async()=>{
+    setErr("");
+    try{setModels(await listGroqModels(adminHash))}catch(e){setErr(aiErrText(e))}
+  };
+  const changeModel=async(m)=>{
+    setErr("");
+    try{const v=await rpc("aps_ai_set_model",{p_admin_hash:adminHash,p_model:m});setStatus(st=>({...st,model:v||m}));setNotice("")}
+    catch(e){setErr(aiErrText(e))}
+  };
   const loadStatus=useCallback(()=>{
     rpc("aps_ai_status",{p_admin_hash:adminHash}).then(s=>setStatus(s||{})).catch(e=>setStatus({err:aiErrText(e)}));
   },[adminHash]);
@@ -3553,10 +3588,20 @@ function AiReviewPanel({adminHash,base,items,lines,plans,dowMap,settings,opts,ai
     setBusy(true);setErr("");setSec(0);
     try{
       const input=buildAiPlanInput({base,items,lines,plans,dowMap,settings,opts,note:note.trim()});
-      const raw=await callAiJson(adminHash,[
-        {role:"system",content:AI_PLAN_SYSTEM},
-        {role:"user",content:JSON.stringify(input)}
-      ],2048,setSec);
+      const msgs=[{role:"system",content:AI_PLAN_SYSTEM},{role:"user",content:JSON.stringify(input)}];
+      let raw;
+      try{raw=await callAiJson(adminHash,msgs,4096,setSec)}
+      catch(e){
+        if(!(e instanceof AiModelGoneError))throw e;
+        // 모델이 종료됨 → 쓸 수 있는 모델로 바꾸고 한 번 더
+        const ids=await listGroqModels(adminHash);
+        const next=pickGroqModel(ids,status?.model);
+        if(!next)throw new Error("쓸 수 있는 Groq 모델을 찾지 못했습니다. ("+e.message+")");
+        await rpc("aps_ai_set_model",{p_admin_hash:adminHash,p_model:next});
+        setModels(ids);setStatus(st=>({...st,model:next}));
+        setNotice(`'${status?.model}' 모델이 종료돼 '${next}'(으)로 바꿨습니다.`);
+        raw=await callAiJson(adminHash,msgs,4096,setSec);
+      }
       setOff(new Set());
       setAi({...validateAiPlan(raw,{base,lines}),baseRef:base});
     }catch(e){setErr(aiErrText(e))}
@@ -3589,10 +3634,15 @@ function AiReviewPanel({adminHash,base,items,lines,plans,dowMap,settings,opts,ai
         <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
           <button className="aps-btn aps-btn-primary aps-btn-sm" onClick={ask} disabled={busy||!base} style={{background:"#8b5cf6",borderColor:"#8b5cf6"}}>{busy?`AI 검토 중... ${sec}초`:ai?"🧠 다시 검토":"🧠 AI 검토 요청"}</button>
           {ai&&<button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>{setAi(null);setOff(new Set())}}>AI 제안 모두 빼기</button>}
-          <span style={{fontSize:11,color:"var(--dimmer)"}}>모델 {status.model} · Groq 무료</span>
+          {models?<select className="aps-input" value={status.model} onChange={e=>changeModel(e.target.value)} style={{padding:"3px 6px",fontSize:11,maxWidth:240}}>
+              {!models.includes(status.model)&&<option value={status.model}>{status.model} (없음)</option>}
+              {models.map(m=><option key={m} value={m}>{m}</option>)}
+            </select>:
+            <span style={{fontSize:11,color:"var(--dimmer)"}}>모델 {status.model} · Groq 무료 <a href="#" onClick={e=>{e.preventDefault();loadModels()}} style={{color:"#8b5cf6"}}>변경</a></span>}
           <button className="aps-btn aps-btn-secondary aps-btn-sm" style={{marginLeft:"auto"}} onClick={()=>setShowKey(v=>!v)}>🔑 키 변경</button>
         </div>
       </>}
+      {notice&&<div style={{marginTop:8,color:"#10b981",fontWeight:600}}>ℹ {notice}</div>}
       {err&&<div className="aps-err" style={{marginTop:8}}>{err}</div>}
       {ai&&<div style={{marginTop:10,display:"flex",flexDirection:"column",gap:6}}>
         {ai.baseRef!==base&&<div style={{color:"#f59e0b",fontWeight:600}}>⚠ AI 검토 뒤에 옵션·라인이 바뀌었습니다. 제안이 지금 초안과 안 맞을 수 있으니 다시 검토하세요.</div>}

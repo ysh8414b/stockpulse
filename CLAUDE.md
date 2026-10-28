@@ -1361,7 +1361,7 @@
 ### APS — 🧠 AI 검토 (자동 생성 + Groq) (2026-10-28)
 - 사용자 요청: 규칙만으로 계획을 짜는 것보다 AI가 같이 보면 더 정교해질 것 같다 → 무료인 Groq로 먼저 붙임 (Claude/GPT API는 유료)
 - 구조: **규칙 초안 → AI 검토(제안) → 사람이 고름 → 규칙이 다시 계산**. AI는 계획을 직접 저장하지 않고, 시간·라인·점심 계산은 항상 `computeAutoPlan`이 함
-- **`setup_aps_ai.sql`** (신규, 1회 실행): `pg_net` 확장 + `aps_secrets`(RLS, anon/authenticated 권한 회수) — Groq 키는 Supabase 안에만 저장(페이지 코드에 키 없음). RPC: `aps_ai_status`(키 유무·모델, 키 값은 안 돌려줌), `aps_ai_set_key`(빈 값 = 삭제), `aps_ai_request(hash, messages, max_tokens)` → `net.http_post`로 Groq `chat/completions`(기본 `llama-3.3-70b-versatile`, JSON 모드, temperature 0.2, 90초) 요청 id 반환, `aps_ai_result(hash, id)` → `net._http_response` 조회(없으면 `{pending:true}`). 모두 `aps_assert_admin` 검사. 모델 변경은 `aps_secrets`에 `groq_model` 행
+- **`setup_aps_ai.sql`** (신규, 1회 실행): `pg_net` 확장 + `aps_secrets`(RLS, anon/authenticated 권한 회수) — Groq 키는 Supabase 안에만 저장(페이지 코드에 키 없음). RPC: `aps_ai_status`(키 유무·모델, 키 값은 안 돌려줌), `aps_ai_set_key`(빈 값 = 삭제), `aps_ai_request(hash, messages, max_tokens)` → `net.http_post`로 Groq `chat/completions`(기본 `openai/gpt-oss-120b`, JSON 모드, temperature 0.2, 90초) 요청 id 반환, `aps_ai_result(hash, id)` → `net._http_response` 조회(없으면 `{pending:true}`). 모두 `aps_assert_admin` 검사. 모델 변경은 `aps_secrets`에 `groq_model` 행
   - 비동기인 이유: Supabase anon 요청은 몇 초면 끊기므로 동기 HTTP 호출 대신 요청 id → 1.5초마다 결과 확인(최대 100초, `callAiJson`)
 - **`aps.html`**:
   - `computeAutoPlan`에 `opts.aiAdj`(`{날짜:{품목id:{qty,reason}}}` — qty 0 = 그날 빼기, 계획에 없던 품목은 추가)와 `opts.aiLineOff`(`{날짜:[라인id]}` — 그날 자동계획에서 제외) 반영. 추가·변경 품목은 부족 생산 후보로 들어가 기존 배정·시간 검사를 그대로 거침(AI가 추가한 부족일 없는 품목은 후보 맨 뒤). 생산 속도 없는 품목은 "반영 불가", 빼기는 제외 목록 `🧠 AI 제안으로 제외`
@@ -1369,6 +1369,8 @@
   - `buildAiPlanInput`: 초안 행(재고·당일 예상·하루 평균·안전재고·부족일·속도), 제외 품목 최대 40개, 관련 품목 요일별 평균 판매, 기간 안 기존 계획, 근무·점심, 규칙 옵션, 사용자 지시를 JSON으로 전달. 시스템 지시에 "데이터에 없는 명절·행사·발주 지어내지 말 것, 입력에 있는 id만, 제안 10개 이하"
   - `validateAiPlan`: 기간 밖 날짜·후보에 없는 품목·없는 라인·이상한 수량은 "반영 안 함 — 이유"로 표시만. 초안과 같은 수량 제안은 버림. AI 검토 뒤에 옵션이 바뀌면 "다시 검토하세요" 경고
   - 가짜 데이터·가짜 AI 응답으로 계산(130→120, 빼기, 추가, 1라인 쉬기)과 화면 확인. **실제 Groq 호출은 미확인**(SQL 실행 + 키 등록 후 첫 사용 필요)
+- **모델 종료 대응 (같은 날)**: 사용자 첫 사용 시 `AI 오류 404: The model llama-3.3-70b-versatile does not exist` — Groq가 이 모델을 2026-08-16에 종료(공식 대체 `openai/gpt-oss-120b`). 기본 모델을 `openai/gpt-oss-120b`로 변경 + SQL에 `aps_ai_models_request`(Groq `/models` 조회, pg_net GET) / `aps_ai_set_model` 추가. 페이지는 404·`model_not_found`·`model_decommissioned`를 받으면(`AiModelGoneError`) 모델 목록을 읽어 `GROQ_MODEL_PREF`(gpt-oss-120b → qwen3.8-27b → qwen3.6-27b → gpt-oss-20b) 순으로 골라 저장하고 한 번 더 요청, "모델이 종료돼 ○○로 바꿨습니다" 안내. 모델 이름 옆 "변경"으로 목록에서 직접 선택(음성·검열 모델 제외 `GROQ_NONCHAT`). max_tokens 2048 → 4096(gpt-oss는 생각 토큰도 포함)
+  - **crawl.py도 같은 모델을 6곳에서 써서 8/16부터 AI 브리핑·종목 분석·테마 분석·재료 포착 코멘트가 실패했을 가능성** → `GROQ_MODEL` 상수(환경변수, 기본 `openai/gpt-oss-120b`)로 교체. 실제 크롤링 실행으로는 미확인
 - 운영 순서: (1) Supabase에서 `setup_aps_ai.sql` 실행 → (2) console.groq.com에서 API 키 발급(크롤러용 GROQ_API_KEY 재사용 가능) → (3) 📅 생산계획 → 🤖 자동 생성 → 🧠 AI 검토에 키 저장 → 요청
 - 한계: Groq 무료 한도(분당·일당 토큰)를 넘으면 429 안내. 품목이 매우 많으면 제외 목록은 40개까지만 보냄. 회의록·발주서·로스 데이터는 아직 AI에 안 보냄(필요하면 "추가 지시"에 적기). 나중에 Claude/GPT로 바꾸려면 `aps_ai_request`의 URL·모델만 교체
 

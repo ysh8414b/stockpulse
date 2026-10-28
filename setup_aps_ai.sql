@@ -23,7 +23,7 @@ BEGIN
   PERFORM aps_assert_admin(p_admin_hash);
   RETURN jsonb_build_object(
     'has_key', EXISTS (SELECT 1 FROM aps_secrets WHERE key = 'groq_api_key'),
-    'model', COALESCE((SELECT value FROM aps_secrets WHERE key = 'groq_model'), 'llama-3.3-70b-versatile'),
+    'model', COALESCE((SELECT value FROM aps_secrets WHERE key = 'groq_model'), 'openai/gpt-oss-120b'),
     'net', EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_net')
   );
 END;
@@ -55,7 +55,7 @@ BEGIN
   PERFORM aps_assert_admin(p_admin_hash);
   SELECT value INTO v_key FROM aps_secrets WHERE key = 'groq_api_key';
   IF v_key IS NULL THEN RAISE EXCEPTION 'no_ai_key'; END IF;
-  v_model := COALESCE((SELECT value FROM aps_secrets WHERE key = 'groq_model'), 'llama-3.3-70b-versatile');
+  v_model := COALESCE((SELECT value FROM aps_secrets WHERE key = 'groq_model'), 'openai/gpt-oss-120b');
   SELECT net.http_post(
     url := 'https://api.groq.com/openai/v1/chat/completions',
     body := jsonb_build_object(
@@ -91,4 +91,40 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
--- 모델 바꾸기 (선택): INSERT INTO aps_secrets(key,value) VALUES('groq_model','llama-3.3-70b-versatile') ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value;
+-- ═══ 모델 관리 ═══
+-- Groq는 모델을 종종 종료함 (llama-3.3-70b-versatile → 2026-08-16 종료, 대체: openai/gpt-oss-120b)
+-- 페이지가 모델 없음 오류를 받으면 목록을 조회해 다른 모델로 바꾸고 다시 시도한다.
+
+-- 사용 가능한 모델 목록 요청 → 요청 id (결과는 aps_ai_result로 확인)
+CREATE OR REPLACE FUNCTION aps_ai_models_request(p_admin_hash TEXT)
+RETURNS BIGINT AS $$
+DECLARE
+  v_key TEXT;
+  v_id BIGINT;
+BEGIN
+  PERFORM aps_assert_admin(p_admin_hash);
+  SELECT value INTO v_key FROM aps_secrets WHERE key = 'groq_api_key';
+  IF v_key IS NULL THEN RAISE EXCEPTION 'no_ai_key'; END IF;
+  SELECT net.http_get(
+    url := 'https://api.groq.com/openai/v1/models',
+    headers := jsonb_build_object('Authorization', 'Bearer ' || v_key),
+    timeout_milliseconds := 30000
+  ) INTO v_id;
+  RETURN v_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- 모델 저장 (빈 값 = 기본 모델)
+CREATE OR REPLACE FUNCTION aps_ai_set_model(p_admin_hash TEXT, p_model TEXT)
+RETURNS TEXT AS $$
+BEGIN
+  PERFORM aps_assert_admin(p_admin_hash);
+  IF p_model IS NULL OR btrim(p_model) = '' THEN
+    DELETE FROM aps_secrets WHERE key = 'groq_model';
+    RETURN 'openai/gpt-oss-120b';
+  END IF;
+  INSERT INTO aps_secrets (key, value, updated_at) VALUES ('groq_model', btrim(p_model), now())
+  ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();
+  RETURN btrim(p_model);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
