@@ -1944,7 +1944,7 @@ function InventoryQuickPanel({onClose,onJumpToSheet,adminHash,items,plans}){
 // ═══════════════════════════════════════════
 // 생산계획 탭
 // ═══════════════════════════════════════════
-function PlanForm({adminHash,items,lines,settings,initial,prefill,defaultDate,onSaved,onCancel}){
+function PlanForm({adminHash,items,lines,settings,initial,prefill,defaultDate,plans,onSaved,onCancel}){
   const isEdit=!!initial;
   const pf=!isEdit?prefill:null; // 발주 부족 알림에서 미리 채운 값
   const wsh=parseInt(settings?.work_start_hour||"8");
@@ -1963,6 +1963,15 @@ function PlanForm({adminHash,items,lines,settings,initial,prefill,defaultDate,on
   const[memo,setMemo]=useState(initial?.memo||pf?.memo||"");
   const[err,setErr]=useState("");
   const[loading,setLoading]=useState(false);
+
+  // 새 계획: 라인을 고르면 그 라인 그날 마지막 계획 뒤로 시작 시각 자동 (시작 시각을 직접 고치면 멈춤)
+  const startTouched=useRef(isEdit||!!pf?.start_at);
+  useEffect(()=>{
+    if(startTouched.current||!lineId)return;
+    const s=suggestPlanSlot({item:{line_ids:[Number(lineId)]},day:baseDate,qty:1,lines,plans:plans||[],settings,rate:0});
+    const v=isoToKstInput(s.start_at);
+    if(v!==startAt)setStartAt(v);
+  },[lineId]);
 
   // ─── 종료 시각 자동 계산 (통계 시간당 생산량 → 품목 시간당 생산량) ───
   const[autoEnd,setAutoEnd]=useState(!isEdit);
@@ -2105,7 +2114,7 @@ function PlanForm({adminHash,items,lines,settings,initial,prefill,defaultDate,on
     if(endAt<=startAt){setErr("종료 시각은 시작 시각보다 뒤여야 합니다");return}
     setLoading(true);setErr("");
     try{
-      await rpc("aps_upsert_plan",{
+      const rid=await rpc("aps_upsert_plan",{
         p_admin_hash:adminHash,
         p_id:isEdit?initial.id:null,
         p_item_id:Number(itemId),
@@ -2116,7 +2125,7 @@ function PlanForm({adminHash,items,lines,settings,initial,prefill,defaultDate,on
         p_status:status,
         p_memo:memo.trim()
       });
-      onSaved();
+      onSaved({id:isEdit?initial.id:(Number(rid)||null),line_id:lineId?Number(lineId):null,start_at:kstInputToIso(startAt),prev:isEdit?initial:null});
     }catch(e){
       setErr(errMsg(e,{invalid_times:"종료 시각이 시작 시각 이전입니다",unauthorized:"인증 실패"}));
     }
@@ -2235,7 +2244,7 @@ function PlanForm({adminHash,items,lines,settings,initial,prefill,defaultDate,on
         </div>
         <div>
           <div className="aps-form-label">시작 시각 * <span style={{color:"var(--muted)",fontWeight:400}}>(KST)</span></div>
-          <input className="aps-input" type="datetime-local" value={startAt} onChange={e=>setStartAt(e.target.value)}/>
+          <input className="aps-input" type="datetime-local" value={startAt} onChange={e=>{startTouched.current=true;setStartAt(e.target.value)}}/>
         </div>
         <div>
           <div className="aps-form-label">종료 시각 * <span style={{color:"var(--muted)",fontWeight:400}}>(KST)</span></div>
@@ -3900,7 +3909,7 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
   const create=async()=>{
     if(selected.length===0)return;
     setCreating(true);
-    let ok=0;const fails=[];const made={}; // "날짜:품목id" → {qty,planId}
+    let ok=0;const fails=[];const made={};const madeKeys=[]; // "날짜:품목id" → {qty,planId}
     for(const r of selected){
       try{
         const pid=await rpc("aps_upsert_plan",{
@@ -3909,6 +3918,7 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
           p_status:"planned",p_memo:r.partial?`시간 부족: 필요 ${r.need}`:""
         });
         made[r.day+":"+r.item.id]={qty:r.qty,planId:typeof pid==="number"?pid:null};
+        if(r.lineId!=null)madeKeys.push(`${r.lineId}|${isoToKstDateStr(new Date(r.startMs).toISOString())}`);
         ok++;
       }catch(e){fails.push(r.item.name)}
     }
@@ -3925,7 +3935,7 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
     }
     setCreating(false);
     if(fails.length)alert(`${ok}건 생성, ${fails.length}건 실패: ${fails.join(", ")}`);
-    onCreated(ok);
+    onCreated(ok,madeKeys);
   };
 
   const lineName=(id)=>localLines.find(l=>l.id===id)?.name||"-";
@@ -4570,6 +4580,48 @@ function swapPlanTimes(a,b,settings){
   ];
 }
 
+// 자동 당기기: 한 라인·한 날짜의 '계획' 상태 계획을 시작 순서대로 빈틈 없이 이어 붙임
+// - 각 계획의 작업 시간(점심 제외)은 유지, 점심은 다시 피해서 계산
+// - 진행중·완료 계획과 전날부터 이어지는 계획은 그대로 두고 그 시간을 피함
+// - 지난 날짜는 건드리지 않음, 오늘이면 지금 이전으로 당기지 않음
+// - focusId: 시작 시각이 같을 때 이 계획을 앞에 둠 (방금 옮긴/수정한 계획)
+// 반환: [{plan,start_at,end_at}] — 바뀌는 계획만
+function repackLineDay(plans,lineId,day,settings,focusId){
+  if(lineId==null||!day||day<todayStr())return[];
+  const ds=kstDayStartMs(day),de=ds+86400000;
+  const ws=parseInt(settings?.work_start_hour)||8;
+  const lunch=getLunch(settings);
+  const lS=lunch?ds+lunch.s*3600000:0,lE=lunch?ds+lunch.e*3600000:0;
+  const lunchIn=(s,e)=>lunch?Math.max(0,Math.min(e,lE)-Math.max(s,lS)):0;
+  const skip=t=>(lunch&&t>=lS&&t<lE)?lE:t;
+  const ms=p=>[new Date(p.start_at).getTime(),new Date(p.end_at).getTime()];
+  const onLine=(plans||[]).filter(p=>Number(p.line_id)===Number(lineId)&&p.status!=="canceled"&&p.start_at&&p.end_at);
+  const movable=onLine.filter(p=>p.status==="planned"&&isoToKstDateStr(p.start_at)===day);
+  if(!movable.length)return[];
+  const fixed=onLine.filter(p=>!movable.includes(p)).map(ms).filter(([s,e])=>s<de&&e>ds);
+  const ord=p=>Number(p.sort_order??p.id)||0;
+  movable.sort((a,b)=>ms(a)[0]-ms(b)[0]||(a.id===focusId?-1:b.id===focusId?1:0)||ord(a)-ord(b));
+  let cur=ds+ws*3600000;
+  if(day===todayStr())cur=Math.max(cur,ceilQuarter(Date.now()));
+  cur=Math.min(cur,ms(movable[0])[0]); // 근무 전(또는 이미 지난 시각)에 잡아 둔 첫 계획은 그 시각 유지
+  const out=[];
+  for(const p of movable){
+    const[s0,e0]=ms(p);
+    const work=Math.max(QUARTER_MS,(e0-s0)-lunchIn(s0,e0));
+    let s=cur,e=cur;
+    for(let guard=0;guard<50;guard++){
+      s=skip(s);e=s+work;
+      if(lunch&&s<lS&&e>lS)e+=lE-lS;
+      const hit=fixed.find(([fs,fe])=>fs<e&&fe>s);
+      if(!hit)break;
+      s=hit[1];
+    }
+    if(s!==s0||e!==e0)out.push({plan:p,start_at:new Date(s).toISOString(),end_at:new Date(e).toISOString()});
+    cur=e;
+  }
+  return out;
+}
+
 function OrderShortagePanel({adminHash,items,lines,plans,settings,invData,onAddPlan}){
   const[data,setData]=useState(null); // {orders, products, linkMissing} | {error}
   const[rates,setRates]=useState({});
@@ -4912,12 +4964,48 @@ function PlansTab({adminHash}){
     setExportingWeek(null);
   };
 
+  // 자동 당기기 (계획 추가·삭제·시간 변경 시 같은 라인·같은 날 계획을 빈틈 없이 이어 붙임)
+  const[autoPack,setAutoPack]=useState(()=>{try{return localStorage.getItem("aps-auto-pack")!=="0"}catch(e){return true}});
+  useEffect(()=>{try{localStorage.setItem("aps-auto-pack",autoPack?"1":"0")}catch(e){}},[autoPack]);
+  const keyOf=(lineId,iso)=>lineId!=null&&iso?`${lineId}|${isoToKstDateStr(iso)}`:null;
+  const repackKeys=async(keys,focusId,force)=>{
+    if(!autoPack&&!force)return 0;
+    const ks=[...new Set((keys||[]).filter(Boolean))];
+    if(!ks.length)return 0;
+    const fresh=await rpc("aps_list_plans",{p_admin_hash:adminHash,p_status:null})||[];
+    let n=0;
+    for(const k of ks){
+      const i=k.indexOf("|");
+      const ch=repackLineDay(fresh,Number(k.slice(0,i)),k.slice(i+1),settings,focusId);
+      for(const{plan:q,start_at,end_at} of ch){
+        await rpc("aps_upsert_plan",{p_admin_hash:adminHash,p_id:q.id,p_item_id:q.item_id,p_line_id:q.line_id,p_qty:q.qty,
+          p_start_at:start_at,p_end_at:end_at,p_status:q.status,p_memo:q.memo||""});
+        n++;
+      }
+    }
+    return n;
+  };
+  // 지금 보는 날짜(전체 날짜 모드면 오늘 이후 전체)의 모든 라인을 한 번에 정리
+  const[packing,setPacking]=useState(false);
+  const packNow=async()=>{
+    setPacking(true);
+    try{
+      const today=todayStr();
+      const ks=plans.filter(p=>p.status==="planned"&&p.line_id!=null&&p.start_at&&(allDates?isoToKstDateStr(p.start_at)>=today:isoToKstDateStr(p.start_at)===dayStr))
+        .map(p=>keyOf(p.line_id,p.start_at));
+      const n=await repackKeys(ks,null,true);
+      if(n===0)alert("당길 빈틈이 없습니다");
+    }catch(e){alert("정리 실패: "+e.message)}
+    setPacking(false);load();
+  };
+
   const changeStatus=async(p,newStatus)=>{
     try{
       // aps_set_plan_status는 서버에서 actual_start_at/actual_end_at에 now() 자동 기록
       await rpc("aps_set_plan_status",{
         p_admin_hash:adminHash,p_id:p.id,p_status:newStatus
       });
+      if(newStatus==="canceled")await repackKeys([keyOf(p.line_id,p.start_at)]).catch(e=>console.warn("[repack]",e));
       load();
     }catch(e){alert("상태 변경 실패: "+e.message)}
   };
@@ -4926,6 +5014,7 @@ function PlansTab({adminHash}){
     if(!confirm(`생산계획 #${p.id} (${p.item_name}) 을(를) 삭제하시겠습니까?`))return;
     try{
       await rpc("aps_delete_plan",{p_admin_hash:adminHash,p_id:p.id});
+      await repackKeys([keyOf(p.line_id,p.start_at)]).catch(e=>console.warn("[repack]",e));
       load();
     }catch(e){alert("삭제 실패: "+e.message)}
   };
@@ -4941,6 +5030,7 @@ function PlansTab({adminHash}){
           await rpc("aps_upsert_plan",{p_admin_hash:adminHash,p_id:q.id,p_item_id:q.item_id,p_line_id:q.line_id,p_qty:q.qty,
             p_start_at:start_at,p_end_at:end_at,p_status:q.status,p_memo:q.memo||""});
         }
+        await repackKeys([keyOf(p.line_id,p.start_at)],p.id).catch(e=>console.warn("[repack]",e));
       }
       load();
     }catch(e){alert("순서 변경 실패: "+e.message);load()}
@@ -5094,6 +5184,7 @@ function PlansTab({adminHash}){
         p_status:p.status,
         p_memo:p.memo||""
       });
+      await repackKeys([keyOf(p.line_id,p.start_at),keyOf(p.line_id,new Date(newStartMs).toISOString())],p.id).catch(e=>console.warn("[repack]",e));
       load();
     }catch(e){
       alert("시간 변경 실패: "+errMsg(e,{invalid_times:"종료 시각이 시작 시각 이전입니다"}));
@@ -5173,6 +5264,13 @@ function PlansTab({adminHash}){
           ? "리스트: 전체 / 간트: 선택일"
           : `리스트·간트 모두 ${dayStr}`}
       </span>
+      <span style={{flex:1}}/>
+      <label style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:12,color:"var(--muted)",cursor:"pointer"}}
+        title="계획을 추가·삭제·시간 변경·취소하면 같은 라인·같은 날의 '계획' 상태 계획을 빈틈 없이 이어 붙입니다 (작업 시간·점심 반영, 진행중·완료 계획은 그대로, 지난 날짜는 안 바꿈)">
+        <input type="checkbox" checked={autoPack} onChange={e=>setAutoPack(e.target.checked)}/>⏩ 빈 시간 자동 당기기
+      </label>
+      <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={packNow} disabled={packing||loading}
+        title={allDates?"오늘 이후 모든 날짜의 라인별 빈 시간을 당깁니다":`${dayStr} 라인별 빈 시간을 지금 당깁니다`}>{packing?"정리 중...":"⏩ 지금 당기기"}</button>
     </div>
 
     {!loading&&<OrderShortagePanel adminHash={adminHash} items={items} lines={lines} plans={plans} settings={settings} invData={invData}
@@ -5308,11 +5406,14 @@ function PlansTab({adminHash}){
       </div>
     }
 
-    {showForm&&<PlanForm key={editing?"e"+editing.id:prefill?"p"+prefill.item_id+prefill.day:"new"} adminHash={adminHash} items={items} lines={lines} settings={settings} initial={editing} prefill={editing?null:prefill} defaultDate={allDates?todayStr():dayStr} onCancel={()=>{setShowForm(false);setPrefill(null)}} onSaved={()=>{setShowForm(false);setPrefill(null);load()}}/>}
+    {showForm&&<PlanForm key={editing?"e"+editing.id:prefill?"p"+prefill.item_id+prefill.day:"new"} adminHash={adminHash} items={items} lines={lines} settings={settings} initial={editing} prefill={editing?null:prefill} defaultDate={allDates?todayStr():dayStr} onCancel={()=>{setShowForm(false);setPrefill(null)}} plans={plans} onSaved={async(info)=>{setShowForm(false);setPrefill(null);
+      if(info)await repackKeys([keyOf(info.line_id,info.start_at),info.prev?keyOf(info.prev.line_id,info.prev.start_at):null],info.id).catch(e=>console.warn("[repack]",e));
+      load()}}/>}
     {showWO&&<WorkOrderModal adminHash={adminHash} dayStr={dayStr} plans={plans} lines={lines} items={items} invData={invData} settings={settings}
       onClose={()=>setShowWO(false)} onSaved={load}/>}
     {showAuto&&<AutoPlanModal adminHash={adminHash} dayStr={dayStr} items={items} lines={lines} plans={plans} settings={settings} invData={invData}
-      onLinesChanged={load} onCancel={()=>setShowAuto(false)} onCreated={()=>{setShowAuto(false);load()}}/>}
+      onLinesChanged={load} onCancel={()=>setShowAuto(false)} onCreated={async(n,keys)=>{setShowAuto(false);
+        await repackKeys(keys||[]).catch(e=>console.warn("[repack]",e));load()}}/>}
     {showSettings&&<SettingsModal adminHash={adminHash} settings={settings} onCancel={()=>setShowSettings(false)} onSaved={(s)=>{setSettings(prev=>({...prev,...s}));setShowSettings(false)}}/>}
     {exportingWeek&&<div style={{position:"fixed",left:-99999,top:0,zIndex:-1,pointerEvents:"none"}} aria-hidden="true">
       <div ref={exportRef}><ExportWeekView week={exportingWeek}/></div>
