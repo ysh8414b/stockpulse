@@ -617,6 +617,130 @@ async function buildExportMaterialsFor(adminHash,planList,items,invData){
   return out;
 }
 
+// ═══ 실제 투입 원육 kg (setup_aps_raw_actual.sql) ═══
+const RAW_ACTUAL_SQL_MSG="실제 투입 원육을 저장하려면 Supabase에서 setup_aps_raw_actual.sql 을 먼저 실행해주세요.";
+function isRawActualMissing(e){const m=String(e?.message||e);return /aps_(get|set)_plan_raw_actuals|aps_get_raw_usage_stats|aps_plan_raw_actuals|PGRST202|Could not find the function/.test(m)}
+// 반환: {planId:{materialId:{kg,name,code}}} — SQL 미실행이면 null
+async function loadPlanRawActuals(adminHash,planIds){
+  const ids=Array.from(new Set((planIds||[]).map(Number).filter(Boolean)));
+  if(ids.length===0)return {};
+  try{
+    const rows=await rpc("aps_get_plan_raw_actuals",{p_admin_hash:adminHash,p_plan_ids:ids});
+    const out={};
+    for(const r of (rows||[])){
+      (out[r.plan_id]=out[r.plan_id]||{})[r.material_id]={kg:Number(r.kg)||0,name:r.material_name,code:r.material_code};
+    }
+    return out;
+  }catch(e){if(isRawActualMissing(e))return null;throw e}
+}
+// values {materialId:"kg 문자열"} → 저장용 [{material_id,kg}] (빈 칸은 제외)
+function rawValuesToRows(values){
+  const rows=[];
+  for(const[mid,v] of Object.entries(values||{})){
+    const s=String(v??"").trim();if(s==="")continue;
+    const kg=Number(s);
+    if(!isFinite(kg)||kg<0)throw new Error(`실제 투입 kg은 0 이상의 숫자여야 합니다 (${s})`);
+    rows.push({material_id:Number(mid),kg});
+  }
+  return rows;
+}
+function rawValuesKey(values){return JSON.stringify(Object.entries(values||{}).map(([k,v])=>[k,String(v??"").trim()]).filter(x=>x[1]!=="").sort())}
+
+// 실제 투입 원육 입력칸 — rows: BOM 기준 [{id,name,code,needKg}], materials: 전체 원자재 품목
+function RawActualInputs({rows,materials,values,setValues,planQtyNote}){
+  const bomIds=new Set((rows||[]).map(r=>String(r.id)));
+  const extraIds=Object.keys(values||{}).filter(id=>!bomIds.has(String(id)));
+  const matById={};for(const m of (materials||[]))matById[String(m.id)]=m;
+  const addable=(materials||[]).filter(m=>!bomIds.has(String(m.id))&&!(String(m.id) in (values||{})));
+  const set=(id,v)=>setValues(prev=>({...prev,[String(id)]:v}));
+  const remove=(id)=>setValues(prev=>{const n={...prev};delete n[String(id)];return n});
+  const planTotal=(rows||[]).reduce((a,r)=>a+r.needKg,0);
+  let actualTotal=0,anyActual=false;
+  for(const v of Object.values(values||{})){const s=String(v??"").trim();if(s!==""&&isFinite(Number(s))){actualTotal+=Number(s);anyActual=true}}
+  const inp={width:96,textAlign:"right",padding:"5px 8px",fontSize:13};
+  const line=(key,name,code,needKg,isExtra)=>{
+    const v=values?.[key]??"";
+    const s=String(v).trim();
+    const diff=s!==""&&isFinite(Number(s))&&needKg>0?(Number(s)-needKg)/needKg*100:null;
+    return <div key={key} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderTop:"1px solid var(--border)",flexWrap:"wrap"}}>
+      <div style={{flex:"1 1 140px",minWidth:0}}>
+        <div style={{fontWeight:600,fontSize:12}}>{name}{isExtra&&<span style={{marginLeft:6,fontSize:10,color:"#f59e0b"}}>BOM 외</span>}</div>
+        <div style={{fontSize:11,color:"var(--muted)"}}>{code||""}{needKg>0&&<> · 계획 {fmtKg(needKg)}</>}</div>
+      </div>
+      <input className="aps-input" type="number" step="any" min="0" value={v} placeholder={needKg>0?String(Math.round(needKg*100)/100):"kg"} onChange={e=>set(key,e.target.value)} style={inp}/>
+      <span style={{fontSize:12,color:"var(--muted)"}}>kg</span>
+      <span style={{width:56,textAlign:"right",fontSize:11,fontWeight:700,color:diff==null?"var(--dimmer)":Math.abs(diff)<1?"var(--muted)":diff>0?"#ef4444":"#22c55e"}}>{diff==null?"":(diff>0?"+":"")+diff.toFixed(1)+"%"}</span>
+      {isExtra&&<button type="button" className="aps-btn aps-btn-secondary" style={{padding:"2px 8px",fontSize:11}} onClick={()=>remove(key)} title="빼기">✕</button>}
+    </div>;
+  };
+  return <div>
+    {(rows||[]).map(r=>line(String(r.id),r.name,r.code,r.needKg,false))}
+    {extraIds.map(id=>{const m=matById[id];return line(id,m?.name||`원자재 #${id}`,m?.code,0,true)})}
+    {addable.length>0&&<div style={{paddingTop:6,borderTop:"1px solid var(--border)"}}>
+      <select className="aps-select" style={{width:"100%",fontSize:12}} value="" onChange={e=>{if(e.target.value)set(e.target.value,"")}}>
+        <option value="">+ 다른 원자재 추가 (BOM에 없는 원육을 썼을 때)</option>
+        {addable.map(m=><option key={m.id} value={m.id}>{m.code} · {m.name}</option>)}
+      </select>
+    </div>}
+    <div style={{display:"flex",justifyContent:"space-between",gap:8,marginTop:8,fontSize:12,flexWrap:"wrap"}}>
+      <span style={{color:"var(--muted)"}}>계획 합계 {fmtKg(planTotal)}{planQtyNote?` (${planQtyNote})`:""}</span>
+      <span>실제 합계 <b>{anyActual?fmtKg(actualTotal):"–"}</b>{anyActual&&planTotal>0&&<span style={{marginLeft:6,color:actualTotal>planTotal?"#ef4444":"#22c55e",fontWeight:700}}>{actualTotal>=planTotal?"+":""}{((actualTotal-planTotal)/planTotal*100).toFixed(1)}%</span>}</span>
+    </div>
+    <div style={{fontSize:11,color:"var(--muted)",marginTop:4}}>빈 칸은 저장하지 않음 · 모두 비우면 실제 투입 기록 삭제</div>
+  </div>;
+}
+
+// 통계 화면에서 계획 1건의 실제 투입 원육 수정
+function PlanRawModal({adminHash,plan,onClose,onSaved}){
+  const[items,setItems]=useState([]);
+  const[rows,setRows]=useState(null);
+  const[values,setValues]=useState({});
+  const[err,setErr]=useState("");
+  const[saving,setSaving]=useState(false);
+  const q=Number(plan.actual_qty??plan.qty)||0;
+  useEffect(()=>{
+    let c=false;
+    (async()=>{
+      try{
+        const its=await rpc("aps_list_items",{p_admin_hash:adminHash});
+        if(c)return;setItems(its||[]);
+        const[mats,saved]=await Promise.all([
+          buildExportMaterialsFor(adminHash,[{...plan,qty:q}],its||[],null),
+          loadPlanRawActuals(adminHash,[plan.id])
+        ]);
+        if(c)return;
+        setRows(mats[plan.id]||[]);
+        if(saved===null)setErr(RAW_ACTUAL_SQL_MSG);
+        const v={};for(const[mid,x] of Object.entries(saved?.[plan.id]||{}))v[mid]=String(x.kg);
+        setValues(v);
+      }catch(e){if(!c)setErr("불러오기 실패: "+String(e.message||e).slice(0,120))}
+    })();
+    return()=>{c=true};
+  },[adminHash,plan.id]);
+  const save=async()=>{
+    setErr("");
+    let list;try{list=rawValuesToRows(values)}catch(e){setErr(e.message);return}
+    setSaving(true);
+    try{
+      await rpc("aps_set_plan_raw_actuals",{p_admin_hash:adminHash,p_plan_id:plan.id,p_rows:list});
+      onSaved&&onSaved();onClose();
+    }catch(e){setErr(isRawActualMissing(e)?RAW_ACTUAL_SQL_MSG:"저장 실패: "+String(e.message||e).slice(0,120))}
+    setSaving(false);
+  };
+  return <div className="aps-modal-bg" onClick={onClose}>
+    <div className="aps-modal" onClick={e=>e.stopPropagation()} style={{maxWidth:520}}>
+      <div style={{fontWeight:700,fontSize:16,marginBottom:4}}>🥩 실제 투입 원육</div>
+      <div style={{fontSize:12,color:"var(--muted)",marginBottom:12}}>#{plan.id} · {plan.item_name} · {fmtNum(q)} {plan.item_unit||""}{plan.actual_end_at?` · ${fmtKstDateTime(plan.actual_end_at)} 완료`:""}</div>
+      {rows===null&&!err?<Loader/>:<RawActualInputs rows={rows||[]} materials={items.filter(i=>i.type==="material")} values={values} setValues={setValues} planQtyNote={`BOM × ${fmtNum(q)}`}/>}
+      {err&&<div className="aps-err">{err}</div>}
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
+        <button className="aps-btn aps-btn-secondary" onClick={onClose} disabled={saving}>취소</button>
+        <button className="aps-btn aps-btn-primary" onClick={save} disabled={saving||rows===null}>{saving?"저장 중...":"저장"}</button>
+      </div>
+    </div>
+  </div>;
+}
+
 // ═══ 상수 ═══
 const TYPE_LABEL={product:"제품",semi:"반제품",material:"원자재"};
 const TYPE_PILL={
@@ -2136,14 +2260,43 @@ function PlanForm({adminHash,items,lines,settings,initial,prefill,defaultDate,pl
     return rows;
   },[itemId,qty,bomByParent,items,invData]);
 
+  // ─── 실제 투입 원육 kg (수정할 때만) ───
+  const[rawValues,setRawValues]=useState({});
+  const[rawInitKey,setRawInitKey]=useState(null); // 불러온 값 (바뀐 경우만 저장)
+  const[rawMissing,setRawMissing]=useState(false);
+  useEffect(()=>{
+    if(!isEdit)return;
+    let c=false;
+    loadPlanRawActuals(adminHash,[initial.id]).then(saved=>{
+      if(c)return;
+      if(saved===null){setRawMissing(true);setRawInitKey(rawValuesKey({}));return}
+      const v={};for(const[mid,x] of Object.entries(saved[initial.id]||{}))v[mid]=String(x.kg);
+      setRawValues(v);setRawInitKey(rawValuesKey(v));
+    }).catch(e=>{console.warn("[PlanForm] raw actuals",e);if(!c)setRawInitKey(rawValuesKey({}))});
+    return()=>{c=true};
+  },[adminHash,isEdit,initial?.id]);
+  const[rawOpen,setRawOpen]=useState(false);
+  useEffect(()=>{if(rawInitKey&&rawInitKey!=="[]")setRawOpen(true)},[rawInitKey]);
+  useEffect(()=>{if(isEdit&&(status==="done"||status==="in_progress"))setRawOpen(true)},[]);
+
   const submit=async()=>{
     if(!itemId){setErr("품목을 선택하세요");return}
     const q=Number(qty);
     if(!q||q<=0){setErr("수량은 0보다 커야 합니다");return}
     if(!startAt||!endAt){setErr("시작/종료 시각을 입력하세요");return}
     if(endAt<=startAt){setErr("종료 시각은 시작 시각보다 뒤여야 합니다");return}
+    let rawRows=null;
+    if(isEdit&&rawInitKey!==null&&rawValuesKey(rawValues)!==rawInitKey){
+      try{rawRows=rawValuesToRows(rawValues)}catch(e){setErr(e.message);return}
+      if(rawMissing){setErr(RAW_ACTUAL_SQL_MSG);return}
+    }
     setLoading(true);setErr("");
     try{
+      if(rawRows){
+        try{await rpc("aps_set_plan_raw_actuals",{p_admin_hash:adminHash,p_plan_id:initial.id,p_rows:rawRows})}
+        catch(e){setErr(isRawActualMissing(e)?RAW_ACTUAL_SQL_MSG:"실제 투입 원육 저장 실패: "+String(e.message||e).slice(0,100));setLoading(false);return}
+        setRawInitKey(rawValuesKey(rawValues));
+      }
       const rid=await rpc("aps_upsert_plan",{
         p_admin_hash:adminHash,
         p_id:isEdit?initial.id:null,
@@ -2340,6 +2493,27 @@ function PlanForm({adminHash,items,lines,settings,initial,prefill,defaultDate,pl
               </div>;
             })}
             {(!invData||!invData.raws||invData.raws.length===0)&&<div style={{fontSize:11,color:"var(--muted)",fontStyle:"italic",padding:"4px 2px"}}>재고시트에 원육 데이터가 없습니다. 📋 재고 시트 탭에서 업로드하세요.</div>}
+          </div>}
+        </div>}
+        {isEdit&&itemId&&<div style={{gridColumn:"1 / -1",padding:"12px",background:"rgba(245,158,11,0.06)",border:"1px solid rgba(245,158,11,0.35)",borderRadius:"8px"}}>
+          <div onClick={()=>setRawOpen(o=>!o)} style={{fontWeight:700,fontSize:13,display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+            <span style={{fontSize:9,color:"var(--muted)",transform:rawOpen?"rotate(90deg)":"none",transition:"transform .15s"}}>▶</span>
+            <span>🥩 실제 투입 원육 kg</span>
+            {rawInitKey!==null&&rawInitKey!=="[]"&&<span style={{fontSize:11,color:"#f59e0b",fontWeight:600}}>입력됨</span>}
+            <span style={{marginLeft:"auto",fontSize:11,color:"var(--muted)",fontWeight:400}}>생산 후 실제로 쓴 양 · 📈 통계에 반영</span>
+          </div>
+          {rawOpen&&<div style={{marginTop:8}}>
+            {rawMissing&&<div style={{fontSize:12,color:"#ef4444",marginBottom:6}}>⚠ {RAW_ACTUAL_SQL_MSG}</div>}
+            {rawInitKey===null||bomLoading?<div style={{fontSize:12,color:"var(--muted)"}}>불러오는 중…</div>:
+              (()=>{
+                // 완료 계획에 실제 수량이 있으면 그 수량 기준 BOM과 비교 (📈 통계와 같은 기준)
+                const aq=initial?.actual_qty!=null?Number(initial.actual_qty):null;
+                const q=Number(qty)||0;
+                const baseQ=aq!=null&&q>0?aq:q;
+                const f=q>0?baseQ/q:1;
+                const rows=f===1?materialReport:materialReport.map(r=>({...r,needKg:r.needKg*f}));
+                return <RawActualInputs rows={rows} materials={items.filter(i=>i.type==="material")} values={rawValues} setValues={setRawValues} planQtyNote={`BOM × ${aq!=null?"실제 수량":"수량"} ${fmtNum(baseQ)}`}/>;
+              })()}
           </div>}
         </div>}
       </div>
@@ -5761,12 +5935,21 @@ function fmtHours(h){
   return mm===0?`${hh}시간`:`${hh}시간 ${mm}분`;
 }
 
-function StatsDrilldownTable({plans,editingId,editForm,setEditForm,saving,startEdit,cancelEdit,saveEdit,showItemColumn=false}){
+function StatsDrilldownTable({adminHash,onRawSaved,plans,editingId,editForm,setEditForm,saving,startEdit,cancelEdit,saveEdit,showItemColumn=false}){
   const inputStyle={width:"100%",padding:"4px 6px",fontSize:11,background:"var(--bg)",border:"1px solid var(--div2)",borderRadius:4,color:"var(--text)"};
+  const[rawMap,setRawMap]=useState({}); // {planId:{materialId:{kg,name}}} / null = SQL 미실행
+  const[rawPlan,setRawPlan]=useState(null);
+  const idsKey=plans.map(p=>p.id).join(",");
+  const reloadRaw=useCallback(()=>{
+    if(!adminHash)return;
+    loadPlanRawActuals(adminHash,plans.map(p=>p.id)).then(setRawMap).catch(e=>console.warn("[stats raw]",e));
+  },[adminHash,idsKey]);
+  useEffect(()=>{reloadRaw()},[reloadRaw]);
   return <div style={{padding:"10px 14px"}}>
-    <div style={{fontSize:11,color:"var(--muted)",marginBottom:8}}>완료 계획 {plans.length}건 · ✏ 수정 버튼으로 실제 시각·실제 수량 보정</div>
+    <div style={{fontSize:11,color:"var(--muted)",marginBottom:8}}>완료 계획 {plans.length}건 · ✏ 수정 버튼으로 실제 시각·실제 수량 보정 · 🥩 버튼으로 실제 투입 원육 kg 입력{rawMap===null&&<span style={{color:"#ef4444"}}> · ⚠ setup_aps_raw_actual.sql 미실행</span>}</div>
+    {rawPlan&&<PlanRawModal adminHash={adminHash} plan={rawPlan} onClose={()=>setRawPlan(null)} onSaved={()=>{reloadRaw();onRawSaved&&onRawSaved()}}/>}
     <div style={{overflowX:"auto"}}>
-      <table style={{width:"100%",fontSize:12,borderCollapse:"collapse",minWidth:showItemColumn?920:760}}>
+      <table style={{width:"100%",fontSize:12,borderCollapse:"collapse",minWidth:showItemColumn?1030:870}}>
         <thead>
           <tr style={{color:"var(--muted)",fontSize:10,textTransform:"uppercase",letterSpacing:"0.5px"}}>
             <th style={{padding:"6px 8px",textAlign:"left",width:60}}>#</th>
@@ -5777,6 +5960,7 @@ function StatsDrilldownTable({plans,editingId,editForm,setEditForm,saving,startE
             <th style={{padding:"6px 8px",textAlign:"right",width:90}}>실제 시간</th>
             <th style={{padding:"6px 8px",textAlign:"right",width:110}}>계획 수량</th>
             <th style={{padding:"6px 8px",textAlign:"right",width:140}}>실제 수량</th>
+            <th style={{padding:"6px 8px",textAlign:"right",width:110}}>실제 원육</th>
             <th style={{padding:"6px 8px",textAlign:"right",width:150}}></th>
           </tr>
         </thead>
@@ -5790,6 +5974,10 @@ function StatsDrilldownTable({plans,editingId,editForm,setEditForm,saving,startE
             const editEndMs=editForm.end?new Date(kstInputToIso(editForm.end)).getTime():0;
             const editHours=(editEndMs-editStartMs)/3600000;
             const qtyChanged=p.actual_qty!=null&&Number(p.actual_qty)!==Number(p.qty);
+            const raw=rawMap?.[p.id];
+            const rawList=raw?Object.values(raw):[];
+            const rawTotal=rawList.reduce((a,x)=>a+x.kg,0);
+            const rawCell=<td style={{padding:"6px 8px",textAlign:"right",fontSize:11,fontWeight:600,color:rawList.length?"#f59e0b":"var(--dimmer)"}} title={rawList.map(x=>`${x.name} ${fmtKg(x.kg)}`).join("\n")}>{rawList.length?fmtKg(rawTotal):"–"}</td>;
             return <tr key={p.id} style={{borderTop:"1px solid var(--div2)"}}>
               <td style={{padding:"6px 8px",fontSize:11,color:"var(--muted)",fontFamily:"monospace"}}>#{p.id}</td>
               {showItemColumn&&<td style={{padding:"6px 8px"}}>
@@ -5809,6 +5997,7 @@ function StatsDrilldownTable({plans,editingId,editForm,setEditForm,saving,startE
                 <td style={{padding:"6px 8px",textAlign:"right"}}>
                   <input type="number" step="any" min="0" value={editForm.qty} placeholder={`비우면 ${p.qty}`} onChange={e=>setEditForm(f=>({...f,qty:e.target.value}))} style={{...inputStyle,width:100,textAlign:"right"}}/>
                 </td>
+                {rawCell}
                 <td style={{padding:"6px 8px",textAlign:"right",whiteSpace:"nowrap"}}>
                   <button disabled={saving} onClick={()=>saveEdit(p)} style={{marginRight:4,padding:"4px 10px",fontSize:11,background:"#06b6d4",color:"#fff",border:"none",borderRadius:4,cursor:saving?"wait":"pointer",fontWeight:600}}>{saving?"...":"저장"}</button>
                   <button disabled={saving} onClick={cancelEdit} style={{padding:"4px 10px",fontSize:11,background:"transparent",color:"var(--muted)",border:"1px solid var(--div2)",borderRadius:4,cursor:"pointer"}}>취소</button>
@@ -5821,7 +6010,9 @@ function StatsDrilldownTable({plans,editingId,editForm,setEditForm,saving,startE
                 <td style={{padding:"6px 8px",textAlign:"right",fontSize:11,fontWeight:600,color:qtyChanged?"#06b6d4":"var(--text)"}}>
                   {p.actual_qty!=null?<>{fmtNum(p.actual_qty)} {p.item_unit}</>:<span style={{color:"var(--dimmer)",fontWeight:400}}>계획값({fmtNum(p.qty)})</span>}
                 </td>
-                <td style={{padding:"6px 8px",textAlign:"right"}}>
+                {rawCell}
+                <td style={{padding:"6px 8px",textAlign:"right",whiteSpace:"nowrap"}}>
+                  {adminHash&&<button onClick={()=>setRawPlan(p)} title="실제 투입 원육 kg 입력" style={{marginRight:4,padding:"4px 8px",fontSize:11,background:"transparent",color:"#f59e0b",border:"1px solid rgba(245,158,11,.5)",borderRadius:4,cursor:"pointer"}}>🥩 원육</button>}
                   <button onClick={()=>startEdit(p)} style={{padding:"4px 10px",fontSize:11,background:"transparent",color:"var(--text)",border:"1px solid var(--div2)",borderRadius:4,cursor:"pointer"}}>✏ 수정</button>
                 </td>
               </>}
@@ -5996,7 +6187,7 @@ function DateStatsView({adminHash}){
                 </tr>
                 {isOpen&&<tr>
                   <td colSpan={4} style={{padding:0,background:"var(--card-bg)",borderTop:"1px solid var(--div2)",borderBottom:"1px solid var(--div2)"}}>
-                    <StatsDrilldownTable plans={g.list} editingId={editingId} editForm={editForm} setEditForm={setEditForm} saving={saving} startEdit={startEdit} cancelEdit={cancelEdit} saveEdit={saveEdit} showItemColumn={true}/>
+                    <StatsDrilldownTable adminHash={adminHash} onRawSaved={()=>{}} plans={g.list} editingId={editingId} editForm={editForm} setEditForm={setEditForm} saving={saving} startEdit={startEdit} cancelEdit={cancelEdit} saveEdit={saveEdit} showItemColumn={true}/>
                   </td>
                 </tr>}
               </React.Fragment>;
@@ -6123,6 +6314,30 @@ function StatsTab({adminHash}){
     setLoading(false);
   },[adminHash,viewMode]);
   useEffect(()=>{load(range)},[load,range]);
+
+  // 실제 투입 원육 통계 (setup_aps_raw_actual.sql) + BOM 단위당 kg
+  const[rawStats,setRawStats]=useState({}); // {item_id: row} / null = SQL 미실행
+  const[bomPerUnit,setBomPerUnit]=useState({}); // {item_id: kg/단위}
+  const loadRawStats=useCallback(async(rangeKey)=>{
+    if(viewMode!=="item")return;
+    const days=rangeKey==="all"?null:parseInt(rangeKey);
+    try{
+      const rows=await rpc("aps_get_raw_usage_stats",{p_admin_hash:adminHash,p_days_back:days});
+      const m={};for(const r of (rows||[]))m[r.item_id]=r;
+      setRawStats(m);
+    }catch(e){if(isRawActualMissing(e))setRawStats(null);else console.warn("[raw stats]",e)}
+  },[adminHash,viewMode]);
+  useEffect(()=>{loadRawStats(range)},[loadRawStats,range]);
+  useEffect(()=>{
+    if(viewMode!=="item")return;
+    rpc("aps_get_material_requirements",{p_admin_hash:adminHash}).then(reqs=>{
+      const m={};
+      for(const mat of (reqs||[]))for(const s of (mat.sources||[])){
+        m[s.parent_id]=(m[s.parent_id]||0)+Number(s.qty||0)*(1+Number(s.loss_rate||0)/100);
+      }
+      setBomPerUnit(m);
+    }).catch(()=>{});
+  },[adminHash,viewMode]);
 
   // range 바뀌면 드릴다운 캐시 무효화 (기간 필터가 plan 목록에도 반영됨)
   useEffect(()=>{
@@ -6293,6 +6508,7 @@ function StatsTab({adminHash}){
             <th className="right hide-mobile" style={{width:110}}>평균 시간</th>
             <th className="right hide-mobile" style={{width:130}}>계획↔실제</th>
             <th className="right" style={{width:120}}>시간당 생산</th>
+            <th className="right" style={{width:150}} title="실제 투입 원육 kg ÷ 실제 수량 (실제 원육을 입력한 계획만) · BOM 기준과 비교">원육 kg/단위<div style={{fontSize:9,fontWeight:400}}>실제 · BOM</div></th>
             <th className="center hide-mobile" style={{width:110}}>최근 완료</th>
           </tr></thead>
           <tbody>
@@ -6323,21 +6539,32 @@ function StatsTab({adminHash}){
                     {Math.abs(variancePct)>=1&&<div style={{fontSize:10,marginTop:2}}>{variance>=0?"+":""}{variancePct.toFixed(0)}%</div>}
                   </td>
                   <td className="right" style={{fontWeight:600,color:"#06b6d4"}}>{fmtNum(s.qty_per_hour)} <span style={{fontSize:11,color:"var(--muted)",fontWeight:400}}>{s.item_unit}/h</span></td>
+                  {(()=>{
+                    const r=rawStats?.[s.item_id];
+                    const bom=bomPerUnit[s.item_id];
+                    const act=r&&Number(r.total_qty)>0?Number(r.total_raw_kg)/Number(r.total_qty):null;
+                    const diff=act!=null&&bom>0?(act-bom)/bom*100:null;
+                    const tip=r?`실제 원육 입력 ${r.plan_count}건 · ${fmtKg(Number(r.total_raw_kg))} ÷ ${fmtNum(r.total_qty)}${s.item_unit||""}\n`+(r.materials||[]).map(m=>`${m.material_name} ${fmtKg(Number(m.kg))}`).join("\n"):"실제 투입 원육을 입력한 완료 계획이 없습니다 (행을 펼쳐 🥩 원육 버튼)";
+                    return <td className="right" style={{fontSize:12}} title={tip}>
+                      {act!=null?<div style={{fontWeight:700,color:"#f59e0b"}}>{fmtKg(act)}{diff!=null&&Math.abs(diff)>=1&&<span style={{fontSize:10,marginLeft:4,color:diff>0?"#ef4444":"#22c55e"}}>{diff>0?"+":""}{diff.toFixed(0)}%</span>}</div>:<div style={{color:"var(--dimmer)"}}>–</div>}
+                      <div style={{fontSize:10,color:"var(--muted)"}}>{bom>0?`BOM ${fmtKg(bom)}`:"BOM 없음"}{r?` · ${r.plan_count}건`:""}</div>
+                    </td>;
+                  })()}
                   <td className="center hide-mobile" style={{fontSize:11,color:"var(--muted)"}}>{s.last_completed_at?fmtKstDateTime(s.last_completed_at):"-"}</td>
                 </tr>
                 {isOpen&&<tr>
-                  <td colSpan={9} style={{padding:0,background:"var(--card-bg)",borderTop:"1px solid var(--div2)",borderBottom:"1px solid var(--div2)"}}>
+                  <td colSpan={10} style={{padding:0,background:"var(--card-bg)",borderTop:"1px solid var(--div2)",borderBottom:"1px solid var(--div2)"}}>
                     {itemPlansLoading&&drillPlans.length===0?
                       <div style={{padding:14,fontSize:11,color:"var(--muted)"}}>완료 계획 로딩 중...</div>:
                       drillPlans.length===0?
                       <div style={{padding:14,fontSize:11,color:"var(--muted)"}}>이 기간에 완료된 계획이 없습니다</div>:
-                      <StatsDrilldownTable plans={drillPlans} editingId={editingId} editForm={editForm} setEditForm={setEditForm} saving={saving} startEdit={startEdit} cancelEdit={cancelEdit} saveEdit={saveEdit}/>
+                      <StatsDrilldownTable adminHash={adminHash} onRawSaved={()=>loadRawStats(range)} plans={drillPlans} editingId={editingId} editForm={editForm} setEditForm={setEditForm} saving={saving} startEdit={startEdit} cancelEdit={cancelEdit} saveEdit={saveEdit}/>
                     }
                   </td>
                 </tr>}
               </React.Fragment>;
             })}
-            {withoutData.length>0&&<tr><td colSpan={9} style={{padding:"14px 12px",fontSize:11,color:"var(--dimmer)",background:"var(--card-bg)"}}>아직 실적 없음: {withoutData.map(s=>s.item_name).join(", ")}</td></tr>}
+            {withoutData.length>0&&<tr><td colSpan={10} style={{padding:"14px 12px",fontSize:11,color:"var(--dimmer)",background:"var(--card-bg)"}}>아직 실적 없음: {withoutData.map(s=>s.item_name).join(", ")}</td></tr>}
           </tbody>
         </table>
       </div>
