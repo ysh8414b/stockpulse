@@ -3851,6 +3851,7 @@ function computeAutoPlan({targetDay,items,lines,plans,invProducts,dowMap,rateByI
   }
 
   // ① 배정: 어떤 제품을 어느 라인에 넣을지 (같은 원육이 이미 있는 라인은 전환 시간이 짧으므로 자연히 우선)
+  const skipBase=skipped.length; // 여기부터 뒤에 붙는 제외 = 배정 단계에서 생긴 것 (최적화 결과로 다시 만듦)
   let assigned=[],seqNo=0;
   const place=(c,fill)=>{
     const g=groupOf(c.item.id);
@@ -3934,8 +3935,165 @@ function computeAutoPlan({targetDay,items,lines,plans,invProducts,dowMap,rateByI
       out.forEach(r=>rows.push(r));switches+=sw;break;
     }
   }
+  // ③ 🧮 최적 배치: 위 규칙 결과에서 출발해 라인 배정·순서를 바꿔 보며 더 나은 안을 찾음
+  let optInfo=null;
+  if(opts.optimize!==false){
+    const opt=optimizeDayPlan({C:[...candidates.map(c=>({c,fill:false})),...fillPool.map(c=>({c,fill:true}))],
+      greedyRows:rows,greedySwitches:switches,targetDay,dayStart,winStart,winEnd,lineStart,lineUsed0,prevGroup0,
+      autoLineIds,groupOf,groupByItem,csFor,skipLunch,endAfterWork,workMsBetween,lunch,lS,lE,speed,fillDays,days:parseInt(opts.days)||1});
+    if(opt){
+      optInfo=opt.info;
+      if(opt.rows){
+        skipped.length=skipBase;
+        opt.dropped.forEach(dropRow);
+        rows.length=0;opt.rows.forEach(r=>rows.push(r));
+        switches=opt.info.after.sw;
+      }
+    }
+  }
   rows.sort((a,b)=>a.lineId-b.lineId||a.startMs-b.startMs);
-  return{rows,skipped,coverEnd,triggerEnd,switches};
+  return{rows,skipped,coverEnd,triggerEnd,switches,optInfo};
+}
+
+// 🧮 하루 계획 최적화 (담금질 탐색). 점수가 낮을수록 좋음:
+//   못 넣은 부족 생산(시간 × 100 × 급한 정도) − 여유 생산(시간 × 2~5) + 제품 전환(1.5, 같은 원육 0.3) + 급한 제품이 늦게 시작(조금)
+// 수량은 규칙이 정한 그대로, 라인·순서·여유 생산 넣고 빼기만 바꿈. 결과는 매번 같음(고정 난수).
+function optimizeDayPlan(a){
+  const{C,greedyRows,targetDay,dayStart,winStart,winEnd,lineStart,lineUsed0,prevGroup0,groupOf,groupByItem,csFor,skipLunch,endAfterWork,workMsBetween,lunch,lS,speed,fillDays}=a;
+  if(!C.length)return null;
+  const LIDS=[...a.autoLineIds].filter(l=>l in lineStart);
+  if(!LIDS.length)return null;
+  const idxOf={};
+  C.forEach((x,i)=>{
+    idxOf[x.c.item.id]=i;
+    x.g=groupOf(x.c.item.id);
+    x.elig=(x.c.eligible||[]).filter(l=>l in lineStart);
+    x.rate={};x.src={};
+    for(const lid of x.elig){
+      const sp=speed?.use?speed.predict(x.c.item.id,lid,targetDay,x.c.need):null;
+      x.rate[lid]=sp?.rate>0?sp.rate:x.c.rate;
+      x.src[lid]=sp?.rate>0?`속도 모델${sp.n!=null?` · 출근 ${sp.n}명`:""}`:x.c.rateSrc;
+    }
+    const fs=x.c.firstShort;
+    const dd=fs?Math.round((kstDayStartMs(fs)-dayStart)/86400000):99;
+    x.urg=x.fill?0:1+3/(1+Math.max(0,dd));
+    const cd=isFinite(x.c.coverDays)?x.c.coverDays:fillDays;
+    x.fw=x.fill?2+3*Math.max(0,1-cd/fillDays):0;
+    x.base=x.c.rate>0?x.c.rate:1;
+  });
+  const simulate=(sol,build)=>{
+    let cost=0,sw=0;
+    const prod=new Float64Array(C.length);
+    const out=build?[]:null,placed=build?new Set():null;
+    for(const lid of LIDS){
+      const list=sol[lid];
+      if(!list||!list.length)continue;
+      let t=lineStart[lid],usedFlag=lineUsed0[lid],pg=prevGroup0[lid];
+      for(const i of list){
+        const x=C[i],rate=x.rate[lid];
+        if(!(rate>0))continue;
+        const start=skipLunch(ceilQuarter(t+csFor(usedFlag,pg,x.g)));
+        if(start>=winEnd)continue;
+        let qty=x.c.need,end=endAfterWork(start,Math.max(QUARTER_MS,ceilQuarter(qty/rate*3600000)));
+        if(end>winEnd){
+          const avail=workMsBetween(start,winEnd);
+          const fit=Math.floor(avail/3600000*rate);
+          if(fit<1||avail<QUARTER_MS||(x.fill&&avail<FILL_MIN_PART_MS))continue;
+          qty=fit;end=winEnd;
+        }
+        const same=usedFlag&&x.g!=null&&x.g===pg;
+        if(usedFlag){if(same)cost+=0.3;else{cost+=1.5;sw++}}
+        prod[i]+=qty;
+        if(!x.fill)cost+=0.02*x.urg*(start-winStart)/3600000;
+        if(build){
+          placed.add(i);
+          out.push({...x.c,rate,rateSrc:x.src[lid],key:targetDay+":"+x.c.item.id,day:targetDay,fill:x.fill,lineId:lid,qty,
+            group:x.g,groupName:x.g!=null?groupByItem[x.c.item.id].name:"",prio:out.length,partial:!x.fill&&qty<x.c.need,
+            startMs:start,endMs:end,sameAsPrev:same,overLunch:!!lunch&&start<lS&&end>lS});
+        }
+        t=end;usedFlag=true;pg=x.g??("i"+x.c.item.id);
+      }
+    }
+    let unmet=0,fillQ=0;
+    C.forEach((x,i)=>{
+      if(x.fill){cost-=x.fw*prod[i]/x.base;fillQ+=prod[i]}
+      else{const u=Math.max(0,x.c.need-prod[i]);cost+=100*x.urg*u/x.base;unmet+=u}
+    });
+    return{cost,sw,unmet,fillQ,out,placed};
+  };
+  // 출발점 = 규칙 결과
+  const init={};LIDS.forEach(l=>init[l]=[]);
+  const inInit=new Set();
+  greedyRows.slice().sort((p,q)=>p.lineId-q.lineId||p.startMs-q.startMs).forEach(r=>{
+    const i=idxOf[r.item.id];
+    if(i==null||!init[r.lineId]||inInit.has(i))return;
+    init[r.lineId].push(i);inInit.add(i);
+  });
+  const initUn=C.map((_,i)=>i).filter(i=>!inInit.has(i)&&C[i].elig.length);
+  // 규칙 결과 지표 (실제 규칙 행 기준)
+  const before={sw:a.greedySwitches,unmet:0,fill:0};
+  const gq={};greedyRows.forEach(r=>{gq[r.item.id]=(gq[r.item.id]||0)+r.qty;if(r.fill)before.fill+=r.qty});
+  C.forEach(x=>{if(!x.fill)before.unmet+=Math.max(0,x.c.need-(gq[x.c.item.id]||0))});
+
+  // 고정 난수 (같은 입력 → 같은 결과)
+  let seed=0;for(const ch of targetDay+":"+C.length)seed=(seed*31+ch.charCodeAt(0))|0;
+  const rand=()=>{seed=(seed+0x6D2B79F5)|0;let t=Math.imul(seed^(seed>>>15),1|seed);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296};
+  const ri=(n)=>Math.floor(rand()*n);
+  const mutate=(sol,un)=>{
+    const r=rand();
+    if(r<0.2&&un.length){ // 빠진 제품 넣기
+      const ui=ri(un.length),i=un[ui],x=C[i];
+      const l=x.elig[ri(x.elig.length)];
+      if(!sol[l])return null;
+      const arr=sol[l].slice();arr.splice(ri(arr.length+1),0,i);
+      const nu=un.slice();nu.splice(ui,1);
+      return{sol:{...sol,[l]:arr},un:nu};
+    }
+    const pl=[];for(const l of LIDS)for(let p=0;p<sol[l].length;p++)pl.push([l,p]);
+    if(!pl.length)return null;
+    const[l,p]=pl[ri(pl.length)];
+    const src=sol[l];
+    if(r<0.32){ // 빼기
+      const arr=src.slice();const i=arr.splice(p,1)[0];
+      return{sol:{...sol,[l]:arr},un:[...un,i]};
+    }
+    if(r<0.55){ // 같은 라인 안에서 자리 바꾸기
+      if(src.length<2)return null;
+      let q=ri(src.length-1);if(q>=p)q++;
+      const arr=src.slice();[arr[p],arr[q]]=[arr[q],arr[p]];
+      return{sol:{...sol,[l]:arr},un};
+    }
+    // 옮기기 (가끔 같은 원육 묶음째)
+    let s=p,e=p+1;const g=C[src[p]].g;
+    if(g!=null&&rand()<0.35){while(s>0&&C[src[s-1]].g===g)s--;while(e<src.length&&C[src[e]].g===g)e++}
+    const block=src.slice(s,e);
+    const targets=LIDS.filter(t=>block.every(i=>C[i].elig.includes(t)));
+    if(!targets.length)return null;
+    const t=targets[ri(targets.length)];
+    const rest=src.slice(0,s).concat(src.slice(e));
+    const dst=t===l?rest:sol[t].slice();
+    dst.splice(ri(dst.length+1),0,...block);
+    const ns={...sol,[l]:rest};ns[t]=dst;
+    return{sol:ns,un};
+  };
+  const iters=Math.round(Math.min(25000,3000+C.length*400)/(a.days>3?2:1));
+  const initE=simulate(init).cost;
+  let cur=init,curUn=initUn,curE=initE,best=init,bestE=initE;
+  const T0=3,T1=0.02;
+  for(let k=0;k<iters;k++){
+    const m=mutate(cur,curUn);
+    if(!m)continue;
+    const e=simulate(m.sol).cost;
+    const T=T0*Math.pow(T1/T0,k/iters);
+    if(e<=curE||rand()<Math.exp((curE-e)/T)){
+      cur=m.sol;curUn=m.un;curE=e;
+      if(e<bestE-1e-6){best=cur;bestE=e}
+    }
+  }
+  if(!(bestE<initE-0.05))return{rows:null,info:{improved:false,before,after:before}};
+  const b=simulate(best,true);
+  const dropped=C.map((x,i)=>i).filter(i=>!b.placed.has(i)).map(i=>({...C[i].c,fill:C[i].fill}));
+  return{rows:b.out,dropped,info:{improved:true,before,after:{sw:b.sw,unmet:Math.round(b.unmet),fill:Math.round(b.fillQ)}}};
 }
 
 // 여러 날 연속 생성: 앞 날짜에 만든 계획을 "있는 계획"으로 넣고 다음 날을 계산
@@ -3945,11 +4103,16 @@ function computeAutoPlanRange(args){
   const dayList=[targetDay];
   while(dayList.length<n)dayList.push(nthProdDayAfter(dayList[dayList.length-1],1,opts.prodDays));
   const virtual=[],rows=[];
-  let first=null,switches=0;
+  let first=null,switches=0,optInfo=null;
   for(const day of dayList){
     const res=computeAutoPlan({...args,targetDay:day,plans:plans.concat(virtual)});
     if(!first)first=res;
     switches+=res.switches||0;
+    if(res.optInfo){
+      if(!optInfo)optInfo={improved:false,days:0,before:{sw:0,unmet:0,fill:0},after:{sw:0,unmet:0,fill:0}};
+      if(res.optInfo.improved){optInfo.improved=true;optInfo.days++}
+      for(const k of ["sw","unmet","fill"]){optInfo.before[k]+=res.optInfo.before[k];optInfo.after[k]+=res.optInfo.after[k]}
+    }
     for(const r of res.rows){
       rows.push(r);
       virtual.push({id:"v"+virtual.length,item_id:r.item.id,line_id:r.lineId,status:"planned",qty:r.qty,
@@ -3959,7 +4122,7 @@ function computeAutoPlanRange(args){
   // 제외 목록: 첫날 기준, 기간 중 한 번이라도 계획된 제품은 뺌
   const planned=new Set(rows.map(r=>r.item.id));
   const skipped=first.skipped.filter(s=>!planned.has(s.item.id));
-  return{rows,skipped,days:dayList,coverEnd:first.coverEnd,triggerEnd:first.triggerEnd,switches};
+  return{rows,skipped,days:dayList,coverEnd:first.coverEnd,triggerEnd:first.triggerEnd,switches,optInfo};
 }
 
 // ═══ 🧠 AI 검토 (Groq, setup_aps_ai.sql) ═══
@@ -4304,7 +4467,7 @@ function AiReviewPanel({adminHash,base,items,lines,plans,dowMap,demand,settings,
 
 function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLinesChanged,onCreated,onCancel}){
   const[opts,setOpts]=useState(()=>{
-    const def={lead:2,cover:5,useSafety:true,changeoverMin:0,weeks:8,prodDays:[1,2,3,4,5],fill:true,fillDays:14,days:1,groupSimilar:true,sameChangeoverMin:0,useForecast:true};
+    const def={lead:2,cover:5,useSafety:true,changeoverMin:0,weeks:8,prodDays:[1,2,3,4,5],fill:true,fillDays:14,days:1,groupSimilar:true,sameChangeoverMin:0,useForecast:true,optimize:true};
     try{return {...def,...JSON.parse(localStorage.getItem("aps-autoplan-opts-v2")||"{}")}}catch(e){return def}
   });
   useEffect(()=>{try{localStorage.setItem("aps-autoplan-opts-v2",JSON.stringify(opts))}catch(e){}},[opts]);
@@ -4490,6 +4653,9 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
           <input type="checkbox" checked={opts.groupSimilar!==false} onChange={e=>setOpt("groupSimilar",e.target.checked)}/> 같은 원육 제품 이어서 생산
           {opts.groupSimilar!==false&&<>· 같은 원육끼리 전환 {numIn("sameChangeoverMin",{min:0,max:240,step:5})}분</>}
         </label>
+        <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}} title="규칙으로 만든 계획에서 출발해 라인 배정·순서를 수천 번 바꿔 보며, 부족 생산을 더 넣고 제품 전환을 줄이는 배치를 찾습니다 (수량은 그대로)">
+          <input type="checkbox" checked={opts.optimize!==false} onChange={e=>setOpt("optimize",e.target.checked)}/> 🧮 최적 배치 계산
+        </label>
         <span style={{display:"flex",alignItems:"center",gap:4}}>
           생산 요일
           {DOW_LABEL.map((lb,i)=>{
@@ -4520,6 +4686,17 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
         {opts.groupSimilar!==false&&groupByItem&&Object.keys(groupByItem).length===0&&<span style={{color:"#f59e0b"}}> · BOM에 원자재가 연결된 제품이 없어 원육 묶기가 적용되지 않습니다</span>}
         {result&&result.rows.length>0&&<> · 제품 전환 <b>{result.switches}회</b></>}
       </div>
+      {result?.optInfo&&opts.optimize!==false&&(()=>{
+        const o=result.optInfo,b=o.before,f=o.after;
+        if(!o.improved)return <div style={{fontSize:12,marginBottom:10,padding:"7px 10px",borderRadius:8,background:"rgba(16,185,129,0.07)",border:"1px solid rgba(16,185,129,0.25)"}}>🧮 최적 배치 계산: 규칙 결과보다 나은 배치가 없어 그대로 사용합니다.</div>;
+        const part=[];
+        if(f.unmet!==b.unmet)part.push(<span key="u">못 넣은 부족 생산 <b>{fmtNum(Math.round(b.unmet))} → {fmtNum(f.unmet)}</b></span>);
+        if(f.sw!==b.sw)part.push(<span key="s">제품 전환 <b>{b.sw} → {f.sw}회</b></span>);
+        if(f.fill!==Math.round(b.fill))part.push(<span key="f">여유 생산 <b>{fmtNum(Math.round(b.fill))} → {fmtNum(f.fill)}</b></span>);
+        return <div style={{fontSize:12,marginBottom:10,padding:"7px 10px",borderRadius:8,background:"rgba(16,185,129,0.1)",border:"1px solid rgba(16,185,129,0.35)",lineHeight:1.6}}>
+          🧮 <b>최적 배치 적용</b>{result.days.length>1?` (${o.days}일)`:""} — 규칙 결과 대비 {part.length?part.reduce((acc,x,i)=>i?[...acc," · ",x]:[x],[]):"시작 시각·순서 정리"}
+        </div>;
+      })()}
 
       {loadErr?<div className="aps-err">{loadErr}</div>:
        isPast?<div className="aps-err">지난 날짜에는 자동 생성할 수 없습니다. 오늘 이후 날짜를 선택하세요.</div>:
