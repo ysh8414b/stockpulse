@@ -2025,25 +2025,29 @@ function InventoryQuickPanel({onClose,onJumpToSheet,adminHash,items,plans}){
     return m;
   },[plans]);
 
+  const frozen=useFrozenStock(items);
   // 템플릿 순서대로 + 박스 0 포함, 검색 적용
   const rows=useMemo(()=>{
     const q=query.trim().toLowerCase();
     return template.map(t=>{
       const p=productMap[t.code];
+      const name=t.name||(p?p.name:"");
+      const fb=frozenBoxFor(t.code,name,frozen.fz);
       return {
         code:t.code,
-        name:t.name||(p?p.name:""),
+        name,
+        frozen:fb!=null,
         color:t.color||"w",
-        box:p?Math.round(p.box):0,
+        box:fb!=null?fb:(p?Math.round(p.box):0),
         safety:Math.round(safetyMap[t.code]||0),
         planned:Math.round(plannedMap[t.code]||0),
-        hasData:!!p
+        hasData:!!p||fb!=null
       };
     }).filter(r=>{
       if(!q)return true;
       return r.code.toLowerCase().includes(q)||(r.name||"").toLowerCase().includes(q);
     });
-  },[template,productMap,safetyMap,plannedMap,query]);
+  },[template,productMap,safetyMap,plannedMap,query,frozen.fz]);
 
   // 템플릿 밖 추가 품목 (업로드에는 있는데 마스터에 없음)
   const extras=useMemo(()=>{
@@ -2093,7 +2097,7 @@ function InventoryQuickPanel({onClose,onJumpToSheet,adminHash,items,plans}){
               const qtyCls=r.box===0?" zero":(low?" low":"");
               return <tr key={r.code} style={{background:INV_COLOR_BG[r.color]||"transparent"}} title={`${r.code} — ${r.name}${r.safety>0?` · 안전재고 ${r.safety}`:""}${r.planned>0?` · 오늘 이후 계획 ${r.planned}`:""}`}>
                 <td className="dot"><span style={{background:INV_COLOR_DOT[r.color]||"#94a3b8"}}/></td>
-                <td className="nm">{r.name||r.code}</td>
+                <td className="nm">{r.name||r.code}{r.frozen&&<span title="❄ 냉동재고 수량" style={{marginLeft:3}}>❄</span>}</td>
                 <td className={"qty"+qtyCls}>{r.box}</td>
                 <td className={"safety"+(r.safety===0?" none":"")}>{r.safety>0?r.safety:"–"}</td>
                 <td className={"plan"+(r.planned===0?" none":"")}>{r.planned>0?r.planned:"–"}</td>
@@ -7087,6 +7091,65 @@ function applyRemoteInventoryToLocal(remote){
   }catch(e){}
 }
 
+// ───── 쿠팡 제품 = orders.html ❄ 냉동재고에서 불러오기 (2026-10-29) ─────
+// 냉동 로트(제품코드 = 발주서 상품코드) → 발주서 제품의 🔗 APS 품목 → APS 품목 코드 = 재고시트 코드
+// 단위: 박스는 그대로, 팩·개는 ÷ 입수량, kg 등은 제외
+const isCoupangName=n=>/쿠팡/.test(String(n||""));
+let _frozenStockCache=null,_frozenStockAt=0;
+async function loadFrozenRaw(force){
+  if(!force&&_frozenStockCache&&Date.now()-_frozenStockAt<60000)return _frozenStockCache;
+  const[m,f]=await Promise.all([
+    rpc("ol_list_masters",{p_admin_hash:""}),
+    rpc("ol_list_frozen",{p_admin_hash:""})
+  ]);
+  if(m?.error||f?.error)throw new Error(m?.error||f?.error);
+  _frozenStockCache={products:m?.products||[],lots:f?.lots||[]};
+  _frozenStockAt=Date.now();
+  return _frozenStockCache;
+}
+function buildFrozenByApsCode(raw,items){
+  const byId={};(items||[]).forEach(i=>{byId[i.id]=i});
+  const olByCode={};(raw?.products||[]).forEach(p=>{if(p.code)olByCode[String(p.code)]=p});
+  const map={};      // aps 코드 → {box, lots}
+  const linked=new Set(); // 냉동 발주 제품과 연결된 aps 코드 (재고 0이어도 냉동재고 기준)
+  for(const p of (raw?.products||[])){
+    const it=p.aps_item_id&&byId[p.aps_item_id];
+    if(it?.code&&p.storage==="frozen")linked.add(it.code);
+  }
+  let skipped=0;
+  for(const l of (raw?.lots||[])){
+    const p=olByCode[String(l.product_code||"")];
+    const it=p&&p.aps_item_id&&byId[p.aps_item_id];
+    if(!it?.code)continue;
+    linked.add(it.code);
+    const u=String(l.unit||"박스").trim();
+    let box=null;
+    if(/박스|box/i.test(u))box=Number(l.qty)||0;
+    else if(/팩|개|ea/i.test(u)&&Number(p.per_box)>0)box=(Number(l.qty)||0)/Number(p.per_box);
+    if(box==null){skipped++;continue}
+    const e=map[it.code]||(map[it.code]={box:0,lots:0});
+    e.box+=box;e.lots++;
+  }
+  return {map,linked,skipped};
+}
+// 재고시트 제품 행에 덮어쓰기: 이름에 '쿠팡'이 있고 냉동 발주 제품과 연결된 것만
+function frozenBoxFor(code,name,fz){
+  if(!fz||!isCoupangName(name)||!fz.linked.has(code))return null;
+  return Math.round(fz.map[code]?.box||0);
+}
+function useFrozenStock(items){
+  const[raw,setRaw]=useState(null);
+  const[err,setErr]=useState("");
+  const[at,setAt]=useState(0);
+  const load=useCallback(async(force)=>{
+    try{const r=await loadFrozenRaw(force);setRaw(r);setAt(_frozenStockAt);setErr("")}
+    catch(e){setErr(String(e?.message||e))}
+  },[]);
+  useEffect(()=>{load(false)},[load]);
+  const fz=useMemo(()=>raw&&items&&items.length?buildFrozenByApsCode(raw,items):null,[raw,items]);
+  return {fz,err,at,reload:()=>load(true)};
+}
+
 function templateToText(tpl){
   return tpl.map(t=>`${t.code} | ${t.name||""} | ${t.color||"w"}`).join("\n");
 }
@@ -7285,10 +7348,15 @@ function InventorySheetTab({adminHash}){
   const productMap=useMemo(()=>{
     const m={};for(const p of products)m[p.code]=p;return m;
   },[products]);
+  const frozen=useFrozenStock(items);
   const rows=template.map(t=>{
     const p=productMap[t.code];
-    return {code:t.code,name:t.name||(p?p.name:""),color:t.color||"w",box:p?Math.round(p.box):0,hasData:!!p};
+    const name=t.name||(p?p.name:"");
+    const fb=frozenBoxFor(t.code,name,frozen.fz);
+    return {code:t.code,name,color:t.color||"w",box:fb!=null?fb:(p?Math.round(p.box):0),hasData:!!p||fb!=null,frozen:fb!=null};
   });
+  const frozenRows=rows.filter(r=>r.frozen);
+  const coupangUnlinked=rows.filter(r=>!r.frozen&&isCoupangName(r.name));
   const extras=products.filter(p=>!template.some(t=>t.code===p.code));
 
   const useTemplate=template.length>0;
@@ -7373,6 +7441,16 @@ function InventorySheetTab({adminHash}){
 
     {err&&<div className="aps-err" style={{marginBottom:10}}>{err}</div>}
     {busy&&<div style={{fontSize:12,color:"var(--muted)",marginBottom:10}}>처리 중…</div>}
+    {(frozenRows.length>0||coupangUnlinked.length>0||frozen.err)&&<div style={{fontSize:12,marginBottom:10,padding:"8px 12px",borderRadius:8,background:"rgba(59,130,246,0.08)",border:"1px solid rgba(59,130,246,0.25)",lineHeight:1.6}}>
+      {frozen.err?<span style={{color:"#dc2626"}}>⚠ 냉동재고를 불러오지 못했습니다 — 쿠팡 제품도 업로드한 파일 값으로 표시합니다 ({frozen.err.slice(0,80)})</span>
+      :<>❄ <b>쿠팡 제품 {frozenRows.length}개</b>는 발주서 ❄ 냉동재고 수량(박스)으로 표시합니다
+        {frozen.at>0&&<span style={{color:"var(--muted)"}}> · {new Date(frozen.at).toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"})} 기준</span>}
+        <button className="aps-btn aps-btn-secondary" style={{marginLeft:8,padding:"2px 8px",fontSize:11}} onClick={frozen.reload}>↻ 다시 불러오기</button>
+        {frozen.fz?.skipped>0&&<div style={{color:"#d97706"}}>kg 등 박스로 바꿀 수 없는 냉동 로트 {frozen.fz.skipped}건은 빠졌습니다</div>}
+        {coupangUnlinked.length>0&&<div style={{color:"#d97706"}}>냉동재고와 연결 안 된 쿠팡 제품 {coupangUnlinked.length}개 (파일 값 표시): {coupangUnlinked.map(r=>r.name).join(", ")}
+          <div style={{color:"var(--muted)"}}>→ orders.html 📦 제품리스트에서 해당 냉동 제품의 🔗 APS 품목을 이 코드의 품목으로 연결하세요</div></div>}
+      </>}
+    </div>}
 
     {!hasAny?<div className="aps-empty">
       <div className="aps-empty-emoji">📋</div>
@@ -7406,7 +7484,7 @@ function InventorySheetTab({adminHash}){
                 <tbody>
                   {rows.length===0&&idx===0?<tr><td colSpan="2" style={{textAlign:"center",color:"#999",padding:"18px 8px"}}>제품 목록이 비어있습니다. "제품 목록 편집"에서 추가하세요.</td></tr>:null}
                   {part.map(r=><tr key={r.code} className={"inv-row-"+(r.color||"w")}>
-                    <td className="name" title={r.name}>{r.name}</td>
+                    <td className="name" title={r.frozen?r.name+" (❄ 냉동재고)":r.name}>{r.name}{r.frozen&&<span style={{fontSize:"0.85em",marginLeft:3}}>❄</span>}</td>
                     <td className={"right qty"+(r.box===0?" zero":"")}>{r.box}</td>
                   </tr>)}
                 </tbody>
