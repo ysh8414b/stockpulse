@@ -342,7 +342,10 @@ async function rpc(name,body){
   }
   const txt=await r.text();
   if(!txt)return null;
-  try{return JSON.parse(txt)}catch(e){return txt}
+  let out;
+  try{out=JSON.parse(txt)}catch(e){return txt}
+  if(name==="aps_get_item_stats")return adjustItemStatsForLunch(body,out); // 통계 시간에서 점심 제외
+  return out;
 }
 function errMsg(e,map){
   const s=String(e?.message||e||"");
@@ -1554,6 +1557,58 @@ function getLunch(settings){
   const s=parseHHMM(settings?.lunch_start),e=parseHHMM(settings?.lunch_end);
   if(s==null||e==null||e<=s)return null;
   return{s,e,label:`${settings.lunch_start}~${settings.lunch_end}`};
+}
+
+// ─── 통계 시간 = 종료 − 시작 − 점심과 겹친 시간 (예: 점심 12~13시, 10:00~13:10 → 1시간 50분) ───
+// 점심 설정은 1분 캐시. 지금 설정된 점심시간을 지난 실적에도 똑같이 적용
+let _lunchCache=null;
+async function loadLunch(adminHash,force){
+  if(!force&&_lunchCache&&_lunchCache.hash===adminHash&&Date.now()-_lunchCache.at<60000)return _lunchCache.lunch;
+  const st=await rpc("aps_get_settings",{p_admin_hash:adminHash}).catch(()=>null);
+  const lunch=getLunch(st||{});
+  _lunchCache={hash:adminHash,at:Date.now(),lunch};
+  return lunch;
+}
+function useLunch(adminHash){
+  const[lunch,setLunch]=useState(()=>_lunchCache&&_lunchCache.hash===adminHash?_lunchCache.lunch:null);
+  useEffect(()=>{let c=false;loadLunch(adminHash).then(l=>{if(!c)setLunch(l)});return()=>{c=true}},[adminHash]);
+  return lunch;
+}
+function workMsBetween(sMs,eMs,lunch){
+  if(!(eMs>sMs))return 0;
+  return Math.max(0,eMs-sMs-speedLunchOverlapMs(sMs,eMs,lunch));
+}
+function workHoursOf(sIso,eIso,lunch){
+  if(!sIso||!eIso)return 0;
+  return workMsBetween(new Date(sIso).getTime(),new Date(eIso).getTime(),lunch)/3600000;
+}
+// aps_get_item_stats(서버, 점심 포함 시간)를 완료 계획 목록으로 다시 계산해 점심을 뺌
+async function adjustItemStatsForLunch(body,stats){
+  if(!Array.isArray(stats)||!stats.length)return stats;
+  const hash=body?.p_admin_hash;
+  const lunch=await loadLunch(hash);
+  if(!lunch)return stats;
+  const plans=await rpc("aps_get_done_plans_all",{p_admin_hash:hash,p_days_back:body?.p_days_back??null}).catch(()=>null);
+  if(!Array.isArray(plans))return stats; // setup_aps_v9.sql 미실행 → 서버 값 그대로
+  const agg={};
+  for(const p of plans){
+    if(!p.actual_start_at||!p.actual_end_at)continue;
+    const a=agg[p.item_id]=agg[p.item_id]||{n:0,act:0,q:0,plan:0,planN:0};
+    a.n++;
+    a.act+=workHoursOf(p.actual_start_at,p.actual_end_at,lunch);
+    a.q+=Number(p.actual_qty!=null?p.actual_qty:p.qty)||0;
+    if(p.start_at&&p.end_at){a.plan+=workHoursOf(p.start_at,p.end_at,lunch);a.planN++}
+  }
+  return stats.map(s=>{
+    const a=agg[s.item_id];
+    if(!a||!a.n)return s;
+    return{...s,
+      total_actual_hours:a.act,
+      avg_actual_hours:a.act/a.n,
+      avg_planned_hours:a.planN?a.plan/a.planN:s.avg_planned_hours,
+      qty_per_hour:a.act>0?a.q/a.act:0,
+      lunch_excluded:true};
+  });
 }
 
 function SettingsModal({adminHash,settings,onSaved,onCancel}){
@@ -3545,12 +3600,12 @@ function fitSpeedModel({plans,staff,lines,att,settings,items}){
   const base={n:samples.length,removed,attendanceDays,staffCount:ctx.staff.length,use:false,eval:null};
   if(samples.length<SPEED_MIN_PLANS)return{...base,ok:false,reason:`완료 실적 ${samples.length}건 — ${SPEED_MIN_PLANS}건 이상 쌓이면 분석합니다`};
 
-  // 시험: 최근 25%를 모르는 척 맞혀봄 (기존 방식 = 품목별 Σ수량 ÷ Σ(종료−시작), 지금 📈 통계와 같은 값)
+  // 시험: 최근 25%를 모르는 척 맞혀봄 (기존 방식 = 품목별 Σ수량 ÷ Σ(종료−시작−점심), 지금 📈 통계와 같은 값)
   samples.sort((a,b)=>a.end-b.end);
   const nTest=Math.max(5,Math.round(samples.length*0.25));
   const train=samples.slice(0,samples.length-nTest),test=samples.slice(samples.length-nTest);
   const m0=speedFit(train);
-  const cur={};train.forEach(s=>{const c=cur[s.itemId]=cur[s.itemId]||{q:0,h:0};c.q+=s.q;c.h+=s.elapsed});
+  const cur={};train.forEach(s=>{const c=cur[s.itemId]=cur[s.itemId]||{q:0,h:0};c.q+=s.q;c.h+=s.h});
   let eCur=0,eMod=0,act=0,nEval=0;
   for(const s of test){
     const c=cur[s.itemId];if(!c||!m0.count[s.itemId])continue;
@@ -3565,7 +3620,7 @@ function fitSpeedModel({plans,staff,lines,att,settings,items}){
   const staffBeta=m.b[m.S],batchBeta=m.b[m.B];
   const itemRows=m.items.map(it=>{
     const ss=samples.filter(s=>s.itemId===it);
-    const q=ss.reduce((a,s)=>a+s.q,0),el=ss.reduce((a,s)=>a+s.elapsed,0);
+    const q=ss.reduce((a,s)=>a+s.q,0),el=ss.reduce((a,s)=>a+s.h,0);
     return{itemId:it,name:ss[0].itemName,unit:ss[0].unit,count:ss.length,
       model:Math.exp(m.b[0]+m.b[m.iIdx[it]]),current:el>0?q/el:null,qRef:m.qRef[it]};
   }).sort((a,b)=>b.count-a.count);
@@ -5929,6 +5984,7 @@ function fmtHours(h){
 }
 
 function StatsDrilldownTable({adminHash,onRawSaved,plans,editingId,editForm,setEditForm,saving,startEdit,cancelEdit,saveEdit,showItemColumn=false}){
+  const lunch=useLunch(adminHash);
   const inputStyle={width:"100%",padding:"4px 6px",fontSize:11,background:"var(--bg)",border:"1px solid var(--div2)",borderRadius:4,color:"var(--text)"};
   const[rawMap,setRawMap]=useState({}); // {planId:{materialId:{kg,name}}} / null = SQL 미실행
   const[rawPlan,setRawPlan]=useState(null);
@@ -5962,10 +6018,10 @@ function StatsDrilldownTable({adminHash,onRawSaved,plans,editingId,editForm,setE
             const isEdit=editingId===p.id;
             const startMs=p.actual_start_at?new Date(p.actual_start_at).getTime():0;
             const endMs=p.actual_end_at?new Date(p.actual_end_at).getTime():0;
-            const hoursReal=(endMs-startMs)/3600000;
+            const hoursReal=workMsBetween(startMs,endMs,lunch)/3600000;
             const editStartMs=editForm.start?new Date(kstInputToIso(editForm.start)).getTime():0;
             const editEndMs=editForm.end?new Date(kstInputToIso(editForm.end)).getTime():0;
-            const editHours=(editEndMs-editStartMs)/3600000;
+            const editHours=editEndMs>editStartMs?workMsBetween(editStartMs,editEndMs,lunch)/3600000:(editEndMs-editStartMs)/3600000;
             const qtyChanged=p.actual_qty!=null&&Number(p.actual_qty)!==Number(p.qty);
             const raw=rawMap?.[p.id];
             const rawList=raw?Object.values(raw):[];
@@ -6024,6 +6080,7 @@ function StatsDrilldownTable({adminHash,onRawSaved,plans,editingId,editForm,setE
 // StatsDrilldownTable을 showItemColumn=true로 재사용.
 // ═══════════════════════════════════════════
 function DateStatsView({adminHash}){
+  const lunch=useLunch(adminHash);
   const[plans,setPlans]=useState([]);
   const[loading,setLoading]=useState(true);
   const[range,setRange]=useState("30");
@@ -6095,7 +6152,7 @@ function DateStatsView({adminHash}){
       const totalHours=list.reduce((a,p)=>{
         const s=p.actual_start_at?new Date(p.actual_start_at).getTime():0;
         const e=p.actual_end_at?new Date(p.actual_end_at).getTime():0;
-        return a+Math.max(0,(e-s)/3600000);
+        return a+workMsBetween(s,e,lunch)/3600000;
       },0);
       // 품목마다 단위(unit)가 다르므로 unit별로 총량 집계
       const byUnit={};
@@ -6108,14 +6165,14 @@ function DateStatsView({adminHash}){
     });
     arr.sort((a,b)=>b.date.localeCompare(a.date));
     return arr;
-  },[plans]);
+  },[plans,lunch]);
 
   const totalCount=plans.length;
   const totalHours=useMemo(()=>plans.reduce((a,p)=>{
     const s=p.actual_start_at?new Date(p.actual_start_at).getTime():0;
     const e=p.actual_end_at?new Date(p.actual_end_at).getTime():0;
-    return a+Math.max(0,(e-s)/3600000);
-  },0),[plans]);
+    return a+workMsBetween(s,e,lunch)/3600000;
+  },0),[plans,lunch]);
   const totalDates=groups.length;
 
   const toggleExpand=(dateStr)=>{
@@ -6263,7 +6320,7 @@ function SpeedView({adminHash}){
       </table></div>
       <div style={{fontWeight:700,fontSize:14,margin:"6px 0"}}>📦 품목별 시간당 생산량</div>
       <div style={{overflowX:"auto"}}><table className="aps-table" style={{minWidth:560}}>
-        <thead><tr><th>품목</th><th className="right">실적</th><th className="right" title="📈 통계와 같은 값: Σ수량 ÷ Σ(종료−시작), 점심 포함">기존 (점심 포함)</th><th className="right" title="평소 인원·평소 수량, 점심 제외 작업 시간 기준">속도 모델</th><th className="right">평소 1회 수량</th></tr></thead>
+        <thead><tr><th>품목</th><th className="right">실적</th><th className="right" title="📈 통계와 같은 값: Σ수량 ÷ Σ(종료−시작−점심)">기존 (통계)</th><th className="right" title="평소 인원·평소 수량, 점심 제외 작업 시간 기준">속도 모델</th><th className="right">평소 1회 수량</th></tr></thead>
         <tbody>{m.itemRows.map(r=><tr key={r.itemId}>
           <td><div className="aps-nm2" style={{fontWeight:600}} title={r.name}>{r.name}</div></td>
           <td className="right">{r.count}건</td>
@@ -6566,7 +6623,7 @@ function StatsTab({adminHash}){
       </div>
     }
     <div style={{fontSize:11,color:"var(--dimmer)",marginTop:8,lineHeight:1.5}}>
-      ※ 실제 시각은 "▶ 시작" / "✓ 완료" 버튼 클릭 순간에 자동 기록됩니다 (KST) · 잘못 기록된 시각·실제 수량은 품목 행을 클릭해 펼친 뒤 ✏ 버튼으로 직접 수정 가능 · 실제 수량을 비워두면 계획 수량 그대로 통계 반영 · 365일 초과 완료/취소 계획은 매일 1회 자동 정리됨 · 계획↔실제 차이는 평균 시간 기준 {">5%"} 초과 시 색상 표시
+      ※ 실제 시각은 "▶ 시작" / "✓ 완료" 버튼 클릭 순간에 자동 기록됩니다 (KST) · 잘못 기록된 시각·실제 수량은 품목 행을 클릭해 펼친 뒤 ✏ 버튼으로 직접 수정 가능 · 실제 수량을 비워두면 계획 수량 그대로 통계 반영 · 생산 시간은 ⚙ 근무시간의 점심시간을 빼고 계산 (예: 점심 12~13시, 10:00~13:10 → 2시간 10분) · 365일 초과 완료/취소 계획은 매일 1회 자동 정리됨 · 계획↔실제 차이는 평균 시간 기준 {">5%"} 초과 시 색상 표시
     </div>
   </div>;
 }
