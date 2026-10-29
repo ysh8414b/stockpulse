@@ -4854,9 +4854,31 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
     }
     return out;
   },[manual,rawLots]);
+  // 출고 확정 기록 — 서버(ol_settings `fzout_done:{날짜}`)에 [{vendor,at,boxes,fail,moves:[…],man}] 저장
+  // 확정된 날짜(같은 업체 또는 전체)는 출고 확정 버튼이 잠기고, 기록된 로트별 수량으로 되돌리기 가능
+  // 예전 기록(이 브라우저 localStorage `ol-fzout-done:{날짜}`, 로트 정보 없음)도 잠금으로 취급
   const doneKey="ol-fzout-done:"+selDate;
-  const[doneInfo,setDoneInfo]=useState(null);
-  useEffect(()=>{try{setDoneInfo(JSON.parse(lsGet(doneKey,"null")))}catch(e){setDoneInfo(null)}},[doneKey]);
+  const srvDoneKey="fzout_done:"+selDate;
+  const[doneList,setDoneList]=useState([]);
+  useEffect(()=>{
+    let list=fzManCache.has(srvDoneKey)?fzManCache.get(srvDoneKey):masters.settings?.[srvDoneKey];
+    list=Array.isArray(list)?[...list]:[];
+    try{const old=JSON.parse(lsGet(doneKey,"null"));if(old&&old.at&&!list.some(r=>r.at===old.at))list.push({vendor:"",...old,legacy:true})}catch(e){}
+    setDoneList(list);
+  },[srvDoneKey,masters.settings]);
+  const saveDone=async list=>{
+    const srv=list.filter(r=>!r.legacy);
+    setDoneList(list);fzManCache.set(srvDoneKey,srv);
+    if(!list.some(r=>r.legacy))lsSet(doneKey,"null");
+    await rpc("ol_set_setting",{p_admin_hash:adminHash,p_key:srvDoneKey,p_value:srv});
+  };
+  // 지금 보는 업체에 걸리는 확정 기록 (전체로 확정했거나, 같은 업체, 또는 전체 보기에서 아무 업체나)
+  const doneHits=doneList.filter(r=>!vendor||!r.vendor||r.vendor===vendor);
+  const locked=doneHits.length>0;
+  const undoMoves=doneHits.flatMap(r=>r.legacy?[]:(r.moves||[]));
+  const undoBoxes=fzoRound(undoMoves.reduce((a,m)=>a+(m.boxes||0),0));
+  const[askUndo,setAskUndo]=useState(false);
+  useEffect(()=>{setAskUndo(false);setAsk(false)},[selDate,vendor]);
 
   const allOrders=useMemo(()=>withExtra?[...orders,...extraOrders]:orders,[orders,extraOrders,withExtra]);
   const prodMap=useMemo(()=>Object.fromEntries(masters.products.map(p=>[p.code,p])),[masters.products]);
@@ -4919,23 +4941,64 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
 
   const confirm=async()=>{
     setAsk(false);setMsg("");
+    if(locked){setMsg("⚠ 이미 출고 확정된 날짜입니다");return}
     const memo=`${fmtMd(selDate)} 입고 발주 출고${vendor?" · "+vendor:""}`;
-    let fail=0;setProgress({done:0,total:moves.length});
+    const manSnap=manual;
+    let fail=0;const okMoves=[];setProgress({done:0,total:moves.length});
     for(let i=0;i<moves.length;i++){
-      const{x}=moves[i];
+      const{x,it}=moves[i];
       // 박스 단위가 아닌 로트(팩·개)는 원래 단위로 환산해서 차감
       const u=(x.lot.unit||"박스").trim();
-      const delta=u==="박스"||u===""?x.out:fzoRound(x.out*moves[i].it.per);
-      try{await rpc("ol_frozen_change_qty",{p_admin_hash:adminHash,p_id:x.lot.id,p_delta:-delta,p_memo:memo})}
-      catch(e){fail++}
+      const delta=u==="박스"||u===""?x.out:fzoRound(x.out*it.per);
+      try{
+        await rpc("ol_frozen_change_qty",{p_admin_hash:adminHash,p_id:x.lot.id,p_delta:-delta,p_memo:memo});
+        // 되돌리기용: 로트가 0이 돼 삭제돼도 다시 만들 수 있게 로트 정보까지 기록
+        okMoves.push({lot_id:x.lot.id,delta,boxes:x.out,code:(x.lot.product_code||"").trim(),name:x.lot.product_name||"",
+          unit:x.lot.unit||"박스",expiry:x.lot.expiry||null,location:x.lot.location||"",in_date:x.lot.in_date||null});
+      }catch(e){fail++}
       setProgress({done:i+1,total:moves.length});
     }
     setProgress(null);
-    const info={at:Date.now(),boxes:fzoRound(moves.reduce((a,m)=>a+m.x.out,0)),fail};
-    lsSet(doneKey,JSON.stringify(info));setDoneInfo(info);
+    const info={vendor,at:Date.now(),boxes:fzoRound(okMoves.reduce((a,m)=>a+m.boxes,0)),fail,moves:okMoves,man:manSnap};
+    let saveErr="";
+    if(okMoves.length){try{await saveDone([...doneList,info])}catch(e){saveErr=errMsg(e)}}
     saveManual({});
     await loadLots();
-    setMsg(fail?`⚠ ${fail}건 차감 실패 — 냉동재고 탭에서 확인하세요`:`✓ 재고에서 ${fmtBoxes(info.boxes)}박스를 차감했습니다`);
+    setMsg(saveErr?`⚠ 차감은 됐지만 확정 기록을 서버에 저장하지 못했습니다 (잠금·되돌리기 안 됨): ${saveErr}`
+      :fail?`⚠ ${fail}건 차감 실패 — 냉동재고 탭에서 확인하세요`:`✓ 재고에서 ${fmtBoxes(info.boxes)}박스를 차감했습니다`);
+  };
+
+  // ↩ 출고 되돌리기 — 확정 때 뺀 수량을 같은 로트에 다시 넣음. 로트가 없어졌으면(0이 돼 삭제 등) 같은 제품·소비기한·위치로 다시 등록
+  const undo=async()=>{
+    setAskUndo(false);setMsg("");
+    const targets=doneHits.filter(r=>!r.legacy);
+    const all=targets.flatMap(r=>r.moves||[]);
+    let fail=0;setProgress({done:0,total:all.length,undo:true});
+    let cur=rawLots;
+    try{const d=await rpc("ol_list_frozen",{p_admin_hash:adminHash});cur=d?.lots||rawLots}catch(e){}
+    for(let i=0;i<all.length;i++){
+      const m=all[i];
+      const memo=`${fmtMd(selDate)} 입고 발주 출고 되돌리기`;
+      try{
+        const same=cur.find(l=>String(l.id)===String(m.lot_id))
+          ||cur.find(l=>(l.product_code||"").trim()===m.code&&(l.unit||"박스")===m.unit&&fzLotSig(l)===`${m.expiry||""}|${(m.location||"").trim()}`);
+        if(same)await rpc("ol_frozen_change_qty",{p_admin_hash:adminHash,p_id:same.id,p_delta:m.delta,p_memo:memo});
+        else await rpc("ol_upsert_frozen_lot",{p_admin_hash:adminHash,p_id:null,p_product_code:m.code,p_product_name:m.name,
+          p_qty:m.delta,p_unit:m.unit,p_expiry:m.expiry,p_location:m.location,p_in_date:m.in_date,p_memo:memo});
+      }catch(e){fail++}
+      setProgress({done:i+1,total:all.length,undo:true});
+    }
+    setProgress(null);
+    let saveErr="";
+    try{await saveDone(doneList.filter(r=>!doneHits.includes(r)))}catch(e){saveErr=errMsg(e)}
+    // 확정 전에 직접 고쳐 둔 출고 수량 복원
+    const man=targets.length===1?targets[0].man:null;
+    if(man&&typeof man==="object"&&Object.keys(man).length)saveManual(man);
+    await loadLots();
+    const boxes=fzoRound(targets.reduce((a,r)=>a+(r.boxes||0),0));
+    setMsg(fail?`⚠ ${fail}건 되돌리기 실패 — 냉동재고 탭에서 확인하세요`
+      :saveErr?`⚠ 재고는 되돌렸지만 확정 기록을 지우지 못했습니다: ${saveErr}`
+      :all.length?`✓ 출고를 되돌렸습니다 (${fmtBoxes(boxes)}박스 재고에 다시 넣음)`:"✓ 확정 잠금을 풀었습니다");
   };
 
   // kind: png | pdf / perFloor: 층별 보기에서 층마다 따로(층마다 새 쪽)
@@ -4975,7 +5038,16 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
         </div>
 
         <div className="ol-toolbar">
-          {progress?<span style={{fontSize:13,fontWeight:700,color:"#ef4444"}}>재고 차감 중… {progress.done}/{progress.total}</span>
+          {progress?<span style={{fontSize:13,fontWeight:700,color:"#ef4444"}}>{progress.undo?"되돌리는 중…":"재고 차감 중…"} {progress.done}/{progress.total}</span>
+           :locked?(askUndo?<span style={{display:"inline-flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+              <span style={{fontSize:13,fontWeight:700,color:"#ef4444"}}>{undoMoves.length
+                ?`로트 ${undoMoves.length}건, ${fmtBoxes(undoBoxes)}박스를 냉동재고에 다시 넣을까요?`
+                :"예전 확정 기록이라 로트 정보가 없습니다. 잠금만 풀까요? (재고는 그대로)"}</span>
+              <button className="ol-btn ol-btn-danger ol-btn-sm" onClick={undo}>{undoMoves.length?"되돌리기":"잠금 풀기"}</button>
+              <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setAskUndo(false)}>취소</button></span>
+            :<span style={{display:"inline-flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+              <button className="ol-btn ol-btn-primary" disabled title="이미 출고 확정된 날짜입니다. 다시 차감하려면 먼저 되돌리세요">🔒 출고 확정됨</button>
+              <button className="ol-btn ol-btn-secondary" onClick={()=>setAskUndo(true)} title="확정 때 뺀 수량을 냉동재고에 다시 넣고 잠금을 풉니다">↩ 출고 되돌리기</button></span>)
            :ask?<span style={{display:"inline-flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
               <span style={{fontSize:13,fontWeight:700,color:"#ef4444"}}>로트 {moves.length}건, {fmtBoxes(moves.reduce((a,m)=>a+m.x.out,0))}박스를 냉동재고에서 차감할까요?</span>
               <button className="ol-btn ol-btn-danger ol-btn-sm" onClick={confirm}>차감</button>
@@ -5015,9 +5087,10 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
         <div style={{fontSize:12,color:"var(--muted)",marginBottom:10}}>
           발주 수량(박스) = 발주 팩수량 ÷ 입수량 · 제품코드로 냉동재고와 연결 · 자동 배정 = {locPref?`📍${locPref} 먼저 → `:""}소비기한 빠른 순{whole?" (한 로트로 다 채울 수 있으면 그 로트만)":""} · 출고 수량 칸을 눌러 직접 고칠 수 있어요 (이 브라우저에 날짜별로 기억)
         </div>
-        {doneInfo&&<div className="ol-warn" style={{padding:"8px 12px",borderColor:"#16a34a",color:"#15803d",background:"rgba(34,197,94,.08)"}}>
-          ✓ 이 입고일은 {fmtAt(doneInfo.at)}에 {fmtBoxes(doneInfo.boxes)}박스를 재고에서 차감했습니다. 다시 확정하면 한 번 더 빠집니다.
-          <button className="ol-btn ol-btn-secondary ol-btn-sm" style={{marginLeft:8}} onClick={()=>{lsSet(doneKey,"null");setDoneInfo(null)}}>표시 지우기</button>
+        {doneList.length>0&&<div className="ol-warn" style={{padding:"8px 12px",borderColor:"#16a34a",color:"#15803d",background:"rgba(34,197,94,.08)"}}>
+          {doneList.map((r,i)=><div key={i}>🔒 {fmtAt(r.at)}에 {r.vendor?`[${r.vendor}] `:""}{fmtBoxes(r.boxes)}박스 출고 확정 (재고 차감){r.fail?` · 실패 ${r.fail}건`:""}{r.legacy?" · 예전 기록(되돌리기 불가, 잠금만 해제 가능)":""}</div>)}
+          {locked?<div style={{fontSize:12,marginTop:2}}>출고 확정 버튼이 잠겨 있습니다. 다시 차감하려면 "↩ 출고 되돌리기" 후 확정하세요.</div>
+            :<div style={{fontSize:12,marginTop:2}}>지금 보는 업체는 아직 확정 안 됨</div>}
         </div>}
         {shortItems.length>0&&<div className="ol-warn" style={{padding:"8px 12px"}}>⚠ 재고 부족: {shortItems.map(x=>`${shipNameOf(x.product)} ${fmtBoxes(x.short)}박스`).join(", ")}</div>}
         {partial.length>0&&<div className="ol-warn" style={{padding:"8px 12px"}}>⚠ 입수량으로 나누어떨어지지 않는 품목(빨강): {partial.map(x=>`${shipNameOf(x.product)} (${fmtNum(x.qty)}÷${x.per})`).join(", ")}</div>}
