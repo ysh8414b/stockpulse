@@ -1158,11 +1158,12 @@
 ### APS — 실제 투입 원육 kg 입력 + 통계 반영 (2026-10-29)
 - 사용자 요청: 계획(BOM) 원육 kg과 실제 투입 원육 kg이 달라 통계가 부정확 → 생산계획 수정에서 실제 투입 kg 입력
 - **`setup_aps_raw_actual.sql`** (신규, 1회 실행, 재실행 안전): `aps_plan_raw_actuals(plan_id FK CASCADE, material_id FK CASCADE, kg, PK(plan_id,material_id))` + RLS. RPC `aps_get_plan_raw_actuals(hash, plan_ids[])`, `aps_set_plan_raw_actuals(hash, plan_id, rows [{material_id,kg}])`(통째로 교체, 빈 배열 = 삭제), `aps_get_raw_usage_stats(hash, days_back)`(실제 원육 입력된 완료 계획만 품목별 `total_raw_kg`·`total_qty`(actual_qty 우선)·원자재별 kg). 기존 함수 변경 없음
-- **aps.html**: `RawActualInputs`(BOM 원자재별 실제 kg 입력 + 계획 대비 % + "다른 원자재 추가"로 BOM 외 원육 + 계획/실제 합계), `loadPlanRawActuals`/`rawValuesToRows`/`isRawActualMissing`
+- **aps.html**: `RawActualInputs`(BOM 원자재별 실제 kg 입력 + 계획 대비 % + 원자재 2개 이상이면 계획/실제 합계), `loadPlanRawActuals`/`rawValuesToRows`/`isRawActualMissing`
   - `PlanForm` 수정 모드에만 "🥩 실제 투입 원육 kg" 접이식 칸(진행중·완료 계획이나 입력값이 있으면 펼쳐짐). 비교 기준 = BOM × 실제 수량(완료 계획에 actual_qty가 있으면) 또는 수량. 값이 바뀐 경우만 계획 저장 전에 `aps_set_plan_raw_actuals` 호출, SQL 미실행이면 창 안에 안내
   - 📈 통계 완료 계획 표(`StatsDrilldownTable`, 품목별·날짜별 공통): "실제 원육" 열(합계, 마우스 올리면 원자재별) + `🥩 원육` 버튼 → `PlanRawModal`(같은 입력칸, BOM은 실제 수량 기준)
   - 📈 통계 품목별 표: "원육 kg/단위 (실제 · BOM)" 열 = 실제 원육 합 ÷ 실제 수량 vs BOM 직접 자식 원자재 `qty×(1+loss)` 합(`aps_get_material_requirements` sources), 차이 % 색 표시
 - 가짜 데이터로 확인(96박스 · 실제 108.5kg → 1.13kg/박스 vs BOM 1.02kg +11%, 수정 창 저장 값). 실제 DB 미확인
+- **원육 고정, kg만 입력 (같은 날)**: 사용자 정정 "원육이 바뀌는 게 아니라 투입 kg만 바뀐다" → "+ 다른 원자재 추가"·BOM 외 원육·✕ 빼기 제거. 원육 이름은 BOM 그대로 표시하고 kg 칸만(빈 칸 = 계획 kg). 저장 시 BOM 원자재만 보냄(`rawValuesToRows(values, allowedIds)`). BOM에 원자재가 없으면 연결 안내
 - 한계: 품목 BOM 비교는 직접 자식 원자재만(반제품 경유 원육은 BOM 값에 빠짐). 🤖 자동 생성·재고·발주 부족 알림은 여전히 BOM 기준(실제 원육 비율로 BOM을 보정하지 않음)
 
 ### APS — 재고 패널에 오늘 이후 계획 수량 컬럼 추가 (2026-07-06)

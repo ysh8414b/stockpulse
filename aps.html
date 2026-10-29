@@ -633,10 +633,12 @@ async function loadPlanRawActuals(adminHash,planIds){
     return out;
   }catch(e){if(isRawActualMissing(e))return null;throw e}
 }
-// values {materialId:"kg 문자열"} → 저장용 [{material_id,kg}] (빈 칸은 제외)
-function rawValuesToRows(values){
+// values {materialId:"kg 문자열"} → 저장용 [{material_id,kg}] (빈 칸 제외, allowedIds가 있으면 그 원자재만)
+function rawValuesToRows(values,allowedIds){
+  const allow=allowedIds?new Set(allowedIds.map(String)):null;
   const rows=[];
   for(const[mid,v] of Object.entries(values||{})){
+    if(allow&&!allow.has(String(mid)))continue;
     const s=String(v??"").trim();if(s==="")continue;
     const kg=Number(s);
     if(!isFinite(kg)||kg<0)throw new Error(`실제 투입 kg은 0 이상의 숫자여야 합니다 (${s})`);
@@ -646,47 +648,37 @@ function rawValuesToRows(values){
 }
 function rawValuesKey(values){return JSON.stringify(Object.entries(values||{}).map(([k,v])=>[k,String(v??"").trim()]).filter(x=>x[1]!=="").sort())}
 
-// 실제 투입 원육 입력칸 — rows: BOM 기준 [{id,name,code,needKg}], materials: 전체 원자재 품목
-function RawActualInputs({rows,materials,values,setValues,planQtyNote}){
-  const bomIds=new Set((rows||[]).map(r=>String(r.id)));
-  const extraIds=Object.keys(values||{}).filter(id=>!bomIds.has(String(id)));
-  const matById={};for(const m of (materials||[]))matById[String(m.id)]=m;
-  const addable=(materials||[]).filter(m=>!bomIds.has(String(m.id))&&!(String(m.id) in (values||{})));
+// 실제 투입 원육 kg 입력칸 — 원육은 BOM 그대로, kg만 입력. rows: [{id,name,code,needKg}]
+function RawActualInputs({rows,values,setValues,planQtyNote}){
+  const list=rows||[];
+  if(list.length===0)return <div style={{fontSize:12,color:"var(--muted)"}}>이 품목 BOM에 원자재(원육)가 없습니다. 📦 품목/BOM 탭에서 먼저 연결하세요.</div>;
   const set=(id,v)=>setValues(prev=>({...prev,[String(id)]:v}));
-  const remove=(id)=>setValues(prev=>{const n={...prev};delete n[String(id)];return n});
-  const planTotal=(rows||[]).reduce((a,r)=>a+r.needKg,0);
+  const planTotal=list.reduce((a,r)=>a+r.needKg,0);
+  // 빈 칸은 계획 kg 그대로 쓴 것으로 보고 합계 계산
   let actualTotal=0,anyActual=false;
-  for(const v of Object.values(values||{})){const s=String(v??"").trim();if(s!==""&&isFinite(Number(s))){actualTotal+=Number(s);anyActual=true}}
-  const inp={width:96,textAlign:"right",padding:"5px 8px",fontSize:13};
-  const line=(key,name,code,needKg,isExtra)=>{
-    const v=values?.[key]??"";
-    const s=String(v).trim();
-    const diff=s!==""&&isFinite(Number(s))&&needKg>0?(Number(s)-needKg)/needKg*100:null;
-    return <div key={key} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderTop:"1px solid var(--border)",flexWrap:"wrap"}}>
-      <div style={{flex:"1 1 140px",minWidth:0}}>
-        <div style={{fontWeight:600,fontSize:12}}>{name}{isExtra&&<span style={{marginLeft:6,fontSize:10,color:"#f59e0b"}}>BOM 외</span>}</div>
-        <div style={{fontSize:11,color:"var(--muted)"}}>{code||""}{needKg>0&&<> · 계획 {fmtKg(needKg)}</>}</div>
-      </div>
-      <input className="aps-input" type="number" step="any" min="0" value={v} placeholder={needKg>0?String(Math.round(needKg*100)/100):"kg"} onChange={e=>set(key,e.target.value)} style={inp}/>
-      <span style={{fontSize:12,color:"var(--muted)"}}>kg</span>
-      <span style={{width:56,textAlign:"right",fontSize:11,fontWeight:700,color:diff==null?"var(--dimmer)":Math.abs(diff)<1?"var(--muted)":diff>0?"#ef4444":"#22c55e"}}>{diff==null?"":(diff>0?"+":"")+diff.toFixed(1)+"%"}</span>
-      {isExtra&&<button type="button" className="aps-btn aps-btn-secondary" style={{padding:"2px 8px",fontSize:11}} onClick={()=>remove(key)} title="빼기">✕</button>}
-    </div>;
-  };
+  for(const r of list){const s=String(values?.[String(r.id)]??"").trim();if(s!==""&&isFinite(Number(s))){actualTotal+=Number(s);anyActual=true}else actualTotal+=r.needKg}
+  const inp={width:100,textAlign:"right",padding:"5px 8px",fontSize:13};
   return <div>
-    {(rows||[]).map(r=>line(String(r.id),r.name,r.code,r.needKg,false))}
-    {extraIds.map(id=>{const m=matById[id];return line(id,m?.name||`원자재 #${id}`,m?.code,0,true)})}
-    {addable.length>0&&<div style={{paddingTop:6,borderTop:"1px solid var(--border)"}}>
-      <select className="aps-select" style={{width:"100%",fontSize:12}} value="" onChange={e=>{if(e.target.value)set(e.target.value,"")}}>
-        <option value="">+ 다른 원자재 추가 (BOM에 없는 원육을 썼을 때)</option>
-        {addable.map(m=><option key={m.id} value={m.id}>{m.code} · {m.name}</option>)}
-      </select>
-    </div>}
-    <div style={{display:"flex",justifyContent:"space-between",gap:8,marginTop:8,fontSize:12,flexWrap:"wrap"}}>
-      <span style={{color:"var(--muted)"}}>계획 합계 {fmtKg(planTotal)}{planQtyNote?` (${planQtyNote})`:""}</span>
+    {list.map(r=>{
+      const key=String(r.id);
+      const v=values?.[key]??"";
+      const s=String(v).trim();
+      const diff=s!==""&&isFinite(Number(s))&&r.needKg>0?(Number(s)-r.needKg)/r.needKg*100:null;
+      return <div key={key} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderTop:"1px solid var(--border)",flexWrap:"wrap"}}>
+        <div style={{flex:"1 1 140px",minWidth:0}}>
+          <div style={{fontWeight:600,fontSize:12}}>{r.name}</div>
+          <div style={{fontSize:11,color:"var(--muted)"}}>계획 {fmtKg(r.needKg)}</div>
+        </div>
+        <input className="aps-input" type="number" step="any" min="0" value={v} placeholder={String(Math.round(r.needKg*100)/100)} onChange={e=>set(key,e.target.value)} style={inp}/>
+        <span style={{fontSize:12,color:"var(--muted)"}}>kg</span>
+        <span style={{width:56,textAlign:"right",fontSize:11,fontWeight:700,color:diff==null?"var(--dimmer)":Math.abs(diff)<1?"var(--muted)":diff>0?"#ef4444":"#22c55e"}}>{diff==null?"":(diff>0?"+":"")+diff.toFixed(1)+"%"}</span>
+      </div>;
+    })}
+    {list.length>1&&<div style={{display:"flex",justifyContent:"space-between",gap:8,marginTop:8,fontSize:12,flexWrap:"wrap"}}>
+      <span style={{color:"var(--muted)"}}>계획 합계 {fmtKg(planTotal)}</span>
       <span>실제 합계 <b>{anyActual?fmtKg(actualTotal):"–"}</b>{anyActual&&planTotal>0&&<span style={{marginLeft:6,color:actualTotal>planTotal?"#ef4444":"#22c55e",fontWeight:700}}>{actualTotal>=planTotal?"+":""}{((actualTotal-planTotal)/planTotal*100).toFixed(1)}%</span>}</span>
-    </div>
-    <div style={{fontSize:11,color:"var(--muted)",marginTop:4}}>빈 칸은 저장하지 않음 · 모두 비우면 실제 투입 기록 삭제</div>
+    </div>}
+    <div style={{fontSize:11,color:"var(--muted)",marginTop:4}}>계획 kg = {planQtyNote||"BOM"} · 실제로 넣은 kg만 입력 (빈 칸 = 입력 안 함, 모두 비우면 기록 삭제)</div>
   </div>;
 }
 
@@ -719,7 +711,7 @@ function PlanRawModal({adminHash,plan,onClose,onSaved}){
   },[adminHash,plan.id]);
   const save=async()=>{
     setErr("");
-    let list;try{list=rawValuesToRows(values)}catch(e){setErr(e.message);return}
+    let list;try{list=rawValuesToRows(values,(rows||[]).map(r=>r.id))}catch(e){setErr(e.message);return}
     setSaving(true);
     try{
       await rpc("aps_set_plan_raw_actuals",{p_admin_hash:adminHash,p_plan_id:plan.id,p_rows:list});
@@ -731,7 +723,7 @@ function PlanRawModal({adminHash,plan,onClose,onSaved}){
     <div className="aps-modal" onClick={e=>e.stopPropagation()} style={{maxWidth:520}}>
       <div style={{fontWeight:700,fontSize:16,marginBottom:4}}>🥩 실제 투입 원육</div>
       <div style={{fontSize:12,color:"var(--muted)",marginBottom:12}}>#{plan.id} · {plan.item_name} · {fmtNum(q)} {plan.item_unit||""}{plan.actual_end_at?` · ${fmtKstDateTime(plan.actual_end_at)} 완료`:""}</div>
-      {rows===null&&!err?<Loader/>:<RawActualInputs rows={rows||[]} materials={items.filter(i=>i.type==="material")} values={values} setValues={setValues} planQtyNote={`BOM × ${fmtNum(q)}`}/>}
+      {rows===null&&!err?<Loader/>:<RawActualInputs rows={rows||[]} values={values} setValues={setValues} planQtyNote={`BOM × ${fmtNum(q)}`}/>}
       {err&&<div className="aps-err">{err}</div>}
       <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
         <button className="aps-btn aps-btn-secondary" onClick={onClose} disabled={saving}>취소</button>
@@ -2287,7 +2279,7 @@ function PlanForm({adminHash,items,lines,settings,initial,prefill,defaultDate,pl
     if(endAt<=startAt){setErr("종료 시각은 시작 시각보다 뒤여야 합니다");return}
     let rawRows=null;
     if(isEdit&&rawInitKey!==null&&rawValuesKey(rawValues)!==rawInitKey){
-      try{rawRows=rawValuesToRows(rawValues)}catch(e){setErr(e.message);return}
+      try{rawRows=rawValuesToRows(rawValues,materialReport&&materialReport.length?materialReport.map(r=>r.id):null)}catch(e){setErr(e.message);return}
       if(rawMissing){setErr(RAW_ACTUAL_SQL_MSG);return}
     }
     setLoading(true);setErr("");
@@ -2512,7 +2504,7 @@ function PlanForm({adminHash,items,lines,settings,initial,prefill,defaultDate,pl
                 const baseQ=aq!=null&&q>0?aq:q;
                 const f=q>0?baseQ/q:1;
                 const rows=f===1?materialReport:materialReport.map(r=>({...r,needKg:r.needKg*f}));
-                return <RawActualInputs rows={rows} materials={items.filter(i=>i.type==="material")} values={rawValues} setValues={setRawValues} planQtyNote={`BOM × ${aq!=null?"실제 수량":"수량"} ${fmtNum(baseQ)}`}/>;
+                return <RawActualInputs rows={rows} values={rawValues} setValues={setRawValues} planQtyNote={`BOM × ${aq!=null?"실제 수량":"수량"} ${fmtNum(baseQ)}`}/>;
               })()}
           </div>}
         </div>}
