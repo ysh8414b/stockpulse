@@ -4776,6 +4776,10 @@ function FzOutQtyCell({value,max,onSave}){
     onKeyDown={e=>{if(e.key==="Enter")e.target.blur();else if(e.key==="Escape"){done.current=true;setEdit(false)}}}/>;
 }
 
+// 냉동 출고 직접 수정·숨김 — 서버 저장값을 탭 이동 후에도 바로 쓰도록 메모
+const fzManCache=new Map();
+const fzLotSig=l=>`${l.expiry||""}|${(l.location||"").trim()}`;
+
 function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrders}){
   const[prefix,setPrefix]=useState(()=>lsGet("ol-prefix","쿠팡"));
   useEffect(()=>lsSet("ol-prefix",prefix),[prefix]);
@@ -4814,11 +4818,42 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
     return()=>{alive=false};
   },[selDate,withExtra,adminHash]);
 
-  // 직접 고친 출고 수량 — 날짜별로 {제품코드:{로트id:박스}}
+  // 직접 고친 출고 수량 — 날짜별로 {제품코드:{로트id:박스}, __lots:{로트id:"소비기한|위치"}}
+  // 서버(ol_settings `fzout_man:{날짜}`)에 저장 → 다른 기기·주소·새로고침 후에도 유지. 이 브라우저에도 사본
   const manKey="ol-fzout-man:"+selDate;
+  const srvManKey="fzout_man:"+selDate;
   const[manual,setManual]=useState({});
-  useEffect(()=>{try{setManual(JSON.parse(lsGet(manKey,"{}"))||{})}catch(e){setManual({})}},[manKey]);
-  const saveManual=m=>{setManual(m);lsSet(manKey,JSON.stringify(m))};
+  useEffect(()=>{
+    if(fzManCache.has(srvManKey)){setManual(fzManCache.get(srvManKey));return}
+    const srv=masters.settings?.[srvManKey];
+    if(srv&&typeof srv==="object"){setManual(srv);return}
+    try{setManual(JSON.parse(lsGet(manKey,"{}"))||{})}catch(e){setManual({})}
+  },[srvManKey,masters.settings]);
+  const saveManual=m=>{
+    // 로트가 다시 만들어져 id가 바뀌어도 찾을 수 있게 소비기한·위치를 함께 기록
+    const sig={};
+    for(const c in m){if(c==="__lots")continue;for(const id in m[c]){const l=rawLots.find(x=>String(x.id)===String(id));if(l)sig[id]=fzLotSig(l)}}
+    const next=Object.keys(sig).length?{...m,__lots:sig}:Object.fromEntries(Object.entries(m).filter(([k])=>k!=="__lots"));
+    setManual(next);fzManCache.set(srvManKey,next);lsSet(manKey,JSON.stringify(next));
+    rpc("ol_set_setting",{p_admin_hash:adminHash,p_key:srvManKey,p_value:next})
+      .catch(e=>setMsg("⚠ 직접 고친 수량을 서버에 저장하지 못했습니다 (이 브라우저에만 저장됨): "+errMsg(e)));
+  };
+  // 저장된 로트 id가 지금 재고에 없으면 같은 제품·소비기한·위치 로트로 연결
+  const manualEff=useMemo(()=>{
+    const sig=manual.__lots||{};const out={};
+    for(const c in manual){
+      if(c==="__lots")continue;
+      const cur={};
+      for(const id in manual[c]){
+        if(rawLots.some(x=>String(x.id)===String(id))){cur[id]=manual[c][id];continue}
+        const s=sig[id];if(!s)continue;
+        const l=rawLots.find(x=>(x.product_code||"").trim()===c&&fzLotSig(x)===s&&!(x.id in cur));
+        if(l)cur[l.id]=manual[c][id];
+      }
+      out[c]=cur;
+    }
+    return out;
+  },[manual,rawLots]);
   const doneKey="ol-fzout-done:"+selDate;
   const[doneInfo,setDoneInfo]=useState(null);
   useEffect(()=>{try{setDoneInfo(JSON.parse(lsGet(doneKey,"null")))}catch(e){setDoneInfo(null)}},[doneKey]);
@@ -4830,13 +4865,22 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
   useEffect(()=>{if(vendor&&!vendors.includes(vendor))setVendor("")},[vendors]);
   const locations=useMemo(()=>[...new Set(rawLots.map(fzLoc))].filter(l=>l!==NO_LOC).sort(locCmp),[rawLots]);
   const locColor=loc=>{const i=locations.indexOf(loc);return i<0?"transparent":FZO_LOC_BG[i%FZO_LOC_BG.length]};
-  const fullPlan=useMemo(()=>buildFzOutPlan(allOrders,prodMap,rawLots,{vendor,whole,locPref,skipExpired,manual}),
-    [allOrders,prodMap,rawLots,vendor,whole,locPref,skipExpired,manual]);
+  const fullPlan=useMemo(()=>buildFzOutPlan(allOrders,prodMap,rawLots,{vendor,whole,locPref,skipExpired,manual:manualEff}),
+    [allOrders,prodMap,rawLots,vendor,whole,locPref,skipExpired,manualEff]);
   // 숨긴 제품(제품코드) — 날짜와 상관없이 이 브라우저에 기억. 숨기면 표·이미지·엑셀·출고 확정에서 모두 빠짐
-  const[hiddenCodes,setHiddenCodes]=useState(()=>{try{return new Set(JSON.parse(lsGet("ol-fzout-hidden","[]")))}catch(e){return new Set()}});
-  useEffect(()=>lsSet("ol-fzout-hidden",JSON.stringify([...hiddenCodes])),[hiddenCodes]);
-  const hideItem=code=>setHiddenCodes(prev=>new Set([...prev,code]));
-  const unhideItem=code=>setHiddenCodes(prev=>{const n=new Set(prev);n.delete(code);return n});
+  // 서버(ol_settings `fzout_hidden`)에도 저장 → 다른 기기·주소에서도 유지
+  const[hiddenCodes,setHiddenCodes]=useState(()=>{
+    const srv=fzManCache.has("fzout_hidden")?fzManCache.get("fzout_hidden"):masters.settings?.fzout_hidden;
+    if(Array.isArray(srv))return new Set(srv);
+    try{return new Set(JSON.parse(lsGet("ol-fzout-hidden","[]")))}catch(e){return new Set()}});
+  const setHidden=n=>{
+    setHiddenCodes(n);const arr=[...n];
+    lsSet("ol-fzout-hidden",JSON.stringify(arr));fzManCache.set("fzout_hidden",arr);
+    rpc("ol_set_setting",{p_admin_hash:adminHash,p_key:"fzout_hidden",p_value:arr})
+      .catch(e=>setMsg("⚠ 숨긴 제품을 서버에 저장하지 못했습니다: "+errMsg(e)));
+  };
+  const hideItem=code=>setHidden(new Set([...hiddenCodes,code]));
+  const unhideItem=code=>{const n=new Set(hiddenCodes);n.delete(code);setHidden(n)};
   const plan=useMemo(()=>fullPlan.filter(x=>!hiddenCodes.has(x.code)),[fullPlan,hiddenCodes]);
   const hiddenItems=fullPlan.filter(x=>hiddenCodes.has(x.code));
   const moves=plan.flatMap(it=>it.rows.filter(x=>x.out>0).map(x=>({it,x})));
@@ -4866,9 +4910,9 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
       cur[r.lot.id]=fzoRound(cur[r.lot.id]-t);if(!(cur[r.lot.id]>0))delete cur[r.lot.id];
       over=fzoRound(over-t);
     }
-    saveManual({...manual,[it.code]:cur});
+    saveManual({...manualEff,[it.code]:cur});
   };
-  const resetItem=code=>{const m={...manual};delete m[code];saveManual(m)};
+  const resetItem=code=>{const m={...manualEff};delete m[code];saveManual(m)};
   const outCell=(it,x)=>x.usable
     ?<span style={{display:"inline-flex",alignItems:"center",gap:4}}><FzOutQtyCell key={x.lot.id+":"+x.out} value={x.out} max={x.stock} onSave={v=>setOut(it,x,v)}/></span>
     :(x.out>0?fmtBoxes(x.out):"");
@@ -4985,7 +5029,7 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
         {hiddenItems.length>0&&<div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10,alignItems:"center"}}>
           <span style={{fontSize:12,color:"var(--muted)",fontWeight:700}}>🙈 숨긴 제품 {hiddenItems.length}개</span>
           {hiddenItems.map(x=><button key={x.code} className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>unhideItem(x.code)} title="다시 보이기">{shipNameOf(x.product)} · {fmtBoxes(x.boxes)}박스 👁</button>)}
-          {hiddenItems.length>1&&<button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setHiddenCodes(new Set())}>모두 보이기</button>}
+          {hiddenItems.length>1&&<button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setHidden(new Set())}>모두 보이기</button>}
         </div>}
 
         {!plan.length?<Empty emoji="❄" text={hiddenItems.length?"모든 냉동 제품을 숨겼습니다 — 위에서 👁 눌러 다시 보이기":frozenOrders.length?"이 업체의 냉동 발주가 없습니다":"이 입고일 발주서에 냉동 제품이 없습니다 (제품리스트에서 보관을 ❄ 냉동으로 지정)"}/>:<>
