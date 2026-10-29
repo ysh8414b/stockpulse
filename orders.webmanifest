@@ -1,0 +1,18 @@
+{
+  "id": "./orders.html",
+  "name": "자동 리스트 생성기",
+  "short_name": "발주리스트",
+  "description": "발주서 → 부착리스트·적재이미지·출고장·냉동재고",
+  "lang": "ko",
+  "start_url": "./orders.html",
+  "scope": "./orders.html",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#07070c",
+  "theme_color": "#07070c",
+  "icons": [
+    { "src": "icons/orders-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/orders-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/orders-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -15,6 +15,7 @@
 - `privacy.html` — 개인정보처리방침
 - `terms.html` — 이용약관
 - `orders.html` — 자동 리스트 생성기 (발주서 → 부착리스트 엑셀 + 적재이미지 + 출고장 + 냉동재고 + 📤 냉동 출고 + 💰 판매가, 비밀번호 없이 접근)
+- `aps.webmanifest` / `orders.webmanifest` / `sw-apps.js` / `pwa.js` / `icons/` — APS·발주리스트 앱(PWA) 설치용
 - `style.css` — 공통 CSS (다크/라이트 테마, 반응형)
 - `shared.js` — 공통 JS (Supabase 설정, db() 함수, 테마 유틸)
 - `sitemap.xml` — SEO용 사이트맵
@@ -1832,6 +1833,15 @@
 - 제외: iframe 안(테마 사이드 패널), `window.opener`가 있는 창(판매가 북마크 창), http(s) 아닌 주소. 안내 상자는 `data-html2canvas-ignore`라 이미지 저장에 안 찍힘
 - 확인: Node 가짜 환경으로 (변경 없음 → 그대로 / 변경+입력 중 → 안 함 / 카운트다운 중 움직임 → 취소 / 70초 무움직임 → 새로고침) 확인. 미리보기 브라우저가 로컬 서버에 접속 못 해 실제 화면 확인은 못 함
 - 한계: GitHub Pages CDN 캐시(약 10분) 때문에 푸시 후 감지까지 최대 10분+3분 정도 걸릴 수 있음. 이 기능이 담긴 shared.js를 한 번은 새로고침으로 받아야 그 뒤부터 동작. 입력칸 밖에 있는 저장 안 한 입력(모달에 적어 두고 다른 곳 클릭)은 1분 무움직임 후 사라질 수 있음
+
+### APS·발주리스트 앱(PWA) 설치 (2026-10-29)
+- 사용자 요청: 사이트를 안드로이드·iOS 앱으로 → APS(`aps.html`)와 발주 페이지(`orders.html`)만 홈 화면 앱으로. 스토어 등록 없음, 메인 사이트(index 등)는 대상 아님
+- **`aps.webmanifest` / `orders.webmanifest`**: 각각 별도 앱(id·start_url·scope = 그 페이지), 이름 "APS 생산계획"(APS) / "자동 리스트 생성기"(발주리스트), `display: standalone`, 배경·테마색 `#07070c`. 아이콘 `icons/aps-*.png`(청록 + 간트 막대) / `icons/orders-*.png`(주황 + 체크리스트) 192·512·180(iOS) — PIL로 생성, 512는 maskable 겸용(그림이 가운데 60% 안)
+- **`sw-apps.js`** (서비스 워커, 캐시 `sp-apps-v1`): 사이트 파일은 항상 네트워크 먼저 → 실패(오프라인)할 때만 저장 사본, cdnjs·jsdelivr(버전 고정 주소)는 사본 먼저. Supabase·POST·`cache:"no-store"` 요청(shared.js 새 버전 감지)은 건드리지 않음 → 배포 후 새 코드가 바로 들어오고 자동 새로고침도 그대로. 캐시 이름을 바꾸면 이전 캐시 삭제
+- **`pwa.js`** (`<script src="pwa.js" data-scope data-name defer>`): 서비스 워커를 그 페이지 범위(`./aps.html`, `./orders.html`)로만 등록 → 다른 페이지에는 영향 없음. 크롬·엣지·웨일(안드로이드·PC)은 `beforeinstallprompt` 때 아래쪽 "📲 앱으로 설치할 수 있어요 [설치]" 안내, 아이폰 사파리는 "공유 → 홈 화면에 추가" 안내. ✕ 누르면 14일 숨김(localStorage `sp-pwa-hide:{범위}`), 앱으로 연 상태·iframe에서는 표시 안 함, 이미지 저장에 안 찍힘
+- 두 페이지 `<head>`: manifest, theme-color, icon, apple-touch-icon, apple-mobile-web-app-* 메타, pwa.js
+- 확인: manifest·아이콘 응답 200, 서비스 워커 동작은 Node 가짜 환경으로 확인(온라인 = 새 파일, 오프라인 = 사본, no-store·Supabase·POST 통과, 옛 캐시 삭제). 앱 내장 미리보기 브라우저는 서비스 워커 등록 자체를 막아 실제 설치·오프라인은 미확인 — 배포 후 휴대폰에서 확인 필요
+- 한계: 오프라인이면 화면은 열리지만 Supabase 데이터를 못 읽어 사실상 사용 불가(데이터 오프라인 저장 없음). iOS 홈 화면 앱에서는 파일 다운로드(이미지·엑셀·PDF)가 미리보기 화면으로 열릴 수 있음 — 거기서 공유 → 저장. 쿠팡 가격 갱신 크롬 확장은 휴대폰에서 동작 안 함. orders.html 판매가 북마크 창(`?pricecap`)은 앱이 아니라 브라우저 창으로 열림
 
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용

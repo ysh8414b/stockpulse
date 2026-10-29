@@ -1,0 +1,18 @@
+{
+  "id": "./aps.html",
+  "name": "APS 생산계획",
+  "short_name": "APS",
+  "description": "생산계획·재고·인원·통계 관리",
+  "lang": "ko",
+  "start_url": "./aps.html",
+  "scope": "./aps.html",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#07070c",
+  "theme_color": "#07070c",
+  "icons": [
+    { "src": "icons/aps-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/aps-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/aps-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
