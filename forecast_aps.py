@@ -6,14 +6,16 @@ APS 수요 예측 (머신러닝)
 1) Supabase에서 매출(aps_sales_daily) + 행사(aps_promotions)를 읽음
 2) 지난 행사의 실제 효과(평소 대비 배수)를 계산해 aps_promotions.actual_uplift에 기록
 3) LightGBM 모델 학습 — 요일, 최근 추세, 같은 요일 평균, 행사, 공휴일·명절 거리 등
-4) 마지막 4주를 "모르는 척" 하고 예측해 기존 방식(최근 8주 같은 요일 평균)과 정확도 비교
-   상품마다 더 정확한 쪽을 사용
+   + 딥러닝(Amazon Chronos-Bolt, 미리 학습된 시계열 모델 — 우리 데이터로 다시 학습하지 않음)
+4) 마지막 4주를 "모르는 척" 하고 예측해 기존 방식(최근 8주 같은 요일 평균) / ML / 딥러닝 정확도 비교
+   상품마다 가장 정확한 쪽을 사용 (딥러닝은 다른 두 쪽보다 확실히(3%+) 나을 때만)
 5) 마지막 매출일 다음날부터 28일치 예측(+ 적게/많이 팔릴 때 범위)을 aps_forecast에 저장
 
 로컬 시험:
   python forecast_aps.py --csv sales.csv [--promos promos.csv] --dry-run
   sales.csv  : date,code,name,qty
   promos.csv : code,start_date,end_date,kind,discount_pct,uplift
+  딥러닝 끄기: FC_DL=0 · 모델 바꾸기: FC_DL_MODEL=amazon/chronos-bolt-base
 """
 import os
 import sys
@@ -45,6 +47,9 @@ MIN_DAYS = 35         # 매출 올라온 날짜가 이보다 적으면 기존 �
 MIN_AGE = 14          # 상품 판매 이력이 이보다 짧으면 기존 방식
 ACTIVE_DAYS = 90      # 최근 90일 안에 팔린 상품만 예측
 PROMO_MIN_SAMPLES = 30  # 행사일 학습 데이터가 이보다 적으면 행사일은 "기존 방식 × 배수"
+DL_MODEL = os.environ.get("FC_DL_MODEL", "amazon/chronos-bolt-small")
+DL_OFF = os.environ.get("FC_DL", "1").strip().lower() in ("0", "false", "no", "off")
+DL_BATCH = 256
 KIND_CODES = {"할인": 1, "1+1": 2, "기획전": 3, "타임딜": 4, "기타": 5}
 
 KST = dt.timezone(dt.timedelta(hours=9))
@@ -372,6 +377,69 @@ def predict_ml(models, X, scale, clean, promo, promo_ok):
     return q, np.minimum(lo, q), np.maximum(hi, q)
 
 
+# ── 딥러닝 (Chronos-Bolt) ─────────────────────────────
+# 수많은 시계열로 미리 학습된 모델이라 몇 달치 데이터로도 쓸 수 있음.
+# 매출 숫자 흐름만 보므로 행사는 모름 → 지난 행사일은 비워서 넣고, 앞으로의 행사일은 행사 배수를 곱함.
+_dl_pipe = None
+
+
+def load_dl():
+    global _dl_pipe
+    if DL_OFF or _dl_pipe is False:
+        return None
+    if _dl_pipe is None:
+        try:
+            import torch
+            from chronos import BaseChronosPipeline
+            torch.set_num_threads(max(1, os.cpu_count() or 1))
+            _dl_pipe = BaseChronosPipeline.from_pretrained(DL_MODEL, device_map="cpu", torch_dtype=torch.float32)
+            log(f"딥러닝 모델 준비: {DL_MODEL}")
+        except Exception as e:
+            log("딥러닝(Chronos) 사용 안 함:", e)
+            _dl_pipe = False
+            return None
+    return _dl_pipe
+
+
+def dl_forecast(ctx, origins, H):
+    """[(위치, 상품번호)] → {(o, j): (중간[H], 적게[H], 많이[H])} — 행사 없는 '평소' 예측 (o 다음날부터)"""
+    pipe = load_dl()
+    if pipe is None:
+        return {}
+    import torch
+    first_pos = {j: (ctx["first"][c] - ctx["start"]).days for j, c in enumerate(ctx["codes"])}
+    keys, seqs = [], []
+    for (o, j) in origins:
+        fp = max(0, first_pos[j])
+        seq = ctx["Qv"][fp:o + 1, j].copy()       # 업로드 안 된 날 = NaN (모델이 빈칸으로 처리)
+        seq[ctx["P"][fp:o + 1, j]] = np.nan       # 지난 행사일도 빈칸 → 평소 수준만 보게
+        if np.isfinite(seq).sum() < MIN_AGE // 2:
+            continue
+        keys.append((o, j))
+        seqs.append(torch.tensor(seq, dtype=torch.float32))
+    out = {}
+    for b in range(0, len(seqs), DL_BATCH):
+        qs, _ = pipe.predict_quantiles(seqs[b:b + DL_BATCH], prediction_length=H,
+                                       quantile_levels=[0.15, 0.5, 0.85])
+        qs = np.maximum(qs.detach().cpu().numpy().astype(float), 0)
+        for k, key in enumerate(keys[b:b + DL_BATCH]):
+            out[key] = (qs[k, :, 1], qs[k, :, 0], qs[k, :, 2])
+    return out
+
+
+def dl_value(ctx, fc, o, t, j):
+    """fc 예측에서 (o → t) 값을 꺼내 행사일이면 배수를 곱함. 없으면 None"""
+    f = fc.get((o, j))
+    if f is None:
+        return None
+    h = t - o
+    q, lo, hi = f[0][h - 1], f[1][h - 1], f[2][h - 1]
+    hint = ctx["P_hint"][t, j]
+    if ctx["P"][t, j] and not np.isnan(hint):
+        q, lo, hi = q * hint, lo * hint, hi * hint
+    return q, min(lo, q), max(hi, q)
+
+
 def run(ctx):
     T_end, codes, up = ctx["T_end"], ctx["codes"], ctx["up"]
     n_days = int(up[:T_end + 1].sum())
@@ -381,58 +449,99 @@ def run(ctx):
     up_pos = np.where(up[:T_end + 1])[0]
     metrics = {"n_days": n_days, "learned_promos": len(ctx["learned"]), "promos": len(ctx["plist"])}
     status, message = "ok", ""
-    use_ml = lgb is not None and n_days >= MIN_DAYS
-    if lgb is None:
-        status, message = "baseline_only", "lightgbm 미설치 — 행사 반영 요일 평균으로 예측"
-    elif n_days < MIN_DAYS:
-        status, message = "baseline_only", f"매출 데이터 {n_days}일 — {MIN_DAYS}일 이상 쌓이면 ML 사용"
+    enough = n_days >= MIN_DAYS
+    use_ml = lgb is not None and enough
     PI = USE.index("promo")
 
     choice = {j: "base" for j in active}
     models = None
     promo_ok = False
-    if use_ml:
+    has_dl = False
+    if enough:
         all_origins = [(o, j) for j in active for o in up_pos if o - first_pos[j] >= MIN_AGE]
         hs = range(1, HORIZON + 1)
         cutoff = T_end - EVAL_DAYS
-        # ── 정확도 비교: cutoff 이전 데이터로만 학습 → 이후 4주를 맞혀봄 ──
-        tr = [(o, j) for (o, j) in all_origins if o + 1 <= cutoff]
-        Xa, ya, sa, _, _, ma = samples(ctx, tr, hs)
-        keep = np.array([t <= cutoff for (_, t, _) in ma], bool)
-        Xa, ya, sa = Xa[keep], ya[keep], sa[keep]
+        # ── 정확도 비교: cutoff 이전 데이터로만 → 이후 4주를 맞혀봄 ──
         te = [(o, j) for (o, j) in all_origins if cutoff <= o < T_end]
         Xb, yb, sb, bb, cb, mb = samples(ctx, te, range(1, EVAL_H + 1))
-        if len(Xa) > 500 and len(Xb) > 50:
-            ok_eval = int(np.sum(Xa[:, PI] > 0)) >= PROMO_MIN_SAMPLES
-            ms = (fit(Xa, ya, sa), fit(Xa, ya, sa, 0.15), fit(Xa, ya, sa, 0.85))
+        pred = lo = hi = None
+        if len(Xb) > 50:
             isp = Xb[:, PI] > 0
-            pred, lo, hi = predict_ml(ms, Xb, sb, cb, isp, ok_eval)
-            prod = {}
-            mj = np.array([j for (_, _, j) in mb])
-            for j in active:
-                k = mj == j
-                if k.sum() == 0 or yb[k].sum() <= 0:
-                    choice[j] = "ml"
-                    continue
-                wm, wc, wb = wape(pred[k], yb[k]), wape(cb[k], yb[k]), wape(bb[k], yb[k])
-                choice[j] = "ml" if wm <= wc * 1.03 else "base"
-                prod[codes[j]] = {"ml": wm, "clean": wc, "base": wb, "n": int(k.sum()),
-                                  "actual": round(float(yb[k].sum()), 1), "model": choice[j]}
-            fin = np.array([pred[i] if choice[mb[i][2]] == "ml" else cb[i] for i in range(len(yb))])
-            metrics["products"] = prod
-            metrics["eval"] = {
-                "from": str(ctx["cal"][cutoff + 1].date()), "to": str(ctx["end"].date()), "horizon": EVAL_H,
-                "n": int(len(yb)), "actual": round(float(yb.sum()), 1),
-                "base": wape(bb, yb), "clean": wape(cb, yb), "ml": wape(pred, yb), "final": wape(fin, yb),
-                "promo_n": int(isp.sum()),
-                "promo": {"base": wape(bb[isp], yb[isp]), "clean": wape(cb[isp], yb[isp]),
-                          "ml": wape(pred[isp], yb[isp]), "final": wape(fin[isp], yb[isp]),
-                          "actual": round(float(yb[isp].sum()), 1)} if isp.any() else None,
-                "coverage": round(float(np.mean((yb >= lo - 1e-9) & (yb <= hi + 1e-9))), 3),
-            }
-        else:
-            status, message = "baseline_only", "학습 데이터 부족 — 행사 반영 요일 평균으로 예측"
+            if use_ml:
+                tr = [(o, j) for (o, j) in all_origins if o + 1 <= cutoff]
+                Xa, ya, sa, _, _, ma = samples(ctx, tr, hs)
+                keep = np.array([t <= cutoff for (_, t, _) in ma], bool)
+                Xa, ya, sa = Xa[keep], ya[keep], sa[keep]
+                if len(Xa) > 500:
+                    ok_eval = int(np.sum(Xa[:, PI] > 0)) >= PROMO_MIN_SAMPLES
+                    ms = (fit(Xa, ya, sa), fit(Xa, ya, sa, 0.15), fit(Xa, ya, sa, 0.85))
+                    pred, lo, hi = predict_ml(ms, Xb, sb, cb, isp, ok_eval)
+            # 딥러닝: 같은 시점·같은 상품을 맞혀봄 (각 시점까지의 매출만 넣음 — 미래는 안 봄)
+            dfc = dl_forecast(ctx, sorted({(o, j) for (o, _, j) in mb}), EVAL_H)
+            dpred = dlo = dhi = None
+            if dfc:
+                has_dl = True
+                dv = [dl_value(ctx, dfc, o, t, j) for (o, t, j) in mb]
+                dpred = np.array([v[0] if v else cb[i] for i, v in enumerate(dv)])
+                dlo = np.array([v[1] if v else cb[i] for i, v in enumerate(dv)])
+                dhi = np.array([v[2] if v else cb[i] for i, v in enumerate(dv)])
+            if pred is not None or dpred is not None:
+                prod = {}
+                mj = np.array([j for (_, _, j) in mb])
+                for j in active:
+                    k = mj == j
+                    if k.sum() == 0 or yb[k].sum() <= 0:
+                        choice[j] = "ml" if pred is not None else "base"
+                        continue
+                    w = {"base": wape(cb[k], yb[k])}
+                    if pred is not None:
+                        w["ml"] = wape(pred[k], yb[k])
+                    if dpred is not None:
+                        w["dl"] = wape(dpred[k], yb[k])
+                    best = "base"
+                    if "ml" in w and w["ml"] <= w["base"] * 1.03:
+                        best = "ml"
+                    if "dl" in w and w["dl"] < w[best] * 0.97:   # 딥러닝은 확실히 나을 때만
+                        best = "dl"
+                    choice[j] = best
+                    prod[codes[j]] = {"ml": w.get("ml"), "dl": w.get("dl"), "clean": w["base"],
+                                      "base": wape(bb[k], yb[k]), "n": int(k.sum()),
+                                      "actual": round(float(yb[k].sum()), 1), "model": best}
+                pick = {"base": (cb, None, None), "ml": (pred, lo, hi), "dl": (dpred, dlo, dhi)}
+                fin = np.array([pick[choice[mb[i][2]]][0][i] for i in range(len(yb))])
+                rng = [i for i in range(len(yb)) if choice[mb[i][2]] != "base"]
+                cov = None
+                if rng:
+                    flo = np.array([pick[choice[mb[i][2]]][1][i] for i in rng])
+                    fhi = np.array([pick[choice[mb[i][2]]][2][i] for i in rng])
+                    cov = round(float(np.mean((yb[rng] >= flo - 1e-9) & (yb[rng] <= fhi + 1e-9))), 3)
+                elif lo is not None:
+                    cov = round(float(np.mean((yb >= lo - 1e-9) & (yb <= hi + 1e-9))), 3)
+
+                def w2(x, m=None):
+                    if x is None:
+                        return None
+                    return wape(x, yb) if m is None else wape(x[m], yb[m])
+                metrics["products"] = prod
+                metrics["eval"] = {
+                    "from": str(ctx["cal"][cutoff + 1].date()), "to": str(ctx["end"].date()), "horizon": EVAL_H,
+                    "n": int(len(yb)), "actual": round(float(yb.sum()), 1),
+                    "base": wape(bb, yb), "clean": wape(cb, yb), "ml": w2(pred), "dl": w2(dpred),
+                    "final": wape(fin, yb),
+                    "promo_n": int(isp.sum()),
+                    "promo": {"base": wape(bb[isp], yb[isp]), "clean": wape(cb[isp], yb[isp]),
+                              "ml": w2(pred, isp), "dl": w2(dpred, isp), "final": wape(fin[isp], yb[isp]),
+                              "actual": round(float(yb[isp].sum()), 1)} if isp.any() else None,
+                    "coverage": cov,
+                }
+        if pred is None:
             use_ml = False
+        if not use_ml and not has_dl:
+            status = "baseline_only"
+            message = ("lightgbm 미설치 — 행사 반영 요일 평균으로 예측" if lgb is None
+                       else "학습 데이터 부족 — 행사 반영 요일 평균으로 예측")
+        elif lgb is None:
+            message = "lightgbm 미설치 — 딥러닝/요일 평균만 사용"
 
         if use_ml:
             Xf, yf, sf, _, _, _ = samples(ctx, all_origins, hs)
@@ -442,31 +551,52 @@ def run(ctx):
             metrics["importance"] = {USE[i]: round(float(v) / max(imp.sum(), 1), 3)
                                      for i, v in sorted(enumerate(imp), key=lambda x: -x[1])[:10]}
             metrics["promo_train_samples"] = int(np.sum(Xf[:, PI] > 0))
+        else:
+            for j in active:
+                if choice[j] == "ml":
+                    choice[j] = "base"
+    else:
+        status, message = "baseline_only", f"매출 데이터 {n_days}일 — {MIN_DAYS}일 이상 쌓이면 ML·딥러닝 사용"
 
     # ── 최종 예측: 마지막 매출일 다음날부터 HORIZON일 ──
     out = []
     Xp, _, sp, bp, cp, mp = samples(ctx, [(T_end, j) for j in active], range(1, HORIZON + 1), train=False)
     if models is not None and len(Xp):
         pq, pl, ph = predict_ml(models, Xp, sp, cp, Xp[:, PI] > 0, promo_ok)
+    dl_js = [j for j in active if choice.get(j) == "dl"]
+    ffc = dl_forecast(ctx, [(T_end, j) for j in dl_js], HORIZON) if dl_js else {}
+    used = {"ml": set(), "dl": set()}
     for i, (o, t, j) in enumerate(mp):
         std = ctx["S28"][o, j]
         std = 0.0 if np.isnan(std) else std
         promo = bool(ctx["P"][t, j])
         young = (T_end - first_pos[j]) < MIN_AGE
+        dv = dl_value(ctx, ffc, o, t, j) if choice.get(j) == "dl" and not young else None
         if not ctx["dow_seen"][ctx["wk"][t]]:
             q = lo = hi = 0.0
             model = "base"
         elif models is not None and choice.get(j) == "ml" and not young:
             q, lo, hi, model = pq[i], pl[i], ph[i], "ml"
+        elif dv is not None:
+            (q, lo, hi), model = dv, "dl"
         else:
             q = cp[i]
             spread = std * (ctx["P_hint"][t, j] if promo and not np.isnan(ctx["P_hint"][t, j]) else 1.0)
             lo, hi, model = max(0.0, q - spread), q + spread, "base"
+        if model in used:
+            used[model].add(j)
         out.append({"date": str(ctx["cal"][t].date()), "code": codes[j], "name": ctx["names"].get(codes[j], "") or "",
                     "qty": round(float(q), 2), "qty_lo": round(float(lo), 2), "qty_hi": round(float(hi), 2),
                     "base": round(float(bp[i]), 2), "promo": promo, "model": model})
-    metrics["ml_products"] = sum(1 for j in active if choice.get(j) == "ml") if models is not None else 0
+    metrics["ml_products"] = len(used["ml"])
+    metrics["dl_products"] = len(used["dl"])
+    if has_dl:
+        metrics["dl_model"] = DL_MODEL
     return out, metrics, status, message, len(active), n_days
+
+
+def fmt_pct(v):
+    return "–" if v is None else f"{v:.1%}"
 
 
 def main():
@@ -488,17 +618,17 @@ def main():
         log("매출 데이터 없음 — 종료")
         return
     log(f"매출 {len(sales)}행 · 상품 {sales['code'].nunique()}개 · 행사 {len(promos)}건 · "
-        f"lightgbm={'O' if lgb else 'X'} holidays={'O' if holidays_lib else 'X'}")
+        f"lightgbm={'O' if lgb else 'X'} 딥러닝={'X' if DL_OFF else DL_MODEL} holidays={'O' if holidays_lib else 'X'}")
 
     ctx = build(sales, promos)
     out, metrics, status, message, n_prod, n_days = run(ctx)
     ev = metrics.get("eval")
     if ev:
         log(f"정확도 비교 {ev['from']}~{ev['to']} (오차율, 낮을수록 좋음): 기존 {ev['base']:.1%} · 행사반영 {ev['clean']:.1%}"
-            f" · ML {ev['ml']:.1%} → 최종 {ev['final']:.1%} · 범위 안 비율 {ev['coverage']:.0%} · 행사일 {ev['promo_n']}건")
+            f" · ML {fmt_pct(ev['ml'])} · 딥러닝 {fmt_pct(ev['dl'])} → 최종 {ev['final']:.1%} · 범위 안 비율 {fmt_pct(ev['coverage'])} · 행사일 {ev['promo_n']}건")
         if ev.get("promo"):
             log("  행사일만:", ev["promo"])
-    log(f"상태 {status} {message} · 예측 {len(out)}행 · 상품 {n_prod}개 (ML {metrics.get('ml_products', 0)}개)")
+    log(f"상태 {status} {message} · 예측 {len(out)}행 · 상품 {n_prod}개 (ML {metrics.get('ml_products', 0)}개 · 딥러닝 {metrics.get('dl_products', 0)}개)")
 
     if a.dry_run:
         pd.DataFrame(out).to_csv(a.out, index=False, encoding="utf-8-sig")

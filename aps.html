@@ -8176,14 +8176,15 @@ function ForecastView({adminHash}){
     const g={};
     rows.forEach(r=>{
       const d=String(r.date).slice(0,10);
-      const o=g[r.code]=g[r.code]||{code:r.code,name:r.name,by:{},ml:0,n:0};
-      o.by[d]=r;if(r.model==="ml")o.ml++;o.n++;
+      const o=g[r.code]=g[r.code]||{code:r.code,name:r.name,by:{},cnt:{},n:0};
+      o.by[d]=r;o.cnt[r.model]=(o.cnt[r.model]||0)+1;o.n++;
     });
     const k=q.trim().toLowerCase();
     return Object.values(g).map(o=>{
       let sum=0,base=0,promo=false;
       dates.forEach(d=>{const r=o.by[d];if(r){sum+=Number(r.qty)||0;base+=Number(r.base)||0;if(r.promo)promo=true}});
-      return {...o,sum,base,promo,model:o.ml>o.n/2?"ml":"base"};
+      const model=(o.cnt.dl||0)>o.n/2?"dl":(o.cnt.ml||0)>o.n/2?"ml":"base";
+      return {...o,sum,base,promo,model};
     }).filter(o=>!k||(o.name+" "+o.code).toLowerCase().includes(k)).sort((a,b)=>b.sum-a.sum);
   },[rows,dates,q]);
 
@@ -8191,9 +8192,9 @@ function ForecastView({adminHash}){
   if(err)return <div style={{color:"#ef4444",fontSize:13,padding:12}}>{err}</div>;
   if(!run)return <div style={{padding:16,border:"1px dashed var(--div2)",borderRadius:10,fontSize:13,lineHeight:1.8}}>
     <b>🔮 아직 예측이 만들어지지 않았습니다.</b><br/>
-    예측은 매일 새벽 5:30에 GitHub에서 자동으로 돌아갑니다(매출 데이터로 머신러닝 모델을 학습). 지금 바로 만들려면:<br/>
+    예측은 매일 새벽 5:30에 GitHub에서 자동으로 돌아갑니다(머신러닝 학습 + 딥러닝 예측). 지금 바로 만들려면:<br/>
     1. GitHub 저장소 → <b>Actions</b> 탭 → <b>APS 수요 예측</b> → <b>Run workflow</b><br/>
-    2. 2~3분 뒤 이 화면을 새로고침
+    2. 5~10분 뒤 이 화면을 새로고침
   </div>;
 
   const improve=ev&&ev.base>0&&ev.final!=null?(ev.base-ev.final)/ev.base:null;
@@ -8214,10 +8215,11 @@ function ForecastView({adminHash}){
         {card("기존 방식 오차 (요일 평균)",fmtPct(ev.base),`${fmtMD(ev.from)}~${fmtMD(ev.to)}을 모르는 척 맞혀본 결과`)}
         {card("새 예측 오차",fmtPct(ev.final),improve!=null?(improve>0?`기존보다 ${(improve*100).toFixed(0)}% 덜 틀림`:"기존 방식과 비슷하거나 더 틀림 — 데이터가 더 쌓이면 나아집니다"):null,improve>0?"#22c55e":"#f59e0b")}
         {ev.promo&&card("행사일 오차",`${fmtPct(ev.promo.base)} → ${fmtPct(ev.promo.final)}`,`행사일 ${ev.promo_n}건 (기존 → 새 예측)`,ev.promo.final<ev.promo.base?"#22c55e":"#f59e0b")}
+        {(ev.ml!=null||ev.dl!=null)&&card("모델별 오차",`ML ${fmtPct(ev.ml)} · 딥러닝 ${fmtPct(ev.dl)}`,`상품마다 고른 결과: 🔮 ML ${run.metrics?.ml_products||0}개 · 🧠 딥러닝 ${run.metrics?.dl_products||0}개 · 📊 평균 ${Math.max(0,(run.n_products||0)-(run.metrics?.ml_products||0)-(run.metrics?.dl_products||0))}개`)}
         {card("범위 안에 든 비율",ev.coverage!=null?Math.round(ev.coverage*100)+"%":"–","실제 판매가 '적게~많이' 범위 안에 든 비율 (목표 70%)")}
       </div>
       <div style={{fontSize:11,color:"var(--muted)",marginBottom:12,lineHeight:1.6}}>
-        오차 = 날짜·상품마다 |예측 − 실제|를 더해 실제 판매 합계로 나눈 값 (낮을수록 정확). 상품마다 지난 4주 시험에서 더 정확했던 쪽(🔮 ML / 📊 요일 평균)을 씁니다.
+        오차 = 날짜·상품마다 |예측 − 실제|를 더해 실제 판매 합계로 나눈 값 (낮을수록 정확). 상품마다 지난 4주 시험에서 가장 정확했던 쪽(🔮 ML / 🧠 딥러닝 / 📊 요일 평균)을 씁니다. 딥러닝(Chronos)은 미리 학습된 모델이라 다른 두 쪽보다 3% 넘게 나을 때만 고릅니다.
         {runs.length>1&&<> · 최근 실행 오차: {runs.slice(0,6).reverse().map(r=>r.metrics?.eval?.final!=null?fmtPct(r.metrics.eval.final):"–").join(" → ")}</>}
       </div>
     </>}
@@ -8243,8 +8245,8 @@ function ForecastView({adminHash}){
           return <tr key={o.code}>
             <td style={{position:"sticky",left:0,background:"var(--bg)",zIndex:1}}>
               <div style={{fontWeight:600,fontSize:13}}>{o.name||o.code}{o.promo&&<span style={{color:"#f59e0b",fontSize:11}}> 🎉</span>}</div>
-              <div style={{fontSize:10,color:"var(--muted)"}} title={m?`지난 4주 시험 오차 — ML ${fmtPct(m.ml)} · 요일평균(행사반영) ${fmtPct(m.clean)} · 기존 ${fmtPct(m.base)}`:""}>
-                {o.code} · {o.model==="ml"?"🔮 ML":"📊 평균"}{m?` · 오차 ${fmtPct(o.model==="ml"?m.ml:m.clean)}`:""}
+              <div style={{fontSize:10,color:"var(--muted)"}} title={m?`지난 4주 시험 오차 — ML ${fmtPct(m.ml)} · 딥러닝 ${fmtPct(m.dl)} · 요일평균(행사반영) ${fmtPct(m.clean)} · 기존 ${fmtPct(m.base)}`:""}>
+                {o.code} · {o.model==="ml"?"🔮 ML":o.model==="dl"?"🧠 딥러닝":"📊 평균"}{m?` · 오차 ${fmtPct(o.model==="ml"?m.ml:o.model==="dl"?m.dl:m.clean)}`:""}
               </div>
             </td>
             <td className="right"><b>{fmtFc(o.sum)}</b></td>

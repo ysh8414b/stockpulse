@@ -1442,6 +1442,14 @@
 - 운영 순서: (1) Supabase에서 `setup_aps_forecast.sql` 실행 → (2) 커밋·푸시 → GitHub Actions → APS 수요 예측 → Run workflow → (3) 💰 매출 → 🔮 예측에서 오차 비교 확인 → (4) 🎉 행사에 예정 행사 입력(예측은 다음 실행부터, 🤖 자동 생성은 즉시 배수 반영)
 - 한계: 추석은 1번(2026-09)만 학습 — 설날·내년 추석은 그 1번에서 추정. 행사 배수를 모르는 첫 행사는 다른 상품 평균. 새벽 실행이라 매출을 올린 당일 예측엔 반영 안 됨(수동 Run workflow). 안전재고는 아직 예측 범위(qty_hi)를 쓰지 않음(다음 단계 후보)
 
+### APS — 🧠 수요 예측에 딥러닝(Chronos) 후보 추가 (2026-10-29)
+- 사용자 질문 "머신러닝 말고 딥러닝도 가능한가" → 몇 달치·80상품으로 딥러닝을 직접 학습하면 과적합 위험이 커서, **미리 학습된 시계열 모델 Amazon Chronos-Bolt**(`amazon/chronos-bolt-small`, 다시 학습하지 않고 바로 예측)를 세 번째 후보로 추가
+- `forecast_aps.py`: `load_dl`(chronos 불러오기 실패·`FC_DL=0`이면 조용히 끔) / `dl_forecast`(상품 첫 판매일~시점까지 매출을 넣음 — 업로드 안 된 날·**지난 행사일은 빈칸(NaN)**, 분위수 0.15/0.5/0.85, 256개씩 묶어 실행) / `dl_value`(앞으로의 행사일은 행사 배수 곱함). 모델 변경 `FC_DL_MODEL`
+- `run()` 정확도 비교: 같은 4주 시험에서 요일 평균(행사반영) / ML / 딥러닝 오차 비교 → ML은 기존처럼 평균 대비 3% 이내면 선택, **딥러닝은 앞의 승자보다 3% 넘게 나을 때만** 선택(`model = "dl"`). lightgbm 없이 딥러닝만 있어도 동작. metrics에 `eval.dl`, `eval.promo.dl`, `products[code].dl`, `dl_products`, `dl_model` 추가. 범위 적중률은 ML/딥러닝을 고른 상품 기준. `aps_forecast.model`은 TEXT라 SQL 변경 없음
+- `forecast.yml`: CPU용 PyTorch(`--index-url .../whl/cpu`) + `chronos-forecasting` 설치, pip·HuggingFace 모델 캐시, 제한 시간 20 → 30분
+- aps.html 🔮 예측: "모델별 오차" 카드(ML · 딥러닝 오차 + 상품 수), 상품 아래 `🧠 딥러닝` 표시·툴팁에 딥러닝 오차, 안내 문구 갱신. 🤖 자동 생성은 예측값만 쓰므로 변경 없음
+- 한계: Chronos는 행사·명절을 모름(행사는 배수로 보정, 명절 대목은 반영 안 됨). 실제 매출로는 아직 미실행 — 다음 Actions 실행 결과의 "모델별 오차"로 효과 확인
+
 ### APS — ⚡ 생산 속도 예측 (관리 AI 2단계) (2026-10-28)
 - 사용자 요청: 로드맵 2단계 — 라인 × 품목 × 출근 인원으로 시간당 생산량 예측, 인원이 적은 날은 계획 시간이 자동으로 늘게
 - **`setup_aps_speed.sql`** (신규, 1회 실행, v10 전제): `aps_lines.staff_depts JSONB`(이 라인에서 일하는 👥 인원 부서, 비면 전체 출근 인원) + `aps_list_lines` 재정의(staff_depts 포함) + `aps_set_line_staff_depts(hash, line_id, depts)`

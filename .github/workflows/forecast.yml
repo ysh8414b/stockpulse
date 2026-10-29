@@ -10,14 +10,25 @@ on:
 jobs:
   forecast:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
+          cache-dependency-path: .github/workflows/forecast.yml
+      # 딥러닝 모델(Chronos-Bolt) 파일을 매번 받지 않도록 보관
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-chronos-bolt-small-v1
       - name: 패키지 설치
-        run: pip install requests numpy pandas lightgbm holidays
+        run: |
+          pip install requests numpy pandas lightgbm holidays
+          # 딥러닝: GPU용(약 2GB) 대신 CPU용 PyTorch만 설치
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install chronos-forecasting
       - name: 예측 실행
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
