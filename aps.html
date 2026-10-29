@@ -1801,19 +1801,22 @@ function InventoryTab({adminHash}){
     };
   },[]);
 
-  // 재고시트 코드 → box 매핑
+  // 재고시트 코드 → box 매핑 (쿠팡 제품은 ❄ 냉동재고 수량)
+  const frozen=useFrozenStock(items);
   const sheetMap=useMemo(()=>{
     const m={};
-    (sheetInv?.products||[]).forEach(p=>{if(p.code)m[p.code]=p});
-    (sheetInv?.raws||[]).forEach(p=>{if(p.code)m[p.code]=p});
+    const si=overlayFrozenInv(sheetInv,frozen.fz,items);
+    (si?.products||[]).forEach(p=>{if(p.code)m[p.code]=p});
+    (si?.raws||[]).forEach(p=>{if(p.code)m[p.code]=p});
     return m;
-  },[sheetInv]);
+  },[sheetInv,frozen.fz,items]);
 
   // inv를 재고시트 박스 수로 덮어쓰기 (매칭되는 코드만) + stock_status 재계산
   const linked=useMemo(()=>{
     return inv.map(i=>{
       const sp=sheetMap[i.code];
       if(!sp)return {...i, _source:"txn"};
+      if(sp._frozen)i={...i,_frozen:true};
       const sheetStock=Number(sp.box||0);
       const safety=Number(i.safety_stock||0);
       let status="ok";
@@ -1889,6 +1892,7 @@ function InventoryTab({adminHash}){
               <td style={{fontWeight:600}}>
                 {i.name}
                 {i._source==="sheet" && <span title="재고시트 연동" style={{marginLeft:6,fontSize:10,color:"#06b6d4",fontWeight:700}}>📋</span>}
+                {i._frozen && <span title="쿠팡 제품 — ❄ 냉동재고 수량" style={{marginLeft:4,fontSize:11}}>❄</span>}
               </td>
               <td className="center"><Pill map={TYPE_PILL} k={i.type} label={TYPE_LABEL[i.type]}/></td>
               <td className="right" style={{fontWeight:600,color:i.stock_status==="out"?"#ef4444":i.stock_status==="low"?"#f59e0b":"var(--text)"}}>
@@ -5459,6 +5463,9 @@ function PlansTab({adminHash}){
   const[prefill,setPrefill]=useState(null); // 발주 부족 알림 → 계획 추가 창 미리 채움
   // 재고시트 데이터 (PNG export 시 원육 표시용) — PC/모바일 동기화
   const[invData,setInvData]=useState(()=>loadStoredInventory());
+  // 🤖 자동 생성·📦 발주 부족 알림용: 쿠팡 제품은 ❄ 냉동재고 수량
+  const frozenPlan=useFrozenStock(items);
+  const invDataFz=useMemo(()=>overlayFrozenInv(invData,frozenPlan.fz,items),[invData,frozenPlan.fz,items]);
   useEffect(()=>{
     let cancelled=false;
     (async()=>{
@@ -5991,7 +5998,7 @@ function PlansTab({adminHash}){
         title={allDates?"오늘 이후 모든 날짜의 라인별 빈 시간을 당깁니다":`${dayStr} 라인별 빈 시간을 지금 당깁니다`}>{packing?"정리 중...":"⏩ 지금 당기기"}</button>
     </div>
 
-    {!loading&&<OrderShortagePanel adminHash={adminHash} items={items} lines={lines} plans={plans} settings={settings} invData={invData}
+    {!loading&&<OrderShortagePanel adminHash={adminHash} items={items} lines={lines} plans={plans} settings={settings} invData={invDataFz}
       onAddPlan={pf=>{setDayStr(pf.day);setAllDates(false);setEditing(null);setPrefill(pf);setShowForm(true)}}/>}
 
     {loading?<Loader/>:
@@ -6129,7 +6136,7 @@ function PlansTab({adminHash}){
       load()}}/>}
     {showWO&&<WorkOrderModal adminHash={adminHash} dayStr={dayStr} plans={plans} lines={lines} items={items} invData={invData} settings={settings}
       onClose={()=>setShowWO(false)} onSaved={load}/>}
-    {showAuto&&<AutoPlanModal adminHash={adminHash} dayStr={dayStr} items={items} lines={lines} plans={plans} settings={settings} invData={invData}
+    {showAuto&&<AutoPlanModal adminHash={adminHash} dayStr={dayStr} items={items} lines={lines} plans={plans} settings={settings} invData={invDataFz}
       onLinesChanged={load} onCancel={()=>setShowAuto(false)} onCreated={async(n,keys)=>{setShowAuto(false);
         await repackKeys(keys||[]).catch(e=>console.warn("[repack]",e));load()}}/>}
     {showSettings&&<SettingsModal adminHash={adminHash} settings={settings} onCancel={()=>setShowSettings(false)} onSaved={(s)=>{setSettings(prev=>({...prev,...s}));setShowSettings(false)}}/>}
@@ -7136,6 +7143,27 @@ function buildFrozenByApsCode(raw,items){
 function frozenBoxFor(code,name,fz){
   if(!fz||!isCoupangName(name)||!fz.linked.has(code))return null;
   return Math.round(fz.map[code]?.box||0);
+}
+// 재고시트 데이터(invData)의 쿠팡 제품 박스 수를 냉동재고로 바꾼 사본 — 🤖 자동 생성·📦 발주 부족·📊 재고 탭용
+//  이름(재고시트 목록 → 업로드 파일 → APS 품목 순)에 '쿠팡'이 있고 냉동 발주 제품과 연결된 코드만
+function overlayFrozenInv(inv,fz,items){
+  if(!fz)return inv;
+  const tplName={};(loadStoredTemplate()||DEFAULT_PRODUCT_TEMPLATE).forEach(t=>{if(t.code)tplName[t.code]=t.name||""});
+  const itemName={};(items||[]).forEach(i=>{if(i.code)itemName[i.code]=i.name||""});
+  const prods=(inv?.products||[]).slice();
+  const idx={};prods.forEach((p,k)=>{idx[p.code]=k});
+  let changed=false;
+  for(const code of fz.linked){
+    const k=idx[code];
+    const name=tplName[code]||(k!=null?prods[k].name:"")||itemName[code]||"";
+    const fb=frozenBoxFor(code,name,fz);
+    if(fb==null)continue;
+    if(k!=null)prods[k]={...prods[k],box:fb,_frozen:true};
+    else prods.push({code,name,box:fb,kg:0,_frozen:true});
+    changed=true;
+  }
+  if(!changed)return inv;
+  return {...(inv||{raws:[],savedAt:""}),products:prods};
 }
 function useFrozenStock(items){
   const[raw,setRaw]=useState(null);
