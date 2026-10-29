@@ -4693,13 +4693,6 @@ function FzOutFloorSheet({groups,date,prefix,vendor,onlyOut,locColor,print,refCb
     </div>
     {!groups.length&&<div style={{padding:"30px 0",textAlign:"center",color:C.muted}}>선택한 생산지점이 없습니다</div>}
     {groups.map(g=><div key={g.floor} data-shipcut="1" style={{border:"1px solid #cbd5e1",borderRadius:8,marginBottom:18,overflow:"hidden"}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 14px",background:"#eff6ff",borderBottom:"1px solid #cbd5e1",flexWrap:"wrap"}}>
-        <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap"}}>
-          <span style={{fontSize:22,fontWeight:900,color:"#1d4ed8"}}>🏭 {g.floor}</span>
-          <span style={{fontSize:12,color:C.muted}}>{g.items.length}개 제품 · 출고 {fmtBoxes(g.out)}박스{g.short>0&&<b style={{color:"#dc2626"}}> · 부족 {fmtBoxes(g.short)}</b>}</span>
-        </div>
-        <span style={{padding:"4px 12px",borderRadius:16,background:"#1d4ed8",color:"#fff",fontWeight:800,fontSize:15,whiteSpace:"nowrap"}}>발주 {fmtBoxes(g.total)}박스</span>
-      </div>
       <FzOutTable plan={g.items} onlyOut={onlyOut} locColor={locColor} print={print} outCell={outCell} onHide={onHide} flush/>
     </div>)}
   </div>;
