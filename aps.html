@@ -4588,6 +4588,27 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
         ok++;
       }catch(e){fails.push(r.item.name)}
     }
+    // 🤖 규칙 제안 기록 (보정 모델 학습용 — 나중에 고치거나 지워도 처음 제안은 남음)
+    let logFailed=false;
+    try{
+      const ruleQty={};(baseResult?.rows||[]).forEach(r=>{ruleQty[r.key]=r.qty});
+      const num=(v)=>v==null||!isFinite(Number(v))?null:Math.round(Number(v)*1000)/1000;
+      const logRows=(result?.rows||[]).map(r=>{
+        const m=made[r.day+":"+r.item.id];const picked=!unchecked.has(r.key);
+        return{day:r.day,item_id:r.item.id,item_code:r.item.code||"",item_name:r.item.name||"",
+          created:picked&&!!m,plan_id:picked&&m?m.planId:null,
+          rule_qty:ruleQty[r.key]??null,saved_qty:r.qty,line_id:r.lineId??null,
+          start_at:new Date(r.startMs).toISOString(),end_at:new Date(r.endMs).toISOString(),
+          fill:!!r.fill,partial:!!r.partial,need:num(r.need),stock_now:num(r.stockNow),start_stock:num(r.startStock),
+          first_short:r.firstShort||null,avg_daily:num(r.avgDaily),floor_qty:num(r.floor),target_demand:num(r.targetDemand),
+          demand_src:r.demandSrc||"",rate:num(r.rate),rate_src:r.rateSrc||"",ai_qty:r.ai?r.qty:null,
+          extra:{lead:opts.lead,cover:opts.cover,fillDays:opts.fillDays,optimize:opts.optimize!==false,useForecast:opts.useForecast!==false}};
+      });
+      if(logRows.length){
+        const batch=Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+        await rpc("aps_log_autoplan",{p_admin_hash:adminHash,p_batch_id:batch,p_rows:logRows});
+      }
+    }catch(e){logFailed=true;console.warn("자동 생성 기록 저장 실패",e)}
     // 📝 AI 제안 피드백 기록 (실패해도 계획 생성에는 영향 없음)
     if(ai){
       const lineNm=(id)=>localLines.find(l=>l.id===id)?.name||"";
@@ -4601,6 +4622,7 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
     }
     setCreating(false);
     if(fails.length)alert(`${ok}건 생성, ${fails.length}건 실패: ${fails.join(", ")}`);
+    if(logFailed&&ok>0)alert("계획은 생성됐지만 제안 기록은 저장되지 않았습니다 — Supabase에서 setup_aps_autoplan_log.sql 을 실행하세요.");
     onCreated(ok,madeKeys);
   };
 

@@ -1394,6 +1394,13 @@
 - 노드 가짜 데이터(3라인·14~18품목·원육 3~4종): 제품 전환 4~5 → 1~2회, 같은 조건에서 못 넣던 부족 14박스 배정, 겹침·중복 0, 1일 약 30~140ms. 실제 데이터·화면 클릭 미확인. SQL 변경 없음
 - 한계: 한 제품을 두 라인에 나눠 넣지 않음. 날짜를 넘나드는 최적화 아님(하루씩 차례로). 🧠 AI 검토는 여전히 규칙 초안(최적화 후 결과)을 보냄 — Groq 413 토큰 초과 문제는 아직 그대로
 
+### APS — 🤖 자동 생성 제안 기록 (보정 모델 준비) (2026-10-29)
+- 사용자 요청: 관리자가 자동 생성 계획을 고치는 습관을 토큰 없이 배우는 보정 모델을 나중에 만들기 위해, 지금부터 규칙의 처음 제안을 기록
+- **`setup_aps_autoplan_log.sql`** (신규, 1회 실행, 재실행 안전): `aps_autoplan_log`(batch_id·day·item·created(체크 빼서 안 만들면 false)·plan_id(FK 없음 — 계획 삭제돼도 기록 유지)·rule_qty(AI 반영 전 규칙 수량, AI 추가 품목은 NULL)·saved_qty·line·start/end·fill·partial·need·재고·부족일·하루 평균·바닥·그날 수요·demand_src·rate·ai_qty·extra(옵션)) + RLS. RPC `aps_log_autoplan(hash, batch_id, rows)`(365일 지난 기록 정리 포함), `aps_list_autoplan_log(hash, days)`(aps_plans와 조인 → 지금 수량·품목·라인·상태·actual_qty·plan_deleted)
+- aps.html `AutoPlanModal.create`: 계획 생성 후 결과 행 전부(체크 뺀 행 포함)를 한 번에 기록. 기록 실패해도 계획 생성은 그대로, SQL 미실행이면 안내 alert
+- 남는 것 = 처음 제안 + 최종 상태(중간 수정 이력은 없음). 손으로 만든 계획은 기록 대상 아님. 조회 화면·보정 모델은 6~8주(약 150건) 쌓인 뒤 만들 예정
+- JSX 컴파일만 확인, 실제 DB 저장 미확인
+
 ### APS — 🧠 AI 검토 (자동 생성 + Groq) (2026-10-28)
 - 사용자 요청: 규칙만으로 계획을 짜는 것보다 AI가 같이 보면 더 정교해질 것 같다 → 무료인 Groq로 먼저 붙임 (Claude/GPT API는 유료)
 - 구조: **규칙 초안 → AI 검토(제안) → 사람이 고름 → 규칙이 다시 계산**. AI는 계획을 직접 저장하지 않고, 시간·라인·점심 계산은 항상 `computeAutoPlan`이 함
