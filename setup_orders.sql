@@ -1021,3 +1021,82 @@ BEGIN
   RETURN json_build_object('moved', v_qty, 'dest_id', v_dest);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ═══════════════════════════════════════════
+-- 🏷 이력번호 관리 (2026-10-30 추가)
+-- 원육 + 소비기한 단위로 한 번만 입력 → 같은 원육을 쓰고 소비기한이 같은 냉동 로트에 자동 표시
+-- ═══════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS ol_meat_traces (
+  id               BIGSERIAL PRIMARY KEY,
+  material_id      BIGINT NULL,              -- APS 원자재 id (NULL = 이름으로만 연결)
+  material_name    TEXT NOT NULL,            -- 원육명
+  expiry           DATE NULL,                -- 소비기한 (냉동 로트 소비기한과 맞춤)
+  trace_no         TEXT NOT NULL DEFAULT '', -- 이력번호
+  max_slaughter    DATE NULL,                -- 최대 도축일
+  max_process      DATE NULL,                -- 최대 가공일
+  max_receivable   DATE NULL,                -- 최대 입고가능일
+  max_expiry       DATE NULL,                -- 최대 소비기한
+  memo             TEXT DEFAULT '',
+  created_at       TIMESTAMPTZ DEFAULT now(),
+  updated_at       TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_ol_meat_traces_mat ON ol_meat_traces (material_id, expiry);
+ALTER TABLE ol_meat_traces ENABLE ROW LEVEL SECURITY;
+-- 같은 원육 + 같은 소비기한 중복 금지 (이미 중복이 있으면 인덱스는 건너뛰고 안내만 — 화면에서 정리 후 다시 실행)
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM ol_meat_traces GROUP BY LOWER(TRIM(material_name)), expiry HAVING COUNT(*) > 1) THEN
+    RAISE NOTICE '같은 원육·소비기한 이력번호가 중복된 기록이 있어 중복 금지 인덱스를 만들지 못했습니다. 화면에서 정리 후 이 파일을 다시 실행하세요.';
+  ELSE
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_ol_meat_traces_mat_exp
+      ON ol_meat_traces (LOWER(TRIM(material_name)), COALESCE(expiry, DATE '1900-01-01'));
+  END IF;
+END $$;
+
+CREATE OR REPLACE FUNCTION ol_list_meat_traces(p_admin_hash TEXT)
+RETURNS JSON AS $$
+BEGIN
+  RETURN COALESCE((SELECT json_agg(row_to_json(t) ORDER BY t.material_name, t.expiry NULLS LAST, t.id) FROM ol_meat_traces t), '[]'::json);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- p_id NULL = 추가. p_row: {material_id, material_name, expiry, trace_no, max_slaughter, max_process, max_receivable, max_expiry, memo}
+CREATE OR REPLACE FUNCTION ol_upsert_meat_trace(p_admin_hash TEXT, p_id BIGINT, p_row JSONB)
+RETURNS JSON AS $$
+DECLARE v_id BIGINT; v_name TEXT := TRIM(COALESCE(p_row->>'material_name',''));
+BEGIN
+  -- 인증 없음 (2026-10-13: 비밀번호 없이 접근 허용)
+  IF v_name = '' THEN RAISE EXCEPTION 'name_required'; END IF;
+  -- 같은 원육 + 같은 소비기한에는 이력번호가 하나만 (2026-10-30)
+  IF EXISTS (SELECT 1 FROM ol_meat_traces t
+              WHERE t.id IS DISTINCT FROM p_id
+                AND t.expiry IS NOT DISTINCT FROM NULLIF(p_row->>'expiry','')::DATE
+                AND (LOWER(TRIM(t.material_name)) = LOWER(v_name)
+                     OR (t.material_id IS NOT NULL AND t.material_id = NULLIF(p_row->>'material_id','')::BIGINT))) THEN
+    RAISE EXCEPTION 'duplicate_trace';
+  END IF;
+  IF p_id IS NULL THEN
+    INSERT INTO ol_meat_traces (material_id, material_name, expiry, trace_no, max_slaughter, max_process, max_receivable, max_expiry, memo)
+    VALUES (NULLIF(p_row->>'material_id','')::BIGINT, v_name, NULLIF(p_row->>'expiry','')::DATE,
+            TRIM(COALESCE(p_row->>'trace_no','')), NULLIF(p_row->>'max_slaughter','')::DATE, NULLIF(p_row->>'max_process','')::DATE,
+            NULLIF(p_row->>'max_receivable','')::DATE, NULLIF(p_row->>'max_expiry','')::DATE, TRIM(COALESCE(p_row->>'memo','')))
+    RETURNING id INTO v_id;
+  ELSE
+    UPDATE ol_meat_traces SET material_id = NULLIF(p_row->>'material_id','')::BIGINT, material_name = v_name,
+           expiry = NULLIF(p_row->>'expiry','')::DATE, trace_no = TRIM(COALESCE(p_row->>'trace_no','')),
+           max_slaughter = NULLIF(p_row->>'max_slaughter','')::DATE, max_process = NULLIF(p_row->>'max_process','')::DATE,
+           max_receivable = NULLIF(p_row->>'max_receivable','')::DATE, max_expiry = NULLIF(p_row->>'max_expiry','')::DATE,
+           memo = TRIM(COALESCE(p_row->>'memo','')), updated_at = now()
+     WHERE id = p_id RETURNING id INTO v_id;
+    IF v_id IS NULL THEN RAISE EXCEPTION 'trace_not_found'; END IF;
+  END IF;
+  RETURN json_build_object('id', v_id);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION ol_delete_meat_trace(p_admin_hash TEXT, p_id BIGINT)
+RETURNS VOID AS $$
+BEGIN
+  DELETE FROM ol_meat_traces WHERE id = p_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
