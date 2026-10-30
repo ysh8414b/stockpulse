@@ -4086,31 +4086,13 @@ function FrozenLotForm({adminHash,masters,initial,locations,lots,traces,matInfo,
   const[memo,setMemo]=useState(initial?.memo||"");
   const[busy,setBusy]=useState(false);
   const[err,setErr]=useState("");
-  // 고른 제품의 기존 재고 소비기한 (빠른 날짜순, 수정 중인 로트는 제외)
-  const expOpts=useMemo(()=>{
-    const name=matched?null:prodText.trim();
-    if(!matched&&!name)return [];
-    const m=new Map();
-    for(const l of lots||[]){
-      if(initial?.id&&l.id===initial.id)continue;
-      const d=l.expiry?String(l.expiry).slice(0,10):"";
-      if(!d)continue;
-      if(matched?l.product_code!==matched.code:(l.product_code||l.product_name!==name))continue;
-      if(!m.has(d))m.set(d,{d,qty:0,unit:l.unit||"박스",locs:[],here:false});
-      const o=m.get(d);o.qty+=Number(l.qty||0);
-      const lc=(l.location||"").trim();
-      if(lc&&!o.locs.includes(lc))o.locs.push(lc);
-      if(lc&&lc===location.trim())o.here=true;
-    }
-    return [...m.values()].sort((a,b)=>a.d.localeCompare(b.d));
-  },[lots,matched,prodText,location,initial]);
   // 이 제품의 원육(APS BOM)으로 🏷 이력번호에 저장된 소비기한
   const traceInfo=matched&&matInfo?matInfo(matched.code):null;
   const traceOpts=useMemo(()=>{
     if(!traceInfo?.mats?.length||!traces?.length)return [];
     const m=new Map();
     for(const t of traces){
-      const d=ymd10(t.expiry);if(!d)continue;
+      const d=ymd10(t.expiry);if(!d||traceRecvPassed(t))continue;
       const mat=traceInfo.mats.find(x=>traceMatchMat(t,x));if(!mat)continue;
       if(!m.has(d))m.set(d,{d,items:[]});m.get(d).items.push({mat:mat.name,no:t.trace_no});
     }
@@ -4149,13 +4131,6 @@ function FrozenLotForm({adminHash,masters,initial,locations,lots,traces,matInfo,
         <datalist id="fz-locations">{locations.map(l=><option key={l} value={l}/>)}</datalist></div>
       <div><div className="ol-label">입고일</div><input className="ol-input" type="date" value={inDate} onChange={e=>setInDate(e.target.value)}/></div>
     </div>
-    {expOpts.length>0&&<div style={{margin:"-4px 0 12px"}}>
-      <div style={{fontSize:11,color:"var(--muted)",marginBottom:5}}>이 제품 재고에 있는 소비기한 (누르면 선택)</div>
-      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-        {expOpts.map(o=><button key={o.d} type="button" className={"ol-btn ol-btn-sm "+(expiry===o.d?"ol-btn-primary":"ol-btn-secondary")}
-          title={o.locs.join(", ")} onClick={()=>setExpiry(expiry===o.d?"":o.d)}>
-          {o.d.replace(/-/g,".")} <span style={{opacity:.75,fontWeight:400}}>· {o.qty}{o.unit}{o.here?" · 이 위치":""}</span></button>)}
-      </div></div>}
     {matched&&traceInfo&&<div style={{margin:"-4px 0 12px"}}>
       <div style={{fontSize:11,color:"var(--muted)",marginBottom:5}}>🏷 이력번호에 저장된 소비기한 · 같은 원육({traceInfo.mats.map(x=>x.name).join(", ")||"없음"}) — 누르면 선택</div>
       {traceInfo.state==="nolink"?<div style={{fontSize:11,color:"var(--dimmer)"}}>제품리스트에서 🔗 APS 품목을 연결하면 원육의 이력번호 소비기한을 불러옵니다</div>
@@ -4399,6 +4374,8 @@ const ymd10=d=>d?String(d).slice(0,10):"";
 // 같은 원육(이름 또는 APS 원자재 id) + 같은 소비기한 = 같은 이력번호 자리
 const sameTraceSlot=(a,b)=>ymd10(a.expiry)===ymd10(b.expiry)&&(String(a.material_name||"").trim().toLowerCase()===String(b.material_name||"").trim().toLowerCase()
   ||(a.material_id!=null&&a.material_id!==""&&b.material_id!=null&&b.material_id!==""&&Number(a.material_id)===Number(b.material_id)));
+// 최대 입고가능일이 오늘보다 앞이면 입고 불가 (입고 등록 창에서 숨김, 이력번호 탭에서만 표시)
+const traceRecvPassed=t=>!!t.max_receivable&&ymd10(t.max_receivable)<todayYmd();
 const traceMatchMat=(t,m)=>t.material_id!=null&&t.material_id!==""?Number(t.material_id)===Number(m.id):String(t.material_name||"").trim()===String(m.name||"").trim();
 function traceErr(e){
   const s=String(e?.message||e||"");
@@ -4560,6 +4537,7 @@ function FrozenTraceManager({adminHash,traces,traceErrMsg,reload,materials,lots,
                {g.inStock>0&&<> · 재고 있는 기한 {g.inStock}건</>}
                {!g.linked&&<span style={{color:"#f97316"}}> · APS 원자재 아님</span>}
                {dupN>0&&<span style={{color:"#ef4444",fontWeight:700}}> · ⛔ 중복 {dupN}건</span>}
+               {g.items.some(traceRecvPassed)&&<span style={{color:"#ef4444"}}> · 입고가능일 지남 {g.items.filter(traceRecvPassed).length}건</span>}
              </div>
            </div>
          </div>
@@ -4571,10 +4549,10 @@ function FrozenTraceManager({adminHash,traces,traceErrMsg,reload,materials,lots,
        {isOpen&&<div className="ol-scroll"><table className="ol-table fz-table">
         <thead><tr><th>소비기한</th><th>이력번호</th>{TRACE_DATES.map(([k,l])=><th key={k}>{l}</th>)}<th>사용 제품</th><th></th></tr></thead>
         <tbody>{g.items.map(t=>{const users=g.users.get(t.id);
-         return <tr key={t.id} className={"fz-row fz-"+fzStatus(t.expiry)} style={dupIds.has(t.id)?{background:"rgba(239,68,68,.12)"}:undefined}>
+         return <tr key={t.id} className={"fz-row fz-"+fzStatus(t.expiry)} style={dupIds.has(t.id)?{background:"rgba(239,68,68,.12)"}:traceRecvPassed(t)?{opacity:.6}:undefined}>
           <td style={{whiteSpace:"nowrap",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{dt(t.expiry)}{dupIds.has(t.id)&&<div style={{fontSize:11,color:"#ef4444",fontWeight:700}}>⛔ 중복</div>}</td>
-          <td><div style={{fontFamily:"monospace",fontWeight:700,whiteSpace:"nowrap"}}>{t.trace_no||<span style={{color:"var(--dimmer)"}}>–</span>}</div>{t.memo&&<div style={{fontSize:11,color:"var(--muted)"}}>{t.memo}</div>}</td>
-          {TRACE_DATES.map(([k])=><td key={k} style={{whiteSpace:"nowrap",fontSize:13}}>{dt(t[k])}</td>)}
+          <td><div style={{fontFamily:"monospace",fontWeight:700,whiteSpace:"nowrap"}}>{t.trace_no||<span style={{color:"var(--dimmer)"}}>–</span>}</div>{traceRecvPassed(t)&&<div style={{fontSize:11,color:"#ef4444",fontWeight:700}}>입고가능일 지남 · 입고 등록에 안 보임</div>}{t.memo&&<div style={{fontSize:11,color:"var(--muted)"}}>{t.memo}</div>}</td>
+          {TRACE_DATES.map(([k])=><td key={k} style={{whiteSpace:"nowrap",fontSize:13,...(k==="max_receivable"&&traceRecvPassed(t)?{color:"#ef4444",fontWeight:700}:{})}}>{dt(t[k])}</td>)}
           <td style={{fontSize:12,maxWidth:280,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{users.length?<span title={users.join("\n")}>{users.slice(0,2).join(", ")}{users.length>2&&` 외 ${users.length-2}개`}</span>:<span style={{color:"var(--dimmer)"}}>재고 없음</span>}</td>
           <td className="right">{delId===t.id
             ?<span className="fz-actions"><span style={{fontSize:12,color:"#ef4444",fontWeight:600}}>삭제할까요?</span>
@@ -4968,7 +4946,25 @@ function buildFzOutPlan(orders,prodMap,lots,opts){
 
 // 화면·이미지 공통 표 (이미지 양식: 냉동제품 | 발주 수량 | 소비기한 | 위치 | 재고 | 출고 수량)
 // 제품 표 (냉동제품 | 발주 수량 | 소비기한 | 위치 | 재고 | 출고 수량) — 제품별 보기·생산지점 카드 공통
-function FzOutTable({plan,onlyOut,locColor,print,outCell,flush,onHide}){
+// 📤 냉동 출고 화면의 소비기한 칸 — 누르면 같은 원육·같은 소비기한 이력번호 표시 (저장 이미지에는 안 나옴)
+function FzOutExpTrace({children,items}){
+  const[open,setOpen]=useState(false);
+  const ref=useRef(null);
+  useEffect(()=>{if(!open)return;
+    const h=e=>{if(ref.current&&!ref.current.contains(e.target))setOpen(false)};
+    document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h)},[open]);
+  return <span ref={ref} style={{position:"relative",display:"inline-block"}}>
+    <button type="button" onClick={()=>setOpen(!open)} title="눌러서 이력번호 보기"
+      style={{background:"none",border:"1px dashed "+(open?"#0e7490":"transparent"),borderRadius:6,padding:"1px 5px",margin:"-2px -6px",cursor:"pointer",font:"inherit",color:"inherit"}}>{children}</button>
+    {open&&<div style={{position:"absolute",zIndex:20,top:"calc(100% + 4px)",left:"50%",transform:"translateX(-50%)",minWidth:200,padding:"8px 10px",background:"#fff",color:"#111",border:"1.5px solid #0e7490",borderRadius:8,boxShadow:"0 6px 20px rgba(0,0,0,.18)",textAlign:"left",fontSize:12,fontWeight:500,whiteSpace:"nowrap"}}>
+      <div style={{fontSize:11,fontWeight:800,color:"#0e7490",marginBottom:4}}>🏷 이력번호</div>
+      {items==null?<div style={{color:"#6b7280"}}>원육 정보 없음 (APS 품목 연결 필요)</div>
+       :!items.length?<div style={{color:"#dc2626"}}>이 소비기한으로 저장된 이력번호 없음</div>
+       :items.map((t,i)=><div key={i} style={{lineHeight:1.6}}><span style={{color:"#6b7280",marginRight:6}}>{t.mat}</span><b style={{fontFamily:"monospace",fontSize:13}}>{t.no||"(번호 없음)"}</b></div>)}
+    </div>}
+  </span>;
+}
+function FzOutTable({plan,onlyOut,locColor,print,outCell,flush,onHide,traceOf}){
   const sep="1.5px solid #cfd5dd";
   const cell={padding:"9px 8px",borderBottom:"1px solid #eef0f3",textAlign:"center",fontVariantNumeric:"tabular-nums",verticalAlign:"middle"};
   const th={...cell,padding:"7px 8px",fontSize:11.5,fontWeight:800,color:"#6b7280",letterSpacing:".02em",borderBottom:"1.5px solid #111"};
@@ -5008,7 +5004,7 @@ function FzOutTable({plan,onlyOut,locColor,print,outCell,flush,onHide}){
           const loc=fzLoc(x.lot);
           return <tr key={x.lot.id}>
             {i===0&&head}
-            <td style={{...cell,...t,color:x.expired?"#dc2626":"#111",fontWeight:x.expired?800:500}}>{fzExpText(x.lot.expiry)}
+            <td style={{...cell,...t,color:x.expired?"#dc2626":"#111",fontWeight:x.expired?800:500}}>{!print&&traceOf&&x.lot.expiry?<FzOutExpTrace items={traceOf(it,x)}>{fzExpText(x.lot.expiry)}</FzOutExpTrace>:fzExpText(x.lot.expiry)}
               {x.expired&&<span style={{fontSize:11,marginLeft:4}}>지남</span>}
               {!x.expired&&st==="soon"&&<span style={{display:"inline-block",marginLeft:4,padding:"0 5px",borderRadius:4,background:"#ffedd5",color:"#c2410c",fontSize:10.5,fontWeight:800}}>임박</span>}</td>
             <td style={{...cell,...t}}>{loc===NO_LOC?"–":<span style={{display:"inline-block",minWidth:44,padding:"3px 8px",borderRadius:6,background:locColor(loc),fontWeight:800,fontSize:13,boxSizing:"border-box"}}>{loc}</span>}</td>
@@ -5023,13 +5019,13 @@ function FzOutTable({plan,onlyOut,locColor,print,outCell,flush,onHide}){
 function fzOutCells(need,out,short){
   return [{k:"발주",v:fmtBoxes(need)},...(short>0?[{k:"부족",v:fmtBoxes(short),tone:"bad"}]:[]),{k:"출고 박스",v:fmtBoxes(out),tone:"tot"}];
 }
-function FzOutSheet({plan,date,prefix,vendor,onlyOut,locColor,print,refCb,outCell,onHide}){
+function FzOutSheet({plan,date,prefix,vendor,onlyOut,locColor,print,refCb,outCell,onHide,traceOf}){
   const totalNeed=fzoRound(plan.reduce((a,x)=>a+x.boxes,0));
   const totalOut=fzoRound(plan.reduce((a,x)=>a+x.shipped,0));
   const totalShort=fzoRound(plan.reduce((a,x)=>a+x.short,0));
   return <div ref={refCb} className="ol-sheet" style={{padding:print?0:"22px 24px",fontSize:14,lineHeight:1.35,background:"#fff",color:"#111",...(print?{border:"none",borderRadius:0,margin:0,overflow:"visible"}:{})}}>
     <SheetHead pre={`${prefix?prefix+" · ":""}냉동 출고${vendor?" · "+vendor:""}`} main={sheetDay(date)} cells={fzOutCells(totalNeed,totalOut,totalShort)}/>
-    <FzOutTable plan={plan} onlyOut={onlyOut} locColor={locColor} print={print} outCell={outCell} onHide={onHide}/>
+    <FzOutTable plan={plan} onlyOut={onlyOut} locColor={locColor} print={print} outCell={outCell} onHide={onHide} traceOf={traceOf}/>
   </div>;
 }
 
@@ -5040,14 +5036,14 @@ function fzOutSiteGroups(plan){
   return [...m.entries()].sort((a,b)=>siteCmp(a[0],b[0])).map(([floor,items])=>({floor,items,
     total:fzoRound(items.reduce((a,x)=>a+x.boxes,0)),out:fzoRound(items.reduce((a,x)=>a+x.shipped,0)),short:fzoRound(items.reduce((a,x)=>a+x.short,0))}));
 }
-function FzOutFloorSheet({groups,date,prefix,vendor,onlyOut,locColor,print,refCb,outCell,onHide}){
+function FzOutFloorSheet({groups,date,prefix,vendor,onlyOut,locColor,print,refCb,outCell,onHide,traceOf}){
   const sum=k=>fzoRound(groups.reduce((a,g)=>a+g[k],0));
   const one=groups.length===1;
   return <div ref={refCb} className="ol-sheet" style={{padding:print?0:"22px 24px",fontSize:14,lineHeight:1.35,background:"#fff",color:"#111",...(print?{border:"none",borderRadius:0,margin:0,overflow:"visible"}:{})}}>
     <SheetHead pre={`${prefix?prefix+" · ":""}냉동 출고${one?" · "+groups[0].floor:""}${vendor?" · "+vendor:""}`} main={sheetDay(date)} cells={fzOutCells(sum("total"),sum("out"),sum("short"))}/>
     {!groups.length&&<div style={{padding:"30px 0",textAlign:"center",color:"#6b7280"}}>선택한 생산지점이 없습니다</div>}
     {groups.map(g=><div key={g.floor} data-shipcut="1" style={{border:"1.5px solid #cfd5dd",borderRadius:10,marginBottom:18,overflow:"hidden"}}>
-      <FzOutTable plan={g.items} onlyOut={onlyOut} locColor={locColor} print={print} outCell={outCell} onHide={onHide} flush/>
+      <FzOutTable plan={g.items} onlyOut={onlyOut} locColor={locColor} print={print} outCell={outCell} onHide={onHide} traceOf={traceOf} flush/>
     </div>)}
   </div>;
 }
@@ -5289,6 +5285,22 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
     saveManual({...manualEff,[it.code]:cur});
   };
   const resetItem=code=>{const m={...manualEff};delete m[code];saveManual(m)};
+  // 🏷 이력번호: 제품 → APS 품목 → BOM 원육, 같은 소비기한 기록
+  const[fzTraces,setFzTraces]=useState([]);
+  const[fzMats,setFzMats]=useState(_apsMatsCache);
+  useEffect(()=>{let alive=true;
+    loadApsMaterials().then(r=>{if(alive)setFzMats(r)});
+    rpc("ol_list_meat_traces",{p_admin_hash:adminHash}).then(d=>{if(alive)setFzTraces(Array.isArray(d)?d:[])}).catch(()=>{});
+    return()=>{alive=false}},[adminHash]);
+  const traceOf=(it,x)=>{
+    const p=it.product||masters.products.find(q=>q.code===it.code);
+    if(!fzMats?.map||!p||p.aps_item_id==null)return null;
+    const mats=fzMats.map.get(Number(p.aps_item_id))||[];
+    if(!mats.length)return null;
+    const d=ymd10(x.lot.expiry);const out=[];
+    for(const m of mats)for(const t of fzTraces)if(ymd10(t.expiry)===d&&traceMatchMat(t,m))out.push({mat:m.name,no:t.trace_no});
+    return out;
+  };
   const outCell=(it,x)=>x.usable
     ?<span style={{display:"inline-flex",alignItems:"center",gap:4}}><FzOutQtyCell key={x.lot.id+":"+x.out} value={x.out} max={x.stock} onSave={v=>setOut(it,x,v)}/></span>
     :(x.out>0?fmtBoxes(x.out):"");
@@ -5467,8 +5479,8 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
             <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setOffFloors(new Set())}>전체 선택</button>
           </div>}
           {view==="product"
-            ?<div className="ol-scroll"><FzOutSheet plan={plan} date={selDate} prefix={prefix} vendor={vendor} onlyOut={onlyOut} locColor={locColor} outCell={outCell} onHide={hideItem}/></div>
-            :<div className="ol-scroll"><FzOutFloorSheet groups={selGroups} date={selDate} prefix={prefix} vendor={vendor} onlyOut={onlyOut} locColor={locColor} outCell={outCell} onHide={hideItem}/></div>}
+            ?<div className="ol-scroll"><FzOutSheet plan={plan} date={selDate} prefix={prefix} vendor={vendor} onlyOut={onlyOut} locColor={locColor} outCell={outCell} onHide={hideItem} traceOf={traceOf}/></div>
+            :<div className="ol-scroll"><FzOutFloorSheet groups={selGroups} date={selDate} prefix={prefix} vendor={vendor} onlyOut={onlyOut} locColor={locColor} outCell={outCell} onHide={hideItem} traceOf={traceOf}/></div>}
           <div style={{position:"fixed",left:-20000,top:0,width:SHIP_PRINT_W,background:"#fff"}} aria-hidden="true">
             {view==="product"
               ?<FzOutSheet plan={plan} date={selDate} prefix={prefix} vendor={vendor} onlyOut={onlyOut} locColor={locColor} print refCb={el=>{printRef.current=el}}/>
