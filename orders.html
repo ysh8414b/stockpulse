@@ -4982,8 +4982,8 @@ function FzOutExpTrace({children,items}){
 }
 function FzOutTable({plan,onlyOut,locColor,print,outCell,flush,onHide,traceOf}){
   const sep="1.5px solid #cfd5dd";
-  const cell={padding:"9px 8px",borderBottom:"1px solid #eef0f3",textAlign:"center",fontVariantNumeric:"tabular-nums",verticalAlign:"middle"};
-  const th={...cell,padding:"7px 8px",fontSize:11.5,fontWeight:800,color:"#6b7280",letterSpacing:".02em",borderBottom:"1.5px solid #111"};
+  const cell={padding:"4px 8px",lineHeight:1.25,borderBottom:"1px solid #eef0f3",textAlign:"center",fontVariantNumeric:"tabular-nums",verticalAlign:"middle"};
+  const th={...cell,padding:"6px 8px",fontSize:11.5,fontWeight:800,color:"#6b7280",letterSpacing:".02em",borderBottom:"1.5px solid #111"};
   return <>
     <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed",minWidth:print?0:560}}>
       <colgroup><col style={{width:"36%"}}/><col style={{width:"13%"}}/><col style={{width:"18%"}}/><col style={{width:"11%"}}/><col style={{width:"10%"}}/><col style={{width:"12%"}}/></colgroup>
@@ -5006,8 +5006,8 @@ function FzOutTable({plan,onlyOut,locColor,print,outCell,flush,onHide,traceOf}){
           </td>,
           <td key="q" rowSpan={n} style={{...cell,...top,...bg,borderBottom:"none",borderRight:"1px solid #e5e7eb"}}>
             {/* 이미지 저장(html2canvas)에서도 글씨가 보이도록 flex 대신 block 쌓기 */}
-            <div style={{display:"inline-block",minWidth:54,padding:"4px 8px",border:`2px solid ${bad?"#dc2626":"transparent"}`,borderRadius:8,textAlign:"center",verticalAlign:"middle",boxSizing:"border-box"}}>
-              <div style={{fontSize:20,fontWeight:900,lineHeight:"24px",color:bad||it.partial?"#dc2626":"#111"}}>{fmtBoxes(it.boxes)}</div>
+            <div style={{display:"inline-block",minWidth:54,padding:bad?"2px 8px":"0 8px",border:`2px solid ${bad?"#dc2626":"transparent"}`,borderRadius:8,textAlign:"center",verticalAlign:"middle",boxSizing:"border-box"}}>
+              <div style={{fontSize:19,fontWeight:900,lineHeight:"22px",color:bad||it.partial?"#dc2626":"#111"}}>{fmtBoxes(it.boxes)}</div>
               {bad&&<div style={{fontSize:11,fontWeight:800,lineHeight:"15px",color:"#dc2626",whiteSpace:"nowrap"}}>부족 {fmtBoxes(it.short)}</div>}
               {it.over>0&&<div style={{fontSize:11,fontWeight:800,lineHeight:"15px",color:"#7c3aed",whiteSpace:"nowrap"}}>초과 {fmtBoxes(it.over)}</div>}
             </div>
@@ -5025,7 +5025,7 @@ function FzOutTable({plan,onlyOut,locColor,print,outCell,flush,onHide,traceOf}){
               {!x.expired&&st==="soon"&&<span style={{display:"inline-block",marginLeft:4,padding:"0 5px",borderRadius:4,background:"#ffedd5",color:"#c2410c",fontSize:10.5,fontWeight:800}}>임박</span>}</td>
             <td style={{...cell,...t}}>{loc===NO_LOC?"–":<span style={{display:"inline-block",minWidth:44,padding:"3px 8px",borderRadius:6,background:locColor(loc),fontWeight:800,fontSize:13,boxSizing:"border-box"}}>{loc}</span>}</td>
             <td style={{...cell,...t,color:x.usable?"#6b7280":"#b6bcc6"}} title={x.stock==null?`단위(${x.lot.unit})를 박스로 바꿀 수 없어 배정에서 제외`:""}>{x.stock==null?`${fmtNum(x.lot.qty)}${x.lot.unit}`:fmtBoxes(x.stock)}</td>
-            <td style={{...cell,...t,fontWeight:900,fontSize:18,padding:outCell?"4px 6px":cell.padding}}>
+            <td style={{...cell,...t,fontWeight:900,fontSize:18,padding:outCell?"2px 6px":cell.padding}}>
               {outCell?outCell(it,x):x.out>0?fmtBoxes(x.out):""}</td>
           </tr>;})}</tbody>;
       })}
