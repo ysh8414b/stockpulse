@@ -3536,65 +3536,82 @@ function shipSections(data){
 const SHIP_ACCENT={chilled:{main:"#0e7490",soft:"#ecfeff",x:"0E7490",xs:"E0F7FA"},frozen:{main:"#1d4ed8",soft:"#eff6ff",x:"1D4ED8",xs:"E3ECFD"}};
 const secShort=sec=>sec.title.replace("제품","");
 
+// 이미지 머리: 위 작은 글씨(머리말 · 종류) + 큰 날짜, 오른쪽 숫자 칸
+const sheetDay=(date,dateTo)=>dateTo&&dateTo!==date
+  ?`${fmtMd(date)} (${dowOf(date)}) ~ ${fmtMd(dateTo)} (${dowOf(dateTo)})`
+  :`${parseYmd(date).getMonth()+1}월 ${parseYmd(date).getDate()}일 (${dowOf(date)})`;
+function SheetHead({pre,main,cells}){
+  return <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",gap:16,flexWrap:"wrap",paddingBottom:14,borderBottom:"3px solid #111",marginBottom:22}}>
+    <div style={{minWidth:0}}>
+      <div style={{fontSize:13,fontWeight:700,color:"#6b7280",letterSpacing:".02em"}}>{pre}</div>
+      <div className="ol-ship-ttl" style={{fontSize:26,fontWeight:900,letterSpacing:"-0.6px",lineHeight:1.15,marginTop:2}}>{main}</div>
+    </div>
+    <div style={{display:"flex",border:"1.5px solid #111",borderRadius:8,overflow:"hidden"}}>
+      {cells.map((c,i)=><div key={c.k} style={{padding:"6px 14px",textAlign:"center",borderLeft:i?"1px solid #d1d5db":"none",background:c.tone==="tot"?"#111":c.tone==="bad"?"#fee2e2":"#fff",color:c.tone==="tot"?"#fff":c.tone==="bad"?"#dc2626":"#111"}}>
+        <div style={{fontSize:11,fontWeight:700,color:c.tone==="tot"?"#cbd5e1":c.tone==="bad"?"#dc2626":"#6b7280"}}>{c.k}</div>
+        <div style={{fontSize:20,fontWeight:900,fontVariantNumeric:"tabular-nums",lineHeight:1.2}}>{c.v}</div>
+      </div>)}
+    </div>
+  </div>;
+}
+
 function ShipSheetPreview({data,date,dateTo,prefix,print,refCb}){
   const noExp=!!dateTo; // 기간 합계는 소비기한이 섞이므로 열 생략
   const secs=shipSections(data);
   const secRows=sec=>sec.groups.flatMap(g=>g.rows);
   const total=secs.reduce((a,sec)=>a+sumBy(secRows(sec),"boxes"),0);
-  const cell={padding:"8px 12px",borderBottom:"1px solid #e5e7eb",fontVariantNumeric:"tabular-nums"};
-  const num={...cell,textAlign:"center"};
+  const th={padding:"7px 12px",borderBottom:"1px solid #e5e7eb",fontSize:11.5,fontWeight:800,color:"#6b7280",letterSpacing:".02em",textAlign:"center"};
+  const cell={padding:"10px 12px",borderBottom:"1px solid #eef0f3",fontVariantNumeric:"tabular-nums",textAlign:"center"};
+  const pre=`${prefix?prefix+" · ":""}${dateTo?"발주 합계":"출고리스트"}`;
+  const cells=[...secs.map(sec=>({k:secShort(sec),v:fmtBoxes(sumBy(secRows(sec),"boxes"))})),{k:"총 박스",v:fmtBoxes(total),tone:"tot"}];
   // print: 이미지 저장용 사본 — 바깥 테두리 없이 고정 폭
   return <div ref={refCb} className={print?"ol-sheet":"ol-sheet ol-ship-sheet"} style={{padding:print?0:"22px 24px",fontSize:14,lineHeight:1.4,...(print?{border:"none",borderRadius:0,margin:0,overflow:"visible"}:{})}}>
-    <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:12,flexWrap:"wrap",paddingBottom:12,borderBottom:"2px solid #111",marginBottom:18}}>
-      <div className="ol-ship-ttl" style={{fontSize:24,fontWeight:900,letterSpacing:"-0.5px"}}>{shipTitle(prefix,date,dateTo)}</div>
-      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        {secs.map(sec=><span key={sec.key} style={{padding:"4px 10px",borderRadius:14,background:SHIP_ACCENT[sec.key].soft,color:SHIP_ACCENT[sec.key].main,fontWeight:700,fontSize:13}}>{secShort(sec)} {fmtBoxes(sumBy(secRows(sec),"boxes"))}박스</span>)}
-        <span style={{padding:"4px 10px",borderRadius:14,background:"#111",color:"#fff",fontWeight:700,fontSize:13}}>총 {fmtBoxes(total)}박스</span>
-      </div>
-    </div>
+    <SheetHead pre={pre} main={sheetDay(date,dateTo)} cells={cells}/>
     {secs.map(sec=>{
       const ac=SHIP_ACCENT[sec.key];
       const all=secRows(sec);
       return <div key={sec.key} data-shipcut="1" style={{marginBottom:26}}>
-        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-          <span style={{width:5,height:20,borderRadius:3,background:ac.main}}/>
-          <span style={{fontSize:17,fontWeight:800,color:ac.main}}>{sec.title}</span>
-          <span style={{fontSize:12,color:"#6b7280"}}>{all.filter(r=>r.qty>0).length}품목</span>
+        <div style={{display:"flex",alignItems:"baseline",gap:10,marginBottom:10}}>
+          <span style={{fontSize:13,fontWeight:900,padding:"3px 10px",borderRadius:5,background:ac.main,color:"#fff"}}>{secShort(sec)}</span>
+          <span style={{fontSize:12,color:"#6b7280"}}>{sec.groups.length>1?`${sec.groups.length}개 층 · `:""}{all.filter(r=>r.qty>0).length}품목 · {fmtNum(sumBy(all,"qty"))}팩</span>
         </div>
-        {sec.groups.map((g,gi)=>{
+        {sec.groups.map(g=>{
           const runs=runsOf(g.rows,r=>r.expiry);
-          return <div key={g.site} data-shipcut="1" data-shipsite={g.site} style={{border:"1px solid #d7dde5",borderRadius:8,marginBottom:16,overflow:"hidden"}}>
-            <div className="ol-ship-sitehd" style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 14px",background:ac.soft,borderBottom:"1px solid #d7dde5"}}>
-              <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap",minWidth:0}}>
-                <span className="ol-ship-site" style={{fontSize:20,fontWeight:900,color:ac.main}}>{g.site}</span>
+          return <div key={g.site} data-shipcut="1" data-shipsite={g.site} style={{border:"1.5px solid #cfd5dd",borderRadius:10,marginBottom:18,overflow:"hidden"}}>
+            <div className="ol-ship-sitehd" style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"11px 16px 10px",borderBottom:"1.5px solid #111"}}>
+              <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap",minWidth:0}}>
+                <span className="ol-ship-site" style={{fontSize:21,fontWeight:900}}>{g.site}</span>
                 <span style={{fontSize:12,color:"#6b7280"}}>{g.rows.filter(r=>r.qty>0).length}품목 · {fmtNum(sumBy(g.rows,"qty"))}팩</span>
               </div>
-              <span style={{padding:"4px 12px",borderRadius:16,background:ac.main,color:"#fff",fontWeight:800,fontSize:15,whiteSpace:"nowrap"}}>{fmtBoxes(sumBy(g.rows,"boxes"))}박스</span>
+              <span style={{fontSize:22,fontWeight:900,whiteSpace:"nowrap",fontVariantNumeric:"tabular-nums"}}>{fmtBoxes(sumBy(g.rows,"boxes"))}<small style={{fontSize:13,fontWeight:700,marginLeft:2}}>박스</small></span>
             </div>
-            <table style={{minWidth:600}}>
-              <colgroup><col/><col className="c-qty" style={{width:100}}/><col className="c-box" style={{width:90}}/>{!noExp&&<col className="c-exp" style={{width:150}}/>}</colgroup>
-              <thead><tr style={{background:"#f8fafc",color:"#475569",fontSize:12}}>
-                <th style={{...cell,textAlign:"center"}}>제품명</th>
-                <th style={num}>총 팩수량</th><th style={num}>박스수량</th>{!noExp&&<th style={{...cell,textAlign:"center"}}>{sec.expLabel}</th>}
+            <table style={{minWidth:print?0:600}}>
+              <colgroup><col/><col className="c-qty" style={{width:84}}/><col className="c-box" style={{width:84}}/>{!noExp&&<col className="c-exp" style={{width:124}}/>}</colgroup>
+              <thead><tr>
+                <th style={th}>제품명</th><th style={th}>팩</th><th style={th}>박스</th>{!noExp&&<th style={th}>{sec.expLabel}</th>}
               </tr></thead>
               <tbody>
                 {g.rows.map((r,i)=>{
                   const run=runs.find(x=>x.start===i);
                   const dim=!r.qty;
+                  const last=i===g.rows.length-1?{borderBottom:"none"}:{};
+                  const runLast=run&&run.start+run.len>=g.rows.length?{borderBottom:"none"}:{};
                   return <tr key={r.code+r.expiry} data-shipcut={noExp||run?"1":undefined} style={{color:dim?"#b6bcc6":"#111"}}>
-                    <td style={{...cell,textAlign:"center",fontFamily:"'NanumSquare','Pretendard',sans-serif"}}>{boldDigits(shipNameOf(r.product),dim)}<span style={{color:dim?"#9ca3af":"#000",fontWeight:900,marginLeft:6,whiteSpace:"nowrap"}}>/ {r.per}ea</span></td>
-                    <td style={num}>{r.qty?fmtNum(r.qty):"–"}</td>
-                    <td style={{...num,fontWeight:800,background:dim?"transparent":"#fef9c3",color:r.partial?"#dc2626":dim?"#b6bcc6":"#111"}} title={r.partial?"입수량으로 나누어떨어지지 않음":""}>{r.qty?fmtBoxes(r.boxes):"–"}</td>
-                    {!noExp&&run&&<td rowSpan={run.len} className="c-exp" style={{...cell,textAlign:"center",fontWeight:600,fontSize:13,borderLeft:"1px solid #e5e7eb",color:"#111"}}>{fmtExp(run.value)}</td>}
+                    <td style={{...cell,...last,fontFamily:"'NanumSquare','Pretendard',sans-serif"}}>{boldDigits(shipNameOf(r.product),dim)}<span style={{color:dim?"#9ca3af":"#000",fontWeight:900,marginLeft:6,whiteSpace:"nowrap"}}>/ {r.per}ea</span></td>
+                    <td style={{...cell,...last,color:dim?"#b6bcc6":"#374151"}}>{r.qty?fmtNum(r.qty):"–"}</td>
+                    <td style={{...cell,...last,fontWeight:900,fontSize:17,background:dim?"transparent":"#fef9c3",color:r.partial?"#dc2626":dim?"#b6bcc6":"#111"}} title={r.partial?"입수량으로 나누어떨어지지 않음":""}>{r.qty?fmtBoxes(r.boxes):"–"}</td>
+                    {!noExp&&run&&<td rowSpan={run.len} className="c-exp" style={{...cell,...runLast,background:"#f8fafc",fontWeight:700,fontSize:13,borderLeft:"1px solid #e5e7eb",color:"#111",lineHeight:1.25}}>
+                      {run.value?<>{run.value.replace(/-/g,".")}<div style={{fontSize:11,fontWeight:600,color:"#6b7280"}}>이후</div></>:""}
+                    </td>}
                   </tr>;
                 })}
               </tbody>
             </table>
           </div>;
         })}
-        {sec.groups.length>1&&<div data-shipcut="1" style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",borderTop:"2px solid #111",fontWeight:900,fontSize:15}}>
+        {sec.groups.length>1&&<div data-shipcut="1" style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 16px 0",borderTop:"2px solid #111",fontWeight:800,fontSize:15}}>
           <span>{secShort(sec)} 합계</span>
-          <span style={{fontVariantNumeric:"tabular-nums"}}>{fmtNum(sumBy(all,"qty"))}팩 · {fmtBoxes(sumBy(all,"boxes"))}박스</span>
+          <span style={{fontWeight:900,fontVariantNumeric:"tabular-nums"}}>{fmtNum(sumBy(all,"qty"))}팩 · {fmtBoxes(sumBy(all,"boxes"))}박스</span>
         </div>}
       </div>;
     })}
@@ -4659,66 +4676,65 @@ function buildFzOutPlan(orders,prodMap,lots,opts){
 // 화면·이미지 공통 표 (이미지 양식: 냉동제품 | 발주 수량 | 소비기한 | 위치 | 재고 | 출고 수량)
 // 제품 표 (냉동제품 | 발주 수량 | 소비기한 | 위치 | 재고 | 출고 수량) — 제품별 보기·생산지점 카드 공통
 function FzOutTable({plan,onlyOut,locColor,print,outCell,flush,onHide}){
-  const C={line:"#cbd5e1",strong:"#111",yellow:"#ffff00",muted:"#6b7280"};
-  const cell={padding:"8px 10px",borderBottom:`1px solid ${C.line}`,borderLeft:`1px solid ${C.line}`,textAlign:"center",fontVariantNumeric:"tabular-nums",verticalAlign:"middle"};
-  const th={...cell,fontWeight:800,fontSize:15,borderBottom:`2px solid ${C.strong}`,borderTop:flush?"none":`1px solid ${C.line}`};
+  const sep="1.5px solid #cfd5dd";
+  const cell={padding:"9px 8px",borderBottom:"1px solid #eef0f3",textAlign:"center",fontVariantNumeric:"tabular-nums",verticalAlign:"middle"};
+  const th={...cell,padding:"7px 8px",fontSize:11.5,fontWeight:800,color:"#6b7280",letterSpacing:".02em",borderBottom:"1.5px solid #111"};
   return <>
-    <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed",minWidth:print?0:560,borderRight:flush?"none":`1px solid ${C.line}`}}>
-      <colgroup><col style={{width:"38%"}}/><col style={{width:"13%"}}/><col style={{width:"17%"}}/><col style={{width:"10%"}}/><col style={{width:"10%"}}/><col style={{width:"12%"}}/></colgroup>
+    <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed",minWidth:print?0:560}}>
+      <colgroup><col style={{width:"36%"}}/><col style={{width:"13%"}}/><col style={{width:"18%"}}/><col style={{width:"11%"}}/><col style={{width:"10%"}}/><col style={{width:"12%"}}/></colgroup>
       <thead><tr>
-        <th style={{...th,background:C.yellow,...(flush?{borderLeft:"none"}:{})}}>냉동제품</th>
-        <th style={{...th,background:C.yellow}}>발주 수량</th>
-        <th style={th}>소비기한</th><th style={th}>위치</th><th style={th}>재고</th><th style={th}>출고 수량</th>
+        <th style={{...th,textAlign:"left",paddingLeft:12}}>냉동제품</th>
+        <th style={th}>발주</th><th style={th}>소비기한</th><th style={th}>위치</th><th style={th}>재고</th><th style={th}>출고</th>
       </tr></thead>
-      {plan.map(it=>{
+      {plan.map((it,pi)=>{
         const rows=onlyOut?it.rows.filter(x=>x.out>0):it.rows;
         const n=Math.max(1,rows.length);
-        const top={borderTop:`2px solid ${C.strong}`};
+        const bg=pi%2?{background:"#f8fafc"}:{};
+        const top=pi?{borderTop:sep}:{};
+        const endB=i=>i===rows.length-1||!rows.length?{borderBottom:"none"}:{};
+        const bad=it.short>0;
         const head=[
-          <td key="nm" rowSpan={n} style={{...cell,...top,...(flush?{borderLeft:"none"}:{}),fontFamily:"'NanumSquare','Pretendard',sans-serif",fontSize:15}}>
+          <td key="nm" rowSpan={n} style={{...cell,...top,...bg,borderBottom:"none",textAlign:"left",paddingLeft:12,fontFamily:"'NanumSquare','Pretendard',sans-serif",fontSize:15}}>
             {boldDigits(shipNameOf(it.product))}
             {!print&&onHide&&<button className="ol-btn ol-btn-secondary ol-btn-sm" style={{marginLeft:6,padding:"1px 6px",fontSize:11,verticalAlign:"middle"}} title="이 제품 숨기기 (표·이미지·엑셀·출고 확정에서 빠짐)" onClick={()=>onHide(it.code)}>🙈 숨기기</button>}
-            {!print&&it.manual&&<div style={{fontSize:11,color:"#7c3aed",fontWeight:700,marginTop:2}}>✋ 직접 수정함</div>}
+            {!print&&it.manual&&<div style={{fontSize:11,color:"#7c3aed",fontWeight:700,marginTop:2,fontFamily:"Pretendard,sans-serif"}}>✋ 직접 수정함</div>}
           </td>,
-          <td key="q" rowSpan={n} style={{...cell,...top,background:C.yellow,fontWeight:900,fontSize:17}}>
-            <span style={{color:it.partial?"#dc2626":"#111"}}>{fmtBoxes(it.boxes)}</span>
-            {it.short>0&&<div style={{fontSize:12,fontWeight:800,color:"#dc2626",marginTop:2}}>부족 {fmtBoxes(it.short)}</div>}
-            {it.over>0&&<div style={{fontSize:12,fontWeight:800,color:"#7c3aed",marginTop:2}}>초과 {fmtBoxes(it.over)}</div>}
+          <td key="q" rowSpan={n} style={{...cell,...top,...bg,borderBottom:"none",borderRight:"1px solid #e5e7eb"}}>
+            <span style={{display:"inline-flex",flexDirection:"column",alignItems:"center",minWidth:54,padding:"5px 8px 4px",border:`2px solid ${bad?"#dc2626":"transparent"}`,borderRadius:8,background:bad?"#fff":"transparent",lineHeight:1,boxSizing:"border-box"}}>
+              <b style={{fontSize:20,fontWeight:900,color:bad||it.partial?"#dc2626":"#111"}}>{fmtBoxes(it.boxes)}</b>
+              {bad&&<small style={{fontSize:10.5,fontWeight:800,color:"#dc2626",marginTop:3}}>부족 {fmtBoxes(it.short)}</small>}
+              {it.over>0&&<small style={{fontSize:10.5,fontWeight:800,color:"#7c3aed",marginTop:3}}>초과 {fmtBoxes(it.over)}</small>}
+            </span>
           </td>];
         if(!rows.length)return <tbody key={it.code} data-shipcut="1"><tr>{head}
-          <td colSpan={4} style={{...cell,...top,color:"#dc2626",fontWeight:700}}>{it.rows.length?"출고할 로트 없음":"냉동재고에 이 제품 재고 없음"}</td></tr></tbody>;
+          <td colSpan={4} style={{...cell,...top,...bg,borderBottom:"none",color:"#dc2626",fontWeight:700}}>{it.rows.length?"출고할 로트 없음":"냉동재고에 이 제품 재고 없음"}</td></tr></tbody>;
         return <tbody key={it.code} data-shipcut="1">{rows.map((x,i)=>{
-          const t=i===0?top:{};
+          const t={...(i===0?top:{}),...bg,...endB(i)};
           const st=fzStatus(x.lot.expiry);
           const loc=fzLoc(x.lot);
           return <tr key={x.lot.id}>
             {i===0&&head}
-            <td style={{...cell,...t,color:x.expired?"#dc2626":"#111",fontWeight:x.expired?800:500}}>{fzExpText(x.lot.expiry)}{x.expired&&<span style={{fontSize:11,marginLeft:4}}>지남</span>}{!x.expired&&st==="soon"&&<span style={{fontSize:11,marginLeft:4,color:"#ea580c"}}>임박</span>}</td>
-            <td style={{...cell,...t,background:locColor(loc)}}>{loc===NO_LOC?"–":loc}</td>
-            <td style={{...cell,...t,color:x.usable?"#111":"#9ca3af"}} title={x.stock==null?`단위(${x.lot.unit})를 박스로 바꿀 수 없어 배정에서 제외`:""}>{x.stock==null?`${fmtNum(x.lot.qty)}${x.lot.unit}`:fmtBoxes(x.stock)}</td>
-            <td style={{...cell,...t,fontWeight:x.out>0?900:400,fontSize:x.out>0?16:14,background:x.out>0?"#fff7ed":"transparent",padding:outCell?"4px 6px":cell.padding}}>
+            <td style={{...cell,...t,color:x.expired?"#dc2626":"#111",fontWeight:x.expired?800:500}}>{fzExpText(x.lot.expiry)}
+              {x.expired&&<span style={{fontSize:11,marginLeft:4}}>지남</span>}
+              {!x.expired&&st==="soon"&&<span style={{display:"inline-block",marginLeft:4,padding:"0 5px",borderRadius:4,background:"#ffedd5",color:"#c2410c",fontSize:10.5,fontWeight:800}}>임박</span>}</td>
+            <td style={{...cell,...t}}>{loc===NO_LOC?"–":<span style={{display:"inline-block",minWidth:44,padding:"3px 8px",borderRadius:6,background:locColor(loc),fontWeight:800,fontSize:13,boxSizing:"border-box"}}>{loc}</span>}</td>
+            <td style={{...cell,...t,color:x.usable?"#6b7280":"#b6bcc6"}} title={x.stock==null?`단위(${x.lot.unit})를 박스로 바꿀 수 없어 배정에서 제외`:""}>{x.stock==null?`${fmtNum(x.lot.qty)}${x.lot.unit}`:fmtBoxes(x.stock)}</td>
+            <td style={{...cell,...t,fontWeight:900,fontSize:18,padding:outCell?"4px 6px":cell.padding}}>
               {outCell?outCell(it,x):x.out>0?fmtBoxes(x.out):""}</td>
           </tr>;})}</tbody>;
       })}
     </table>
   </>;
 }
+function fzOutCells(need,out,short){
+  return [{k:"발주",v:fmtBoxes(need)},...(short>0?[{k:"부족",v:fmtBoxes(short),tone:"bad"}]:[]),{k:"출고 박스",v:fmtBoxes(out),tone:"tot"}];
+}
 function FzOutSheet({plan,date,prefix,vendor,onlyOut,locColor,print,refCb,outCell,onHide}){
-  const C={line:"#cbd5e1",strong:"#111",yellow:"#ffff00",muted:"#6b7280"};
   const totalNeed=fzoRound(plan.reduce((a,x)=>a+x.boxes,0));
   const totalOut=fzoRound(plan.reduce((a,x)=>a+x.shipped,0));
   const totalShort=fzoRound(plan.reduce((a,x)=>a+x.short,0));
-  const cell={padding:"8px 10px",borderBottom:`1px solid ${C.line}`,borderLeft:`1px solid ${C.line}`,textAlign:"center",fontVariantNumeric:"tabular-nums",verticalAlign:"middle"};
-  const th={...cell,fontWeight:800,fontSize:15,borderBottom:`2px solid ${C.strong}`,borderTop:`1px solid ${C.line}`};
   return <div ref={refCb} className="ol-sheet" style={{padding:print?0:"22px 24px",fontSize:14,lineHeight:1.35,background:"#fff",color:"#111",...(print?{border:"none",borderRadius:0,margin:0,overflow:"visible"}:{})}}>
-    <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:12,flexWrap:"wrap",paddingBottom:12,borderBottom:`2px solid ${C.strong}`,marginBottom:16}}>
-      <div style={{fontSize:24,fontWeight:900,letterSpacing:"-0.5px"}}>{shipTitle(prefix,date)}{vendor&&<span style={{fontSize:15,fontWeight:600,color:C.muted,marginLeft:8}}>{vendor}</span>}</div>
-      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        <span style={{padding:"4px 10px",borderRadius:14,background:"#eff6ff",color:"#1d4ed8",fontWeight:700,fontSize:13}}>발주 {fmtBoxes(totalNeed)}박스</span>
-        <span style={{padding:"4px 10px",borderRadius:14,background:"#111",color:"#fff",fontWeight:700,fontSize:13}}>출고 {fmtBoxes(totalOut)}박스</span>
-        {totalShort>0&&<span style={{padding:"4px 10px",borderRadius:14,background:"#fee2e2",color:"#dc2626",fontWeight:800,fontSize:13}}>부족 {fmtBoxes(totalShort)}박스</span>}
-      </div>
-    </div>
+    <SheetHead pre={`${prefix?prefix+" · ":""}냉동 출고${vendor?" · "+vendor:""}`} main={sheetDay(date)} cells={fzOutCells(totalNeed,totalOut,totalShort)}/>
     <FzOutTable plan={plan} onlyOut={onlyOut} locColor={locColor} print={print} outCell={outCell} onHide={onHide}/>
   </div>;
 }
@@ -4731,20 +4747,12 @@ function fzOutSiteGroups(plan){
     total:fzoRound(items.reduce((a,x)=>a+x.boxes,0)),out:fzoRound(items.reduce((a,x)=>a+x.shipped,0)),short:fzoRound(items.reduce((a,x)=>a+x.short,0))}));
 }
 function FzOutFloorSheet({groups,date,prefix,vendor,onlyOut,locColor,print,refCb,outCell,onHide}){
-  const C={strong:"#111",muted:"#6b7280"};
   const sum=k=>fzoRound(groups.reduce((a,g)=>a+g[k],0));
   const one=groups.length===1;
   return <div ref={refCb} className="ol-sheet" style={{padding:print?0:"22px 24px",fontSize:14,lineHeight:1.35,background:"#fff",color:"#111",...(print?{border:"none",borderRadius:0,margin:0,overflow:"visible"}:{})}}>
-    <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:12,flexWrap:"wrap",paddingBottom:12,borderBottom:`2px solid ${C.strong}`,marginBottom:16}}>
-      <div style={{fontSize:24,fontWeight:900,letterSpacing:"-0.5px"}}>{shipTitle(prefix,date)}{one?` · ${groups[0].floor}`:""}{vendor&&<span style={{fontSize:15,fontWeight:600,color:C.muted,marginLeft:8}}>{vendor}</span>}</div>
-      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        <span style={{padding:"4px 10px",borderRadius:14,background:"#eff6ff",color:"#1d4ed8",fontWeight:700,fontSize:13}}>발주 {fmtBoxes(sum("total"))}박스</span>
-        <span style={{padding:"4px 10px",borderRadius:14,background:"#111",color:"#fff",fontWeight:700,fontSize:13}}>출고 {fmtBoxes(sum("out"))}박스</span>
-        {sum("short")>0&&<span style={{padding:"4px 10px",borderRadius:14,background:"#fee2e2",color:"#dc2626",fontWeight:800,fontSize:13}}>부족 {fmtBoxes(sum("short"))}박스</span>}
-      </div>
-    </div>
-    {!groups.length&&<div style={{padding:"30px 0",textAlign:"center",color:C.muted}}>선택한 생산지점이 없습니다</div>}
-    {groups.map(g=><div key={g.floor} data-shipcut="1" style={{border:"1px solid #cbd5e1",borderRadius:8,marginBottom:18,overflow:"hidden"}}>
+    <SheetHead pre={`${prefix?prefix+" · ":""}냉동 출고${one?" · "+groups[0].floor:""}${vendor?" · "+vendor:""}`} main={sheetDay(date)} cells={fzOutCells(sum("total"),sum("out"),sum("short"))}/>
+    {!groups.length&&<div style={{padding:"30px 0",textAlign:"center",color:"#6b7280"}}>선택한 생산지점이 없습니다</div>}
+    {groups.map(g=><div key={g.floor} data-shipcut="1" style={{border:"1.5px solid #cfd5dd",borderRadius:10,marginBottom:18,overflow:"hidden"}}>
       <FzOutTable plan={g.items} onlyOut={onlyOut} locColor={locColor} print={print} outCell={outCell} onHide={onHide} flush/>
     </div>)}
   </div>;
