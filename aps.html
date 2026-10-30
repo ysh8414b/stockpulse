@@ -2258,6 +2258,10 @@ function PlanForm({adminHash,items,lines,settings,initial,prefill,defaultDate,pl
   const[endAt,setEndAt]=useState(initial?isoToKstInput(initial.end_at):pf?.end_at?isoToKstInput(pf.end_at):defaultEndInput);
   const[status,setStatus]=useState(initial?.status||"planned");
   const[memo,setMemo]=useState(initial?.memo||pf?.memo||"");
+  // 진행중·완료 계획: ▶ 시작을 누른 실제 시각 수정
+  const canEditActualStart=isEdit&&!!initial?.actual_start_at&&(initial.status==="in_progress"||initial.status==="done");
+  const actualStartInit=canEditActualStart?isoToKstInput(initial.actual_start_at):"";
+  const[actualStart,setActualStart]=useState(actualStartInit);
   const[err,setErr]=useState("");
   const[loading,setLoading]=useState(false);
 
@@ -2439,8 +2443,24 @@ function PlanForm({adminHash,items,lines,settings,initial,prefill,defaultDate,pl
       try{rawRows=rawValuesToRows(rawValues,materialReport&&materialReport.length?materialReport.map(r=>r.id):null)}catch(e){setErr(e.message);return}
       if(rawMissing){setErr(RAW_ACTUAL_SQL_MSG);return}
     }
+    const actualStartChanged=canEditActualStart&&actualStart&&actualStart!==actualStartInit;
+    if(canEditActualStart&&!actualStart){setErr("실제 시작 시각을 입력하세요");return}
+    if(actualStartChanged){
+      if(Date.parse(kstInputToIso(actualStart))>Date.now()+5*60000){setErr("실제 시작 시각은 지금보다 늦을 수 없습니다");return}
+      if(initial.actual_end_at&&Date.parse(kstInputToIso(actualStart))>=Date.parse(initial.actual_end_at)){setErr("실제 시작 시각은 실제 종료 시각보다 앞이어야 합니다");return}
+    }
     setLoading(true);setErr("");
     try{
+      if(actualStartChanged){
+        try{await rpc("aps_set_plan_actual_start",{p_admin_hash:adminHash,p_id:initial.id,p_actual_start_at:kstInputToIso(actualStart)})}
+        catch(e){
+          const m=String(e?.message||e);
+          setErr(/aps_set_plan_actual_start|PGRST202|does not exist|404/.test(m)?"실제 시작 시각을 바꾸려면 Supabase에서 setup_aps_actual_start.sql 을 먼저 실행하세요"
+            :errMsg(e,{start_in_future:"실제 시작 시각은 지금보다 늦을 수 없습니다",start_after_end:"실제 시작 시각은 실제 종료 시각보다 앞이어야 합니다",not_started:"시작하지 않은 계획입니다"}));
+          setLoading(false);return;
+        }
+        invalidateSpeedModel();
+      }
       if(rawRows){
         try{await rpc("aps_set_plan_raw_actuals",{p_admin_hash:adminHash,p_plan_id:initial.id,p_rows:rawRows})}
         catch(e){setErr(isRawActualMissing(e)?RAW_ACTUAL_SQL_MSG:"실제 투입 원육 저장 실패: "+String(e.message||e).slice(0,100));setLoading(false);return}
@@ -2582,6 +2602,16 @@ function PlanForm({adminHash,items,lines,settings,initial,prefill,defaultDate,pl
           <div className="aps-form-label">종료 시각 * <span style={{color:"var(--muted)",fontWeight:400}}>(KST)</span></div>
           <input className="aps-input" type="datetime-local" value={endAt} onChange={e=>{setEndAt(e.target.value);setAutoEnd(false)}}/>
         </div>
+        {canEditActualStart&&<div style={{gridColumn:"1 / -1",padding:"10px 12px",background:"rgba(34,197,94,0.06)",border:"1px solid rgba(34,197,94,0.35)",borderRadius:8}}>
+          <div className="aps-form-label" style={{color:"#22c55e"}}>▶ 실제 시작 시각 <span style={{color:"var(--muted)",fontWeight:400}}>(시작 버튼을 누른 시각 · KST)</span></div>
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            <input className="aps-input" type="datetime-local" value={actualStart} onChange={e=>setActualStart(e.target.value)} style={{flex:"1 1 200px"}}/>
+            {actualStart!==actualStartInit&&<button type="button" className="aps-btn aps-btn-secondary" style={{padding:"4px 10px",fontSize:12}} onClick={()=>setActualStart(actualStartInit)}>되돌리기</button>}
+          </div>
+          <div style={{fontSize:11,color:"var(--muted)",marginTop:4}}>
+            {initial.actual_end_at?<>실제 종료: {fmtKstDateTime(initial.actual_end_at)} · </>:null}시작을 늦게 눌렀다면 실제로 시작한 시각으로 고치세요. 📈 통계 생산 시간에 반영됩니다.
+          </div>
+        </div>}
         {itemId&&<div style={{gridColumn:"1 / -1",fontSize:12,padding:"8px 10px",borderRadius:8,lineHeight:1.5,
           background:rateInfo?"rgba(6,182,212,.08)":"rgba(148,163,184,.08)",border:`1px solid ${rateInfo?"rgba(6,182,212,.35)":"var(--border)"}`}}>
           {rateInfo?<>
