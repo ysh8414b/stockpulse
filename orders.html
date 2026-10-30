@@ -27,52 +27,90 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="shared.js"></script>
   <style>
-    .ol-shell{max-width:1200px;margin:0 auto;padding:20px 32px 60px;box-sizing:border-box}
-    .ol-header{display:flex;align-items:center;justify-content:space-between;padding:20px 32px;max-width:1200px;margin:0 auto;box-sizing:border-box;gap:10px;flex-wrap:wrap}
-    .ol-tabs{display:flex;gap:4px;border-bottom:1px solid var(--div2);margin-bottom:20px;overflow-x:auto}
-    .ol-tab{padding:10px 18px;border:none;background:none;color:var(--muted);font-size:14px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;font-family:inherit;white-space:nowrap}
+    /* ── 발주리스트 전용 색 (사이트 공통 색 위에 덮어씀, APS와 같은 계열) ── */
+    :root{--bg:#0c0f13;--text:#e6e8eb;--muted:#8a93a0;--dim:#6b7380;--dimmer:#5a626d;
+      --card-bg:#12161b;--card-bd:#222932;--card-hbg:#171c22;--card-hbd:#2e3742;
+      --div:#1b2128;--div2:#222932;--row-head:#151a20;--hover:#151a20;
+      --inp-bg:#0f1317;--inp-bd:#2a313a;
+      --ol-accent:#22b8cf;--ol-accent-ink:#0e7490;--ol-accent-soft:rgba(34,184,207,0.12);--ol-ring:rgba(34,184,207,0.55);
+      --ol-shadow:0 18px 50px rgba(0,0,0,.5)}
+    .light{--bg:#f1f2f0;--text:#171b20;--muted:#5d6672;--dim:#8a929c;--dimmer:#9aa1aa;
+      --card-bg:#ffffff;--card-bd:#dcdfe3;--card-hbg:#f7f8f8;--card-hbd:#c6cbd1;
+      --div:#e8eaec;--div2:#dcdfe3;--row-head:#f6f7f6;--hover:#f4f6f6;
+      --inp-bg:#ffffff;--inp-bd:#cfd4d9;
+      --ol-accent:#0e7490;--ol-accent-soft:rgba(14,116,144,0.09);--ol-ring:rgba(14,116,144,0.5);
+      --ol-shadow:0 18px 50px rgba(20,30,40,.18)}
+    body::before,body::after{display:none}
+    body{font-feature-settings:"tnum" 1}
+    :focus-visible{outline:2px solid var(--ol-ring);outline-offset:2px}
+    @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+    .ol-shell{width:100%;max-width:1200px;margin:0 auto;padding:18px 32px 60px;box-sizing:border-box}
+    .ol-header{width:100%;border-bottom:1px solid var(--div2);background:var(--bg)}
+    .ol-header-in{display:flex;align-items:center;gap:16px;max-width:1200px;margin:0 auto;padding:12px 32px;box-sizing:border-box}
+    .ol-brand{display:flex;align-items:baseline;gap:10px;min-width:0}
+    .ol-brand b{font-size:16px;font-weight:800;letter-spacing:-.01em;color:var(--text);white-space:nowrap}
+    .ol-brand span{font-size:13px;color:var(--muted);white-space:nowrap}
+    .ol-back{font-size:12px;color:var(--muted);text-decoration:none;white-space:nowrap;padding:4px 0}
+    .ol-back:hover{color:var(--text)}
+    .ol-header-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+    .ol-icon-btn{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;border:1px solid var(--card-bd);background:var(--card-bg);color:var(--text);cursor:pointer;font-size:15px;line-height:1}
+    .ol-icon-btn:hover{border-color:var(--card-hbd)}
+
+    /* 탭: 하는 일끼리 묶음 (준비 · 발주 · 냉동) */
+    .ol-tabs{position:sticky;top:0;z-index:20;display:flex;align-items:stretch;background:var(--bg);border-bottom:1px solid var(--div2);margin:0 0 18px;overflow-x:auto;scrollbar-width:none}
+    .ol-tabs::-webkit-scrollbar{display:none}
+    .ol-tab-group{display:flex;gap:2px;padding:0 10px;position:relative}
+    .ol-tab-group:first-child{padding-left:0}
+    .ol-tab-group+.ol-tab-group::before{content:"";position:absolute;left:0;top:12px;bottom:12px;width:1px;background:var(--div2)}
+    .ol-tab{padding:12px 12px 11px;border:none;background:none;color:var(--muted);font-size:14px;font-weight:600;cursor:pointer;border-bottom:3px solid transparent;font-family:inherit;white-space:nowrap;transition:color .12s,border-color .12s}
     .ol-tab:hover{color:var(--text)}
-    .ol-tab.active{color:var(--text);border-bottom-color:#06b6d4}
-    .ol-subtabs{display:flex;gap:0;border:1px solid var(--card-bd);border-radius:8px;overflow:hidden;width:max-content;max-width:100%}
-    .ol-subtabs button{padding:8px 16px;border:none;background:var(--card-bg);color:var(--muted);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
-    .ol-subtabs button.on{background:rgba(6,182,212,0.14);color:#06b6d4}
+    .ol-tab.active{color:var(--text);border-bottom-color:var(--ol-accent)}
+    .ol-tab .ic{margin-right:5px}
+    .ol-subtabs{display:inline-flex;gap:2px;padding:3px;border:1px solid var(--card-bd);border-radius:9px;background:var(--card-bg);width:max-content;max-width:100%;box-sizing:border-box}
+    .ol-subtabs button{padding:6px 14px;border:none;border-radius:6px;background:none;color:var(--muted);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap}
+    .ol-subtabs button:hover{color:var(--text)}
+    .ol-subtabs button.on{background:var(--ol-accent-soft);color:var(--ol-accent)}
     .ol-table{width:100%;border-collapse:collapse;font-size:13px}
-    .ol-table th{text-align:left;padding:9px 10px;font-size:12px;font-weight:600;color:var(--muted);border-bottom:1px solid var(--div2);background:var(--card-bg);white-space:nowrap}
+    .ol-table th{text-align:left;padding:9px 10px;font-size:12px;font-weight:600;color:var(--muted);border-bottom:1px solid var(--div2);background:var(--row-head);white-space:nowrap}
     .ol-table td{padding:9px 10px;border-bottom:1px solid var(--div);vertical-align:middle}
     .ol-table tr:hover td{background:var(--hover)}
     .ol-table .right{text-align:right}
     .ol-table .center{text-align:center}
     .ol-scroll{overflow-x:auto}
     .ol-input{width:100%;padding:8px 12px;border-radius:7px;border:1px solid var(--inp-bd);background:var(--inp-bg);color:var(--text);font-size:13px;outline:none;font-family:inherit;box-sizing:border-box}
-    .ol-input:focus{border-color:rgba(6,182,212,0.45)}
+    .ol-input:focus{border-color:var(--ol-accent);box-shadow:0 0 0 3px var(--ol-accent-soft)}
     select.ol-input option{background:var(--bg);color:var(--text)}
-    .ol-btn{padding:8px 16px;border-radius:7px;border:none;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s;white-space:nowrap}
+    .ol-btn{padding:8px 16px;border-radius:7px;border:1px solid transparent;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .12s,border-color .12s,color .12s;white-space:nowrap;line-height:1.2}
     .ol-btn:disabled{opacity:.5;cursor:not-allowed}
-    .ol-btn-primary{background:linear-gradient(135deg,#06b6d4,#8b5cf6);color:#fff}
+    .ol-btn-primary{background:var(--ol-accent-ink);border-color:var(--ol-accent-ink);color:#fff}
+    .ol-btn-primary:hover:not(:disabled){background:#0b6378;border-color:#0b6378}
     .ol-btn-secondary{background:var(--card-bg);border:1px solid var(--card-bd);color:var(--text)}
-    .ol-btn-secondary:hover{background:var(--card-hbg)}
-    .ol-btn-danger{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.25);color:#ef4444}
+    .ol-btn-secondary:hover:not(:disabled){background:var(--card-hbg);border-color:var(--card-hbd)}
+    .ol-btn-danger{background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.3);color:#ef4444}
+    .ol-btn-danger:hover:not(:disabled){background:rgba(239,68,68,0.15)}
     .ol-btn-sm{padding:5px 10px;font-size:12px}
     .ol-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
-    .ol-lastup{font-size:13px;padding:5px 10px;border-radius:8px;background:rgba(6,182,212,.1);border:1px solid rgba(6,182,212,.35);cursor:pointer;white-space:nowrap}
-    .ol-lastup b{color:#06b6d4}
+    .ol-lastup{font-size:13px;padding:5px 10px;border-radius:8px;background:var(--ol-accent-soft);border:1px solid var(--card-bd);cursor:pointer;white-space:nowrap}
+    .ol-lastup b{color:var(--ol-accent)}
     .ol-chips{display:flex;gap:4px;flex-wrap:wrap}
-    .ol-chips button{padding:6px 12px;border-radius:6px;border:1px solid var(--card-bd);background:var(--card-bg);color:var(--muted);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
-    .ol-chips button.on{background:rgba(6,182,212,0.12);border-color:rgba(6,182,212,0.45);color:#06b6d4}
+    .ol-chips button{padding:5px 12px;border-radius:999px;border:1px solid var(--card-bd);background:var(--card-bg);color:var(--muted);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
+    .ol-chips button:hover{color:var(--text);border-color:var(--card-hbd)}
+    .ol-chips button.on{background:var(--ol-accent-soft);border-color:var(--ol-accent);color:var(--ol-accent)}
     .ol-chips button.warn{border-color:rgba(239,68,68,0.4);color:#ef4444}
     .ol-chips button.warn.on{background:rgba(239,68,68,0.12)}
     .ol-pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:var(--card-bg);border:1px solid var(--card-bd);color:var(--muted);margin:1px 3px 1px 0;white-space:nowrap}
     .ol-pill.mixed{background:rgba(245,158,11,0.12);border-color:rgba(245,158,11,0.35);color:#d97706}
     .ol-pill.single{background:rgba(6,182,212,0.1);border-color:rgba(6,182,212,0.35);color:#0891b2}
-    .ol-card{background:var(--card-bg);border:1px solid var(--card-bd);border-radius:10px;padding:16px;margin-bottom:14px}
+    .ol-card{background:var(--card-bg);border:1px solid var(--card-bd);border-radius:12px;padding:16px;margin-bottom:14px}
     .ol-label{font-size:12px;color:var(--muted);margin-bottom:4px;font-weight:500}
     .ol-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:12px}
-    .ol-modal-bg{position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px;box-sizing:border-box}
-    .ol-modal{background:var(--bg);border:1px solid var(--card-bd);border-radius:12px;padding:24px;width:100%;max-width:620px;max-height:90vh;overflow:auto;box-sizing:border-box}
+    .ol-modal-bg{position:fixed;inset:0;background:rgba(5,8,12,0.6);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px;box-sizing:border-box}
+    .ol-modal{background:var(--bg);border:1px solid var(--card-bd);border-radius:12px;box-shadow:var(--ol-shadow);padding:24px;width:100%;max-width:620px;max-height:90vh;overflow:auto;box-sizing:border-box}
     .ol-modal-lg{max-width:820px}
     .ol-modal:has(.ol-mkt-wrap){max-width:1080px}
     .ol-mkt-name{all:unset;cursor:pointer;font-weight:600;word-break:keep-all;border-bottom:1px dashed transparent}
-    .ol-mkt-name:hover{color:#06b6d4;border-bottom-color:#06b6d4}
+    .ol-mkt-name:hover{color:var(--ol-accent);border-bottom-color:var(--ol-accent)}
     .ol-mkt-name .ol-mkt-ic{font-size:11px;opacity:.35}
     .ol-stock-badge{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:9px;font-size:11px;font-weight:700;vertical-align:1px;white-space:nowrap}
     .ol-stock-badge.sold{background:#ef4444;color:#fff}
@@ -87,10 +125,12 @@
     .ol-datelist{position:sticky;top:12px;background:var(--card-bg);border:1px solid var(--card-bd);border-radius:10px;padding:8px;max-height:75vh;overflow:auto}
     .ol-dateitem{display:flex;justify-content:space-between;align-items:center;padding:9px 10px;border-radius:7px;cursor:pointer;font-size:13px;border:1px solid transparent}
     .ol-dateitem:hover{background:var(--hover)}
-    .ol-dateitem.on{border-color:rgba(6,182,212,0.5);background:rgba(6,182,212,0.08);font-weight:700}
+    .ol-dateitem.on{border-color:var(--ol-accent);background:var(--ol-accent-soft);font-weight:700}
     .ol-dateitem .past{color:var(--dimmer)}
     .ol-check{display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--card-bd);border-radius:7px;cursor:pointer;font-size:13px;user-select:none}
-    .ol-check.on{border-color:rgba(6,182,212,0.5);background:rgba(6,182,212,0.08)}
+    .ol-check:hover{border-color:var(--card-hbd)}
+    .ol-check.on{border-color:var(--ol-accent);background:var(--ol-accent-soft)}
+    .ol-check input{accent-color:var(--ol-accent)}
     .ol-swatch{width:24px;height:24px;border-radius:6px;cursor:pointer;border:2px solid transparent;box-sizing:border-box}
     .ol-swatch.on{border-color:var(--text)}
     .ol-sheet{background:#fff;color:#111;border:1px solid #cbd5e1;border-radius:6px;padding:12px;margin-bottom:12px;font-size:12px;overflow-x:auto}
@@ -102,7 +142,7 @@
     .fz-stat{background:var(--card-bg);border:1px solid var(--card-bd);border-radius:10px;padding:12px 14px;min-width:0}
     .fz-stat.clickable{cursor:pointer}
     .fz-stat.clickable:hover{background:var(--card-hbg)}
-    .fz-stat.on{border-color:rgba(6,182,212,.55);background:rgba(6,182,212,.08)}
+    .fz-stat.on{border-color:var(--ol-accent);background:var(--ol-accent-soft)}
     .fz-stat .k{font-size:12px;color:var(--muted);margin-bottom:4px}
     .fz-stat .v{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums}
     .fz-stat .v small{font-size:12px;font-weight:500;color:var(--muted);margin-left:2px}
@@ -120,8 +160,8 @@
     .fz-row.fz-soon td{background:rgba(249,115,22,.05)}
     .fz-actions{display:inline-flex;gap:4px;align-items:center;white-space:nowrap}
     .fz-qty-btn{background:none;border:1px dashed transparent;border-radius:6px;padding:2px 6px;margin:-3px -7px;cursor:pointer;color:inherit;font:inherit}
-    .fz-qty-btn:hover{border-color:#06b6d4;background:rgba(6,182,212,0.08)}
-    .fz-qty-in{width:84px;padding:4px 6px;border-radius:6px;border:1.5px solid #06b6d4;background:var(--bg);color:var(--text);font:inherit;font-size:15px;font-weight:800;text-align:right}
+    .fz-qty-btn:hover{border-color:var(--ol-accent);background:var(--ol-accent-soft)}
+    .fz-qty-in{width:84px;padding:4px 6px;border-radius:6px;border:1.5px solid var(--ol-accent);background:var(--bg);color:var(--text);font:inherit;font-size:15px;font-weight:800;text-align:right}
     .fz-act{width:30px;height:28px;border-radius:6px;border:1px solid var(--card-bd);background:var(--bg);color:var(--text);cursor:pointer;font-size:13px;font-family:inherit;padding:0}
     .fz-act:hover{background:var(--card-hbg)}
     .fz-act.in{color:#16a34a;font-weight:800}
@@ -168,7 +208,10 @@
     }
     @media (max-width:600px){
       .ol-shell{padding:16px 16px 50px}
-      .ol-header{padding:16px}
+      .ol-header-in{padding:10px 16px;gap:10px}
+      .ol-brand span,.ol-back{display:none}
+      .ol-tab{padding:11px 9px 10px;font-size:13px}
+      .ol-tab-group{padding:0 6px}
       .ol-modal{padding:18px}
     }
   </style>
@@ -5141,7 +5184,17 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
 const VALID_TABS=["products","orders","lists","ship","frozen","fzout","extra"];
 function getTabFromHash(){const h=(window.location.hash||"").replace("#","");return VALID_TABS.includes(h)?h:"orders"}
 
+const OL_TAB_GROUPS=[
+  [["products","📦","제품리스트"]],
+  [["orders","📄","발주서"],["lists","🗂","발주리스트"],["extra","➕","추가 발주"],["ship","🚚","출고장"]],
+  [["frozen","❄","냉동재고"],["fzout","📤","냉동 출고"]],
+];
+function olTodayLabel(){
+  const d=new Date(Date.now()+(new Date().getTimezoneOffset()+540)*60000);
+  return `${d.getMonth()+1}월 ${d.getDate()}일 ${"일월화수목금토"[d.getDay()]}요일`;
+}
 function App(){
+  const todayLabel=olTodayLabel();
   const[theme,setTheme]=useState(getStoredTheme());
   // 비밀번호 없이 접근 (RPC는 p_admin_hash를 무시)
   const adminHash="";
@@ -5180,28 +5233,20 @@ function App(){
   const sharedExtra={adminHash,masters,reloadMasters,...extraData,extra:true};
 
   return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column"}}>
-    <header className="ol-header">
-      <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-        <a href="aps.html" style={{fontSize:14,fontWeight:700,color:"var(--text)",textDecoration:"none"}}>← APS</a>
-        <span style={{fontSize:13,color:"var(--muted)"}}>|</span>
-        <span style={{fontSize:18}}>🚚</span>
-        <span style={{fontWeight:700,fontSize:15}}>자동 리스트 생성기</span>
+    <header className="ol-header"><div className="ol-header-in">
+      <div className="ol-brand"><b>자동 리스트 생성기</b><span>{todayLabel}</span></div>
+      <div className="ol-header-right">
+        <a className="ol-back" href="aps.html">APS 생산계획 →</a>
+        <button className="ol-icon-btn" onClick={toggleTheme} title={theme==="dark"?"밝은 화면":"어두운 화면"}>{theme==="dark"?"☀":"☾"}</button>
       </div>
-      <div style={{display:"flex",alignItems:"center",gap:10}}>
-        <button onClick={toggleTheme} style={{background:"none",border:"none",fontSize:20,cursor:"pointer"}}>{theme==="dark"?"☀️":"🌙"}</button>
-      </div>
-    </header>
-    <div className="ol-shell" style={{flex:1,width:"100%"}}>
+    </div></header>
+    <div className="ol-shell" style={{flex:1}}>
       {<>
-        <div className="ol-tabs">
-          <button className={"ol-tab"+(tab==="products"?" active":"")} onClick={()=>setTab("products")}>📦 제품리스트</button>
-          <button className={"ol-tab"+(tab==="orders"?" active":"")} onClick={()=>setTab("orders")}>📄 발주서</button>
-          <button className={"ol-tab"+(tab==="lists"?" active":"")} onClick={()=>setTab("lists")}>🗂 발주리스트</button>
-          <button className={"ol-tab"+(tab==="ship"?" active":"")} onClick={()=>setTab("ship")}>🚚 출고장</button>
-          <button className={"ol-tab"+(tab==="frozen"?" active":"")} onClick={()=>setTab("frozen")}>❄ 냉동재고</button>
-          <button className={"ol-tab"+(tab==="fzout"?" active":"")} onClick={()=>setTab("fzout")}>📤 냉동 출고</button>
-          <button className={"ol-tab"+(tab==="extra"?" active":"")} onClick={()=>setTab("extra")}>➕ 추가 발주</button>
-        </div>
+        <nav className="ol-tabs">
+          {OL_TAB_GROUPS.map((g,gi)=><div key={gi} className="ol-tab-group">
+            {g.map(([k,ic,label])=><button key={k} className={"ol-tab"+(tab===k?" active":"")} onClick={()=>setTab(k)}><span className="ic">{ic}</span>{label}</button>)}
+          </div>)}
+        </nav>
         {mastersErr&&<div className="ol-warn">{mastersErr}</div>}
         {tab==="products"&&<ProductsTab {...shared}/>}
         {tab==="orders"&&<OrdersTab {...shared}/>}
