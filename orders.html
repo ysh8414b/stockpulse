@@ -3720,12 +3720,15 @@ async function saveShipPng(el,fileName){
 // 출고장 A4 세로 — 794×1123px(96dpi) 종이, 여백 38px(10mm), 내용 폭 718px
 const SHIP_A4={W:794,H:1123,M:38,FOOT:22,S:3};
 const SHIP_PRINT_W=SHIP_A4.W-SHIP_A4.M*2;
+// A4 가로 — 1123×794px, 내용 폭 1047px (냉동 출고)
+const SHIP_PRINT_W_LAND=SHIP_A4.H-SHIP_A4.M*2;
 // 사본을 한 번 캡처한 뒤 data-shipcut 위치(섹션·층 카드·줄 경계)에서 잘라 A4 쪽들로 나눔
 // 조금 넘치는 정도(1.2쪽 이하)는 나누지 않고 한 쪽에 축소해서 맞춤
 // trim=true면 내용이 끝난 곳(+아래 여백)에서 종이를 잘라 빈 아래 공간을 없앰 (폭은 A4 그대로)
-async function shipA4Pages(el,{trim=false}={}){
+async function shipA4Pages(el,{trim=false,land=false}={}){
   if(document.fonts&&document.fonts.ready)await document.fonts.ready;
-  const{W,H,M,FOOT,S}=SHIP_A4;
+  const{M,FOOT,S}=SHIP_A4;
+  const W=land?SHIP_A4.H:SHIP_A4.W,H=land?SHIP_A4.W:SHIP_A4.H,PW=W-M*2;
   const src=await html2canvas(el,{scale:S,backgroundColor:"#ffffff",useCORS:true});
   const top=el.getBoundingClientRect().top;
   const total=el.scrollHeight;
@@ -3749,7 +3752,7 @@ async function shipA4Pages(el,{trim=false}={}){
     const pg=document.createElement("canvas");pg.width=W*S;pg.height=pageH*S;
     const ctx=pg.getContext("2d");
     ctx.fillStyle="#ffffff";ctx.fillRect(0,0,pg.width,pg.height);
-    const dw=SHIP_PRINT_W*k,dx=M+(SHIP_PRINT_W-dw)/2;
+    const dw=PW*k,dx=M+(PW-dw)/2;
     ctx.drawImage(src,0,a*S,src.width,h*S,dx*S,M*S,dw*S,h*k*S);
     if(multi){
       ctx.fillStyle="#6b7280";ctx.font=`${11*S}px Pretendard, sans-serif`;ctx.textAlign="center";
@@ -3759,10 +3762,11 @@ async function shipA4Pages(el,{trim=false}={}){
   });
 }
 const downloadCanvas=(c,name)=>{const a=document.createElement("a");a.download=name+".png";a.href=c.toDataURL("image/png");a.click()};
-function shipPdf(pages,name){
+function shipPdf(pages,name,land=false){
   const{jsPDF}=window.jspdf;
-  const pdf=new jsPDF({orientation:"portrait",unit:"mm",format:"a4"});
-  pages.forEach((c,i)=>{if(i)pdf.addPage();pdf.addImage(c.toDataURL("image/jpeg",0.95),"JPEG",0,0,210,297)});
+  const pdf=new jsPDF({orientation:land?"landscape":"portrait",unit:"mm",format:"a4"});
+  const pw=land?297:210,ph=land?210:297;
+  pages.forEach((c,i)=>{if(i)pdf.addPage();pdf.addImage(c.toDataURL("image/jpeg",0.95),"JPEG",0,0,pw,ph)});
   pdf.save(name+".pdf");
 }
 
@@ -5390,12 +5394,12 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
       const jobs=perFloor?selGroups.map(g=>({el:floorRefs.current[g.floor],name:`냉동출고_${selDate}${vendor?"_"+safe(vendor):""}_${safe(g.floor)}`})):[{el:printRef.current,name}];
       const all=[];let count=0;
       for(const j of jobs){
-        const pages=await shipA4Pages(j.el,{trim:kind==="png"});
+        const pages=await shipA4Pages(j.el,{trim:kind==="png",land:true});
         if(kind==="pdf"){all.push(...pages);continue}
         for(let i=0;i<pages.length;i++){downloadCanvas(pages[i],pages.length>1?`${j.name}_${i+1}쪽`:j.name);count++;await new Promise(r=>setTimeout(r,500))}
       }
-      if(kind==="pdf"){shipPdf(all,name);count=all.length}
-      setMsg(`${kind==="pdf"?"PDF":"이미지"} 저장했습니다 (A4 ${count}${kind==="pdf"?"쪽":"장"})`);
+      if(kind==="pdf"){shipPdf(all,name,true);count=all.length}
+      setMsg(`${kind==="pdf"?"PDF":"이미지"} 저장했습니다 (A4 가로 ${count}${kind==="pdf"?"쪽":"장"})`);
     }catch(e){setMsg("저장 실패: "+errMsg(e))}
     setSaving("");
   };
@@ -5435,7 +5439,7 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
             <button className={view==="product"?"on":""} onClick={()=>setView("product")}>📦 제품별</button>
             <button className={view==="floor"?"on":""} onClick={()=>setView("floor")}>🏭 생산지점별</button>
           </div>
-          <button className="ol-btn ol-btn-secondary" disabled={!plan.length||!!saving||(view==="floor"&&!selGroups.length)} onClick={()=>save("png")}>{saving==="png"?"저장 중…":"🖼 이미지 (A4)"}</button>
+          <button className="ol-btn ol-btn-secondary" disabled={!plan.length||!!saving||(view==="floor"&&!selGroups.length)} onClick={()=>save("png")}>{saving==="png"?"저장 중…":"🖼 이미지 (A4 가로)"}</button>
           <button className="ol-btn ol-btn-secondary" disabled={!plan.length||!!saving||(view==="floor"&&!selGroups.length)} onClick={()=>save("pdf")}>{saving==="pdf"?"저장 중…":"📄 PDF"}</button>
           {view==="floor"&&selGroups.length>1&&<button className="ol-btn ol-btn-secondary" disabled={!!saving} onClick={()=>save("png",true)} title="생산지점마다 이미지 한 장씩">{saving==="png-floor"?"저장 중…":`🖼 지점별로 저장 (${selGroups.length}장)`}</button>}
           <button className="ol-btn ol-btn-secondary" disabled={!plan.length} onClick={()=>downloadFzOutXlsx(plan,selDate,prefix,vendor,onlyOut)}>📥 엑셀</button>
@@ -5493,7 +5497,7 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
           {view==="product"
             ?<div className="ol-scroll"><FzOutSheet plan={plan} date={selDate} prefix={prefix} vendor={vendor} onlyOut={onlyOut} locColor={locColor} outCell={outCell} onHide={hideItem} traceOf={traceOf}/></div>
             :<div className="ol-scroll"><FzOutFloorSheet groups={selGroups} date={selDate} prefix={prefix} vendor={vendor} onlyOut={onlyOut} locColor={locColor} outCell={outCell} onHide={hideItem} traceOf={traceOf}/></div>}
-          <div style={{position:"fixed",left:-20000,top:0,width:SHIP_PRINT_W,background:"#fff"}} aria-hidden="true">
+          <div style={{position:"fixed",left:-20000,top:0,width:SHIP_PRINT_W_LAND,background:"#fff"}} aria-hidden="true">
             {view==="product"
               ?<FzOutSheet plan={plan} date={selDate} prefix={prefix} vendor={vendor} onlyOut={onlyOut} locColor={locColor} print refCb={el=>{printRef.current=el}}/>
               :<>
