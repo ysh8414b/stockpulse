@@ -4509,7 +4509,7 @@ function FrozenTraceManager({adminHash,traces,traceErrMsg,reload,materials,lots,
       <tbody>{shown.map(t=>{const users=usersOf(t);const linked=(t.material_id!=null&&t.material_id!=="")||materials.some(m=>m.name.trim()===String(t.material_name).trim());
         return <tr key={t.id} className={"fz-row fz-"+fzStatus(t.expiry)} style={dupIds.has(t.id)?{background:"rgba(239,68,68,.12)"}:undefined}>
         <td><div style={{fontWeight:700}}>{t.material_name}</div>{dupIds.has(t.id)&&<div style={{fontSize:11,color:"#ef4444",fontWeight:700}}>⛔ 같은 소비기한 중복</div>}{!linked&&<div style={{fontSize:11,color:"#f97316"}}>APS 원자재 아님</div>}{t.memo&&<div style={{fontSize:11,color:"var(--muted)"}}>{t.memo}</div>}</td>
-        <td>{t.expiry?<ExpiryBadge exp={t.expiry}/>:dt(null)}</td>
+        <td style={{whiteSpace:"nowrap",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{dt(t.expiry)}</td>
         <td style={{fontFamily:"monospace",fontWeight:700,whiteSpace:"nowrap"}}>{t.trace_no||<span style={{color:"var(--dimmer)"}}>–</span>}</td>
         {TRACE_DATES.map(([k])=><td key={k} style={{whiteSpace:"nowrap",fontSize:13}}>{dt(t[k])}</td>)}
         <td style={{fontSize:12,maxWidth:260}}>{users.length?<span title={users.join("\n")}>{users.slice(0,2).join(", ")}{users.length>2&&` 외 ${users.length-2}개`}</span>:<span style={{color:"var(--dimmer)"}}>재고 없음</span>}</td>
