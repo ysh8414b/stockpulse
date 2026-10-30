@@ -4701,7 +4701,7 @@ function FzOutTable({plan,onlyOut,locColor,print,outCell,flush,onHide}){
           </td>,
           <td key="q" rowSpan={n} style={{...cell,...top,...bg,borderBottom:"none",borderRight:"1px solid #e5e7eb"}}>
             {/* 이미지 저장(html2canvas)에서도 글씨가 보이도록 flex 대신 block 쌓기 */}
-            <div style={{display:"inline-block",minWidth:54,padding:"4px 8px",border:`2px solid ${bad?"#dc2626":"transparent"}`,borderRadius:8,background:bad?"#fff":"transparent",textAlign:"center",verticalAlign:"middle",boxSizing:"border-box"}}>
+            <div style={{display:"inline-block",minWidth:54,padding:"4px 8px",border:`2px solid ${bad?"#dc2626":"transparent"}`,borderRadius:8,textAlign:"center",verticalAlign:"middle",boxSizing:"border-box"}}>
               <div style={{fontSize:20,fontWeight:900,lineHeight:"24px",color:bad||it.partial?"#dc2626":"#111"}}>{fmtBoxes(it.boxes)}</div>
               {bad&&<div style={{fontSize:11,fontWeight:800,lineHeight:"15px",color:"#dc2626",whiteSpace:"nowrap"}}>부족 {fmtBoxes(it.short)}</div>}
               {it.over>0&&<div style={{fontSize:11,fontWeight:800,lineHeight:"15px",color:"#7c3aed",whiteSpace:"nowrap"}}>초과 {fmtBoxes(it.over)}</div>}
