@@ -4068,7 +4068,7 @@ function ExpiryBadge({exp}){
   </span>;
 }
 
-function FrozenLotForm({adminHash,masters,initial,locations,lots,onSaved,onCancel}){
+function FrozenLotForm({adminHash,masters,initial,locations,lots,traces,matInfo,onSaved,onCancel}){
   const isEdit=!!initial?.id;
   const products=useMemo(()=>[...masters.products].sort((a,b)=>(storageOf(a)==="frozen"?0:1)-(storageOf(b)==="frozen"?0:1)||a.name.localeCompare(b.name,"ko",{numeric:true})),[masters.products]);
   const label=p=>`${shipNameOf(p)} (${p.code})`;
@@ -4104,6 +4104,18 @@ function FrozenLotForm({adminHash,masters,initial,locations,lots,onSaved,onCance
     }
     return [...m.values()].sort((a,b)=>a.d.localeCompare(b.d));
   },[lots,matched,prodText,location,initial]);
+  // 이 제품의 원육(APS BOM)으로 🏷 이력번호에 저장된 소비기한
+  const traceInfo=matched&&matInfo?matInfo(matched.code):null;
+  const traceOpts=useMemo(()=>{
+    if(!traceInfo?.mats?.length||!traces?.length)return [];
+    const m=new Map();
+    for(const t of traces){
+      const d=ymd10(t.expiry);if(!d)continue;
+      const mat=traceInfo.mats.find(x=>traceMatchMat(t,x));if(!mat)continue;
+      if(!m.has(d))m.set(d,{d,items:[]});m.get(d).items.push({mat:mat.name,no:t.trace_no});
+    }
+    return [...m.values()].sort((a,b)=>a.d.localeCompare(b.d));
+  },[traceInfo,traces]);
   const save=async()=>{
     const name=matched?matched.name:prodText.trim();
     const q=Number(qty);
@@ -4144,6 +4156,16 @@ function FrozenLotForm({adminHash,masters,initial,locations,lots,onSaved,onCance
           title={o.locs.join(", ")} onClick={()=>setExpiry(expiry===o.d?"":o.d)}>
           {o.d.replace(/-/g,".")} <span style={{opacity:.75,fontWeight:400}}>· {o.qty}{o.unit}{o.here?" · 이 위치":""}</span></button>)}
       </div></div>}
+    {matched&&traceInfo&&<div style={{margin:"-4px 0 12px"}}>
+      <div style={{fontSize:11,color:"var(--muted)",marginBottom:5}}>🏷 이력번호에 저장된 소비기한 · 같은 원육({traceInfo.mats.map(x=>x.name).join(", ")||"없음"}) — 누르면 선택</div>
+      {traceInfo.state==="nolink"?<div style={{fontSize:11,color:"var(--dimmer)"}}>제품리스트에서 🔗 APS 품목을 연결하면 원육의 이력번호 소비기한을 불러옵니다</div>
+       :!traceOpts.length?<div style={{fontSize:11,color:"var(--dimmer)"}}>이 원육으로 저장된 이력번호가 없습니다</div>
+       :<div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+        {traceOpts.map(o=><button key={o.d} type="button" className={"ol-btn ol-btn-sm "+(expiry===o.d?"ol-btn-primary":"ol-btn-secondary")}
+          title={o.items.map(x=>x.mat+": "+(x.no||"(번호 없음)")).join(" / ")} onClick={()=>setExpiry(expiry===o.d?"":o.d)}>
+          {o.d.replace(/-/g,".")} <span style={{opacity:.75,fontWeight:400,fontFamily:"monospace"}}>· {o.items.map(x=>x.no||"–").join(", ")}</span></button>)}
+      </div>}
+    </div>}
     <div className="ol-label">메모</div>
     <input className="ol-input" value={memo} onChange={e=>setMemo(e.target.value)} placeholder="선택"/>
     {!isEdit&&<div style={{fontSize:11,color:"var(--muted)",marginTop:8}}>같은 제품·소비기한·위치 재고가 이미 있으면 수량이 합쳐집니다</div>}
@@ -4484,6 +4506,21 @@ function FrozenTraceManager({adminHash,traces,traceErrMsg,reload,materials,lots,
     return traces.filter(t=>!s||[t.material_name,t.trace_no,t.memo,ymd10(t.expiry)].some(x=>String(x||"").toLowerCase().includes(s)));
   },[traces,q]);
   const dupIds=useMemo(()=>new Set(traces.filter(t=>traces.some(u=>u.id!==t.id&&sameTraceSlot(t,u))).map(t=>t.id)),[traces]);
+  // 원육별 묶음 (접었다 펼치기, 펼친 원육은 브라우저에 기억)
+  const searching=!!q.trim();
+  const[open,setOpenRaw]=useState(()=>{try{return new Set(JSON.parse(lsGet("ol-trace-open","[]")))}catch(e){return new Set()}});
+  const setOpen=v=>{setOpenRaw(v);lsSet("ol-trace-open",JSON.stringify([...v]))};
+  const toggle=k=>{const n=new Set(open);n.has(k)?n.delete(k):n.add(k);setOpen(n)};
+  const groups=useMemo(()=>{
+    const m=new Map();
+    for(const t of shown){const k=String(t.material_name||"").trim();if(!m.has(k))m.set(k,{key:k,name:k,items:[]});m.get(k).items.push(t)}
+    return [...m.values()].map(g=>{
+      const items=g.items.sort((a,b)=>String(a.expiry||"9999").localeCompare(String(b.expiry||"9999")));
+      const users=new Map(items.map(t=>[t.id,usersOf(t)]));
+      const linked=items.some(t=>t.material_id!=null&&t.material_id!=="")||materials.some(x=>x.name.trim()===g.name);
+      return {...g,items,users,linked,inStock:items.filter(t=>users.get(t.id).length).length};
+    }).sort((a,b)=>a.name.localeCompare(b.name,"ko",{numeric:true}));
+  },[shown,lots,matInfo,materials]);
   const del=async t=>{try{await rpc("ol_delete_meat_trace",{p_admin_hash:adminHash,p_id:t.id});setDelId(null);setDelErr("");reload()}catch(e){setDelErr(traceErr(e))}};
   const dt=d=>d?fzExpText(d):<span style={{color:"var(--dimmer)"}}>–</span>;
   return <>
@@ -4504,22 +4541,50 @@ function FrozenTraceManager({adminHash,traces,traceErrMsg,reload,materials,lots,
     </div>}
     {!traces.length?(!traceErrMsg&&<Empty emoji="🏷" text="등록된 이력번호가 없습니다. '＋ 이력번호 추가'로 시작하세요."/>):
      !shown.length?<Empty emoji="🔍" text="조건에 맞는 이력번호가 없습니다"/>:
-     <div className="fz-group"><div className="ol-scroll"><table className="ol-table fz-table">
-      <thead><tr><th>원육명</th><th>소비기한</th><th>이력번호</th>{TRACE_DATES.map(([k,l])=><th key={k}>{l}</th>)}<th>사용 제품</th><th></th></tr></thead>
-      <tbody>{shown.map(t=>{const users=usersOf(t);const linked=(t.material_id!=null&&t.material_id!=="")||materials.some(m=>m.name.trim()===String(t.material_name).trim());
-        return <tr key={t.id} className={"fz-row fz-"+fzStatus(t.expiry)} style={dupIds.has(t.id)?{background:"rgba(239,68,68,.12)"}:undefined}>
-        <td><div style={{fontWeight:700}}>{t.material_name}</div>{dupIds.has(t.id)&&<div style={{fontSize:11,color:"#ef4444",fontWeight:700}}>⛔ 같은 소비기한 중복</div>}{!linked&&<div style={{fontSize:11,color:"#f97316"}}>APS 원자재 아님</div>}{t.memo&&<div style={{fontSize:11,color:"var(--muted)"}}>{t.memo}</div>}</td>
-        <td style={{whiteSpace:"nowrap",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{dt(t.expiry)}</td>
-        <td style={{fontFamily:"monospace",fontWeight:700,whiteSpace:"nowrap"}}>{t.trace_no||<span style={{color:"var(--dimmer)"}}>–</span>}</td>
-        {TRACE_DATES.map(([k])=><td key={k} style={{whiteSpace:"nowrap",fontSize:13}}>{dt(t[k])}</td>)}
-        <td style={{fontSize:12,maxWidth:260}}>{users.length?<span title={users.join("\n")}>{users.slice(0,2).join(", ")}{users.length>2&&` 외 ${users.length-2}개`}</span>:<span style={{color:"var(--dimmer)"}}>재고 없음</span>}</td>
-        <td className="right">{delId===t.id
-          ?<span className="fz-actions"><span style={{fontSize:12,color:"#ef4444",fontWeight:600}}>삭제할까요?</span>
-            <button className="ol-btn ol-btn-danger ol-btn-sm" onClick={()=>del(t)}>삭제</button>
-            <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setDelId(null)}>취소</button></span>
-          :<span className="fz-actions"><button className="fz-act" title="수정" onClick={()=>onEdit(t)}>✏</button><button className="fz-act" title="삭제" onClick={()=>setDelId(t.id)}>🗑</button></span>}</td>
-      </tr>})}</tbody>
-     </table></div></div>}
+     <>
+     <div style={{display:"flex",gap:6,marginBottom:8,alignItems:"center"}}>
+       <span style={{fontSize:12,color:"var(--muted)"}}>원육 {groups.length}종 · 이력번호 {shown.length}건{searching&&" · 검색 결과는 모두 펼침"}</span>
+       {!searching&&<span style={{marginLeft:"auto",display:"flex",gap:6}}>
+         <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setOpen(new Set(groups.map(g=>g.key)))}>모두 펼치기</button>
+         <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setOpen(new Set())}>모두 접기</button></span>}
+     </div>
+     <div className="fz-groups">{groups.map(g=>{const isOpen=searching||open.has(g.key);const dupN=g.items.filter(t=>dupIds.has(t.id)).length;
+      return <div key={g.key} className="fz-group">
+       <div className="fz-group-hd fz-trace-hd" onClick={()=>!searching&&toggle(g.key)} style={{cursor:searching?"default":"pointer",borderLeftColor:dupN?"#ef4444":"var(--ol-accent)"}}>
+         <div style={{minWidth:0,display:"flex",alignItems:"center",gap:10}}>
+           <span style={{fontSize:12,color:"var(--muted)",width:12,display:"inline-block",transform:isOpen?"rotate(90deg)":"none",transition:"transform .15s"}}>▶</span>
+           <div style={{minWidth:0}}>
+             <div className="fz-group-name">{g.name}</div>
+             <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>
+               소비기한 {fzExpText(g.items[0].expiry)}{g.items.length>1&&<> ~ {fzExpText(g.items[g.items.length-1].expiry)}</>}
+               {g.inStock>0&&<> · 재고 있는 기한 {g.inStock}건</>}
+               {!g.linked&&<span style={{color:"#f97316"}}> · APS 원자재 아님</span>}
+               {dupN>0&&<span style={{color:"#ef4444",fontWeight:700}}> · ⛔ 중복 {dupN}건</span>}
+             </div>
+           </div>
+         </div>
+         <div style={{display:"flex",alignItems:"center",gap:8}}>
+           <div className="fz-group-total">{g.items.length}<span style={{fontSize:"0.7em",fontWeight:500,color:"var(--muted)",marginLeft:2}}>건</span></div>
+           <button className="ol-btn ol-btn-secondary ol-btn-sm" title="이 원육 이력번호 추가" onClick={e=>{e.stopPropagation();onEdit({material_name:g.name})}}>＋</button>
+         </div>
+       </div>
+       {isOpen&&<div className="ol-scroll"><table className="ol-table fz-table">
+        <thead><tr><th>소비기한</th><th>이력번호</th>{TRACE_DATES.map(([k,l])=><th key={k}>{l}</th>)}<th>사용 제품</th><th></th></tr></thead>
+        <tbody>{g.items.map(t=>{const users=g.users.get(t.id);
+         return <tr key={t.id} className={"fz-row fz-"+fzStatus(t.expiry)} style={dupIds.has(t.id)?{background:"rgba(239,68,68,.12)"}:undefined}>
+          <td style={{whiteSpace:"nowrap",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{dt(t.expiry)}{dupIds.has(t.id)&&<div style={{fontSize:11,color:"#ef4444",fontWeight:700}}>⛔ 중복</div>}</td>
+          <td><div style={{fontFamily:"monospace",fontWeight:700,whiteSpace:"nowrap"}}>{t.trace_no||<span style={{color:"var(--dimmer)"}}>–</span>}</div>{t.memo&&<div style={{fontSize:11,color:"var(--muted)"}}>{t.memo}</div>}</td>
+          {TRACE_DATES.map(([k])=><td key={k} style={{whiteSpace:"nowrap",fontSize:13}}>{dt(t[k])}</td>)}
+          <td style={{fontSize:12,maxWidth:280,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{users.length?<span title={users.join("\n")}>{users.slice(0,2).join(", ")}{users.length>2&&` 외 ${users.length-2}개`}</span>:<span style={{color:"var(--dimmer)"}}>재고 없음</span>}</td>
+          <td className="right">{delId===t.id
+            ?<span className="fz-actions"><span style={{fontSize:12,color:"#ef4444",fontWeight:600}}>삭제할까요?</span>
+              <button className="ol-btn ol-btn-danger ol-btn-sm" onClick={()=>del(t)}>삭제</button>
+              <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setDelId(null)}>취소</button></span>
+            :<span className="fz-actions"><button className="fz-act" title="수정" onClick={()=>onEdit(t)}>✏</button><button className="fz-act" title="삭제" onClick={()=>setDelId(t.id)}>🗑</button></span>}</td>
+         </tr>})}</tbody>
+       </table></div>}
+      </div>})}</div>
+     </>}
   </>;
 }
 
@@ -4833,7 +4898,7 @@ function FrozenTab({adminHash,masters}){
 
     {shots&&<Modal onClose={closeShots}><FrozenShotsSheet shots={shots} onClose={closeShots}/></Modal>}
     {printing&&<div style={{position:"fixed",left:-20000,top:0}}><div ref={printRef}><FrozenPrintPages view={view} byProduct={byProduct} byLocation={byLocation} byExpiry={byExpiry} lots={filtered} filterText={filterText} paged={printing==="pages"}/></div></div>}
-    {editing&&<Modal onClose={()=>setEditing(null)}><FrozenLotForm adminHash={adminHash} masters={masters} initial={editing} locations={locations} lots={lots} onCancel={()=>setEditing(null)} onSaved={()=>{setEditing(null);load()}}/></Modal>}
+    {editing&&<Modal onClose={()=>setEditing(null)}><FrozenLotForm adminHash={adminHash} masters={masters} initial={editing} locations={locations} lots={lots} traces={traces} matInfo={matInfo} onCancel={()=>setEditing(null)} onSaved={()=>{setEditing(null);load()}}/></Modal>}
     {traceForm&&<Modal onClose={()=>setTraceForm(null)}><MeatTraceForm key={traceForm.id||"new"} adminHash={adminHash} initial={traceForm} materials={materials} traces={traces} expOptsFor={expOptsFor} onSwitch={setTraceForm}
       onCancel={()=>setTraceForm(null)} onSaved={()=>{setTraceForm(null);loadTraces()}}/></Modal>}
     {action&&<Modal onClose={()=>setAction(null)}><FrozenActionForm adminHash={adminHash} type={action.type} lot={action.lot} locations={locations} onCancel={()=>setAction(null)} onDone={()=>{setAction(null);load()}}/></Modal>}
