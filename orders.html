@@ -156,6 +156,14 @@
     .fz-qty{font-size:15px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
     .fz-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;white-space:nowrap}
     .fz-loc{white-space:nowrap;font-size:13px}
+    .fz-trace-btn{background:none;border:1px dashed transparent;border-radius:6px;padding:2px 6px;margin:-3px -7px;cursor:pointer;color:inherit;font:inherit;text-align:left;min-width:80px}
+    .fz-trace-btn:hover{border-color:var(--ol-accent);background:var(--ol-accent-soft)}
+    .fz-trace-line{font-size:12px;line-height:1.5;white-space:nowrap}
+    .fz-trace-line .k{color:var(--muted);margin-right:6px;font-size:11px}
+    .fz-trace-line .v{font-family:monospace;font-weight:600}
+    .fz-trace-edit{display:flex;flex-direction:column;gap:6px;min-width:200px}
+    .fz-trace-edit label{display:flex;flex-direction:column;gap:2px;font-size:11px;color:var(--muted)}
+    .fz-trace-edit .ol-input{padding:5px 8px;font-size:13px;font-family:monospace}
     .fz-row.fz-expired td{background:rgba(239,68,68,.07)}
     .fz-row.fz-soon td{background:rgba(249,115,22,.05)}
     .fz-actions{display:inline-flex;gap:4px;align-items:center;white-space:nowrap}
@@ -747,6 +755,16 @@ function useApsItems(){
   const[st,setSt]=useState(_apsItemsCache);
   useEffect(()=>{let alive=true;loadApsItems().then(r=>{if(alive)setSt(r)});return()=>{alive=false}},[]);
   return st; // null = 불러오는 중
+}
+// APS 품목별 사용 원육(BOM 원자재) — 냉동재고 원육 표시·이력번호 입력용
+let _apsMatsCache=null,_apsMatsPromise=null;
+function loadApsMaterials(force){
+  if(_apsMatsCache&&!force)return Promise.resolve(_apsMatsCache);
+  if(_apsMatsPromise&&!force)return _apsMatsPromise;
+  _apsMatsPromise=rpc("ol_list_aps_materials",{p_admin_hash:""})
+    .then(d=>{const map=new Map();for(const r of(Array.isArray(d)?d:[]))map.set(Number(r.item_id),r.materials||[]);_apsMatsCache={map,missing:false};return _apsMatsCache})
+    .catch(e=>{const missing=/function|PGRST202|schema cache/i.test(String(e?.message||e));_apsMatsPromise=null;return {map:new Map(),missing,error:missing?"":errMsg(e)}});
+  return _apsMatsPromise;
 }
 // 이름 비교용: 괄호 안·중량·기호·공백 제거
 function apsNameKey(s){
@@ -4350,6 +4368,51 @@ function FrozenPrintPages({view,byProduct,byLocation,byExpiry,lots,filterText,pa
   </div>)}</>;
 }
 
+// 🥩 원육 이름 줄 (APS BOM 기준)
+function FzMatLine({info}){
+  if(!info)return null;
+  if(info.state==="nolink")return <span style={{fontSize:11,color:"var(--dimmer)"}}>🔗 APS 미연결</span>;
+  if(info.state==="nobom")return <span style={{fontSize:11,color:"var(--dimmer)"}}>🥩 BOM 원육 없음</span>;
+  return <span style={{fontSize:11,color:"#b45309"}}>🥩 {info.mats.map(m=>m.name).join(" · ")}</span>;
+}
+// 이력번호 칸 — 원육마다 하나씩 (원육 정보가 없으면 한 칸). 화면 확인용, 이미지·엑셀에는 안 나옴
+function FrozenTraceCell({adminHash,lot,info,onSaved,onError}){
+  const[edit,setEdit]=useState(null); // {key: 값}
+  const[saving,setSaving]=useState(false);
+  const traces=lot.trace_nos&&typeof lot.trace_nos==="object"?lot.trace_nos:{};
+  const mats=info?.mats||[];
+  // 입력칸 목록: BOM 원육 + 예전에 적었지만 지금 BOM에 없는 키
+  const fields=useMemo(()=>{
+    const f=mats.map(m=>({key:String(m.id),label:m.name}));
+    if(!f.length)f.push({key:"_",label:"이력번호"});
+    for(const k of Object.keys(traces))if(!f.some(x=>x.key===k))f.push({key:k,label:k==="_"?"이력번호":"(BOM에서 빠진 원육)",old:true});
+    return f;
+  },[mats,traces]);
+  const filled=fields.filter(f=>String(traces[f.key]||"").trim());
+  const save=async()=>{
+    setSaving(true);
+    try{await rpc("ol_set_frozen_trace",{p_admin_hash:adminHash,p_id:lot.id,p_traces:edit});setEdit(null);onSaved()}
+    catch(e){const s=String(e?.message||e);onError(/function|PGRST202|schema cache/i.test(s)?"이력번호를 저장하려면 Supabase SQL Editor에서 setup_orders_trace.sql 을 1회 실행해 주세요.":fzErr(e))}
+    setSaving(false);
+  };
+  if(edit)return <div className="fz-trace-edit" onKeyDown={e=>{if(e.key==="Escape")setEdit(null);if(e.key==="Enter"){e.preventDefault();save()}}}>
+    {fields.map((f,i)=><label key={f.key}>
+      <span style={f.old?{color:"#ef4444"}:undefined}>{f.label}</span>
+      <input className="ol-input" autoFocus={i===0} value={edit[f.key]||""} placeholder="이력번호" onChange={e=>setEdit({...edit,[f.key]:e.target.value})}/>
+    </label>)}
+    <div style={{display:"flex",gap:6}}>
+      <button className="ol-btn ol-btn-primary ol-btn-sm" disabled={saving} onClick={save}>{saving?"저장 중…":"저장"}</button>
+      <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setEdit(null)}>취소</button>
+    </div>
+  </div>;
+  return <button className="fz-trace-btn" title="눌러서 이력번호 입력·수정" onClick={()=>setEdit(Object.fromEntries(fields.map(f=>[f.key,traces[f.key]||""])))}>
+    {filled.length?filled.map(f=><div key={f.key} className="fz-trace-line">
+      {fields.length>1&&<span className="k">{f.label}</span>}<span className="v">{traces[f.key]}</span></div>)
+     :<span style={{color:"var(--dimmer)",fontSize:12}}>＋ 이력번호</span>}
+    {filled.length>0&&filled.length<fields.length&&<div style={{fontSize:11,color:"#f97316"}}>{fields.length-filled.length}개 원육 미입력</div>}
+  </button>;
+}
+
 function FrozenTab({adminHash,masters}){
   const[rawLots,setRawLots]=useState([]);
   const[rawTxns,setRawTxns]=useState([]);
@@ -4376,8 +4439,18 @@ function FrozenTab({adminHash,masters}){
     setLoading(false);
   },[adminHash]);
   useEffect(()=>{load()},[load]);
+  const[apsMats,setApsMats]=useState(_apsMatsCache);
+  useEffect(()=>{let alive=true;loadApsMaterials().then(r=>{if(alive)setApsMats(r)});return()=>{alive=false}},[]);
 
   const prodMap=useMemo(()=>new Map(masters.products.map(p=>[p.code,p])),[masters.products]);
+  // 제품코드 → 사용 원육 (제품리스트 🔗 APS 품목 → BOM 원자재)
+  const matInfo=useCallback(code=>{
+    if(!apsMats||apsMats.missing||apsMats.error)return null;
+    const p=code?prodMap.get(code):null;
+    if(!p||p.aps_item_id==null)return {state:"nolink",mats:[]};
+    const mats=apsMats.map.get(Number(p.aps_item_id))||[];
+    return {state:mats.length?"ok":"nobom",mats};
+  },[apsMats,prodMap]);
   const withName=l=>{const p=l.product_code?prodMap.get(l.product_code):null;return p?{...l,disp_name:`${shipNameOf(p)} / ${p.per_box}ea`}:l};
   const lots=useMemo(()=>rawLots.map(withName),[rawLots,prodMap]);
   const txns=useMemo(()=>rawTxns.map(withName),[rawTxns,prodMap]);
@@ -4392,9 +4465,11 @@ function FrozenTab({adminHash,masters}){
       if(stF==="warn"&&!(st==="expired"||st==="soon"||st==="warn"))return false;
       if(!s)return true;
       const p=prodMap.get(l.product_code);
-      return [l.product_name,l.disp_name,l.product_code,l.location,l.memo,p?.ship_name,p?.image_name].some(x=>String(x||"").toLowerCase().includes(s));
+      const tr=l.trace_nos&&typeof l.trace_nos==="object"?Object.values(l.trace_nos):[];
+      const mt=(matInfo(l.product_code)?.mats||[]).map(m=>m.name);
+      return [l.product_name,l.disp_name,l.product_code,l.location,l.memo,p?.ship_name,p?.image_name,...tr,...mt].some(x=>String(x||"").toLowerCase().includes(s));
     });
-  },[lots,q,locF,stF,prodMap]);
+  },[lots,q,locF,stF,prodMap,matInfo]);
 
   const stats=useMemo(()=>{
     const c={expired:0,soon:0};for(const l of lots){const st=fzStatus(l.expiry);if(st in c)c[st]++}
@@ -4489,13 +4564,17 @@ function FrozenTab({adminHash,masters}){
   const memoCell=l=>l.memo?<span style={{fontSize:12,color:"var(--muted)"}}>{l.memo}</span>:<span style={{color:"var(--dimmer)"}}>–</span>;
   const nameCell=l=><>
     <div style={{fontWeight:700}}>{fzName(l)}</div>
-    <div style={{fontSize:11,color:"var(--muted)"}}><span style={{fontFamily:"monospace"}}>{l.product_code||"코드 없음"}</span></div></>;
+    <div style={{fontSize:11,color:"var(--muted)"}}><span style={{fontFamily:"monospace"}}>{l.product_code||"코드 없음"}</span></div>
+    <div><FzMatLine info={matInfo(l.product_code)}/></div></>;
+  const traceCell=l=><FrozenTraceCell key={l.id+":"+JSON.stringify(l.trace_nos||{})} adminHash={adminHash} lot={l} info={matInfo(l.product_code)} onSaved={load} onError={setErr}/>;
   const totalText=ls=>fzUnitSum(ls).map(([u,n],i)=><span key={u}>{i>0&&" · "}{fzQty(n,u)}</span>);
 
   if(loading)return <Empty emoji="❄" text="불러오는 중…"/>;
 
   return <>
     {err&&<div className="ol-warn">{err}</div>}
+    {apsMats?.missing&&<div className="ol-warn">원육·이력번호를 쓰려면 Supabase SQL Editor에서 <b>setup_orders_trace.sql</b> 을 1회 실행해 주세요.</div>}
+    {apsMats?.error&&<div className="ol-warn">원육 정보를 불러오지 못했습니다: {apsMats.error}</div>}
     <div className="fz-stats">
       <div className="fz-stat"><div className="k">제품</div><div className="v">{stats.products}<small>종</small></div></div>
       <div className="fz-stat"><div className="k">총 수량</div><div className="v" style={stats.qty.length>1?{fontSize:16}:undefined}>{stats.qty.length?stats.qty.map(([u,n],i)=><span key={u}>{i>0&&<small> · </small>}{fmtNum(n)}<small>{u}</small></span>):<>0<small>박스</small></>}</div></div>
@@ -4541,15 +4620,17 @@ function FrozenTab({adminHash,masters}){
             <div style={{minWidth:0}}>
               <div className="fz-group-name">{g.name}</div>
               <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}><span style={{fontFamily:"monospace"}}>{g.code||"코드 없음"}</span> · {g.lots.length}건{g.lots[0].expiry&&<> · 가장 빠른 기한 {fzExpText(g.lots[0].expiry)}</>}</div>
+              <div style={{marginTop:2}}><FzMatLine info={matInfo(g.code)}/></div>
             </div>
             <div className="fz-group-total">{totalText(g.lots)}</div>
           </div>
           <div className="ol-scroll"><table className="ol-table fz-table">
-            <thead><tr><th>소비기한</th><th>위치</th><th className="right">수량</th><th>입고일</th><th>메모</th><th></th></tr></thead>
+            <thead><tr><th>소비기한</th><th>위치</th><th className="right">수량</th><th>이력번호</th><th>입고일</th><th>메모</th><th></th></tr></thead>
             <tbody>{g.lots.map(l=><tr key={l.id} className={rowCls(l)}>
               <td><ExpiryBadge exp={l.expiry}/></td>
               <td><span className="fz-loc">📍 {fzLoc(l)}</span></td>
               <td className="right fz-qty">{qtyCell(l)}</td>
+              <td>{traceCell(l)}</td>
               <td style={{fontSize:12,color:"var(--muted)",whiteSpace:"nowrap"}}>{l.in_date?fzExpText(l.in_date):"–"}</td>
               <td>{memoCell(l)}</td>
               <td className="right">{actions(l)}</td>
@@ -4563,23 +4644,25 @@ function FrozenTab({adminHash,masters}){
           <div className="fz-group-total">{totalText(g.lots)}</div>
         </div>
         <div className="ol-scroll"><table className="ol-table fz-table">
-          <thead><tr><th>제품</th><th>소비기한</th><th className="right">수량</th><th>메모</th><th></th></tr></thead>
+          <thead><tr><th>제품</th><th>소비기한</th><th className="right">수량</th><th>이력번호</th><th>메모</th><th></th></tr></thead>
           <tbody>{g.lots.map(l=><tr key={l.id} className={rowCls(l)}>
             <td>{nameCell(l)}</td>
             <td><ExpiryBadge exp={l.expiry}/></td>
             <td className="right fz-qty">{qtyCell(l)}</td>
+            <td>{traceCell(l)}</td>
             <td>{memoCell(l)}</td>
             <td className="right">{actions(l)}</td>
           </tr>)}</tbody>
         </table></div>
       </div>)}</div>:
      <div className="fz-group"><div className="ol-scroll"><table className="ol-table fz-table">
-        <thead><tr><th>소비기한</th><th>제품</th><th>위치</th><th className="right">수량</th><th>메모</th><th></th></tr></thead>
+        <thead><tr><th>소비기한</th><th>제품</th><th>위치</th><th className="right">수량</th><th>이력번호</th><th>메모</th><th></th></tr></thead>
         <tbody>{byExpiry.map(l=><tr key={l.id} className={rowCls(l)}>
           <td><ExpiryBadge exp={l.expiry}/></td>
           <td>{nameCell(l)}</td>
           <td><span className="fz-loc">📍 {fzLoc(l)}</span></td>
           <td className="right fz-qty">{qtyCell(l)}</td>
+          <td>{traceCell(l)}</td>
           <td>{memoCell(l)}</td>
           <td className="right">{actions(l)}</td>
         </tr>)}</tbody>
