@@ -7412,7 +7412,10 @@ function InventorySheetTab({adminHash}){
     try{
       if(document.fonts&&document.fonts.ready)await document.fonts.ready;
       await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
-      const canvas=await html2canvas(sheetRef.current,{scale:2,backgroundColor:"#ffffff",useCORS:true,letterRendering:true});
+      // 모바일에서도 PC와 같은 배치로 저장: 복제 화면을 1200px 폭으로 그려 모바일 CSS(좁은 열·줄바꿈)를 끔
+      const canvas=await html2canvas(sheetRef.current,{scale:2,backgroundColor:"#ffffff",useCORS:true,letterRendering:true,
+        windowWidth:1200,scrollX:0,scrollY:0,
+        onclone:(doc,el)=>{el.style.maxWidth="none";el.style.width="max-content";el.style.margin="0";el.style.borderRadius="0"}});
       const safeDate=dateLabel.replace(/[\/\\?%*:|"<>()]/g,"_").replace(/\s+/g,"_");
       const a=document.createElement("a");
       a.download=`재고시트_${safeDate}.png`;

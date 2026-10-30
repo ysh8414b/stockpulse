@@ -779,6 +779,12 @@
   - `fmtDtDow(iso)`: KST 변환 후 `MM/DD(요일) HH:MM` 형식으로 출력 → 각 행의 시작/종료 시각에 요일 인라인 표시
 - 적용 위치: `ExportPlansView` 헤더 dateLabel + 행의 시작/종료 시각 (`fmtKstDateTime` → `fmtDtDow`)
 
+### APS — 재고 시트 모바일 이미지 저장 길쭉함 수정 (2026-10-30)
+- 사용자 보고: 모바일에서 재고 시트 이미지 저장 시 이상하게 세로로 길게 나옴
+- 원인: 모바일 CSS(700px 이하 — 40/60 좁은 열, 제품명 줄바꿈)가 적용된 화면을 그대로 캡처
+- `InventorySheetTab.downloadImage`: html2canvas에 `windowWidth:1200`(복제 화면을 PC 폭으로 그려 모바일 CSS 미적용) + `scrollX/scrollY:0` + `onclone`에서 시트 `max-width:none; width:max-content` → 모바일에서도 PC와 같은 배치의 이미지. 화면 표시는 그대로
+- 실제 휴대폰 저장은 미확인
+
 ### APS — 매출 일보 업로드 + 월평균 안전재고 (2026-06-28)
 - 사용자 요청: "매출일보(매출.xlsx) 업로드하면 1년치 저장하면서 월평균 통계. A/D/E/H 셀 사용. 상품코드가 재고시트 제품코드와 일치하는 항목에 한달평균 안전재고 자동 입력. 현재재고는 재고시트에서 연동"
 - **`setup_aps_sales.sql`** (신규, 1회 실행):
