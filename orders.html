@@ -4435,7 +4435,7 @@ function MeatTraceForm({adminHash,initial,materials,traces,expOptsFor,onSwitch,o
     </div>
     {dup&&<div style={{margin:"-4px 0 12px",padding:"10px 12px",borderRadius:8,border:"1.5px solid #ef4444",background:"rgba(239,68,68,.08)",fontSize:13}}>
       <b style={{color:"#ef4444"}}>⛔ 이미 등록된 소비기한입니다</b>
-      <div style={{marginTop:4}}>🥩 {dup.material_name} · {f.expiry?f.expiry.replace(/-/g,"."):"소비기한 없음"} → 이력번호 <b style={{fontFamily:"monospace"}}>{dup.trace_no||"(번호 없음)"}</b></div>
+      <div style={{marginTop:4}}>{dup.material_name} · {f.expiry?f.expiry.replace(/-/g,"."):"소비기한 없음"} → 이력번호 <b style={{fontFamily:"monospace"}}>{dup.trace_no||"(번호 없음)"}</b></div>
       <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>같은 소비기한에 다른 이력번호는 넣을 수 없습니다. 번호를 바꾸려면 기존 기록을 수정하세요.</div>
       {onSwitch&&<button type="button" className="ol-btn ol-btn-secondary ol-btn-sm" style={{marginTop:8}} onClick={()=>onSwitch(dup)}>✏ 기존 기록 수정하기</button>}
     </div>}
@@ -4499,7 +4499,7 @@ function FrozenTraceManager({adminHash,traces,traceErrMsg,reload,materials,lots,
       <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
         {missing.map(x=><button key={x.mat.id+"|"+x.exp} className="ol-btn ol-btn-secondary ol-btn-sm" title={[...x.names].join("\n")}
           onClick={()=>onEdit({material_name:x.mat.name,expiry:x.exp})}>
-          🥩 {x.mat.name} · {x.exp?x.exp.replace(/-/g,"."):"소비기한 없음"} <span style={{opacity:.7,fontWeight:400}}>· 제품 {x.names.size}개</span></button>)}
+          {x.mat.name} · {x.exp?x.exp.replace(/-/g,"."):"소비기한 없음"} <span style={{opacity:.7,fontWeight:400}}>· 제품 {x.names.size}개</span></button>)}
       </div>
     </div>}
     {!traces.length?(!traceErrMsg&&<Empty emoji="🏷" text="등록된 이력번호가 없습니다. '＋ 이력번호 추가'로 시작하세요."/>):
@@ -4508,7 +4508,7 @@ function FrozenTraceManager({adminHash,traces,traceErrMsg,reload,materials,lots,
       <thead><tr><th>원육명</th><th>소비기한</th><th>이력번호</th>{TRACE_DATES.map(([k,l])=><th key={k}>{l}</th>)}<th>사용 제품</th><th></th></tr></thead>
       <tbody>{shown.map(t=>{const users=usersOf(t);const linked=(t.material_id!=null&&t.material_id!=="")||materials.some(m=>m.name.trim()===String(t.material_name).trim());
         return <tr key={t.id} className={"fz-row fz-"+fzStatus(t.expiry)} style={dupIds.has(t.id)?{background:"rgba(239,68,68,.12)"}:undefined}>
-        <td><div style={{fontWeight:700}}>🥩 {t.material_name}</div>{dupIds.has(t.id)&&<div style={{fontSize:11,color:"#ef4444",fontWeight:700}}>⛔ 같은 소비기한 중복</div>}{!linked&&<div style={{fontSize:11,color:"#f97316"}}>APS 원자재 아님</div>}{t.memo&&<div style={{fontSize:11,color:"var(--muted)"}}>{t.memo}</div>}</td>
+        <td><div style={{fontWeight:700}}>{t.material_name}</div>{dupIds.has(t.id)&&<div style={{fontSize:11,color:"#ef4444",fontWeight:700}}>⛔ 같은 소비기한 중복</div>}{!linked&&<div style={{fontSize:11,color:"#f97316"}}>APS 원자재 아님</div>}{t.memo&&<div style={{fontSize:11,color:"var(--muted)"}}>{t.memo}</div>}</td>
         <td>{t.expiry?<ExpiryBadge exp={t.expiry}/>:dt(null)}</td>
         <td style={{fontFamily:"monospace",fontWeight:700,whiteSpace:"nowrap"}}>{t.trace_no||<span style={{color:"var(--dimmer)"}}>–</span>}</td>
         {TRACE_DATES.map(([k])=><td key={k} style={{whiteSpace:"nowrap",fontSize:13}}>{dt(t[k])}</td>)}
