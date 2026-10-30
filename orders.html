@@ -4700,11 +4700,12 @@ function FzOutTable({plan,onlyOut,locColor,print,outCell,flush,onHide}){
             {!print&&it.manual&&<div style={{fontSize:11,color:"#7c3aed",fontWeight:700,marginTop:2,fontFamily:"Pretendard,sans-serif"}}>✋ 직접 수정함</div>}
           </td>,
           <td key="q" rowSpan={n} style={{...cell,...top,...bg,borderBottom:"none",borderRight:"1px solid #e5e7eb"}}>
-            <span style={{display:"inline-flex",flexDirection:"column",alignItems:"center",minWidth:54,padding:"5px 8px 4px",border:`2px solid ${bad?"#dc2626":"transparent"}`,borderRadius:8,background:bad?"#fff":"transparent",lineHeight:1,boxSizing:"border-box"}}>
-              <b style={{fontSize:20,fontWeight:900,color:bad||it.partial?"#dc2626":"#111"}}>{fmtBoxes(it.boxes)}</b>
-              {bad&&<small style={{fontSize:10.5,fontWeight:800,color:"#dc2626",marginTop:3}}>부족 {fmtBoxes(it.short)}</small>}
-              {it.over>0&&<small style={{fontSize:10.5,fontWeight:800,color:"#7c3aed",marginTop:3}}>초과 {fmtBoxes(it.over)}</small>}
-            </span>
+            {/* 이미지 저장(html2canvas)에서도 글씨가 보이도록 flex 대신 block 쌓기 */}
+            <div style={{display:"inline-block",minWidth:54,padding:"4px 8px",border:`2px solid ${bad?"#dc2626":"transparent"}`,borderRadius:8,background:bad?"#fff":"transparent",textAlign:"center",verticalAlign:"middle",boxSizing:"border-box"}}>
+              <div style={{fontSize:20,fontWeight:900,lineHeight:"24px",color:bad||it.partial?"#dc2626":"#111"}}>{fmtBoxes(it.boxes)}</div>
+              {bad&&<div style={{fontSize:11,fontWeight:800,lineHeight:"15px",color:"#dc2626",whiteSpace:"nowrap"}}>부족 {fmtBoxes(it.short)}</div>}
+              {it.over>0&&<div style={{fontSize:11,fontWeight:800,lineHeight:"15px",color:"#7c3aed",whiteSpace:"nowrap"}}>초과 {fmtBoxes(it.over)}</div>}
+            </div>
           </td>];
         if(!rows.length)return <tbody key={it.code} data-shipcut="1"><tr>{head}
           <td colSpan={4} style={{...cell,...top,...bg,borderBottom:"none",color:"#dc2626",fontWeight:700}}>{it.rows.length?"출고할 로트 없음":"냉동재고에 이 제품 재고 없음"}</td></tr></tbody>;
