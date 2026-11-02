@@ -405,7 +405,7 @@ function OvsResBadge({r}){
 }
 const jsonArr=v=>{if(Array.isArray(v))return v;try{const a=JSON.parse(v||"[]");return Array.isArray(a)?a:[]}catch(e){return[]}};
 const BET_KINDS={
-  oversold:{table:"oversold_track",tp:10,sl:-10,color:"#3b82f6",
+  oversold:{table:"oversold_track",rule:"종가 기준 +10% 익절 / -10% 손절",color:"#3b82f6",
     title:"과대 낙폭 성과 추적",sub:"엔벨로프 20 하단 이탈 · +10% / -10% 청산",
     intro:<>매일 장 마감 후 <b style={{color:"#3b82f6"}}>엔벨로프 20 하단을 깬 종목</b>(종가가 20일 이동평균 대비 -20% 이하 · 그날 거래대금 1,000억 이상 · 시총 3,000억 이상 · 당일 상승 제외)을
       <b> 선정일 종가에 샀다고 가정</b>합니다. 이후 매 거래일 종가 기준으로 <b style={{color:"#22c55e"}}>+10% 이상이면 익절</b>, <b style={{color:"#ef4444"}}>-10% 이하면 손절</b>로 마감하고,
@@ -413,14 +413,15 @@ const BET_KINDS={
     sql:"setup_oversold_track.sql",empty:"장 마감 후(15:35) 과대 낙폭 종목이 나오면 쌓이기 시작합니다",
     note:r=>[`MA20 ${catPct(r.deviation)}`,`거래대금 ${Math.round((Number(r.trading_value)||0)/1e8).toLocaleString()}억`,r.display_sector].filter(Boolean).join(" · "),
     colLabel:"종목 · 선정일 이격"},
-  leader:{table:"leader_track",tp:10,sl:-5,color:"#f97316",
-    title:"주도주 배팅 성과 추적",sub:"주도 테마 대장주 · +10% / -5% 청산",
+  leader:{table:"leader_track",rule:"종가가 10일 이동평균선 아래로 내려가면 매도",color:"#f97316",
+    title:"주도주 배팅 성과 추적",sub:"주도 테마 대장주 · 10일선 이탈 시 매도",
     intro:<>개별 종목이 아니라 <b style={{color:"#f97316"}}>테마가 통째로 오른 날</b>만 봅니다. 같은 테마 안에 <b>+10% 이상 · 거래대금 1,000억 이상</b> 종목이
       대장 포함 <b>3개 이상</b>이면 주도 테마로 보고, 그 안에서 상승률 + 거래대금이 가장 높은 <b>대장주</b>를 강한 테마 순으로 하루 최대 3종목 편입합니다.
-      선정일 종가에 샀다고 가정하고 매 거래일 종가 기준 <b style={{color:"#22c55e"}}>+10% 이상 익절</b>, <b style={{color:"#ef4444"}}>-5% 이하 손절</b>로 마감합니다.
+      선정일 종가에 샀다고 가정하고, 정해 둔 익절·손절선 없이 <b>종가가 10일 이동평균선 아래로 내려가는 날 그 종가에 매도</b>합니다.
+      매도할 때 수익이면 <b style={{color:"#22c55e"}}>익절</b>, 손실이면 <b style={{color:"#ef4444"}}>손절</b>로 표시합니다. 10일치 종가가 아직 없는 종목은 판단하지 않고 계속 보유합니다.
       종목을 누르면 함께 오른 종목과 그날 테마 뉴스를 볼 수 있습니다.</>,
     sql:"setup_leader_track.sql",empty:"장 마감 후(15:35) 주도 테마가 나온 날부터 쌓이기 시작합니다 — 조건을 만족하는 테마가 없는 날은 편입이 없습니다",
-    note:r=>[`🔥 ${r.theme_name||"-"}`,`동반 ${r.theme_count||0}종목`,`당일 ${catPct(r.change_pct)}`,`거래대금 ${Math.round((Number(r.trading_value)||0)/1e8).toLocaleString()}억`].join(" · "),
+    note:r=>[`🔥 ${r.theme_name||"-"}`,`동반 ${r.theme_count||0}종목`,`당일 ${catPct(r.change_pct)}`,r.status!=="closed"&&r.last_ma?`10일선 ₩${Math.round(Number(r.last_ma)).toLocaleString()}`:`거래대금 ${Math.round((Number(r.trading_value)||0)/1e8).toLocaleString()}억`].join(" · "),
     colLabel:"종목 · 주도 테마",expandable:true},
 };
 function LeaderDetail({r}){
@@ -549,7 +550,7 @@ function BetTrack({kind}){
       </Box>;
     })}</div>
     <div style={{marginTop:"14px",padding:"12px 16px",background:"var(--card-bg)",border:"1px solid var(--div2)",borderRadius:"10px",fontSize:"13px",lineHeight:1.65,color:"var(--dim)"}}>
-      ⚠️ 과거 성과는 미래 수익을 보장하지 않습니다. 선정일 종가 매수 · 종가 기준 +{K.tp}% / {K.sl}% 청산을 가정한 시뮬레이션이며 실제 체결가·수수료·세금은 반영되지 않았습니다
+      ⚠️ 과거 성과는 미래 수익을 보장하지 않습니다. 선정일 종가 매수 · 청산 규칙({K.rule})을 가정한 시뮬레이션이며 실제 체결가·수수료·세금은 반영되지 않았습니다
       {kind==="leader"?" (상한가로 마감한 종목은 실제로는 종가에 사기 어려울 수 있습니다)":""}.
       같은 종목이 여러 날 선정되면 날마다 따로 집계됩니다. 투자 추천이 아니며 판단과 책임은 본인에게 있습니다.
     </div>

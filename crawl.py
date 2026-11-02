@@ -3005,8 +3005,7 @@ LEADER_MIN_CHANGE = 10.0                    # 동반 상승 인정: 당일 +10% 
 LEADER_MIN_TRADING_VALUE = 100_000_000_000  # 동반 상승 인정: 거래대금 1,000억 이상
 LEADER_MIN_THEME_STOCKS = 3                 # 주도 테마: 위 조건 종목이 대장 포함 3개 이상
 LEADER_MAX_PICKS = 3                        # 하루 최대 편입 (강한 테마 순, 테마당 대장 1종목)
-LEADER_TRACK_TAKE_PROFIT = 10.0             # 종가 수익률 +10% 이상 → 익절
-LEADER_TRACK_STOP_LOSS = -5.0               # 종가 수익률 -5% 이하 → 손절
+LEADER_TRACK_EXIT_MA = 10                   # 종가가 10일 이동평균선 아래로 내려가면 매도 (익절·손절선 없음)
 LEADER_TRACK_KEEP_DAYS = 365
 
 
@@ -4070,12 +4069,44 @@ def seed_oversold_track(oversold):
     return len(rows)
 
 
-def _update_bet_track(table, krx_data, take_profit, stop_loss, label):
+def _load_prior_closes(codes, need):
+    """daily_prices 에서 종목별 오늘 이전 종가를 최신순으로 need 개까지 반환 {code: [close, ...]}."""
+    out = {}
+    codes = sorted(set(codes))
+    cutoff = (datetime.now(timezone(timedelta(hours=9))) - timedelta(days=max(30, need * 3))).strftime("%Y-%m-%d")
+    for i in range(0, len(codes), 80):
+        chunk = codes[i:i + 80]
+        offset = 0
+        while True:
+            batch = supabase_request("GET", "daily_prices", params={
+                "code": f"in.({','.join(chunk)})",
+                "date": f"lt.{TODAY}",
+                "and": f"(date.gte.{cutoff})",
+                "select": "code,date,close",
+                "order": "code,date.desc",
+                "limit": "1000",
+                "offset": str(offset),
+            })
+            if not batch:
+                break
+            for r in batch:
+                lst = out.setdefault(r["code"], [])
+                if len(lst) < need:
+                    lst.append(float(r["close"]))
+            if len(batch) < 1000:
+                break
+            offset += 1000
+    return out
+
+
+def _update_bet_track(table, krx_data, label, take_profit=None, stop_loss=None, exit_ma=None):
     """진행 중(open)인 배팅 추적 종목을 오늘 종가로 갱신 (과대 낙폭 / 주도주 공통).
 
-    - 종가 수익률 >= take_profit → 익절(win), <= stop_loss → 손절(loss)로 마감
-      (close_date / close_price / close_ret / hold_days 기록)
-    - 아직 둘 다 안 닿았으면 현재 수익률·최고·최저만 갱신
+    청산 규칙은 둘 중 하나:
+    - take_profit / stop_loss: 종가 수익률 >= take_profit → 익절(win), <= stop_loss → 손절(loss)
+    - exit_ma=N: 오늘 종가 < N일 이동평균(오늘 종가 포함) → 매도. 그때 수익률 > 0 이면 win, 아니면 loss.
+      N일치 종가가 안 모인 종목(신규 상장 등)은 판단하지 않고 계속 보유.
+    마감 시 close_date / close_price / close_ret / hold_days 기록, 아니면 현재 수익률·최고·최저만 갱신.
     close 모드에서 하루 1회 전제 (last_date != TODAY 인 행만 → 같은 날 재실행해도 안전).
     """
     if not krx_data:
@@ -4102,6 +4133,8 @@ def _update_bet_track(table, krx_data, take_profit, stop_loss, label):
         log(f"  ℹ️ 갱신할 {label} 추적 종목 없음")
         return 0
 
+    prior = _load_prior_closes([r["code"] for r in open_rows], exit_ma - 1) if exit_ma else {}
+
     now_iso = datetime.now(timezone(timedelta(hours=9))).isoformat()
     updated, wins, losses, skipped = 0, 0, 0, 0
     for row in open_rows:
@@ -4124,11 +4157,21 @@ def _update_bet_track(table, krx_data, take_profit, stop_loss, label):
             "updated_at": now_iso,
         }
         result = None
-        if ret >= take_profit:
-            result = "win"
+        if exit_ma:
+            closes = prior.get(row["code"], [])
+            if len(closes) >= exit_ma - 1:
+                ma = (price + sum(closes[:exit_ma - 1])) / exit_ma
+                payload["last_ma"] = round(ma, 2)
+                if price < ma:
+                    result = "win" if ret > 0 else "loss"
+        else:
+            if take_profit is not None and ret >= take_profit:
+                result = "win"
+            elif stop_loss is not None and ret <= stop_loss:
+                result = "loss"
+        if result == "win":
             wins += 1
-        elif ret <= stop_loss:
-            result = "loss"
+        elif result == "loss":
             losses += 1
         if result:
             payload.update({
@@ -4150,14 +4193,13 @@ def _update_bet_track(table, krx_data, take_profit, stop_loss, label):
 
 def update_oversold_track(krx_data):
     """과대 낙폭 추적: 종가 +10% 익절 / -10% 손절."""
-    return _update_bet_track("oversold_track", krx_data,
-                             OVERSOLD_TRACK_TAKE_PROFIT, OVERSOLD_TRACK_STOP_LOSS, "과대 낙폭")
+    return _update_bet_track("oversold_track", krx_data, "과대 낙폭",
+                             take_profit=OVERSOLD_TRACK_TAKE_PROFIT, stop_loss=OVERSOLD_TRACK_STOP_LOSS)
 
 
 def update_leader_track(krx_data):
-    """주도주 배팅 추적: 종가 +10% 익절 / -5% 손절."""
-    return _update_bet_track("leader_track", krx_data,
-                             LEADER_TRACK_TAKE_PROFIT, LEADER_TRACK_STOP_LOSS, "주도주")
+    """주도주 배팅 추적: 종가가 10일 이동평균선 아래로 내려가면 매도."""
+    return _update_bet_track("leader_track", krx_data, "주도주", exit_ma=LEADER_TRACK_EXIT_MA)
 
 
 def select_leader_stocks(krx_data, theme_map):

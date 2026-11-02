@@ -6,7 +6,8 @@
 -- 주도주:    그 테마에서 상승률 + 거래대금 점수가 가장 높은 종목 (대장)
 -- 편입:      주도 테마를 강한 순으로 최대 3개, 테마마다 대장 1종목
 --            (close 모드 15:35/16:00, entry_price = 당일 종가)
--- 마감:      매 거래일 종가 수익률 +10% 이상 → win(익절), -5% 이하 → loss(손절)
+-- 마감:      매 거래일 종가가 10일 이동평균선 아래로 내려가면 매도 (익절·손절선 없음)
+--            매도 시 수익률 > 0 이면 win(익절), 아니면 loss(손절)
 --
 -- 1회 실행. 재실행 안전 (IF NOT EXISTS).
 -- =============================================
@@ -39,6 +40,7 @@ CREATE TABLE IF NOT EXISTS leader_track (
     ret_cum NUMERIC DEFAULT 0,
     max_ret NUMERIC DEFAULT 0,
     min_ret NUMERIC DEFAULT 0,
+    last_ma NUMERIC,                         -- 최근 갱신일의 10일 이동평균 (매도 기준선)
 
     -- ── 마감 결과 ──
     status TEXT DEFAULT 'open',              -- open | closed
@@ -50,6 +52,9 @@ CREATE TABLE IF NOT EXISTS leader_track (
 
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- 이미 예전 버전으로 테이블을 만들었다면 컬럼만 추가 (재실행 안전)
+ALTER TABLE leader_track ADD COLUMN IF NOT EXISTS last_ma NUMERIC;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_leader_track_pick_code
     ON leader_track(pick_date, code);

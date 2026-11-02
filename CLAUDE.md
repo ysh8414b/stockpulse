@@ -1656,6 +1656,14 @@
 - **운영 순서**: Supabase에서 `setup_leader_track.sql` 실행 → 커밋·푸시 → 다음 평일 close 모드(15:35)부터. 조건을 만족하는 테마가 없는 날은 편입 없음(+10% 종목 3개 이상이 한 테마에 몰리는 날은 드묾 — 며칠씩 0건일 수 있음)
 - 한계: 상한가 마감 종목은 실제로 종가에 사기 어려움(가정상 체결). 테마 묶음은 기업개요 기반 theme_map이라 테마 분류가 틀리면 주도 테마도 틀림. 뉴스는 선정일 하루 스냅샷. 종가 기준 청산만
 
+### 주도주 배팅 청산 규칙 → 10일선 이탈 매도 (2026-11-02)
+- 사용자 요청: 주도주는 익절·손절선(+10% / -5%)을 두지 말고 **종가가 10일 이동평균선 아래로 내려가면 매도** (과대 낙폭은 +10% / -10% 그대로)
+- **crawl.py**: `LEADER_TRACK_TAKE_PROFIT/STOP_LOSS` 삭제 → `LEADER_TRACK_EXIT_MA = 10`. `_update_bet_track(table, krx_data, label, take_profit=None, stop_loss=None, exit_ma=None)`로 시그니처 변경 — `exit_ma`가 있으면 신규 `_load_prior_closes(codes, need)`(daily_prices에서 진행 중 종목만 `code=in.(…)` 80개씩, 오늘 이전 종가 최신순 9개)로 MA10 = (오늘 종가 + 직전 9거래일 종가) ÷ 10 계산, 오늘 종가 < MA10이면 매도 마감(수익률 > 0 → win, 아니면 loss), 매일 `last_ma` 기록. 직전 종가가 9개 미만(신규 상장·daily_prices 누락)이면 판단하지 않고 보유
+- **setup_leader_track.sql**: `last_ma NUMERIC` 컬럼 추가 + `ALTER TABLE … ADD COLUMN IF NOT EXISTS last_ma`(이미 만든 테이블도 재실행으로 반영). **SQL을 이미 실행했다면 다시 실행 필요** — 컬럼이 없으면 주도주 갱신 PATCH가 실패함
+- **index.html**: `BET_KINDS`의 `tp/sl` → `rule` 문구, 주도주 부제 "10일선 이탈 시 매도", 안내문 갱신, 진행 중 종목은 부가정보에 `10일선 ₩…` 표시, 면책 문구는 `청산 규칙({rule})`
+- 확인: 가짜 데이터로 10일선 아래 매도(+15% → 익절, -5% → 손절), 위면 보유, 종가 부족 시 보유, 과대 낙폭 +10/-10 그대로. 화면 문구·10일선 표시 확인
+- 한계: daily_prices는 시총 3000억+ 종목만 저장 — 시총이 그 아래로 떨어지면 10일선을 못 구해 계속 보유로 남을 수 있음. 편입 다음 거래일부터 판단(편입일엔 매도 없음)
+
 ### 자동 리스트 생성기 (orders.html) (2026-10-13)
 - 사용자 요청: 발주서(쿠팡 ERP 엑셀) 업로드 → 제품리스트 참고해 **부착리스트(엑셀) + 적재이미지(PNG)** 자동 생성. APS와 같은 관리자 인증을 쓰는 독립 페이지
 - **`setup_orders.sql`** (신규, 1회 실행, `setup_aps.sql`의 `aps_assert_admin` 재사용): 테이블 5개 `ol_box_specs` / `ol_load_methods` / `ol_products` / `ol_orders`(order_no UNIQUE) / `ol_order_items`(CASCADE). RLS + 정책 없음 → RPC만. 기본 적재방식 2개 시드(단독 40박스 / 혼적 가능 40)
