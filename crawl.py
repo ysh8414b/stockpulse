@@ -3000,6 +3000,15 @@ OVERSOLD_TRACK_TAKE_PROFIT = 10.0           # 종가 수익률 +10% 이상 → �
 OVERSOLD_TRACK_STOP_LOSS = -10.0            # 종가 수익률 -10% 이하 → 손절 마감
 OVERSOLD_TRACK_KEEP_DAYS = 365              # 성과 기록 보존 기간
 
+# ── 주도주 배팅 성과 추적 (leader_track) ──
+LEADER_MIN_CHANGE = 10.0                    # 동반 상승 인정: 당일 +10% 이상
+LEADER_MIN_TRADING_VALUE = 100_000_000_000  # 동반 상승 인정: 거래대금 1,000억 이상
+LEADER_MIN_THEME_STOCKS = 3                 # 주도 테마: 위 조건 종목이 대장 포함 3개 이상
+LEADER_MAX_PICKS = 3                        # 하루 최대 편입 (강한 테마 순, 테마당 대장 1종목)
+LEADER_TRACK_TAKE_PROFIT = 10.0             # 종가 수익률 +10% 이상 → 익절
+LEADER_TRACK_STOP_LOSS = -5.0               # 종가 수익률 -5% 이하 → 손절
+LEADER_TRACK_KEEP_DAYS = 365
+
 
 def save_daily_close(krx_data):
     """close 모드에서 시총 3000억+ 종목의 당일 종가를 daily_prices에 누적 저장.
@@ -4061,10 +4070,10 @@ def seed_oversold_track(oversold):
     return len(rows)
 
 
-def update_oversold_track(krx_data):
-    """진행 중(open)인 과대 낙폭 추적 종목을 오늘 종가로 갱신.
+def _update_bet_track(table, krx_data, take_profit, stop_loss, label):
+    """진행 중(open)인 배팅 추적 종목을 오늘 종가로 갱신 (과대 낙폭 / 주도주 공통).
 
-    - 종가 수익률 +10% 이상 → 익절(win), -10% 이하 → 손절(loss)로 마감
+    - 종가 수익률 >= take_profit → 익절(win), <= stop_loss → 손절(loss)로 마감
       (close_date / close_price / close_ret / hold_days 기록)
     - 아직 둘 다 안 닿았으면 현재 수익률·최고·최저만 갱신
     close 모드에서 하루 1회 전제 (last_date != TODAY 인 행만 → 같은 날 재실행해도 안전).
@@ -4075,7 +4084,7 @@ def update_oversold_track(krx_data):
     open_rows = []
     offset = 0
     while True:
-        batch = supabase_request("GET", "oversold_track", params={
+        batch = supabase_request("GET", table, params={
             "status": "eq.open",
             "last_date": f"neq.{TODAY}",
             "select": "id,code,entry_price,days_tracked,max_ret,min_ret",
@@ -4090,7 +4099,7 @@ def update_oversold_track(krx_data):
             break
         offset += 1000
     if not open_rows:
-        log("  ℹ️ 갱신할 과대 낙폭 추적 종목 없음")
+        log(f"  ℹ️ 갱신할 {label} 추적 종목 없음")
         return 0
 
     now_iso = datetime.now(timezone(timedelta(hours=9))).isoformat()
@@ -4115,10 +4124,10 @@ def update_oversold_track(krx_data):
             "updated_at": now_iso,
         }
         result = None
-        if ret >= OVERSOLD_TRACK_TAKE_PROFIT:
+        if ret >= take_profit:
             result = "win"
             wins += 1
-        elif ret <= OVERSOLD_TRACK_STOP_LOSS:
+        elif ret <= stop_loss:
             result = "loss"
             losses += 1
         if result:
@@ -4131,12 +4140,136 @@ def update_oversold_track(krx_data):
                 "hold_days": days,
             })
 
-        if supabase_request("PATCH", "oversold_track", data=payload,
+        if supabase_request("PATCH", table, data=payload,
                             params={"id": f"eq.{row['id']}"}) is not None:
             updated += 1
 
-    log(f"  📈 과대 낙폭 성과 추적 갱신 {updated}종목 (익절 {wins} · 손절 {losses} · 시세없음 {skipped})")
+    log(f"  📈 {label} 성과 추적 갱신 {updated}종목 (익절 {wins} · 손절 {losses} · 시세없음 {skipped})")
     return updated
+
+
+def update_oversold_track(krx_data):
+    """과대 낙폭 추적: 종가 +10% 익절 / -10% 손절."""
+    return _update_bet_track("oversold_track", krx_data,
+                             OVERSOLD_TRACK_TAKE_PROFIT, OVERSOLD_TRACK_STOP_LOSS, "과대 낙폭")
+
+
+def update_leader_track(krx_data):
+    """주도주 배팅 추적: 종가 +10% 익절 / -5% 손절."""
+    return _update_bet_track("leader_track", krx_data,
+                             LEADER_TRACK_TAKE_PROFIT, LEADER_TRACK_STOP_LOSS, "주도주")
+
+
+def select_leader_stocks(krx_data, theme_map):
+    """주도 테마의 대장주 선정.
+
+    주도 테마 = 테마 안에 '당일 +10% 이상 · 거래대금 1,000억 이상' 종목이 대장 포함 3개 이상
+              (개별 종목 혼자 오른 날은 제외 — 테마가 같이 올라야 함)
+    대장     = 그 충족 종목 중 상승률(50) + 거래대금(50) 정규화 점수 1위
+    테마 순서 = 충족 종목 수 ↓ → 구체적인 테마 우선(로봇 > 기계) → 충족 종목 평균 상승률 ↓ → 거래대금 합 ↓
+    같은 종목이 여러 테마의 대장이면 가장 강한 테마 하나로 편입하고 나머지는 other_themes 로 기록.
+    """
+    if not krx_data or not theme_map:
+        return []
+    log("🔥 주도주 선정 시작...")
+
+    themes = []
+    for theme_name, stocks in theme_map.items():
+        hits, seen = [], set()
+        for s in stocks:
+            code = s.get("code")
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            d = krx_data.get(code)
+            if not d or is_etf_etn(d.get("name", "")):
+                continue
+            cp = float(d.get("change_pct", 0) or 0)
+            tv = int(d.get("trading_value", 0) or 0)
+            if cp >= LEADER_MIN_CHANGE and tv >= LEADER_MIN_TRADING_VALUE and d.get("price", 0) > 0:
+                hits.append(d)
+        if len(hits) < LEADER_MIN_THEME_STOCKS:
+            continue
+        max_cp = max(float(h["change_pct"]) for h in hits) or 1
+        max_tv = max(int(h["trading_value"]) for h in hits) or 1
+        scored = sorted(hits, key=lambda h: float(h["change_pct"]) / max_cp * 50 + int(h["trading_value"]) / max_tv * 50,
+                        reverse=True)
+        themes.append({
+            "name": theme_name,
+            "hits": scored,
+            "leader": scored[0],
+            "avg": sum(float(h["change_pct"]) for h in hits) / len(hits),
+            "tv_sum": sum(int(h["trading_value"]) for h in hits),
+        })
+
+    themes.sort(key=lambda t: (-len(t["hits"]), THEME_SPECIFICITY.get(t["name"], 3), -t["avg"], -t["tv_sum"]))
+
+    picks, by_code = [], {}
+    for t in themes:
+        code = t["leader"]["code"]
+        if code in by_code:
+            by_code[code]["other_themes"].append(t["name"])
+            continue
+        if len(picks) >= LEADER_MAX_PICKS:
+            continue
+        pick = {"theme": t, "other_themes": []}
+        picks.append(pick)
+        by_code[code] = pick
+
+    result = []
+    for rank, pk in enumerate(picks, 1):
+        t, d = pk["theme"], pk["theme"]["leader"]
+        _, _, news_json = _search_theme_news_api(f"{t['name']} 주식", t["name"])
+        try:
+            news = json.loads(news_json or "[]")
+        except Exception:
+            news = []
+        result.append({
+            "pick_date": TODAY,
+            "code": d["code"],
+            "name": d.get("name", ""),
+            "market": d.get("market", ""),
+            "display_sector": d.get("display_sector", ""),
+            "rank": rank,
+            "change_pct": round(float(d.get("change_pct", 0)), 2),
+            "trading_value": int(d.get("trading_value", 0)),
+            "market_cap": int(d.get("market_cap", 0)),
+            "theme_name": t["name"],
+            "theme_count": len(t["hits"]),
+            "theme_avg_pct": round(t["avg"], 2),
+            "theme_stocks": [{"name": h.get("name", ""), "code": h["code"],
+                              "change_pct": round(float(h["change_pct"]), 2),
+                              "trading_value": int(h["trading_value"])} for h in t["hits"]],
+            "other_themes": pk["other_themes"],
+            "news_list": news,
+            "entry_price": float(d["price"]),
+            "last_price": float(d["price"]),
+            "last_date": TODAY,
+            "days_tracked": 0,
+            "ret_cum": 0,
+            "max_ret": 0,
+            "min_ret": 0,
+            "status": "open",
+        })
+
+    log(f"  ✅ 주도 테마 {len(themes)}개 → 대장 {len(result)}종목 편입 대상")
+    for r in result:
+        log(f"     {r['rank']}. [{r['theme_name']}] {r['name']} {r['change_pct']:+.2f}% "
+            f"(동반 {r['theme_count']}종목, 뉴스 {len(r['news_list'])}건)")
+    return result
+
+
+def seed_leader_track(picks):
+    """오늘 주도주를 leader_track 에 편입 (오늘분 교체 → 재실행 안전)."""
+    if picks is None:
+        return 0
+    supabase_request("DELETE", "leader_track", params={"pick_date": f"eq.{TODAY}"})
+    if not picks:
+        log("  ℹ️ 오늘은 주도 테마 없음 — 주도주 편입 없음")
+        return 0
+    result = supabase_request("POST", "leader_track", data=picks)
+    log(f"  🔥 주도주 성과 추적 편입 {len(picks)}종목 {'✅' if result else '❌'}")
+    return len(picks)
 
 
 # ─────────────────────────────────────────
@@ -4742,6 +4875,9 @@ def main():
     if ai_mode == "close":
         # 과대 낙폭 성과 추적: 기존 종목을 오늘 종가로 먼저 갱신(익절/손절 판정) → 저장 단계에서 오늘분 편입
         update_oversold_track(krx_data)
+        # 주도주 배팅: 기존 종목 갱신 → 오늘 주도 테마 대장 편입 (확정 종가 기준)
+        update_leader_track(krx_data)
+        seed_leader_track(select_leader_stocks(krx_data, theme_map))
 
     # 10-2. 재료 포착 TOP 10 (close 모드에서만 — DART/뉴스 API 비용 + 확정 종가 필요)
     #        FORCE_CATALYST=1 이면 시간대·중복 여부 무관하게 강제 산출 (수동 실행/테스트용)
@@ -4964,6 +5100,8 @@ def main():
         # catalyst_track(재료 포착 성과 추적)은 2026-11-02부터 더 쌓이지 않음 — 기존 기록은 지우지 않고 남겨 둠
         cutoff_ot = (datetime.now() - timedelta(days=OVERSOLD_TRACK_KEEP_DAYS)).strftime("%Y-%m-%d")
         supabase_request("DELETE", "oversold_track", params={"pick_date": f"lt.{cutoff_ot}"})
+        cutoff_lt = (datetime.now() - timedelta(days=LEADER_TRACK_KEEP_DAYS)).strftime("%Y-%m-%d")
+        supabase_request("DELETE", "leader_track", params={"pick_date": f"lt.{cutoff_lt}"})
         log(f"  🧹 {cutoff_dp} 이전 일봉 / {cutoff_os} 이전 과대 낙폭 / {cutoff_ct} 이전 재료 포착 / {cutoff_ot} 이전 낙폭 성과 정리")
 
     log("")

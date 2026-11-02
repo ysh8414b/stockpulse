@@ -1642,6 +1642,20 @@
 - **운영 순서**: (1) Supabase SQL Editor에서 `setup_oversold_track.sql` 실행 → (2) **GitHub Actions의 크롤링 워크플로(crawl.yml)가 비활성화(disabled_inactivity) 상태라 Actions 탭에서 다시 Enable** — 켜기 전엔 새 데이터가 쌓이지 않음 → (3) 다음 평일 close 모드(15:35)부터 편입, 그 다음 거래일부터 익절/손절 판정
 - 한계: 종가 기준만(장중 고가·저가로 ±10% 닿은 건 판정 안 함). 같은 종목이 며칠 연속 뽑히면 날마다 따로 편입·집계(서로 비슷하게 움직여 승률이 한쪽으로 쏠릴 수 있음). 만기(최대 보유일) 없음 — ±10%에 안 닿으면 계속 진행 중. 수수료·세금 미반영. 과거분 소급 불가(daily_prices는 60일만 보관)
 
+### 성과 추적에 🔥 주도주 배팅 추가 (2026-11-02)
+- 사용자 요청: 성과 추적에 주도주 배팅 추가. 주도주 = 개별 종목 혼자 오른 게 아니라 **테마가 통째로 오를 때** 그 테마의 대장. 그 테마 뉴스도 함께 보기
+- 규칙(사용자 확정): 테마 안에 **당일 +10% 이상 · 거래대금 1,000억 이상** 종목이 대장 포함 **3개 이상** → 주도 테마. 대장 = 그 충족 종목 중 상승률(50) + 거래대금(50) 정규화 점수 1위. 하루 **상위 3개 테마의 대장** 편입. 종가 기준 **+10% 익절 / -5% 손절**
+- **`setup_leader_track.sql`** (신규, 1회 실행): `leader_track` — oversold_track과 같은 추적·마감 컬럼 + 선정일 change_pct · theme_name · theme_count · theme_avg_pct · theme_stocks(JSONB, 충족 종목 목록) · other_themes(JSONB) · news_list(JSONB, 그날 테마 뉴스 최대 5건). RLS anon SELECT만
+- **crawl.py**:
+  - 상수 `LEADER_MIN_CHANGE=10`, `LEADER_MIN_TRADING_VALUE=1000억`, `LEADER_MIN_THEME_STOCKS=3`, `LEADER_MAX_PICKS=3`, `LEADER_TRACK_TAKE_PROFIT=10`, `LEADER_TRACK_STOP_LOSS=-5`, `LEADER_TRACK_KEEP_DAYS=365`
+  - 갱신 로직을 공통 `_update_bet_track(table, krx_data, tp, sl, label)`로 묶음 → `update_oversold_track`(+10/-10) / `update_leader_track`(+10/-5)이 호출
+  - `select_leader_stocks(krx_data, theme_map)`: `build_theme_stock_map`의 theme_map(전체 테마, 시총 3000억+, ETF 제외)을 돌며 충족 종목 3개 이상인 테마만. 테마 순서 = 충족 종목 수 ↓ → 구체적인 테마 우선(`THEME_SPECIFICITY`, 예: 로봇 > 기계 — 같은 종목들이 넓은 테마에도 묶여 있어서) → 평균 상승률 ↓ → 거래대금 합 ↓. 같은 대장이 여러 테마를 이끌면 가장 강한 테마 하나로 편입하고 나머지는 `other_themes`. 편입 종목마다 `_search_theme_news_api("{테마} 주식", 테마)`로 뉴스 저장(네이버 검색 API 최대 3회 × 3종목)
+  - `seed_leader_track(picks)`: 오늘분 DELETE 후 INSERT. main에서 close 모드일 때 `update_oversold_track` 다음에 `update_leader_track` → `seed_leader_track(select_leader_stocks(...))`. close 모드 정리에 leader_track 365일 초과 삭제
+- **index.html**: `OversoldTrack` → 공통 `BetTrack({kind})` + 설정 `BET_KINDS`(oversold / leader: 테이블·청산선·색·안내문·종목 부가정보). 성과 추적 화면 위에 `▼ 과대 낙폭 / 🔥 주도주` 전환(localStorage `sp-track-kind`). 주도주 날짜 줄에 그날 주도 테마 이름, 종목 줄에 `🔥 테마 · 동반 N종목 · 당일 +X% · 거래대금`, 누르면 `LeaderDetail`(함께 오른 종목 👑 대장 표시·등락률·거래대금 + 같은 대장의 다른 주도 테마 + 그날 테마 뉴스 링크). 검색에 테마명 포함
+- 확인: 가짜 테마 데이터로 선정(개별 급등 종목 제외, 로봇/기계 겹침 → 로봇 선택 + other_themes) · -5% 손절 판정, 화면은 가짜 응답과 테이블 없을 때 안내로 확인. 실제 크롤링·DB 미확인
+- **운영 순서**: Supabase에서 `setup_leader_track.sql` 실행 → 커밋·푸시 → 다음 평일 close 모드(15:35)부터. 조건을 만족하는 테마가 없는 날은 편입 없음(+10% 종목 3개 이상이 한 테마에 몰리는 날은 드묾 — 며칠씩 0건일 수 있음)
+- 한계: 상한가 마감 종목은 실제로 종가에 사기 어려움(가정상 체결). 테마 묶음은 기업개요 기반 theme_map이라 테마 분류가 틀리면 주도 테마도 틀림. 뉴스는 선정일 하루 스냅샷. 종가 기준 청산만
+
 ### 자동 리스트 생성기 (orders.html) (2026-10-13)
 - 사용자 요청: 발주서(쿠팡 ERP 엑셀) 업로드 → 제품리스트 참고해 **부착리스트(엑셀) + 적재이미지(PNG)** 자동 생성. APS와 같은 관리자 인증을 쓰는 독립 페이지
 - **`setup_orders.sql`** (신규, 1회 실행, `setup_aps.sql`의 `aps_assert_admin` 재사용): 테이블 5개 `ol_box_specs` / `ol_load_methods` / `ol_products` / `ol_orders`(order_no UNIQUE) / `ol_order_items`(CASCADE). RLS + 정책 없음 → RPC만. 기본 적재방식 2개 시드(단독 40박스 / 혼적 가능 40)
@@ -1941,7 +1955,7 @@
 - 테마 순위가 장 마감 후에도 변동됨 (뉴스 갱신 때문)
 - 과대 낙폭 탭은 평일 15:00(장중, 현재 시세 기준) + close 모드(15:35/16:00, 확정 종가)에 갱신됨. 그 외 시간대에는 마지막 갱신 데이터 표시
 - 재료 포착 탭은 close 모드(15:35/16:00) 하루 1회만 산출됨. 장중에는 전 거래일 데이터가 표시되며, `DART_API_KEY` 미설정 시 공시 원출처 없이 뉴스 추정으로만 동작
-- 성과 추적은 2026-11-02부터 과대 낙폭 종목(`oversold_track`) 기준 — `setup_oversold_track.sql` 실행 이후 선정분부터만 쌓임. 재료 포착 추적(`catalyst_track`)은 중단(기존 기록만 남음)
+- 성과 추적은 2026-11-02부터 과대 낙폭(`oversold_track`) + 주도주(`leader_track`) 두 가지 기준 — `setup_oversold_track.sql` 실행 이후 선정분부터만 쌓임. 재료 포착 추적(`catalyst_track`)은 중단(기존 기록만 남음)
 - GitHub Actions 크롤링 워크플로(crawl.yml)가 비활성화(disabled_inactivity)되면 데이터가 쌓이지 않음 — Actions 탭에서 다시 Enable 필요
 
 ## 개발 서버
