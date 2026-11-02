@@ -20,6 +20,7 @@
 - `shared.js` — 공통 JS (Supabase 설정, db() 함수, 테마 유틸)
 - `sitemap.xml` — SEO용 사이트맵
 - `crawl.py` — Python 크롤러 (데이터 수집/가공, GitHub Actions로 실행)
+- `kakao_setup.py` — 카카오톡 알림 최초 연결 스크립트 (PC에서 1회 실행, refresh token → Supabase `app_secrets`)
 - `.github/workflows/crawl.yml` — 장중 5분 간격 + 장 마감 후 1회 실행
 - 데이터 저장: Supabase (PostgreSQL)
 - 차트: 외부 라이브러리 없이 SVG polyline 직접 렌더링
@@ -1663,6 +1664,23 @@
 - **index.html**: `BET_KINDS`의 `tp/sl` → `rule` 문구, 주도주 부제 "10일선 이탈 시 매도", 안내문 갱신, 진행 중 종목은 부가정보에 `10일선 ₩…` 표시, 면책 문구는 `청산 규칙({rule})`
 - 확인: 가짜 데이터로 10일선 아래 매도(+15% → 익절, -5% → 손절), 위면 보유, 종가 부족 시 보유, 과대 낙폭 +10/-10 그대로. 화면 문구·10일선 표시 확인
 - 한계: daily_prices는 시총 3000억+ 종목만 저장 — 시총이 그 아래로 떨어지면 10일선을 못 구해 계속 보유로 남을 수 있음. 편입 다음 거래일부터 판단(편입일엔 매도 없음)
+
+### 성과 추적 카카오톡 알림 (나에게 보내기) (2026-11-02)
+- 사용자 요청: 성과 추적에 종목이 포착되면 알림. 텔레그램과 비교 후 사용자가 **카카오톡**(본인만 받는 "나에게 보내기", 무료) 선택
+- **`setup_kakao.sql`** (신규, 1회 실행): `app_secrets(key PK, value, updated_at)` — RLS ON + 정책 없음 + anon/authenticated 권한 회수 → service role(크롤러)만 접근. 카카오 refresh token 보관용 (쓸 때마다 새로 바뀔 수 있어 GitHub Secrets 대신 DB)
+- **`kakao_setup.py`** (신규, PC에서 1회 실행): `python kakao_setup.py <REST_API_키> [클라이언트_시크릿]` → 카카오 로그인 주소 열기(scope `talk_message`, redirect `https://localhost`) → 이동한 주소 붙여넣기 → 토큰 발급 → 나에게 테스트 메시지 → refresh token 저장(`SUPABASE_KEY` 환경변수가 있으면 app_secrets에 바로 저장, 없으면 SQL Editor에 붙일 INSERT 문 출력)
+- **crawl.py**:
+  - env `KAKAO_REST_API_KEY`, `KAKAO_CLIENT_SECRET`(선택), `KAKAO_TEST`, `SITE_URL`(기본 https://ainsightlab.kr). 키가 없으면 알림만 건너뜀
+  - `_kakao_token()`: app_secrets의 `kakao_refresh_token`으로 access token 발급(실행당 1회), 응답에 새 refresh token이 오면(만료 1개월 이내) 다시 저장 → 매일 쓰면 계속 연장
+  - `kakao_send(text, link, button)`: 텍스트 템플릿(최대 200자), 링크 = 사이트 `#issues`(카카오 앱에 등록한 도메인만 동작하므로 뉴스 원문 링크는 안 씀)
+  - `notify_track_kakao(leader_new, oversold_new, closed)`: 주도주는 종목마다 1건(종목·등락률·종가 / 테마·동반 수 / 함께 오른 종목 3개 / 뉴스 제목 1개 / 매도 규칙), 과대 낙폭 편입·매도는 묶어서 200자 단위로 나눠 전송. 보낼 게 없는 날은 안 보냄. 실패해도 크롤링 계속
+  - `_update_bet_track`이 마감 종목 목록(kind·name·result·ret·days·reason)을 반환(select에 name 추가). PATCH 성공도 None이 와서 갱신 수가 0으로 찍히던 로그 수정
+  - `seed_oversold_track`/`seed_leader_track`이 **오늘 새로 편입된 행만** 반환(편입 전에 오늘 이미 있던 코드를 조회) → 16:00 close 재실행 때 같은 종목 알림 중복 방지. 매도 알림은 `last_date≠TODAY` 가드로 원래 1회
+  - main: close 모드에서 갱신·편입 결과를 모아 과대 낙폭 저장 직후 `notify_track_kakao` 호출. `KAKAO_TEST`면 시작할 때 테스트 메시지 1건
+- **crawl.yml**: Secrets `KAKAO_REST_API_KEY`·`KAKAO_CLIENT_SECRET` 연결 + 수동 실행 입력 `kakao_test`(체크하면 테스트 메시지)
+- 확인: 가짜 카카오·DB로 토큰 갱신 저장, 메시지 내용·200자 나누기, 보낼 것 없을 때 0건, 16:00 재실행 중복 제외 확인. **실제 카카오 발송은 미확인**
+- **운영 순서**: (1) developers.kakao.com → 앱 추가 → 플랫폼 Web 사이트 도메인 `https://ainsightlab.kr` → 카카오 로그인 활성화 + Redirect URI `https://localhost` → 동의항목 "카카오톡 메시지 전송" 선택 동의 (2) Supabase에서 `setup_kakao.sql` 실행 (3) PC에서 `python kakao_setup.py <REST API 키>` → 나와의 채팅에 테스트 메시지 확인 → 출력된 SQL을 Supabase에 실행(또는 SUPABASE_KEY 설정 후 실행) (4) GitHub Secrets에 `KAKAO_REST_API_KEY`(클라이언트 시크릿을 켰다면 `KAKAO_CLIENT_SECRET`도) 등록 (5) Actions → STOCKPULSE 크롤링 → Run workflow → "카카오톡 알림 테스트" 체크로 연결 확인
+- 한계: 본인 카카오톡에만 감. refresh token은 약 2개월 유효 — 크롤링이 2개월 가까이 멈추거나 카카오 연결을 끊으면 kakao_setup.py 다시 실행. 메시지당 200자라 종목이 많으면 여러 건으로 나뉨
 
 ### 자동 리스트 생성기 (orders.html) (2026-10-13)
 - 사용자 요청: 발주서(쿠팡 ERP 엑셀) 업로드 → 제품리스트 참고해 **부착리스트(엑셀) + 적재이미지(PNG)** 자동 생성. APS와 같은 관리자 인증을 쓰는 독립 페이지

@@ -49,6 +49,11 @@ DART_API_KEY = os.environ.get("DART_API_KEY", "")  # https://opendart.fss.or.kr 
 
 # 재료 포착 TOP 10을 close 모드가 아닐 때도 강제 산출 (수동 실행/테스트용)
 FORCE_CATALYST = os.environ.get("FORCE_CATALYST", "").strip().lower() in ("1", "true", "yes", "on")
+# 카카오톡 "나에게 보내기" 알림 (성과 추적 편입·매도). 키가 없으면 알림만 건너뜀
+KAKAO_REST_API_KEY = os.environ.get("KAKAO_REST_API_KEY", "").strip()
+KAKAO_CLIENT_SECRET = os.environ.get("KAKAO_CLIENT_SECRET", "").strip()
+KAKAO_TEST = os.environ.get("KAKAO_TEST", "").strip().lower() in ("1", "true", "yes", "on")
+SITE_URL = os.environ.get("SITE_URL", "") or "https://ainsightlab.kr"
 
 YAHOO_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -4032,7 +4037,9 @@ def seed_oversold_track(oversold):
     close 모드(확정 종가)에서만 호출할 것 — 15:00 장중 시세로 편입하면 진입가가 틀어진다.
     """
     if oversold is None:
-        return 0
+        return []
+    existing = {r["code"] for r in (supabase_request("GET", "oversold_track", params={
+        "pick_date": f"eq.{TODAY}", "select": "code"}) or [])}
     supabase_request("DELETE", "oversold_track", params={"pick_date": f"eq.{TODAY}"})
 
     rows = []
@@ -4063,10 +4070,11 @@ def seed_oversold_track(oversold):
 
     if not rows:
         log("  ℹ️ 성과 추적 편입 종목 없음 (과대 낙폭 0개)")
-        return 0
+        return []
     result = supabase_request("POST", "oversold_track", data=rows)
     log(f"  📈 과대 낙폭 성과 추적 편입 {len(rows)}종목 {'✅' if result else '❌'}")
-    return len(rows)
+    # 알림용: 오늘 앞선 실행(15:35)에서 이미 편입된 종목은 빼고 새로 들어온 것만
+    return [r for r in rows if r["code"] not in existing] if result else []
 
 
 def _load_prior_closes(codes, need):
@@ -4118,7 +4126,7 @@ def _update_bet_track(table, krx_data, label, take_profit=None, stop_loss=None, 
         batch = supabase_request("GET", table, params={
             "status": "eq.open",
             "last_date": f"neq.{TODAY}",
-            "select": "id,code,entry_price,days_tracked,max_ret,min_ret",
+            "select": "id,code,name,entry_price,days_tracked,max_ret,min_ret",
             "order": "id",
             "limit": "1000",
             "offset": str(offset),
@@ -4131,12 +4139,13 @@ def _update_bet_track(table, krx_data, label, take_profit=None, stop_loss=None, 
         offset += 1000
     if not open_rows:
         log(f"  ℹ️ 갱신할 {label} 추적 종목 없음")
-        return 0
+        return []
 
     prior = _load_prior_closes([r["code"] for r in open_rows], exit_ma - 1) if exit_ma else {}
 
     now_iso = datetime.now(timezone(timedelta(hours=9))).isoformat()
     updated, wins, losses, skipped = 0, 0, 0, 0
+    closed_list = []
     for row in open_rows:
         d = krx_data.get(row["code"])
         price = float(d.get("price", 0)) if d else 0
@@ -4182,23 +4191,26 @@ def _update_bet_track(table, krx_data, label, take_profit=None, stop_loss=None, 
                 "close_ret": ret,
                 "hold_days": days,
             })
+            closed_list.append({"kind": label, "name": row.get("name") or row["code"], "code": row["code"],
+                                "result": result, "ret": ret, "days": days,
+                                "reason": f"{exit_ma}일선 이탈" if exit_ma else ("익절선 도달" if result == "win" else "손절선 도달")})
 
-        if supabase_request("PATCH", table, data=payload,
-                            params={"id": f"eq.{row['id']}"}) is not None:
-            updated += 1
+        # PATCH 는 return=minimal 이라 성공해도 None — 실패는 supabase_request 안에서 로그로 남음
+        supabase_request("PATCH", table, data=payload, params={"id": f"eq.{row['id']}"})
+        updated += 1
 
     log(f"  📈 {label} 성과 추적 갱신 {updated}종목 (익절 {wins} · 손절 {losses} · 시세없음 {skipped})")
-    return updated
+    return closed_list
 
 
 def update_oversold_track(krx_data):
-    """과대 낙폭 추적: 종가 +10% 익절 / -10% 손절."""
+    """과대 낙폭 추적: 종가 +10% 익절 / -10% 손절. 오늘 마감된 종목 목록을 반환."""
     return _update_bet_track("oversold_track", krx_data, "과대 낙폭",
                              take_profit=OVERSOLD_TRACK_TAKE_PROFIT, stop_loss=OVERSOLD_TRACK_STOP_LOSS)
 
 
 def update_leader_track(krx_data):
-    """주도주 배팅 추적: 종가가 10일 이동평균선 아래로 내려가면 매도."""
+    """주도주 배팅 추적: 종가가 10일 이동평균선 아래로 내려가면 매도. 오늘 마감된 종목 목록을 반환."""
     return _update_bet_track("leader_track", krx_data, "주도주", exit_ma=LEADER_TRACK_EXIT_MA)
 
 
@@ -4304,14 +4316,150 @@ def select_leader_stocks(krx_data, theme_map):
 def seed_leader_track(picks):
     """오늘 주도주를 leader_track 에 편입 (오늘분 교체 → 재실행 안전)."""
     if picks is None:
-        return 0
+        return []
+    existing = {r["code"] for r in (supabase_request("GET", "leader_track", params={
+        "pick_date": f"eq.{TODAY}", "select": "code"}) or [])}
     supabase_request("DELETE", "leader_track", params={"pick_date": f"eq.{TODAY}"})
     if not picks:
         log("  ℹ️ 오늘은 주도 테마 없음 — 주도주 편입 없음")
-        return 0
+        return []
     result = supabase_request("POST", "leader_track", data=picks)
     log(f"  🔥 주도주 성과 추적 편입 {len(picks)}종목 {'✅' if result else '❌'}")
-    return len(picks)
+    return [r for r in picks if r["code"] not in existing] if result else []
+
+
+# ─────────────────────────────────────────
+# 카카오톡 알림 ("나에게 보내기")
+#   refresh token 은 Supabase app_secrets 에 보관 (setup_kakao.sql + kakao_setup.py 로 최초 1회 저장)
+#   매 발송 때 refresh token 으로 access token 을 새로 받고, 새 refresh token 이 오면 다시 저장
+# ─────────────────────────────────────────
+KAKAO_TEXT_LIMIT = 200   # 텍스트 템플릿 최대 글자 수
+_kakao_access = None
+
+
+def _kakao_secret_get(key):
+    rows = supabase_request("GET", "app_secrets", params={"key": f"eq.{key}", "select": "value"})
+    return rows[0]["value"] if rows else ""
+
+
+def _kakao_secret_set(key, value):
+    try:
+        r = requests.post(f"{SUPABASE_URL}/rest/v1/app_secrets", headers={
+            "apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates,return=minimal",
+        }, json=[{"key": key, "value": value, "updated_at": datetime.now(timezone.utc).isoformat()}], timeout=15)
+        return r.status_code < 300
+    except Exception as e:
+        log(f"  ⚠️ 카카오 토큰 저장 실패: {e}")
+        return False
+
+
+def _kakao_token():
+    """refresh token 으로 access token 발급 (실행당 1회). 실패하면 None."""
+    global _kakao_access
+    if _kakao_access:
+        return _kakao_access
+    if not KAKAO_REST_API_KEY:
+        return None
+    refresh = _kakao_secret_get("kakao_refresh_token")
+    if not refresh:
+        log("  ⚠️ 카카오 refresh token 없음 — kakao_setup.py 로 최초 연결 필요")
+        return None
+    data = {"grant_type": "refresh_token", "client_id": KAKAO_REST_API_KEY, "refresh_token": refresh}
+    if KAKAO_CLIENT_SECRET:
+        data["client_secret"] = KAKAO_CLIENT_SECRET
+    try:
+        r = requests.post("https://kauth.kakao.com/oauth/token", data=data, timeout=15)
+        tok = r.json()
+    except Exception as e:
+        log(f"  ⚠️ 카카오 토큰 갱신 실패: {e}")
+        return None
+    if "access_token" not in tok:
+        log(f"  ⚠️ 카카오 토큰 갱신 실패 (다시 kakao_setup.py 실행 필요할 수 있음): {str(tok)[:200]}")
+        return None
+    if tok.get("refresh_token"):   # 만료 1개월 이내면 새 refresh token 이 옴 → 저장해야 계속 연장됨
+        ok = _kakao_secret_set("kakao_refresh_token", tok["refresh_token"])
+        log(f"  🔑 카카오 refresh token 갱신 저장 {'✅' if ok else '❌'}")
+    _kakao_access = tok["access_token"]
+    return _kakao_access
+
+
+def _kakao_chunks(lines, title):
+    """줄 목록을 200자 이하 메시지들로 나눔 (메시지마다 제목 줄 반복)."""
+    msgs, cur = [], title
+    for ln in lines:
+        ln = ln if len(ln) <= KAKAO_TEXT_LIMIT - len(title) - 2 else ln[:KAKAO_TEXT_LIMIT - len(title) - 3] + "…"
+        if len(cur) + 1 + len(ln) > KAKAO_TEXT_LIMIT:
+            msgs.append(cur)
+            cur = title
+        cur += "\n" + ln
+    if cur != title:
+        msgs.append(cur)
+    return msgs
+
+
+def kakao_send(text, link=None, button="사이트에서 보기"):
+    """카카오톡 '나와의 채팅'으로 텍스트 1건 전송. 링크 도메인은 카카오 앱에 등록된 사이트만 동작."""
+    token = _kakao_token()
+    if not token:
+        return False
+    link = link or SITE_URL
+    template = {"object_type": "text", "text": text[:KAKAO_TEXT_LIMIT],
+                "link": {"web_url": link, "mobile_web_url": link}, "button_title": button}
+    try:
+        r = requests.post("https://kapi.kakao.com/v2/api/talk/memo/default/send",
+                          headers={"Authorization": f"Bearer {token}"},
+                          data={"template_object": json.dumps(template, ensure_ascii=False)}, timeout=15)
+        if r.status_code != 200:
+            log(f"  ⚠️ 카카오톡 전송 실패: {r.status_code} {r.text[:200]}")
+            return False
+        return True
+    except Exception as e:
+        log(f"  ⚠️ 카카오톡 전송 실패: {e}")
+        return False
+
+
+def notify_track_kakao(leader_new, oversold_new, closed):
+    """성과 추적 편입·매도를 카카오톡으로 알림. 보낼 게 없으면 아무것도 안 보냄. 실패해도 크롤링엔 영향 없음."""
+    if not KAKAO_REST_API_KEY or not (leader_new or oversold_new or closed):
+        return 0
+    try:
+        now_kst = datetime.now(timezone(timedelta(hours=9)))
+        md = f"{now_kst.month}/{now_kst.day}"
+        page = f"{SITE_URL}/#issues"
+        sent = 0
+        # 주도주: 종목마다 1건 (테마·동반 종목·뉴스 제목)
+        for i, r in enumerate(leader_new or [], 1):
+            mates = [f"{t['name']} {t['change_pct']:+.1f}%" for t in (r.get("theme_stocks") or []) if t.get("code") != r["code"]][:3]
+            news = (r.get("news_list") or [])
+            lines = [f"🔥 주도주 편입 {md} ({i}/{len(leader_new)})",
+                     f"{r['name']} {r['change_pct']:+.2f}% · 종가 {r['entry_price']:,.0f}원",
+                     f"테마: {r['theme_name']} (동반 {r['theme_count']}종목)"]
+            if mates:
+                lines.append("함께: " + ", ".join(mates))
+            if news:
+                lines.append("📰 " + news[0].get("title", ""))
+            lines.append("매도: 종가 10일선 이탈 시")
+            text = "\n".join(lines)
+            if len(text) > KAKAO_TEXT_LIMIT:
+                text = text[:KAKAO_TEXT_LIMIT - 1] + "…"
+            sent += kakao_send(text, page, "테마·뉴스 보기")
+        # 과대 낙폭: 한 메시지에 묶음 (200자 넘으면 나눔)
+        if oversold_new:
+            lines = [f"{r['name']} MA20 {float(r.get('deviation') or 0):+.1f}% · {r['entry_price']:,.0f}원" for r in oversold_new]
+            for m in _kakao_chunks(lines, f"▼ 과대 낙폭 편입 {md} · {len(oversold_new)}종목"):
+                sent += kakao_send(m, page)
+        # 매도(마감)
+        if closed:
+            lines = [f"[{c['kind']}] {c['name']} {c['ret']:+.2f}% {'익절' if c['result'] == 'win' else '손절'} · {c['reason']} · {c['days']}일"
+                     for c in closed]
+            for m in _kakao_chunks(lines, f"📤 매도 {md} · {len(closed)}건"):
+                sent += kakao_send(m, page)
+        log(f"  💬 카카오톡 알림 {sent}건 전송")
+        return sent
+    except Exception as e:
+        log(f"  ⚠️ 카카오톡 알림 실패 (크롤링은 계속): {e}")
+        return 0
 
 
 # ─────────────────────────────────────────
@@ -4845,6 +4993,11 @@ def main():
         log("  export SUPABASE_KEY='your-service-role-key'")
         return
 
+    # 수동 실행 "카카오톡 테스트" — 연결 확인용 메시지 1건 (크롤링은 그대로 진행)
+    if KAKAO_TEST:
+        ok = kakao_send("🔔 STOCKPULSE 카카오톡 알림 테스트\n이 메시지가 보이면 GitHub Actions → 카카오톡 연결 정상입니다.")
+        log(f"  💬 카카오톡 테스트 메시지 {'✅' if ok else '❌ (KAKAO_REST_API_KEY / app_secrets 확인)'}")
+
     # 1. 섹터 매핑 조회 (네이버 업종별 종목, 일 1회 캐시)
     sector_map = fetch_naver_sector_map()
     log(f"  📋 섹터 매핑: {len(sector_map)}개 종목")
@@ -4914,12 +5067,13 @@ def main():
     if ai_mode == "close" or oversold_intraday:
         save_daily_close(krx_data)
         oversold = crawl_oversold_stocks(krx_data)
+    track_closed, leader_new, oversold_new = [], [], []
     if ai_mode == "close":
         # 과대 낙폭 성과 추적: 기존 종목을 오늘 종가로 먼저 갱신(익절/손절 판정) → 저장 단계에서 오늘분 편입
-        update_oversold_track(krx_data)
+        track_closed += update_oversold_track(krx_data) or []
         # 주도주 배팅: 기존 종목 갱신 → 오늘 주도 테마 대장 편입 (확정 종가 기준)
-        update_leader_track(krx_data)
-        seed_leader_track(select_leader_stocks(krx_data, theme_map))
+        track_closed += update_leader_track(krx_data) or []
+        leader_new = seed_leader_track(select_leader_stocks(krx_data, theme_map)) or []
 
     # 10-2. 재료 포착 TOP 10 (close 모드에서만 — DART/뉴스 API 비용 + 확정 종가 필요)
     #        FORCE_CATALYST=1 이면 시간대·중복 여부 무관하게 강제 산출 (수동 실행/테스트용)
@@ -5109,7 +5263,11 @@ def main():
             log("  ℹ️ 과대 낙폭 종목 없음 — 빈 상태로 갱신")
         # 성과 추적 편입은 확정 종가(close 모드)일 때만
         if ai_mode == "close":
-            seed_oversold_track(oversold)
+            oversold_new = seed_oversold_track(oversold) or []
+
+    # 성과 추적 편입·매도 카카오톡 알림 (close 모드, 새로 생긴 것만 — 16:00 재실행 땐 중복 안 보냄)
+    if ai_mode == "close":
+        notify_track_kakao(leader_new, oversold_new, track_closed)
 
     # 재료 포착 TOP 10 저장 (당일분 교체, 과거는 보존)
     if catalysts is not None:

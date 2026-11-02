@@ -16,6 +16,10 @@ on:
         description: '재료 포착 TOP 10을 지금 강제 산출 (시간대 무관, 당일 데이터 덮어씀)'
         type: boolean
         default: false
+      kakao_test:
+        description: '카카오톡 알림 테스트 메시지 보내기 (연결 확인용)'
+        type: boolean
+        default: false
 
 jobs:
   crawl:
@@ -55,4 +59,7 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           DART_API_KEY: ${{ secrets.DART_API_KEY }}
           FORCE_CATALYST: ${{ inputs.force_catalyst }}
+          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+          KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
+          KAKAO_TEST: ${{ inputs.kakao_test }}
         run: python crawl.py
