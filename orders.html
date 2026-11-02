@@ -5033,7 +5033,8 @@ function FzOutExpTrace({children,items}){
     </div>,document.body)}
   </>;
 }
-const fzOutVisible=(plan,onlyOut)=>onlyOut?plan.filter(it=>it.rows.some(x=>x.out>0)):plan;
+// "출고하는 로트만 표시"는 로트 줄만 거름 — 출고가 없는 제품(재고 없음 등)도 챙길 수 있게 제품은 항상 남김
+const fzOutVisible=(plan,onlyOut)=>plan;
 function FzOutTable({plan:allPlan,onlyOut,locColor,print,outCell,flush,onHide,traceOf}){
   const plan=fzOutVisible(allPlan,onlyOut);
   const sep="1.5px solid #cfd5dd";
@@ -5159,7 +5160,7 @@ function downloadFzOutXlsx(plan,date,prefix,vendor,onlyOut){
   for(const g of fzOutSiteGroups(plan)){
     for(const it of g.items){
       const outs=it.rows.filter(x=>x.out>0);
-      if(!outs.length){if(!onlyOut)fl.push([g.floor,shipNameOf(it.product),it.boxes,"재고 없음","",0]);continue}
+      if(!outs.length){fl.push([g.floor,shipNameOf(it.product),it.boxes,it.rows.length?"출고할 로트 없음":"재고 없음","",0]);continue}
       outs.forEach((x,i)=>fl.push([g.floor,i?"":shipNameOf(it.product),i?"":it.boxes,fzExpText(x.lot.expiry),fzLoc(x.lot)===NO_LOC?"":fzLoc(x.lot),x.out]));
     }
     fl.push([`${g.floor} 합계`,"",g.total,"","",g.out]);
