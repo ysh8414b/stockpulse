@@ -3865,7 +3865,7 @@ function computeAutoPlan({targetDay,items,lines,plans,invProducts,dowMap,rateByI
     const hasDow=!!fc&&!fc.slice(1).every(v=>!(v>0));
     if(!hasDow&&!fcd){skipped.push({item:it,reason:"매출 데이터 없음",kind:"nosales"});continue}
     if(!(it.code in stockByCode)){skipped.push({item:it,reason:"재고시트에 없음",kind:"nostock"});continue}
-    const floor=opts.useSafety?Number(it.safety_stock||0):0;
+    const floor=opts.useSafety?Number(it.safety_stock||0)*safetyPctOf(opts)/100:0;
     const promoOf=(d)=>demandPromoOf(demand,it.code,d);
     const f=(d)=>demandOn({fc,fcd,promo:promoOf(d)},d);
 
@@ -4314,7 +4314,7 @@ function buildAiPlanInput({base,items,lines,plans,dowMap,demand,settings,opts,no
   return {
     today:todayStr(),days:base.days.map(d=>d+"("+DOW_LABEL[isoDowOf(d)-1]+")"),
     work_hours:`${settings.work_start_hour}~${settings.work_end_hour}시`+(getLunch(settings)?`, 점심 ${getLunch(settings).label}`:""),
-    rule_options:{shortage_lead_prod_days:Number(opts.lead),cover_days:Number(opts.cover),floor:opts.useSafety?"안전재고":"0",fill_up_to_days:opts.fill?Number(opts.fillDays):null},
+    rule_options:{shortage_lead_prod_days:Number(opts.lead),cover_days:Number(opts.cover),floor:opts.useSafety?`안전재고의 ${safetyPctOf(opts)}%`:"0",fill_up_to_days:opts.fill?Number(opts.fillDays):null},
     lines:lines.map(l=>({line_id:l.id,name:l.name,auto_plan:!!l.auto_plan})),
     draft_plan:plan,not_planned,
     sales_by_dow_mon_to_sun:sales_by_dow,
@@ -4596,9 +4596,11 @@ function AiReviewPanel({adminHash,base,items,lines,plans,dowMap,demand,settings,
   </div>;
 }
 
+// 🤖 자동 생성 — 부족 기준 = 안전재고 × N% (기본 100, 0~200)
+function safetyPctOf(opts){const v=Number(opts?.safetyPct);return Number.isFinite(v)?Math.min(200,Math.max(0,v)):100}
 function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLinesChanged,onCreated,onCancel}){
   const[opts,setOpts]=useState(()=>{
-    const def={lead:2,cover:5,useSafety:true,changeoverMin:0,weeks:8,prodDays:[1,2,3,4,5],fill:true,fillDays:14,days:1,groupSimilar:true,sameChangeoverMin:0,useForecast:true,optimize:true};
+    const def={lead:2,cover:5,useSafety:true,safetyPct:100,changeoverMin:0,weeks:8,prodDays:[1,2,3,4,5],fill:true,fillDays:14,days:1,groupSimilar:true,sameChangeoverMin:0,useForecast:true,optimize:true};
     try{return {...def,...JSON.parse(localStorage.getItem("aps-autoplan-opts-v2")||"{}")}}catch(e){return def}
   });
   useEffect(()=>{try{localStorage.setItem("aps-autoplan-opts-v2",JSON.stringify(opts))}catch(e){}},[opts]);
@@ -4774,7 +4776,7 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
         <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={onCancel}>✕</button>
       </div>
       <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.6,marginBottom:12}}>
-        재고시트 재고 − 요일별 평균 매출 + 기존 계획으로 하루씩 재고를 예측합니다. <b>{fmtMD(addDays(dayStr,1))}~{fmtMD(autoTriggerEnd)}(생산일 {opts.lead}일)</b> 안에 재고가 {opts.useSafety?"안전재고":"0"} 아래로 떨어질 제품을 이날 생산하고, 이날부터 <b>{opts.cover}일치</b>(부족일이 더 뒤면 그날까지) 재고가 {opts.useSafety?"안전재고":"0"} 이상 유지되는 양을 만듭니다.{opts.fill?<> 그러고도 라인 시간이 남으면 <b>재고 일수가 적은 제품부터</b> 재고가 하루 평균 판매 <b>{opts.fillDays}일치</b>가 될 때까지 채웁니다(여유 생산, 1시간 이상 분량일 때만).</>:null}{opts.groupSimilar!==false?" 주 원육(BOM에서 가장 많이 들어가는 원자재)이 같은 제품은 같은 라인에 이어서 배치해 전환을 줄입니다.":""} 시간은 📈 통계 탭의 실제 생산 속도(없으면 품목의 시간당 생산량)로 계산합니다.
+        재고시트 재고 − 요일별 평균 매출 + 기존 계획으로 하루씩 재고를 예측합니다. <b>{fmtMD(addDays(dayStr,1))}~{fmtMD(autoTriggerEnd)}(생산일 {opts.lead}일)</b> 안에 재고가 {opts.useSafety?`안전재고의 ${safetyPctOf(opts)}%`:"0"} 아래로 떨어질 제품을 이날 생산하고, 이날부터 <b>{opts.cover}일치</b>(부족일이 더 뒤면 그날까지) 재고가 {opts.useSafety?`안전재고의 ${safetyPctOf(opts)}%`:"0"} 이상 유지되는 양을 만듭니다.{opts.fill?<> 그러고도 라인 시간이 남으면 <b>재고 일수가 적은 제품부터</b> 재고가 하루 평균 판매 <b>{opts.fillDays}일치</b>가 될 때까지 채웁니다(여유 생산, 1시간 이상 분량일 때만).</>:null}{opts.groupSimilar!==false?" 주 원육(BOM에서 가장 많이 들어가는 원자재)이 같은 제품은 같은 라인에 이어서 배치해 전환을 줄입니다.":""} 시간은 📈 통계 탭의 실제 생산 속도(없으면 품목의 시간당 생산량)로 계산합니다.
       </div>
       <div style={{fontSize:12,marginBottom:10,padding:"7px 10px",borderRadius:8,background:"rgba(139,92,246,0.07)",border:"1px solid rgba(139,92,246,0.25)",lineHeight:1.6}}>
         <b>하루 판매량 기준:</b>{" "}
@@ -4792,8 +4794,15 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
         <label style={{display:"flex",alignItems:"center",gap:6}}>제품 전환 {numIn("changeoverMin",{min:0,max:240,step:5})}분</label>
         <label style={{display:"flex",alignItems:"center",gap:6}}>매출 기준 최근 {numIn("weeks",{min:1,max:52})}주</label>
         <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
-          <input type="checkbox" checked={!!opts.useSafety} onChange={e=>setOpt("useSafety",e.target.checked)}/> 안전재고 밑으로 떨어지면 부족
+          <input type="checkbox" checked={!!opts.useSafety} onChange={e=>setOpt("useSafety",e.target.checked)}/> 안전재고 기준으로 부족 판단
         </label>
+        {opts.useSafety&&<span style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}} title="재고가 (안전재고 × 이 비율) 밑으로 떨어지면 부족으로 보고, 그만큼까지만 채웁니다. 낮출수록 덜 만듭니다.">
+          <span>부족 기준 = 안전재고의</span>
+          {[30,50,70,100].map(v=><button key={v} type="button" className={"aps-btn aps-btn-sm "+(safetyPctOf(opts)===v?"aps-btn-primary":"aps-btn-secondary")}
+            style={{padding:"2px 8px"}} onClick={()=>setOpt("safetyPct",v)}>{v}%</button>)}
+          <input type="number" className="aps-input" min={0} max={200} step={5} value={safetyPctOf(opts)} style={{width:64,padding:"2px 6px"}}
+            onChange={e=>setOpt("safetyPct",e.target.value===""?100:Number(e.target.value))}/>%
+        </span>}
         <label style={{display:"flex",alignItems:"center",gap:6,cursor:fcRows?.length?"pointer":"default",opacity:fcRows?.length?1:0.55}}
           title={fcRows?.length?"💰 매출 → 🔮 예측 탭의 ML 예측을 하루 수요로 사용 (없는 날·상품은 요일 평균)":"아직 예측이 없습니다 — 💰 매출 → 🔮 예측 탭 안내 참고"}>
           <input type="checkbox" disabled={!fcRows?.length} checked={opts.useForecast!==false&&!!fcRows?.length} onChange={e=>setOpt("useForecast",e.target.checked)}/> 🔮 ML 수요 예측 사용
