@@ -1,10 +1,10 @@
-// APS·발주리스트 앱(PWA)용 서비스 워커
+// 메인·APS·발주리스트 앱(PWA)용 서비스 워커
 // - 사이트 파일(같은 주소): 항상 네트워크 먼저 → 실패하면(오프라인) 저장해 둔 사본
 // - CDN 라이브러리(버전 고정 주소): 저장해 둔 사본 먼저 → 없으면 네트워크
 // - Supabase·POST·cache:no-store 요청(새 버전 감지)은 건드리지 않음
-const CACHE = "sp-apps-v1";
-const SHELL = ["aps.html", "orders.html", "shared.js", "style.css",
-  "icons/aps-192.png", "icons/orders-192.png"];
+const CACHE = "sp-apps-v2";
+const SHELL = ["./", "index.html", "aps.html", "orders.html", "shared.js", "style.css",
+  "icons/main-192.png", "icons/aps-192.png", "icons/orders-192.png"];
 const CDN_HOSTS = ["cdnjs.cloudflare.com", "cdn.jsdelivr.net"];
 
 self.addEventListener("install", (e) => {

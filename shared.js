@@ -98,7 +98,7 @@ function applyTheme(t){
     if(bar||!document.body)return;
     bar=document.createElement("div");
     bar.setAttribute("data-html2canvas-ignore","true");
-    bar.style.cssText="position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:2147483000;"+
+    bar.style.cssText="position:fixed;left:50%;bottom:calc(16px + var(--sp-bottom,0px));transform:translateX(-50%);z-index:2147483000;"+
       "display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center;max-width:calc(100% - 32px);"+
       "padding:10px 14px;border-radius:12px;background:#0f172a;color:#f1f5f9;border:1px solid #334155;"+
       "box-shadow:0 8px 24px rgba(0,0,0,.35);font:14px/1.4 Pretendard,system-ui,sans-serif";

@@ -24,7 +24,7 @@
     var d = document.createElement("div");
     d.id = "sp-pwa-bar";
     d.setAttribute("data-html2canvas-ignore", "true");
-    d.style.cssText = "position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:99998;max-width:calc(100% - 32px);" +
+    d.style.cssText = "position:fixed;left:50%;bottom:calc(16px + var(--sp-bottom,0px));transform:translateX(-50%);z-index:99998;max-width:calc(100% - 32px);" +
       "display:flex;align-items:center;gap:10px;padding:10px 12px 10px 16px;border-radius:12px;background:#111827;color:#f9fafb;" +
       "font:600 13px/1.4 Pretendard,-apple-system,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.35)";
     d.innerHTML = "<span style='flex:1'>" + html + "</span>" +

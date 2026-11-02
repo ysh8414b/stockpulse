@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <!-- Google Analytics (gtag.js) -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-3G7NQ8B69G"></script>
   <script>
@@ -17,6 +17,13 @@
   <meta name="author" content="STOCKPULSE" />
   <meta name="robots" content="index, follow" />
   <meta name="theme-color" content="#07070c" />
+  <link rel="manifest" href="main.webmanifest" />
+  <link rel="apple-touch-icon" href="icons/main-180.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="STOCKPULSE" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+  <script src="pwa.js" data-scope="./" data-name="STOCKPULSE" defer></script>
   <link rel="canonical" href="https://ainsightlab.kr/" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="STOCKPULSE" />
@@ -61,33 +68,35 @@
   <style>
     :root{
       color-scheme:dark;
-      --bg:#07070c;--text:#e0ded8;--text-sub:#b0b0b0;--muted:#6b7280;--dim:#555;--dimmer:#444;
-      --card-bg:rgba(255,255,255,0.02);--card-bd:rgba(255,255,255,0.06);
-      --card-hbg:rgba(255,255,255,0.035);--card-hbd:rgba(255,255,255,0.1);
-      --div:rgba(255,255,255,0.04);--div2:rgba(255,255,255,0.05);--div3:rgba(255,255,255,0.06);
+      --bg:#0c0f13;--text:#e6e8eb;--text-sub:#b6bdc6;--muted:#8a93a0;--dim:#6b7480;--dimmer:#525a65;
+      --card-bg:#12161b;--card-bd:#222932;
+      --card-hbg:#161b21;--card-hbd:#323b47;
+      --div:#1a1f26;--div2:#1e242c;--div3:#252c35;
+      --accent:#22b8cf;
       --inp-bg:rgba(255,255,255,0.05);--inp-bd:rgba(255,255,255,0.1);
       --tab-bg:rgba(255,255,255,0.07);--tab-bd:rgba(255,255,255,0.1);
-      --ticker-bg:linear-gradient(90deg,#0a0a12,#0e0e1a,#0a0a12);
+      --ticker-bg:#0f1317;
       --hover:rgba(255,255,255,0.03);--hover2:rgba(255,255,255,0.015);
       --badge-bg:rgba(255,255,255,0.05);--badge-bg2:rgba(255,255,255,0.04);
-      --h-grad:linear-gradient(135deg,#e0ded8 30%,#888 100%);
-      --glow1:rgba(6,182,212,0.03);--glow2:rgba(139,92,246,0.025);
+      --h-grad:linear-gradient(var(--text),var(--text));
+      --glow1:transparent;--glow2:transparent;
       --skel1:rgba(255,255,255,0.04);--skel2:rgba(255,255,255,0.08);
       --scroll-thumb:rgba(255,255,255,0.1);
       --row-head:rgba(255,255,255,0.025);
     }
     .light{
       color-scheme:light;
-      --bg:#f5f5f7;--text:#1a1a2e;--text-sub:#444;--muted:#6b7280;--dim:#9ca3af;--dimmer:#b0b0b0;
-      --card-bg:#ffffff;--card-bd:rgba(0,0,0,0.08);
-      --card-hbg:rgba(0,0,0,0.03);--card-hbd:rgba(0,0,0,0.15);
-      --div:rgba(0,0,0,0.06);--div2:rgba(0,0,0,0.08);--div3:rgba(0,0,0,0.1);
+      --bg:#f1f2f0;--text:#15191e;--text-sub:#3d454f;--muted:#5f6873;--dim:#7d8590;--dimmer:#a3a9b1;
+      --card-bg:#ffffff;--card-bd:#dfe2e6;
+      --card-hbg:#fafbfb;--card-hbd:#c3c9d0;
+      --div:#e8ebee;--div2:#e2e5e9;--div3:#d8dce1;
+      --accent:#0e7490;
       --inp-bg:rgba(0,0,0,0.03);--inp-bd:rgba(0,0,0,0.12);
       --tab-bg:rgba(0,0,0,0.06);--tab-bd:rgba(0,0,0,0.12);
-      --ticker-bg:linear-gradient(90deg,#e8e8f0,#eff0f5,#e8e8f0);
+      --ticker-bg:#e9ebe8;
       --hover:rgba(0,0,0,0.03);--hover2:rgba(0,0,0,0.015);
       --badge-bg:rgba(0,0,0,0.05);--badge-bg2:rgba(0,0,0,0.04);
-      --h-grad:linear-gradient(135deg,#1a1a2e 30%,#555 100%);
+      --h-grad:linear-gradient(var(--text),var(--text));
       --glow1:transparent;--glow2:transparent;
       --skel1:rgba(0,0,0,0.04);--skel2:rgba(0,0,0,0.08);
       --scroll-thumb:rgba(0,0,0,0.15);
@@ -105,7 +114,16 @@
     @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
     @keyframes glowPulse{0%,100%{box-shadow:0 0 8px rgba(6,182,212,0.2)}50%{box-shadow:0 0 20px rgba(6,182,212,0.4)}}
     @keyframes spin{to{transform:rotate(360deg)}}
-    .fade-up{animation:fadeUp .55s cubic-bezier(.16,1,.3,1) both}
+    .fade-up{animation:none}
+    body{font-variant-numeric:tabular-nums}
+    :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+    ::selection{background:rgba(34,184,207,0.3)}
+    .nav-btn{border-radius:0!important;padding-bottom:13px!important}
+    .nav-btn.on{background:transparent!important;border-color:transparent!important;color:var(--text)!important;box-shadow:inset 0 -2px 0 var(--accent)}
+    .nav-btn:hover{color:var(--text)!important}
+    .nav-live{display:inline-flex;align-items:center;gap:4px;margin-left:4px;font-size:10px;font-weight:800;letter-spacing:.02em;color:#ef4444}
+    .nav-live::before{content:"";width:6px;height:6px;border-radius:50%;background:#ef4444;animation:pulse 2s infinite}
+    @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
     .fade-up-d1{animation-delay:.05s}.fade-up-d2{animation-delay:.1s}.fade-up-d3{animation-delay:.15s}.fade-up-d4{animation-delay:.2s}
     @media(max-width:900px){.chat-side-panel,.theme-side-panel{position:fixed!important;top:0!important;right:0!important;bottom:0!important;width:100%!important;max-width:380px!important;height:100vh!important;z-index:999!important;box-shadow:-4px 0 20px rgba(0,0,0,0.3)!important}}
     @media(max-width:900px){.theme-side-panel{max-width:480px!important}}
@@ -121,7 +139,7 @@
       .grid-sector{grid-template-columns:repeat(2,1fr)!important}
       .header-wrap{padding:20px 16px 14px!important;flex-wrap:wrap!important}
       .main-wrap{padding:16px 16px 40px!important}
-      .nav-wrap{padding:22px 16px 14px!important;margin-top:-22px!important;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+      .nav-wrap{padding:4px 16px 0!important;margin-top:0!important;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
       .nav-wrap::-webkit-scrollbar{display:none}
       .nav-btn{padding:12px 16px!important;min-height:44px!important}
       /* 재료 포착 테이블: 카드형 레이아웃을 태블릿까지 확대 (글씨 겹침 방지) */
@@ -155,6 +173,8 @@
       .theme-dropdown{min-width:0!important;max-width:calc(100vw - 32px)!important}
       .card-pad{padding:16px 18px!important}
     }
+    .m-tabbar{display:none}
+    .m-only{display:none!important}
     /* === Phone (600px) === */
     @media(max-width:600px){
       /* Header: 타이틀+설명 왼쪽, 날짜+시간 오른쪽, 줄바꿈 허용 */
@@ -188,6 +208,26 @@
       .news-filter-btn{padding:8px 12px!important;font-size:13px!important;min-height:40px!important}
       .sector-stock-row{padding:12px 0!important}
       footer{flex-direction:column!important;text-align:center!important;padding:18px 16px!important}
+      /* 앱형 레이아웃: 머리글 한 줄 + 아래쪽 탭바 */
+      :root{--sp-bottom:calc(60px + env(safe-area-inset-bottom))}
+      body{padding-bottom:var(--sp-bottom)}
+      .header-wrap{padding:10px 14px 8px!important;align-items:center!important;flex-wrap:nowrap!important;gap:8px!important}
+      .header-wrap>div:first-child{min-width:0!important}
+      .header-subtitle,.header-date,.header-time-large{display:none!important}
+      .header-right{gap:6px!important}
+      .header-time-large{font-size:14px!important;font-weight:600!important;color:var(--muted)!important;white-space:nowrap!important}
+      .m-only{display:flex!important}
+      .nav-wrap{display:none!important}
+      .main-wrap{padding-top:14px!important}
+      .m-tabbar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:900;background:var(--bg);border-top:1px solid var(--div2);padding:0 2px env(safe-area-inset-bottom);box-shadow:0 -4px 16px rgba(0,0,0,.18)}
+      .m-tab{flex:1;min-width:0;height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;background:none;border:0;font-family:inherit;color:var(--dim);cursor:pointer;position:relative;-webkit-tap-highlight-color:transparent}
+      .m-tab .ic{font-size:17px;line-height:1}
+      .m-tab .lb{font-size:11px;font-weight:600;white-space:nowrap}
+      .m-tab.on{color:var(--text)}
+      .m-tab.on::before{content:"";position:absolute;top:0;left:28%;right:28%;height:2px;border-radius:2px;background:var(--accent)}
+      .m-tab .live{position:absolute;top:9px;left:calc(50% + 9px);width:7px;height:7px;border-radius:50%;background:#ef4444;box-shadow:0 0 6px rgba(239,68,68,.7)}
+      .m-icon-btn{width:36px;height:36px;border-radius:10px;border:1px solid var(--card-bd);background:var(--card-bg);color:var(--text);align-items:center;justify-content:center;font-size:16px;text-decoration:none;cursor:pointer;flex-shrink:0;padding:0}
+      .m-icon-btn.on{border-color:rgba(6,182,212,.4);background:rgba(6,182,212,.12)}
     }
     /* === Small phone (400px) === */
     @media(max-width:400px){
@@ -1283,6 +1323,12 @@ function App(){
     if(window.location.hash!==desired){history.replaceState(null,"",desired||window.location.pathname+window.location.search)}
   },[tab]);
 
+  const firstTab=useRef(true);
+  useEffect(()=>{
+    if(firstTab.current){firstTab.current=false;return}
+    if(window.matchMedia&&matchMedia("(max-width:600px)").matches)window.scrollTo(0,0);
+  },[tab]);
+
   useEffect(()=>{
     const onHash=()=>setTab(getTabFromHash());
     window.addEventListener("hashchange",onHash);
@@ -1323,11 +1369,13 @@ function App(){
       </div>
       <div className="fade-up fade-up-d1 header-right" style={{display:"flex",alignItems:"center",gap:"12px"}}>
         <div><div className="header-date" style={{color:"var(--muted)",fontSize:"14px",textAlign:"right"}}>{time.toLocaleDateString("ko-KR",{year:"numeric",month:"long",day:"numeric",weekday:"short"})}</div><div className="header-time-large" style={{color:"var(--text)",fontSize:"22px",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{time.toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</div></div>
+        <a href="board.html" className="m-only m-icon-btn" title="자유게시판" aria-label="자유게시판">📋</a>
+        <button className={"m-only m-icon-btn"+(chatOpen?" on":"")} title="실시간 토론방" aria-label="실시간 토론방" onClick={()=>{setChatOpen(c=>{if(!c)setThemePanel(null);return !c})}}>💬</button>
         <button onClick={()=>setTheme(t=>t==="dark"?"light":"dark")} title={theme==="dark"?"라이트 모드로 전환":"다크 모드로 전환"} style={{width:38,height:38,borderRadius:"10px",border:"1px solid var(--card-bd)",background:"var(--card-bg)",cursor:"pointer",fontSize:"20px",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .25s",flexShrink:0}} onMouseEnter={e=>{e.currentTarget.style.background="var(--card-hbg)";e.currentTarget.style.borderColor="var(--card-hbd)";e.currentTarget.style.transform="translateY(-1px)"}} onMouseLeave={e=>{e.currentTarget.style.background="var(--card-bg)";e.currentTarget.style.borderColor="var(--card-bd)";e.currentTarget.style.transform="none"}}>{theme==="dark"?"☀️":"🌙"}</button>
       </div>
     </header>
 
-    <nav className="nav-wrap" style={{maxWidth:1440,margin:"0 auto",padding:"0 40px 18px",display:"flex",gap:"3px",borderBottom:"1px solid var(--div2)",overflow:"visible"}}>{tabs.map(t=><button key={t.id} className="nav-btn" onClick={()=>setTab(t.id)} style={{padding:"9px 18px",fontFamily:"inherit",fontSize:"15px",fontWeight:tab===t.id?600:400,cursor:"pointer",background:tab===t.id?"var(--tab-bg)":"transparent",border:"1px solid",borderColor:tab===t.id?"var(--tab-bd)":"transparent",borderRadius:"8px",color:tab===t.id?"var(--text)":"var(--dim)",transition:"all .2s",display:"flex",alignItems:"center",gap:"5px",whiteSpace:"nowrap",position:t.live?"relative":"static"}}><span className="nav-btn-icon" style={{fontSize:"12px",opacity:tab===t.id?1:.6}}>{t.ic}</span><span className="nav-btn-label">{t.l}</span>{t.live&&<span style={{position:"absolute",top:"-20px",left:"55px",background:"linear-gradient(135deg, #ff6b6b, #ef4444, #dc2626)",color:"#fff",fontSize:"11px",fontWeight:800,padding:"3px 8px",borderRadius:"6px",letterSpacing:"0.5px",lineHeight:"14px",boxShadow:"0 2px 10px rgba(239,68,68,0.45), 0 0 20px rgba(239,68,68,0.2)",animation:"liveBounce 2s ease-in-out infinite",zIndex:10,pointerEvents:"none"}}><span style={{position:"absolute",bottom:"-4px",left:"14px",width:0,height:0,borderLeft:"5px solid transparent",borderRight:"5px solid transparent",borderTop:"5px solid #ef4444"}}/>LIVE</span>}</button>)}<a href="board.html" className="nav-btn" style={{padding:"9px 18px",fontFamily:"inherit",fontSize:"15px",fontWeight:400,background:"transparent",border:"1px solid transparent",borderRadius:"8px",color:"var(--dim)",transition:"all .2s",display:"flex",alignItems:"center",gap:"5px",whiteSpace:"nowrap",textDecoration:"none",marginLeft:"auto"}} onMouseEnter={e=>{e.currentTarget.style.background="var(--tab-bg)";e.currentTarget.style.borderColor="var(--tab-bd)";e.currentTarget.style.color="var(--text)"}} onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.borderColor="transparent";e.currentTarget.style.color="var(--dim)"}}><span style={{fontSize:"12px"}}>📋</span><span className="nav-btn-label">게시판</span></a><button className="nav-btn" onClick={()=>{setChatOpen(c=>{if(!c)setThemePanel(null);return !c})}} style={{padding:"9px 18px",fontFamily:"inherit",fontSize:"15px",fontWeight:chatOpen?600:400,background:chatOpen?"rgba(6,182,212,0.1)":"transparent",border:"1px solid",borderColor:chatOpen?"rgba(6,182,212,0.25)":"transparent",borderRadius:"8px",color:chatOpen?"#06b6d4":"var(--dim)",transition:"all .2s",display:"flex",alignItems:"center",gap:"5px",whiteSpace:"nowrap",cursor:"pointer"}} onMouseEnter={e=>{if(!chatOpen){e.currentTarget.style.background="rgba(6,182,212,0.08)";e.currentTarget.style.borderColor="rgba(6,182,212,0.2)";e.currentTarget.style.color="#06b6d4"}}} onMouseLeave={e=>{if(!chatOpen){e.currentTarget.style.background="transparent";e.currentTarget.style.borderColor="transparent";e.currentTarget.style.color="var(--dim)"}}}><span style={{fontSize:"12px"}}>💬</span><span className="nav-btn-label">토론방</span></button></nav>
+    <nav className="nav-wrap" style={{maxWidth:1440,margin:"0 auto",padding:"0 40px",display:"flex",gap:"3px",borderBottom:"1px solid var(--div2)",overflow:"visible"}}>{tabs.map(t=><button key={t.id} className={"nav-btn"+(tab===t.id?" on":"")} onClick={()=>setTab(t.id)} style={{padding:"9px 18px",fontFamily:"inherit",fontSize:"15px",fontWeight:tab===t.id?600:400,cursor:"pointer",background:tab===t.id?"var(--tab-bg)":"transparent",border:"1px solid",borderColor:tab===t.id?"var(--tab-bd)":"transparent",borderRadius:"8px",color:tab===t.id?"var(--text)":"var(--dim)",transition:"all .2s",display:"flex",alignItems:"center",gap:"5px",whiteSpace:"nowrap",position:t.live?"relative":"static"}}><span className="nav-btn-icon" style={{fontSize:"12px",opacity:tab===t.id?1:.6}}>{t.ic}</span><span className="nav-btn-label">{t.l}</span>{t.live&&<span className="nav-live">LIVE</span>}</button>)}<a href="board.html" className="nav-btn" style={{padding:"9px 18px",fontFamily:"inherit",fontSize:"15px",fontWeight:400,background:"transparent",border:"1px solid transparent",borderRadius:"8px",color:"var(--dim)",transition:"all .2s",display:"flex",alignItems:"center",gap:"5px",whiteSpace:"nowrap",textDecoration:"none",marginLeft:"auto"}} onMouseEnter={e=>{e.currentTarget.style.background="var(--tab-bg)";e.currentTarget.style.borderColor="var(--tab-bd)";e.currentTarget.style.color="var(--text)"}} onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.borderColor="transparent";e.currentTarget.style.color="var(--dim)"}}><span style={{fontSize:"12px"}}>📋</span><span className="nav-btn-label">게시판</span></a><button className="nav-btn" onClick={()=>{setChatOpen(c=>{if(!c)setThemePanel(null);return !c})}} style={{padding:"9px 18px",fontFamily:"inherit",fontSize:"15px",fontWeight:chatOpen?600:400,background:chatOpen?"rgba(6,182,212,0.1)":"transparent",border:"1px solid",borderColor:chatOpen?"rgba(6,182,212,0.25)":"transparent",borderRadius:"8px",color:chatOpen?"#06b6d4":"var(--dim)",transition:"all .2s",display:"flex",alignItems:"center",gap:"5px",whiteSpace:"nowrap",cursor:"pointer"}} onMouseEnter={e=>{if(!chatOpen){e.currentTarget.style.background="rgba(6,182,212,0.08)";e.currentTarget.style.borderColor="rgba(6,182,212,0.2)";e.currentTarget.style.color="#06b6d4"}}} onMouseLeave={e=>{if(!chatOpen){e.currentTarget.style.background="transparent";e.currentTarget.style.borderColor="transparent";e.currentTarget.style.color="var(--dim)"}}}><span style={{fontSize:"12px"}}>💬</span><span className="nav-btn-label">토론방</span></button></nav>
 
     <div style={{display:"flex",maxWidth:1440,margin:"0 auto",minHeight:"calc(100vh - 200px)"}}>
       <main className="main-wrap" style={{flex:1,minWidth:0,padding:"22px 40px 60px",transition:"all .3s ease"}}>
@@ -1368,6 +1416,10 @@ function App(){
         <a href="terms.html">이용약관</a>
       </div>
     </footer>
+
+    <nav className="m-tabbar" aria-label="탭">
+      {[{id:"overview",l:"시장",ic:"⌂"},{id:"issues",l:"재료",ic:"◆"},{id:"themes",l:"테마",ic:"◈",live:true},{id:"news",l:"뉴스",ic:"◇"},{id:"oversold",l:"낙폭",ic:"▼"},{id:"ai",l:"AI",ic:"⬡"}].map(t=><button key={t.id} className={"m-tab"+(tab===t.id?" on":"")} onClick={()=>{setChatOpen(false);setThemePanel(null);setTab(t.id)}} aria-current={tab===t.id?"page":undefined}><span className="ic">{t.ic}</span><span className="lb">{t.l}</span>{t.live&&<span className="live"/>}</button>)}
+    </nav>
   </div>;
 }
 

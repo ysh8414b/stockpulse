@@ -15,7 +15,7 @@
 - `privacy.html` — 개인정보처리방침
 - `terms.html` — 이용약관
 - `orders.html` — 자동 리스트 생성기 (발주서 → 부착리스트 엑셀 + 적재이미지 + 출고장 + 냉동재고 + 📤 냉동 출고 + 💰 판매가, 비밀번호 없이 접근)
-- `aps.webmanifest` / `orders.webmanifest` / `sw-apps.js` / `pwa.js` / `icons/` — APS·발주리스트 앱(PWA) 설치용
+- `main.webmanifest` / `aps.webmanifest` / `orders.webmanifest` / `sw-apps.js` / `pwa.js` / `icons/` — 메인·APS·발주리스트 앱(PWA) 설치용
 - `style.css` — 공통 CSS (다크/라이트 테마, 반응형)
 - `shared.js` — 공통 JS (Supabase 설정, db() 함수, 테마 유틸)
 - `sitemap.xml` — SEO용 사이트맵
@@ -1974,6 +1974,29 @@
 - 두 페이지 `<head>`: manifest, theme-color, icon, apple-touch-icon, apple-mobile-web-app-* 메타, pwa.js
 - 확인: manifest·아이콘 응답 200, 서비스 워커 동작은 Node 가짜 환경으로 확인(온라인 = 새 파일, 오프라인 = 사본, no-store·Supabase·POST 통과, 옛 캐시 삭제). 앱 내장 미리보기 브라우저는 서비스 워커 등록 자체를 막아 실제 설치·오프라인은 미확인 — 배포 후 휴대폰에서 확인 필요
 - 한계: 오프라인이면 화면은 열리지만 Supabase 데이터를 못 읽어 사실상 사용 불가(데이터 오프라인 저장 없음). iOS 홈 화면 앱에서는 파일 다운로드(이미지·엑셀·PDF)가 미리보기 화면으로 열릴 수 있음 — 거기서 공유 → 저장. 쿠팡 가격 갱신 크롬 확장은 휴대폰에서 동작 안 함. orders.html 판매가 북마크 창(`?pricecap`)은 앱이 아니라 브라우저 창으로 열림
+
+### 메인 페이지 앱(PWA) 설치 (2026-11-02)
+- 사용자 요청: 메인 페이지(index.html)도 앱으로 — APS·발주리스트 앱과 같은 방식
+- **`main.webmanifest`**: 이름 "STOCKPULSE 주식 대시보드"(짧은 이름 STOCKPULSE), id·start_url·scope = `./`(사이트 전체), standalone, 배경·테마색 `#07070c`. 아이콘 `icons/main-*.png`(남색→보라 + 흰 맥박선 + 청록 점) 192·512·180(iOS), 512는 maskable 겸용
+- index.html `<head>`: manifest, apple-touch-icon, apple/mobile-web-app 메타, `pwa.js`(data-scope `./`) — 설치 안내 줄은 기존 pwa.js 그대로(✕ 14일 숨김, 키 `sp-pwa-hide:./`)
+- `sw-apps.js`: 캐시 `sp-apps-v2`(v1 자동 삭제), 미리 저장 목록에 `./`, `index.html`, `icons/main-192.png` 추가. 메인 앱 서비스 워커는 범위 `./`라 board·chat·analysis 등 다른 페이지 요청도 거치지만 네트워크 먼저라 동작 변화 없음. aps.html·orders.html은 더 좁은 범위의 기존 등록이 우선
+- 메인 앱 범위가 사이트 전체라 앱 안에서 APS·발주 페이지로 이동해도 같은 앱 창에서 열림(APS·발주 앱은 따로 설치 가능)
+- 확인: 로컬에서 manifest·아이콘 응답 200. 실제 휴대폰 설치는 배포 후 미확인
+- 한계: 오프라인이면 화면만 열리고 시세 데이터는 못 읽음. 앱 안에서는 AdSense 광고가 그대로 보임
+- **모바일 최적화 (같은 날)**: 사용자 요청 — 휴대폰 폭(600px 이하)에서만 앱처럼 바꿈, PC 화면 변화 없음
+  - 아래쪽 고정 탭바 `.m-tabbar`(시장·재료·테마(빨간 LIVE 점)·뉴스·낙폭·AI, 높이 60px + 아이폰 홈 바 영역 `env(safe-area-inset-bottom)`, 선택 탭 위 청록 선). 위쪽 탭 줄(`.nav-wrap`)은 숨김. 탭바를 누르면 토론방·테마 패널을 닫고 이동
+  - 머리글 한 줄: 부제·날짜·시계 숨김(휴대폰 상단에 시계가 있음, 시계는 제목과 겹쳤음), 게시판 📋·토론방 💬은 아이콘 버튼(`.m-only .m-icon-btn`)으로 머리글 오른쪽에
+  - 탭이 바뀌면 맨 위로 스크롤(휴대폰 폭만, 첫 로드 제외)
+  - viewport에 `viewport-fit=cover`, 휴대폰에서 `:root{--sp-bottom}` + body 아래 여백. shared.js 새 버전 안내·pwa.js 설치 안내는 `bottom:calc(16px + var(--sp-bottom,0px))`로 탭바 위에 뜸(다른 페이지는 변수가 없어 그대로)
+  - 토론방은 기존대로 전체 화면(z 999)으로 열려 탭바(z 900)를 가림
+  - 확인: 375px 폭에서 6개 탭 가로 넘침 0, 탭 이동·맨 위 스크롤·토론방 열기, 659px 폭에서 기존 화면 그대로. 실제 휴대폰은 미확인
+- **디자인 다듬기 (같은 날)**: 사용자 요청 "디자인도 깔끔하게" (frontend-design 스킬) — APS·발주리스트와 같은 강철색으로 통일, 장식을 걷고 숫자를 앞으로
+  - 색(index.html `:root`/`.light`): 어두운 바탕 `#0c0f13`·카드 `#12161b`(단색)·선 `#222932`·글씨 `#e6e8eb`·흐린 글씨 `--muted #8a93a0`/`--dim #6b7480`(예전 `#555`는 탭 글씨가 거의 안 보였음), 밝은 바탕 `#f1f2f0`·흰 카드·선 `#dfe2e6`. 강조색 `--accent`(어두움 `#22b8cf` / 밝음 `#0e7490`). 시세 띠 단색 바탕
+  - 제목 그라데이션 글씨 → 단색(`--h-grad`를 단색으로), 배경 빛 번짐 끔, 카드 순서대로 올라오는 등장 효과(`.fade-up`) 끔, 동작 줄이기 설정 존중, 숫자 고정폭, 키보드 포커스 테두리
+  - 위쪽 탭: 선택 탭은 채운 상자 → 글씨 진하게 + 아래 강조색 2px 선(`.nav-btn.on`, 탭 줄 아래 선과 맞닿음). 떠다니며 튀던 LIVE 말풍선 → 탭 글씨 옆 빨간 점 + "LIVE"(`.nav-live`). 태블릿 폭 탭 줄의 LIVE용 위 여백 제거
+  - 휴대폰 아래 탭바 선택 표시도 `--accent`
+  - 상승 초록 / 하락 빨강, 테마·재료 등 각 탭 안 개별 스타일(인라인)은 그대로
+  - 확인: 1280px(어두움·밝음), 659px, 375px 화면 캡처, 가로 넘침 없음
 
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용

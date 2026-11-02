@@ -1,0 +1,18 @@
+{
+  "id": "./",
+  "name": "STOCKPULSE 주식 대시보드",
+  "short_name": "STOCKPULSE",
+  "description": "코스피·코스닥 시세, 재료 포착, 인기 테마, AI 시장 브리핑",
+  "lang": "ko",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#07070c",
+  "theme_color": "#07070c",
+  "icons": [
+    { "src": "icons/main-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/main-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/main-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
