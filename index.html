@@ -387,10 +387,9 @@ function CatScoreBar({label,value,max,color}){
     <div style={{height:"6px",borderRadius:"3px",background:"var(--badge-bg2)",overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:color,borderRadius:"3px",transition:"width .4s ease"}}/></div>
   </div>;
 }
-// ═══ 재료 포착 성과 추적 ═══
-// 선정일 종가에 샀다고 가정하고 이후 수익률을 누적 기록한 catalyst_track 을 읽어
-// 구간별(D+1/5/10/20) 평균 수익률과 승률, 날짜별·종목별 성적을 보여준다.
-const CAT_TRK_HORIZONS=[{k:"ret_d1",l:"D+1"},{k:"ret_d5",l:"D+5"},{k:"ret_d10",l:"D+10"},{k:"ret_d20",l:"D+20"},{k:"ret_cum",l:"현재"}];
+// ═══ 과대 낙폭 성과 추적 ═══
+// 엔벨로프 20 하단 이탈(종가 ≤ MA20 × 0.8) + 거래대금 1,000억 이상 종목을 선정일 종가에 샀다고 가정하고,
+// 매 거래일 종가 기준 +10% 익절 / -10% 손절에 먼저 닿은 쪽으로 마감한 oversold_track 을 읽어 보여준다.
 function CatTrackStat({label,value,sub,color}){
   return <div style={{padding:"14px 16px",background:"var(--card-bg)",border:"1px solid var(--card-bd)",borderRadius:"10px"}}>
     <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"6px"}}>{label}</div>
@@ -398,114 +397,118 @@ function CatTrackStat({label,value,sub,color}){
     {sub&&<div style={{fontSize:"12px",color:"var(--dim)",marginTop:"3px"}}>{sub}</div>}
   </div>;
 }
-function CatalystTrack(){
+const OVS_RES={win:{l:"익절",c:"#22c55e",bg:"rgba(34,197,94,0.12)"},loss:{l:"손절",c:"#ef4444",bg:"rgba(239,68,68,0.12)"},open:{l:"진행 중",c:"#3b82f6",bg:"rgba(59,130,246,0.12)"}};
+function OvsResBadge({r}){
+  const k=r.status==="closed"?(r.result==="win"?"win":"loss"):"open";const m=OVS_RES[k];
+  return <span style={{fontSize:"12px",fontWeight:700,color:m.c,background:m.bg,padding:"3px 8px",borderRadius:"5px",whiteSpace:"nowrap"}}>{m.l}</span>;
+}
+function OversoldTrack(){
   const[rows,setRows]=useState(null);const[err,setErr]=useState(false);
-  const[expDate,setExpDate]=useState(null);const[q,setQ]=useState("");
+  const[expDate,setExpDate]=useState(null);const[q,setQ]=useState("");const[flt,setFlt]=useState("all");
   useEffect(()=>{let alive=true;
-    db("catalyst_track","order=pick_date.desc,rank.asc&limit=1000").then(r=>{
+    db("oversold_track","order=pick_date.desc,rank.asc&limit=2000").then(r=>{
       if(!alive)return;
       if(r===null){setErr(true);setRows([])}else setRows(r);
     });
     return()=>{alive=false};
   },[]);
   if(rows===null)return <Loader/>;
-  const intro=<div style={{marginBottom:"16px",padding:"14px 16px",background:"rgba(139,92,246,0.05)",border:"1px solid rgba(139,92,246,0.15)",borderRadius:"10px",fontSize:"14px",lineHeight:1.65,color:"var(--text-sub)"}}>
-    각 종목을 <b style={{color:"#8b5cf6"}}>선정된 날 종가에 샀다고 가정</b>하고 이후 수익률을 거래일 단위로 기록합니다.
-    D+1·D+5·D+10·D+20은 그 시점의 확정 수익률이고, <b>현재</b>는 마지막 갱신일 종가 기준입니다.
-    추적은 <b>20거래일</b>까지 이어지며 그 뒤에는 마감 처리됩니다.
-    <span style={{color:"var(--dim)"}}> 매매 수수료·세금·슬리피지는 반영하지 않은 단순 가격 수익률입니다.</span>
+  const intro=<div style={{marginBottom:"16px",padding:"14px 16px",background:"rgba(59,130,246,0.05)",border:"1px solid rgba(59,130,246,0.15)",borderRadius:"10px",fontSize:"14px",lineHeight:1.65,color:"var(--text-sub)"}}>
+    매일 장 마감 후 <b style={{color:"#3b82f6"}}>엔벨로프 20 하단을 깬 종목</b>(종가가 20일 이동평균 대비 -20% 이하 · 그날 거래대금 1,000억 이상 · 시총 3,000억 이상 · 당일 상승 제외)을
+    <b> 선정일 종가에 샀다고 가정</b>합니다. 이후 매 거래일 종가 기준으로 <b style={{color:"#22c55e"}}>+10% 이상이면 익절</b>, <b style={{color:"#ef4444"}}>-10% 이하면 손절</b>로 마감하고,
+    둘 다 닿지 않았으면 진행 중으로 남습니다.
+    <span style={{color:"var(--dim)"}}> 장중 고가·저가가 아니라 종가만 보며, 수수료·세금·슬리피지는 반영하지 않았습니다.</span>
   </div>;
-  if(!rows.length)return <div>{intro}<Empty msg={err?"성과 데이터를 불러오지 못했습니다 — catalyst_track 테이블을 확인하세요":"아직 누적된 성과 기록이 없습니다 — 선정 다음 거래일부터 쌓입니다"}/></div>;
+  if(!rows.length)return <div>{intro}<Empty msg={err?"성과 데이터를 불러오지 못했습니다 — Supabase에 oversold_track 테이블(setup_oversold_track.sql)을 만들었는지 확인하세요":"아직 누적된 기록이 없습니다 — 장 마감 후(15:35) 과대 낙폭 종목이 나오면 쌓이기 시작합니다"}/></div>;
 
   const num=v=>v===null||v===undefined||v===""?null:Number(v);
-  // 구간별 평균 수익률 / 승률 — 해당 구간에 도달한 종목만 집계
-  const horizon=CAT_TRK_HORIZONS.map(h=>{
-    const vals=rows.map(r=>num(r[h.k])).filter(v=>v!==null&&!isNaN(v));
-    if(!vals.length)return{...h,n:0};
-    const avg=vals.reduce((a,b)=>a+b,0)/vals.length;
-    const win=vals.filter(v=>v>0).length;
-    return{...h,n:vals.length,avg,win,winRate:win/vals.length*100,best:Math.max(...vals),worst:Math.min(...vals)};
-  });
-  const cur=horizon.find(h=>h.k==="ret_cum")||{n:0};
+  const isWin=r=>r.status==="closed"&&r.result==="win";
+  const isLoss=r=>r.status==="closed"&&r.result!=="win";
+  const closed=rows.filter(r=>r.status==="closed");
+  const wins=rows.filter(isWin).length,losses=rows.filter(isLoss).length,openN=rows.length-closed.length;
+  const avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
+  const closedRets=closed.map(r=>num(r.close_ret??r.ret_cum)).filter(v=>v!==null&&!isNaN(v));
+  const allRets=rows.map(r=>num(r.status==="closed"?(r.close_ret??r.ret_cum):r.ret_cum)).filter(v=>v!==null&&!isNaN(v));
+  const avgClosed=avg(closedRets),avgAll=avg(allRets);
+  const holds=closed.map(r=>num(r.hold_days??r.days_tracked)).filter(v=>v!==null&&!isNaN(v));
+  const avgHold=avg(holds);
+  const winRate=closed.length?wins/closed.length*100:null;
   const dates=[...new Set(rows.map(r=>r.pick_date))];
-  const openN=rows.filter(r=>r.status!=="closed").length;
 
-  // 선정일별 그룹 (평균 수익률 내림차순이 아니라 최신순 유지)
+  const match=r=>(flt==="all"||(flt==="win"&&isWin(r))||(flt==="loss"&&isLoss(r))||(flt==="open"&&r.status!=="closed"))
+    &&(!q||[r.name,r.code,r.display_sector].some(v=>String(v||"").includes(q)));
   const byDate=dates.map(d=>{
-    const g=rows.filter(r=>r.pick_date===d);
-    const vals=g.map(r=>num(r.ret_cum)).filter(v=>v!==null&&!isNaN(v));
-    const avg=vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:0;
-    return{date:d,list:g,avg,win:vals.filter(v=>v>0).length,n:g.length,days:Math.max(...g.map(r=>Number(r.days_tracked)||0))};
-  }).filter(g=>!q||g.list.some(r=>[r.name,r.code,r.catalyst_type,r.display_sector].some(v=>String(v||"").includes(q))));
+    const all=rows.filter(r=>r.pick_date===d);
+    const g=all.filter(match);
+    return{date:d,list:g,n:all.length,
+      w:all.filter(isWin).length,l:all.filter(isLoss).length,o:all.filter(r=>r.status!=="closed").length};
+  }).filter(g=>g.list.length);
+  const fBtn=(id,l,n,c)=><button key={id} onClick={()=>setFlt(id)} style={{padding:"7px 12px",fontFamily:"inherit",fontSize:"13px",fontWeight:600,border:"1px solid",borderColor:flt===id?(c||"var(--tab-bd)"):"var(--div2)",background:flt===id?"var(--tab-bg)":"transparent",color:flt===id?(c||"var(--text)"):"var(--muted)",borderRadius:"16px",cursor:"pointer"}}>{l} {n}</button>;
+  const COLS="38px 1.3fr 92px 92px 78px 92px 76px 70px";
 
   return <div>
     {intro}
     <div className="cat-trk-stats" style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:"10px",marginBottom:"16px"}}>
-      <CatTrackStat label="추적 종목" value={`${rows.length}개`} sub={`${dates.length}일치 · 추적중 ${openN}개`}/>
-      <CatTrackStat label="평균 수익률 (현재)" value={cur.n?catPct(cur.avg):"—"} color={cur.n?catRetColor(cur.avg):"var(--dim)"} sub={cur.n?`${cur.n}개 종목 기준`:"집계 전"}/>
-      <CatTrackStat label="승률 (현재)" value={cur.n?`${cur.winRate.toFixed(0)}%`:"—"} color={cur.n?(cur.winRate>=50?"#22c55e":"#ef4444"):"var(--dim)"} sub={cur.n?`${cur.win} / ${cur.n} 종목 플러스`:"집계 전"}/>
-      <CatTrackStat label="최고 수익" value={cur.n?catPct(cur.best):"—"} color="#22c55e"/>
-      <CatTrackStat label="최저 수익" value={cur.n?catPct(cur.worst):"—"} color="#ef4444"/>
+      <CatTrackStat label="승률 (익절 ÷ 마감)" value={winRate===null?"—":`${winRate.toFixed(0)}%`} color={winRate===null?"var(--dim)":(winRate>=50?"#22c55e":"#ef4444")} sub={closed.length?`${wins} / ${closed.length} 마감`:"마감된 종목 없음"}/>
+      <CatTrackStat label="평균 수익률 (마감)" value={avgClosed===null?"—":catPct(avgClosed)} color={avgClosed===null?"var(--dim)":catRetColor(avgClosed)} sub={avgAll===null?null:`진행 중 포함 ${catPct(avgAll)}`}/>
+      <CatTrackStat label="익절 · 손절 · 진행 중" value={<span><span style={{color:"#22c55e"}}>{wins}</span> · <span style={{color:"#ef4444"}}>{losses}</span> · <span style={{color:"#3b82f6"}}>{openN}</span></span>} sub={`총 ${rows.length}건 · ${dates.length}일치`}/>
+      <CatTrackStat label="평균 보유 일수" value={avgHold===null?"—":`${avgHold.toFixed(1)}일`} sub="마감 종목 · 거래일 기준"/>
     </div>
 
-    {/* 구간별 성적 */}
-    <Box style={{padding:"16px 18px",marginBottom:"16px"}} hover={false}>
-      <div style={{fontSize:"14px",fontWeight:700,marginBottom:"12px"}}>📐 보유 기간별 성적</div>
-      <div className="cat-trk-horizon" style={{display:"grid",gridTemplateColumns:`repeat(${CAT_TRK_HORIZONS.length},1fr)`,gap:"10px"}}>
-        {horizon.map(h=><div key={h.k} style={{padding:"12px 10px",textAlign:"center",background:"var(--card)",border:"1px solid var(--div3)",borderRadius:"9px"}}>
-          <div style={{fontSize:"12px",color:"var(--muted)",fontWeight:600,marginBottom:"6px"}}>{h.l}</div>
-          <div style={{fontSize:"17px",fontWeight:700,color:h.n?catRetColor(h.avg):"var(--dimmer)",fontVariantNumeric:"tabular-nums"}}>{h.n?catPct(h.avg):"—"}</div>
-          <div style={{fontSize:"11px",color:"var(--dim)",marginTop:"4px"}}>{h.n?`승률 ${h.winRate.toFixed(0)}% · ${h.n}개`:"아직 미도달"}</div>
-        </div>)}
-      </div>
-    </Box>
-
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"12px",flexWrap:"wrap",gap:"10px"}}>
-      <div style={{fontSize:"14px",fontWeight:700}}>🗓 선정일별 성적 <span style={{color:"var(--dim)",fontWeight:400}}>{byDate.length}일</span></div>
+      <div style={{display:"flex",alignItems:"center",gap:"6px",flexWrap:"wrap"}}>
+        <span style={{fontSize:"14px",fontWeight:700,marginRight:"4px"}}>🗓 선정일별</span>
+        {fBtn("all","전체",rows.length)}{fBtn("win","익절",wins,"#22c55e")}{fBtn("loss","손절",losses,"#ef4444")}{fBtn("open","진행 중",openN,"#3b82f6")}
+      </div>
       <div style={{position:"relative"}}><input value={q} onChange={e=>setQ(e.target.value)} placeholder="종목 검색" style={{background:"var(--inp-bg)",border:"1px solid var(--inp-bd)",borderRadius:"8px",padding:"9px 12px 9px 32px",color:"var(--text)",fontSize:"14px",width:200,outline:"none",fontFamily:"inherit"}}/><span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"var(--dim)",fontSize:"14px"}}>⌕</span></div>
     </div>
 
+    {!byDate.length&&<Empty msg="조건에 맞는 종목이 없습니다"/>}
     <div style={{display:"grid",gap:"8px"}}>{byDate.map(g=>{
-      const open=expDate===g.date;
+      const open=expDate===g.date||!!q;
       return <Box key={g.date} style={{overflow:"hidden"}} hover={false}>
-        <div onClick={()=>setExpDate(open?null:g.date)} style={{display:"flex",alignItems:"center",gap:"12px",padding:"14px 18px",cursor:"pointer",flexWrap:"wrap"}}>
+        <div onClick={()=>setExpDate(expDate===g.date?null:g.date)} style={{display:"flex",alignItems:"center",gap:"12px",padding:"14px 18px",cursor:"pointer",flexWrap:"wrap"}}>
           <span style={{fontSize:"15px",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{g.date}</span>
-          <span style={{fontSize:"13px",color:"var(--muted)"}}>{g.n}종목 · {g.days}거래일 경과</span>
-          <span style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:"10px"}}>
-            <span style={{fontSize:"13px",color:"var(--muted)"}}>승 {g.win}/{g.n}</span>
-            <span style={{fontSize:"17px",fontWeight:700,color:catRetColor(g.avg),fontVariantNumeric:"tabular-nums"}}>{catPct(g.avg)}</span>
+          <span style={{fontSize:"13px",color:"var(--muted)"}}>{g.n}종목</span>
+          <span style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:"10px",fontSize:"13px",fontWeight:600}}>
+            <span style={{color:"#22c55e"}}>익절 {g.w}</span>
+            <span style={{color:"#ef4444"}}>손절 {g.l}</span>
+            <span style={{color:"#3b82f6"}}>진행 {g.o}</span>
             <span style={{color:"var(--dimmer)",fontSize:"16px",transform:open?"rotate(90deg)":"none",transition:"transform .2s"}}>›</span>
           </span>
         </div>
         {open&&<div style={{borderTop:"1px solid var(--div3)",overflowX:"auto"}}>
-          <div className="cat-trk-row cat-trk-head" style={{display:"grid",gridTemplateColumns:"38px 1.25fr 90px 90px 86px 1.4fr 82px",padding:"10px 18px",background:"var(--row-head)",fontSize:"12px",color:"var(--muted)",fontWeight:600,alignItems:"center",minWidth:"800px"}}>
-            <span>#</span><span>종목 · 재료</span><span style={{textAlign:"right"}}>진입가</span><span style={{textAlign:"right"}}>현재가</span><span style={{textAlign:"right"}}>누적</span><span style={{textAlign:"right"}}>D+1 / 5 / 10 / 20</span><span style={{textAlign:"right"}}>최고 / 최저</span>
+          <div className="cat-trk-row cat-trk-head" style={{display:"grid",gridTemplateColumns:COLS,padding:"10px 18px",background:"var(--row-head)",fontSize:"12px",color:"var(--muted)",fontWeight:600,alignItems:"center",minWidth:"780px",gap:"6px"}}>
+            <span>#</span><span>종목 · 선정일 이격</span><span style={{textAlign:"right"}}>진입가</span><span style={{textAlign:"right"}}>현재/마감가</span><span style={{textAlign:"right"}}>수익률</span><span style={{textAlign:"right"}}>최고 / 최저</span><span style={{textAlign:"center"}}>결과</span><span style={{textAlign:"right"}}>보유</span>
           </div>
           {g.list.map(r=>{
-            const entry=Number(r.entry_price)||0,last=Number(r.last_price)||0;
-            return <div key={r.id} className="cat-trk-row" style={{display:"grid",gridTemplateColumns:"38px 1.25fr 90px 90px 86px 1.4fr 82px",padding:"12px 18px",borderTop:"1px solid var(--div)",fontSize:"14px",alignItems:"center",minWidth:"800px"}}>
+            const entry=Number(r.entry_price)||0;const done=r.status==="closed";
+            const last=Number(done?(r.close_price??r.last_price):r.last_price)||0;
+            const ret=num(done?(r.close_ret??r.ret_cum):r.ret_cum)||0;
+            const days=num(done?(r.hold_days??r.days_tracked):r.days_tracked)||0;
+            return <div key={r.id} className="cat-trk-row" style={{display:"grid",gridTemplateColumns:COLS,padding:"12px 18px",borderTop:"1px solid var(--div)",fontSize:"14px",alignItems:"center",minWidth:"780px",gap:"6px"}}>
               <span style={{fontSize:"12px",color:"var(--muted)",fontWeight:600}}>{r.rank}</span>
               <div style={{minWidth:0}}>
                 <a href={`https://finance.naver.com/item/main.naver?code=${r.code}`} target="_blank" rel="noopener noreferrer" style={{fontWeight:600,color:"var(--text)",textDecoration:"none"}}>{r.name}</a>
-                <div style={{fontSize:"12px",color:"var(--muted)",marginTop:"2px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{[r.catalyst_type,r.display_sector,r.status==="closed"?"추적 종료":`${r.days_tracked}일차`].filter(Boolean).join(" · ")}</div>
+                <div style={{fontSize:"12px",color:"var(--muted)",marginTop:"2px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{[`MA20 ${catPct(r.deviation)}`,`거래대금 ${Math.round((Number(r.trading_value)||0)/1e8).toLocaleString()}억`,r.display_sector].filter(Boolean).join(" · ")}</div>
               </div>
               <span style={{textAlign:"right",fontVariantNumeric:"tabular-nums",color:"var(--text-sub)"}}>₩{Math.round(entry).toLocaleString()}</span>
               <span style={{textAlign:"right",fontVariantNumeric:"tabular-nums"}}>₩{Math.round(last).toLocaleString()}</span>
-              <span style={{textAlign:"right",fontWeight:700,color:catRetColor(r.ret_cum),fontVariantNumeric:"tabular-nums"}}>{catPct(r.ret_cum)}</span>
-              <span style={{textAlign:"right",fontSize:"12px",fontVariantNumeric:"tabular-nums",display:"flex",justifyContent:"flex-end",gap:"7px",whiteSpace:"nowrap"}}>
-                {["ret_d1","ret_d5","ret_d10","ret_d20"].map(k=>{const v=num(r[k]);return <span key={k} style={{color:v===null?"var(--dimmer)":catRetColor(v)}}>{v===null?"–":catPct(v)}</span>})}
-              </span>
+              <span style={{textAlign:"right",fontWeight:700,color:catRetColor(ret),fontVariantNumeric:"tabular-nums"}}>{catPct(ret)}</span>
               <span style={{textAlign:"right",fontSize:"12px",fontVariantNumeric:"tabular-nums"}}>
                 <div style={{color:"#22c55e"}}>{catPct(r.max_ret)}</div>
                 <div style={{color:"#ef4444",marginTop:"2px"}}>{catPct(r.min_ret)}</div>
               </span>
+              <span style={{textAlign:"center"}}><OvsResBadge r={r}/></span>
+              <span style={{textAlign:"right",fontSize:"12px",color:"var(--muted)",fontVariantNumeric:"tabular-nums"}}>{days}일{done&&r.close_date&&<div style={{color:"var(--dim)",marginTop:"2px"}}>{String(r.close_date).slice(5)}</div>}</span>
             </div>;
           })}
         </div>}
       </Box>;
     })}</div>
     <div style={{marginTop:"14px",padding:"12px 16px",background:"var(--card-bg)",border:"1px solid var(--div2)",borderRadius:"10px",fontSize:"13px",lineHeight:1.65,color:"var(--dim)"}}>
-      ⚠️ 과거 성과는 미래 수익을 보장하지 않습니다. 선정일 종가 매수를 가정한 시뮬레이션 수치이며 실제 체결가·수수료·세금은 반영되지 않았습니다. 투자 추천이 아니며 판단과 책임은 본인에게 있습니다.
+      ⚠️ 과거 성과는 미래 수익을 보장하지 않습니다. 선정일 종가 매수 · 종가 기준 ±10% 청산을 가정한 시뮬레이션이며 실제 체결가·수수료·세금은 반영되지 않았습니다.
+      같은 종목이 여러 날 연속 선정되면 날마다 따로 집계됩니다. 투자 추천이 아니며 판단과 책임은 본인에게 있습니다.
     </div>
   </div>;
 }
@@ -518,9 +521,9 @@ function TabStocks({cat,loading}){
   </div>;
   if(loading)return <Loader/>;
   if(view==="track")return <div className="fade-up">
-    <h2 style={{fontSize:"20px",fontWeight:700,marginBottom:"14px"}}><span style={{color:"#8b5cf6"}}>📈</span> 재료 포착 성과 추적</h2>
+    <h2 style={{fontSize:"20px",fontWeight:700,marginBottom:"14px"}}><span style={{color:"#3b82f6"}}>📈</span> 과대 낙폭 성과 추적 <span style={{fontSize:"14px",color:"var(--dim)",fontWeight:400}}>엔벨로프 20 하단 이탈 · ±10% 청산</span></h2>
     {viewToggle}
-    <CatalystTrack/>
+    <OversoldTrack/>
   </div>;
   const stamp=cat.length?`${cat[0].date}${cat[0].generated_time?` ${cat[0].generated_time}`:""} 기준`:"";
   const intro=<div style={{marginBottom:"16px",padding:"14px 16px",background:"rgba(245,158,11,0.05)",border:"1px solid rgba(245,158,11,0.15)",borderRadius:"10px"}}>
@@ -972,7 +975,7 @@ function TabOversold({ovs,hist,loading,onThemeClick}){
     <ThemeAppearCounts hist={hist} onThemeClick={onThemeClick}/>
     <div style={{marginBottom:"18px"}}>
       <h2 style={{fontSize:"20px",fontWeight:700}}><span style={{color:"#3b82f6"}}>▼</span> 과대 낙폭 종목</h2>
-      <div style={{color:"var(--muted)",fontSize:"14px",marginTop:"4px"}}>단기 과매도 추정 종목 · 장중 15:00 + 마감 후 15:35 갱신</div>
+      <div style={{color:"var(--muted)",fontSize:"14px",marginTop:"4px"}}>MA20 대비 -20% 이하 · 거래대금 1,000억 이상 · 장중 15:00 + 마감 후 15:35 갱신</div>
     </div>
     <Empty msg="종목 없음"/>
   </div>;
@@ -982,7 +985,7 @@ function TabOversold({ovs,hist,loading,onThemeClick}){
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"18px",flexWrap:"wrap",gap:"12px"}}>
       <div>
         <h2 style={{fontSize:"20px",fontWeight:700,display:"flex",alignItems:"center",gap:"10px",flexWrap:"wrap"}}><span><span style={{color:"#3b82f6"}}>▼</span> 과대 낙폭 종목 <span style={{fontSize:"14px",color:"var(--dim)",fontWeight:400}}>{f.length}종목</span></span>{updatedAt&&<span style={{fontSize:"12px",fontWeight:500,color:"#3b82f6",background:"rgba(59,130,246,0.1)",padding:"3px 8px",borderRadius:"5px"}}>📅 {updatedAt}</span>}</h2>
-        <div style={{color:"var(--muted)",fontSize:"14px",marginTop:"4px"}}>단기 과매도 추정 종목 · 거래대금 순 · 장중 15:00 + 마감 후 15:35 갱신</div>
+        <div style={{color:"var(--muted)",fontSize:"14px",marginTop:"4px"}}>MA20 대비 -20% 이하 · 거래대금 1,000억 이상 · 거래대금 순 · 장중 15:00 + 마감 후 15:35 갱신</div>
       </div>
       <div className="search-wrap" style={{position:"relative"}}><input value={q} onChange={e=>setQ(e.target.value)} placeholder="종목명, 코드 검색" style={{background:"var(--inp-bg)",border:"1px solid var(--inp-bd)",borderRadius:"8px",padding:"10px 14px 10px 34px",color:"var(--text)",fontSize:"15px",width:220,outline:"none",fontFamily:"inherit"}}/><span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"var(--dim)",fontSize:"15px"}}>⌕</span></div>
     </div>
@@ -990,7 +993,7 @@ function TabOversold({ovs,hist,loading,onThemeClick}){
       <div>{f.map((s,i)=><OversoldRow key={s.code||i} s={s} isLast={i===f.length-1}/>)}</div>
     </Box>
     <div style={{marginTop:"16px",padding:"14px 18px",background:"rgba(59,130,246,0.04)",border:"1px solid rgba(59,130,246,0.1)",borderRadius:"10px",fontSize:"14px",color:"var(--muted)",lineHeight:1.7}}>
-      ℹ️ 과대 낙폭 종목은 평일 15:00(장중 시세) 및 장 마감 후(15:35/16:00 확정 종가)에 갱신됩니다.<br/>
+      ℹ️ 과대 낙폭 종목은 평일 15:00(장중 시세) 및 장 마감 후(15:35/16:00 확정 종가)에 갱신됩니다. 장 마감 후 목록은 <b>재료 포착 → 📈 성과 추적</b>에서 ±10% 익절·손절 결과로 추적됩니다.<br/>
       투자 추천이 아닌 정보 제공 목적입니다.
     </div>
   </div>;

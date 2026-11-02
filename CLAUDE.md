@@ -1628,6 +1628,20 @@
 - **운영 순서**: (1) Supabase에서 `setup_catalyst_track.sql` 실행 → (2) 다음 close 모드(15:35)부터 그날 TOP 10이 자동 편입 → (3) 그 다음 거래일부터 수익률 누적. D+1은 하루 뒤, D+20은 약 한 달 뒤에 채워짐
 - **한계**: (1) 소급 적용 불가 — 이미 지난 추천은 진입가 스냅샷이 없으므로 SQL 실행 시점 이후 선정분부터 쌓임. (2) 수수료·세금·슬리피지·실제 체결가 미반영(선정일 종가 기준 단순 가격 수익률). (3) 코스피 대비 초과수익(벤치마크) 미계산. (4) 20거래일 이후는 마감되어 장기 성과는 추적하지 않음
 
+### 성과 추적 → 과대 낙폭 종목 ±10% 익절·손절 추적으로 교체 (2026-11-02)
+- 사용자 요청: 재료 포착 탭 안 `📈 성과 추적`을 재료 포착 TOP 10 대신 **매일 과대 낙폭으로 뽑힌 종목**으로. 기존 재료 포착 추적은 멈춤(사용자 선택), 과대 낙폭 탭 자체에도 거래대금 1,000억 조건 적용(사용자 선택)
+- **과대 낙폭 기준 변경**: `crawl_oversold_stocks`에 `OVERSOLD_MIN_TRADING_VALUE = 1000억` 추가 → 시총 3,000억+ · MA20 대비 -20% 이하(엔벨로프 20 하단 이탈) · 당일 상승 제외 · **거래대금 1,000억+**. 과대 낙폭 탭 부제·안내 문구도 갱신
+- **`setup_oversold_track.sql`** (신규, 1회 실행): `oversold_track` — 편입 스냅샷(pick_date·code·name·market·display_sector·rank·ma20·deviation·trading_value·market_cap·entry_price) + 추적 상태(last_price·last_date·days_tracked·ret_cum·max_ret·min_ret) + 마감 결과(status open|closed · result win|loss · close_date · close_price · close_ret · hold_days). UNIQUE(pick_date, code), RLS anon SELECT만(기존 catalyst_track SQL에 있던 "FOR ALL USING(true)" 정책은 공개 키로 쓰기가 가능해 넣지 않음 — 크롤러는 service role이라 RLS 우회)
+- **crawl.py**: 상수 `OVERSOLD_TRACK_TAKE_PROFIT=10`, `OVERSOLD_TRACK_STOP_LOSS=-10`, `OVERSOLD_TRACK_KEEP_DAYS=365`
+  - `update_oversold_track(krx_data)`: close 모드에서 `crawl_oversold_stocks` 직후 호출. `status=open & last_date≠TODAY` 행(1000행씩 페이지네이션)을 오늘 종가로 갱신 → 종가 수익률 ≥ +10% 익절 / ≤ -10% 손절로 마감(마감일·마감가·마감 수익률·보유 거래일 기록), 아니면 수익률·최고·최저만 갱신. 시세 없는 종목(거래정지)은 그날 카운트 안 함
+  - `seed_oversold_track(oversold)`: 과대 낙폭 저장 단계에서 **close 모드일 때만**(15:00 장중 갱신분은 편입 안 함) `DELETE pick_date=TODAY` 후 INSERT, 진입가 = 선정일 종가. 갱신 → 편입 순서라 오늘 편입분은 다음 거래일부터 판정
+  - close 모드 정리: `oversold_track` 365일 초과 삭제
+  - **재료 포착 추적 중단**: `seed_catalyst_track`/`update_catalyst_track`·`CATALYST_TRACK_MAX_DAYS/HORIZONS` 삭제, `CATALYST_TRACK_KEEP_DAYS` → `CATALYST_KEEP_DAYS`(catalyst_stocks 1년 보존용). `catalyst_track` 테이블·기존 기록은 지우지 않고 남김(더 이상 쌓이지 않고 정리도 안 함). setup_catalyst_track.sql은 그대로
+- **index.html**: `CatalystTrack` → `OversoldTrack`(같은 자리, lazy fetch `oversold_track` 2000행). 제목 "📈 과대 낙폭 성과 추적". 카드 4개: 승률(익절 ÷ 마감) / 평균 수익률(마감 종목, 아래 진행 중 포함 값) / 익절·손절·진행 중 개수 / 평균 보유 일수(마감 종목). 선정일별 접기 카드(익절·손절·진행 개수) → 표: 종목·선정일 MA20 이격·거래대금 / 진입가 / 현재·마감가 / 수익률 / 최고·최저 / 결과 뱃지 / 보유 일수·마감일. 결과 필터 칩(전체/익절/손절/진행 중) + 종목 검색(검색 중엔 모든 날짜 펼침). `CAT_TRK_HORIZONS` 삭제
+- 확인: 가짜 DB로 갱신·편입 함수(익절·손절·진행·시세없음) 동작, 화면은 가짜 응답으로 렌더 확인. 실제 크롤링·DB 미확인
+- **운영 순서**: (1) Supabase SQL Editor에서 `setup_oversold_track.sql` 실행 → (2) **GitHub Actions의 크롤링 워크플로(crawl.yml)가 비활성화(disabled_inactivity) 상태라 Actions 탭에서 다시 Enable** — 켜기 전엔 새 데이터가 쌓이지 않음 → (3) 다음 평일 close 모드(15:35)부터 편입, 그 다음 거래일부터 익절/손절 판정
+- 한계: 종가 기준만(장중 고가·저가로 ±10% 닿은 건 판정 안 함). 같은 종목이 며칠 연속 뽑히면 날마다 따로 편입·집계(서로 비슷하게 움직여 승률이 한쪽으로 쏠릴 수 있음). 만기(최대 보유일) 없음 — ±10%에 안 닿으면 계속 진행 중. 수수료·세금 미반영. 과거분 소급 불가(daily_prices는 60일만 보관)
+
 ### 자동 리스트 생성기 (orders.html) (2026-10-13)
 - 사용자 요청: 발주서(쿠팡 ERP 엑셀) 업로드 → 제품리스트 참고해 **부착리스트(엑셀) + 적재이미지(PNG)** 자동 생성. APS와 같은 관리자 인증을 쓰는 독립 페이지
 - **`setup_orders.sql`** (신규, 1회 실행, `setup_aps.sql`의 `aps_assert_admin` 재사용): 테이블 5개 `ol_box_specs` / `ol_load_methods` / `ol_products` / `ol_orders`(order_no UNIQUE) / `ol_order_items`(CASCADE). RLS + 정책 없음 → RPC만. 기본 적재방식 2개 시드(단독 40박스 / 혼적 가능 40)
@@ -1927,7 +1941,8 @@
 - 테마 순위가 장 마감 후에도 변동됨 (뉴스 갱신 때문)
 - 과대 낙폭 탭은 평일 15:00(장중, 현재 시세 기준) + close 모드(15:35/16:00, 확정 종가)에 갱신됨. 그 외 시간대에는 마지막 갱신 데이터 표시
 - 재료 포착 탭은 close 모드(15:35/16:00) 하루 1회만 산출됨. 장중에는 전 거래일 데이터가 표시되며, `DART_API_KEY` 미설정 시 공시 원출처 없이 뉴스 추정으로만 동작
-- 성과 추적(`catalyst_track`)은 `setup_catalyst_track.sql` 실행 이후 선정분부터만 쌓임 — 과거 추천은 진입가 스냅샷이 없어 소급 집계 불가
+- 성과 추적은 2026-11-02부터 과대 낙폭 종목(`oversold_track`) 기준 — `setup_oversold_track.sql` 실행 이후 선정분부터만 쌓임. 재료 포착 추적(`catalyst_track`)은 중단(기존 기록만 남음)
+- GitHub Actions 크롤링 워크플로(crawl.yml)가 비활성화(disabled_inactivity)되면 데이터가 쌓이지 않음 — Actions 탭에서 다시 Enable 필요
 
 ## 개발 서버
 - `python -m http.server 8000` (launch.json 설정됨)

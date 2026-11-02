@@ -2993,6 +2993,12 @@ OVERSOLD_MIN_MARKET_CAP = 300_000_000_000  # 시총 3000억 원
 OVERSOLD_THRESHOLD = -20.0                  # MA20 대비 -20% 이하
 OVERSOLD_MA_WINDOW = 20                     # 이동평균 일수
 OVERSOLD_HISTORY_DAYS = 60                  # daily_prices 보존 기간
+OVERSOLD_MIN_TRADING_VALUE = 100_000_000_000  # 당일 거래대금 1,000억 원 이상
+
+# ── 과대 낙폭 성과 추적 (oversold_track) ──
+OVERSOLD_TRACK_TAKE_PROFIT = 10.0           # 종가 수익률 +10% 이상 → 익절 마감
+OVERSOLD_TRACK_STOP_LOSS = -10.0            # 종가 수익률 -10% 이하 → 손절 마감
+OVERSOLD_TRACK_KEEP_DAYS = 365              # 성과 기록 보존 기간
 
 
 def save_daily_close(krx_data):
@@ -3035,7 +3041,7 @@ def crawl_oversold_stocks(krx_data):
 
     1) daily_prices에서 최근 60일치 가져옴 (모든 종목 한 번에)
     2) 종목별로 최근 20개 종가 평균 계산 → 현재가와 비교
-    3) (price - ma20) / ma20 * 100 <= -20% AND 시총 3000억+ AND 데이터 충분(>=20개)
+    3) (price - ma20) / ma20 * 100 <= -20% AND 시총 3000억+ AND 거래대금 1000억+ AND 데이터 충분(>=20개)
     4) 거래대금 내림차순 정렬
     """
     log("📉 과대 낙폭 종목 산출 시작...")
@@ -3084,6 +3090,9 @@ def crawl_oversold_stocks(krx_data):
         # 당일 상승 종목 제외 (낙폭 종목 탭이므로 하락/보합만 노출)
         if d.get("change_pct", 0) > 0:
             continue
+        # 거래대금 1,000억 미만 제외 (엔벨로프 20 하단 이탈 + 대량 거래 종목만)
+        if d.get("trading_value", 0) < OVERSOLD_MIN_TRADING_VALUE:
+            continue
         closes = by_code.get(code, [])
         # 오늘 종가는 by_code에 이미 들어있을 수 있음(save_daily_close 후 호출) → MA20 모집단으로 그대로 사용
         if len(closes) < OVERSOLD_MA_WINDOW:
@@ -3118,7 +3127,7 @@ def crawl_oversold_stocks(krx_data):
             "generated_time": gen_time,
         })
 
-    log(f"  ✅ 과대 낙폭 {len(result)}개 종목 (MA20 대비 -20% 이하, 시총 3000억+)")
+    log(f"  ✅ 과대 낙폭 {len(result)}개 종목 (MA20 대비 -20% 이하, 시총 3000억+, 거래대금 1000억+)")
     for s in result[:5]:
         log(f"     {s['rank']}. {s['name']} {s['deviation']:+.2f}% (현재 {s['price']:,.0f} vs MA20 {s['ma20']:,.0f})")
     return result
@@ -3144,10 +3153,7 @@ CATALYST_FLOW_FETCH_LIMIT = 30              # 투자자 수급을 조회할 상�
 CATALYST_PRICE_HISTORY_DAYS = 60            # daily_prices 조회 범위 (캘린더일)
 CATALYST_MIN_TRADING_VALUE = 30_000_000_000  # 거래급증 후보 최소 거래대금 (300억)
 
-# ── 성과 추적 (catalyst_track) ──
-CATALYST_TRACK_MAX_DAYS = 20                # 몇 거래일까지 추적할지 (경과 시 closed)
-CATALYST_TRACK_HORIZONS = {1: "ret_d1", 5: "ret_d5", 10: "ret_d10", 20: "ret_d20"}
-CATALYST_TRACK_KEEP_DAYS = 365              # 성과 기록 보존 기간
+CATALYST_KEEP_DAYS = 365                    # catalyst_stocks 보존 기간
 
 
 # ── DART 공시명 → (재료 유형, 신뢰도 25점 만점, 지속성 15점 만점) ──
@@ -4010,113 +4016,126 @@ JSON 형식으로만 답하라:
         return catalysts
 
 
-def seed_catalyst_track(catalysts):
-    """오늘 선정된 재료 포착 종목을 성과 추적 테이블에 편입.
+def seed_oversold_track(oversold):
+    """오늘 과대 낙폭 종목(엔벨로프 20 하단 이탈 + 거래대금 1000억+)을 성과 추적에 편입.
 
     entry_price = 선정일 종가 (= 그날 종가에 샀다고 가정한 가상 매수단가).
     같은 날 재실행되면 오늘분만 지우고 다시 넣으므로 중복되지 않는다.
+    close 모드(확정 종가)에서만 호출할 것 — 15:00 장중 시세로 편입하면 진입가가 틀어진다.
     """
-    if not catalysts:
+    if oversold is None:
         return 0
+    supabase_request("DELETE", "oversold_track", params={"pick_date": f"eq.{TODAY}"})
 
     rows = []
-    for c in catalysts:
-        price = float(c.get("price") or 0)
-        if price <= 0:
+    for o in oversold:
+        price = float(o.get("price") or 0)
+        if price <= 0 or int(o.get("trading_value") or 0) < OVERSOLD_MIN_TRADING_VALUE:
             continue
         rows.append({
             "pick_date": TODAY,
-            "code": c["code"],
-            "name": c.get("name", ""),
-            "market": c.get("market", ""),
-            "display_sector": c.get("display_sector", ""),
-            "rank": c.get("rank", 0),
-            "total_score": c.get("total_score", 0),
-            "catalyst_type": c.get("catalyst_type", ""),
-            "catalyst_source": c.get("catalyst_source", ""),
-            "catalyst_amount": c.get("catalyst_amount", 0),
+            "code": o["code"],
+            "name": o.get("name", ""),
+            "market": o.get("market", ""),
+            "display_sector": o.get("display_sector", ""),
+            "rank": o.get("rank", 0),
+            "ma20": o.get("ma20", 0),
+            "deviation": o.get("deviation", 0),
+            "trading_value": int(o.get("trading_value") or 0),
+            "market_cap": int(o.get("market_cap") or 0),
             "entry_price": price,
             "last_price": price,
             "last_date": TODAY,
             "days_tracked": 0,
             "ret_cum": 0,
-            "max_price": price,
-            "min_price": price,
             "max_ret": 0,
             "min_ret": 0,
             "status": "open",
         })
 
     if not rows:
+        log("  ℹ️ 성과 추적 편입 종목 없음 (과대 낙폭 0개)")
         return 0
-
-    supabase_request("DELETE", "catalyst_track", params={"pick_date": f"eq.{TODAY}"})
-    result = supabase_request("POST", "catalyst_track", data=rows)
-    log(f"  📈 성과 추적 편입 {len(rows)}종목 {'✅' if result else '❌'}")
+    result = supabase_request("POST", "oversold_track", data=rows)
+    log(f"  📈 과대 낙폭 성과 추적 편입 {len(rows)}종목 {'✅' if result else '❌'}")
     return len(rows)
 
 
-def update_catalyst_track(krx_data):
-    """추적 중인(open) 재료 포착 종목의 수익률을 오늘 종가로 갱신.
+def update_oversold_track(krx_data):
+    """진행 중(open)인 과대 낙폭 추적 종목을 오늘 종가로 갱신.
 
-    - days_tracked 를 1 올리고, D+1/5/10/20 시점이면 그때의 수익률을 확정 기록
-    - 누적 수익률 / 추적 중 최고·최저 수익률(최대 낙폭) 갱신
-    - 20거래일 경과하면 status='closed' 로 마감
-
-    close 모드에서 하루 1회만 호출된다는 전제 (last_date로 중복 갱신 방지).
+    - 종가 수익률 +10% 이상 → 익절(win), -10% 이하 → 손절(loss)로 마감
+      (close_date / close_price / close_ret / hold_days 기록)
+    - 아직 둘 다 안 닿았으면 현재 수익률·최고·최저만 갱신
+    close 모드에서 하루 1회 전제 (last_date != TODAY 인 행만 → 같은 날 재실행해도 안전).
     """
     if not krx_data:
         return 0
 
-    open_rows = supabase_request("GET", "catalyst_track", params={
-        "status": "eq.open",
-        "last_date": f"neq.{TODAY}",
-        "select": "id,code,name,entry_price,days_tracked,max_price,min_price",
-        "order": "pick_date.desc",
-        "limit": "500",
-    })
+    open_rows = []
+    offset = 0
+    while True:
+        batch = supabase_request("GET", "oversold_track", params={
+            "status": "eq.open",
+            "last_date": f"neq.{TODAY}",
+            "select": "id,code,entry_price,days_tracked,max_ret,min_ret",
+            "order": "id",
+            "limit": "1000",
+            "offset": str(offset),
+        })
+        if not batch:
+            break
+        open_rows.extend(batch)
+        if len(batch) < 1000:
+            break
+        offset += 1000
     if not open_rows:
-        log("  ℹ️ 갱신할 성과 추적 종목 없음")
+        log("  ℹ️ 갱신할 과대 낙폭 추적 종목 없음")
         return 0
 
-    updated, closed, skipped = 0, 0, 0
+    now_iso = datetime.now(timezone(timedelta(hours=9))).isoformat()
+    updated, wins, losses, skipped = 0, 0, 0, 0
     for row in open_rows:
         d = krx_data.get(row["code"])
         price = float(d.get("price", 0)) if d else 0
         entry = float(row.get("entry_price") or 0)
         if price <= 0 or entry <= 0:
-            skipped += 1
+            skipped += 1   # 거래정지 등 — 오늘은 카운트하지 않음
             continue
 
         days = int(row.get("days_tracked") or 0) + 1
-        ret_cum = (price - entry) / entry * 100
-        max_price = max(float(row.get("max_price") or entry), price)
-        min_price = min(float(row.get("min_price") or entry), price)
-
+        ret = round((price - entry) / entry * 100, 2)
         payload = {
             "last_price": price,
             "last_date": TODAY,
             "days_tracked": days,
-            "ret_cum": round(ret_cum, 2),
-            "max_price": max_price,
-            "min_price": min_price,
-            "max_ret": round((max_price - entry) / entry * 100, 2),
-            "min_ret": round((min_price - entry) / entry * 100, 2),
-            "updated_at": datetime.now(timezone(timedelta(hours=9))).isoformat(),
+            "ret_cum": ret,
+            "max_ret": max(float(row.get("max_ret") or 0), ret),
+            "min_ret": min(float(row.get("min_ret") or 0), ret),
+            "updated_at": now_iso,
         }
-        # 거래일 기준 D+1/5/10/20 시점의 수익률을 그 시점에 한 번만 확정 기록
-        horizon_field = CATALYST_TRACK_HORIZONS.get(days)
-        if horizon_field:
-            payload[horizon_field] = round(ret_cum, 2)
-        if days >= CATALYST_TRACK_MAX_DAYS:
-            payload["status"] = "closed"
-            closed += 1
+        result = None
+        if ret >= OVERSOLD_TRACK_TAKE_PROFIT:
+            result = "win"
+            wins += 1
+        elif ret <= OVERSOLD_TRACK_STOP_LOSS:
+            result = "loss"
+            losses += 1
+        if result:
+            payload.update({
+                "status": "closed",
+                "result": result,
+                "close_date": TODAY,
+                "close_price": price,
+                "close_ret": ret,
+                "hold_days": days,
+            })
 
-        if supabase_request("PATCH", "catalyst_track", data=payload,
+        if supabase_request("PATCH", "oversold_track", data=payload,
                             params={"id": f"eq.{row['id']}"}) is not None:
             updated += 1
 
-    log(f"  📈 성과 추적 갱신 {updated}종목 (마감 {closed} · 시세없음 {skipped})")
+    log(f"  📈 과대 낙폭 성과 추적 갱신 {updated}종목 (익절 {wins} · 손절 {losses} · 시세없음 {skipped})")
     return updated
 
 
@@ -4720,13 +4739,13 @@ def main():
     if ai_mode == "close" or oversold_intraday:
         save_daily_close(krx_data)
         oversold = crawl_oversold_stocks(krx_data)
+    if ai_mode == "close":
+        # 과대 낙폭 성과 추적: 기존 종목을 오늘 종가로 먼저 갱신(익절/손절 판정) → 저장 단계에서 오늘분 편입
+        update_oversold_track(krx_data)
 
     # 10-2. 재료 포착 TOP 10 (close 모드에서만 — DART/뉴스 API 비용 + 확정 종가 필요)
     #        FORCE_CATALYST=1 이면 시간대·중복 여부 무관하게 강제 산출 (수동 실행/테스트용)
     catalysts = None
-    if ai_mode == "close":
-        # 기존 추천분의 성과를 먼저 갱신 (오늘 신규 편입분이 섞이기 전에)
-        update_catalyst_track(krx_data)
     if ai_mode == "close" or FORCE_CATALYST:
         existing_cat = supabase_request("GET", "catalyst_stocks", params={
             "date": f"eq.{TODAY}", "select": "id", "limit": "1"
@@ -4910,6 +4929,9 @@ def main():
             log(f"  📉 과대 낙폭 {len(oversold)}개 저장 {'✅' if result else '❌'}")
         else:
             log("  ℹ️ 과대 낙폭 종목 없음 — 빈 상태로 갱신")
+        # 성과 추적 편입은 확정 종가(close 모드)일 때만
+        if ai_mode == "close":
+            seed_oversold_track(oversold)
 
     # 재료 포착 TOP 10 저장 (당일분 교체, 과거는 보존)
     if catalysts is not None:
@@ -4917,8 +4939,6 @@ def main():
         if catalysts:
             result = supabase_request("POST", "catalyst_stocks", data=catalysts)
             log(f"  🎯 재료 포착 {len(catalysts)}개 저장 {'✅' if result else '❌'}")
-            # 성과 추적 편입 (선정일 종가 = 가상 매수단가)
-            seed_catalyst_track(catalysts)
         else:
             log("  ℹ️ 재료 포착 종목 없음 — 빈 상태로 갱신")
 
@@ -4939,10 +4959,12 @@ def main():
         cutoff_os = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
         supabase_request("DELETE", "oversold_stocks", params={"date": f"lt.{cutoff_os}"})
         # 재료 포착은 성과 추적 이력을 남겨야 하므로 1년 보존
-        cutoff_ct = (datetime.now() - timedelta(days=CATALYST_TRACK_KEEP_DAYS)).strftime("%Y-%m-%d")
+        cutoff_ct = (datetime.now() - timedelta(days=CATALYST_KEEP_DAYS)).strftime("%Y-%m-%d")
         supabase_request("DELETE", "catalyst_stocks", params={"date": f"lt.{cutoff_ct}"})
-        supabase_request("DELETE", "catalyst_track", params={"pick_date": f"lt.{cutoff_ct}"})
-        log(f"  🧹 {cutoff_dp} 이전 일봉 / {cutoff_os} 이전 과대 낙폭 / {cutoff_ct} 이전 재료 포착·성과 정리")
+        # catalyst_track(재료 포착 성과 추적)은 2026-11-02부터 더 쌓이지 않음 — 기존 기록은 지우지 않고 남겨 둠
+        cutoff_ot = (datetime.now() - timedelta(days=OVERSOLD_TRACK_KEEP_DAYS)).strftime("%Y-%m-%d")
+        supabase_request("DELETE", "oversold_track", params={"pick_date": f"lt.{cutoff_ot}"})
+        log(f"  🧹 {cutoff_dp} 이전 일봉 / {cutoff_os} 이전 과대 낙폭 / {cutoff_ct} 이전 재료 포착 / {cutoff_ot} 이전 낙폭 성과 정리")
 
     log("")
     log("=" * 50)
