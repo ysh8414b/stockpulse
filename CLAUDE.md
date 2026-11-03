@@ -2051,6 +2051,7 @@
 - 사용자 보고: 종목명을 누르면 종목홈이 아니라 네이버 증권 첫 화면으로 감
 - 원인: 휴대폰에서 `finance.naver.com/item/main.naver?code=` → `m.stock.naver.com/item/index.nhn?code=` → `m.stock.naver.com/`(메인)으로 넘어감 (네이버 주소 개편)
 - 변경: index·analysis·theme_detail·theme_calendar의 종목 링크를 `https://stock.naver.com/domestic/stock/{code}/total`로 교체 (PC는 종목 시세 화면, 휴대폰은 m.stock 종목 화면으로 이동 — curl로 확인). crawl.py의 같은 주소는 크롤링용이라 그대로
+- **지수 카드도 (2026-11-04)**: 사용자 보고 — 코스피·코스닥 카드를 누르면 지수 화면이 아니라 증권 첫 화면. `finance.naver.com/sise/sise_index.naver?code=KOSPI|KOSDAQ`가 휴대폰에서 `m.stock.naver.com/`(메인)으로 넘어감 → `https://stock.naver.com/domestic/index/{KOSPI|KOSDAQ}/total`로 교체(PC·휴대폰 모두 지수 화면, curl로 확인). 다우·나스닥·S&P500·환율 주소는 휴대폰에서도 해당 화면으로 가서 그대로
 
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
