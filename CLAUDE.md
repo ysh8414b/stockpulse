@@ -2002,7 +2002,7 @@
 - 사용자 요청: AI 브리핑 탭을 데이터까지 완전히 삭제하고, 매일 +5% 이상 · 거래대금 3,000억 이상 종목 상위 10개의 상승 원인을 시황·차트로 분석하는 딥러닝 예측 모델을 메인에 탑재
 - **AI 브리핑 삭제**: index.html `TabAI`·`aiSum`·`ai_summary` 조회 제거(옛 주소 `#ai`는 `#surge`로 이동), crawl.py `generate_ai_summary`·`load_economic_calendar`·`format_calendar_block`·저장·정리 코드 삭제, 실행 모드는 close(15:35/16:00)만 남김(premarket/market 삭제), crawl.yml 08:00 cron 삭제. 파일 삭제: `archive.html`, `guide-ai-briefing.html`, `economic_calendar.json`. 모든 페이지의 아카이브·브리핑 가이드 링크와 sitemap 항목 제거, guide.html 4장은 "급등 종목 AI 활용법"으로 교체, about.html 기능 카드 교체. **`setup_surge.sql`이 `DROP TABLE ai_summary`로 데이터 삭제**
 - 아래 기존 이력 중 AI 브리핑·아카이브 관련 항목(2026-03-02/03-04/03-05/03-10/03-14/05-10)은 기록으로만 남음
-- **`setup_surge.sql`** (1회 실행): `surge_stocks`(date·rank·code·…·surge_type·main_cause·causes·chart_tags·themes·news·disclosures·flow·market_ctx·ohlcv(최근 80일)·pred·similar·ai_comment·ret_d1/d5/d20, UNIQUE(date,code)) + `surge_model_runs`(metrics JSONB), RLS anon SELECT
+- **`setup_surge.sql`** (1회 실행): `surge_stocks`(date·rank·code·…·surge_type·main_cause·causes·chart_tags·themes·news·disclosures·flow·market_ctx·ohlcv(최근 80일)·pred·similar_cases(유사 사례 — `similar`는 SQL 예약어라 이름 변경)·ai_comment·ret_d1/d5/d20, UNIQUE(date,code)) + `surge_model_runs`(metrics JSONB), RLS anon SELECT
 - **`surge_ai.py`** (crawl.py 함수 재사용):
   - 선정: 네이버 전종목 시세에서 +5% 이상 & 거래대금 3,000억 이상(ETF 제외) → 거래대금 상위 10
   - 일봉: 네이버 차트 `fchart.stock.naver.com/sise.nhn`(800일), 시총 3,000억+ 약 700종목 + 코스피/코스닥, 캐시 `surge_cache/prices.pkl`(Actions 캐시, 이후엔 최근 30일만 받아 합침). 기준 거래일 = 코스피 차트 마지막 날짜(오늘과 다르면 휴장으로 보고 종료, `--force`로 무시)

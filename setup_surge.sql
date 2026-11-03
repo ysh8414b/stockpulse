@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS surge_stocks (
     market_ctx JSONB DEFAULT '{}'::jsonb,   -- 지수·섹터 등락
     ohlcv JSONB DEFAULT '[]'::jsonb,        -- 최근 80일 [날짜, 시, 고, 저, 종, 거래량]
     pred JSONB DEFAULT '{}'::jsonb,         -- {d1:{p_up,q10,q50,q90}, d5:..., d20:...}
-    similar JSONB DEFAULT '{}'::jsonb,      -- {cases:[...], summary:{...}}
+    similar_cases JSONB DEFAULT '{}'::jsonb,      -- {cases:[...], summary:{...}}
     ai_comment TEXT DEFAULT '',
     model_version TEXT DEFAULT '',
     generated_time TEXT DEFAULT '',

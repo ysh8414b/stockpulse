@@ -989,7 +989,7 @@ function SurgePredRow({k,label,sub,p,real,metric}){
 }
 
 function SurgeDetail({r,metrics}){
-  const causes=r.causes||[];const sim=r.similar||{};const ss=sim.summary;const hz=metrics?.horizons||{};
+  const causes=r.causes||[];const sim=r.similar_cases||{};const ss=sim.summary;const hz=metrics?.horizons||{};
   const grp=g=>causes.filter(c=>c.group===g);
   const CauseList=({g,icon})=>{const list=grp(g);return <div style={{marginBottom:"12px"}}>
     <div style={{fontSize:"12px",fontWeight:700,color:"var(--muted)",marginBottom:"6px",letterSpacing:".04em"}}>{icon} {g}</div>

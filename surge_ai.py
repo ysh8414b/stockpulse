@@ -674,7 +674,7 @@ def groq_comments(rows):
         p = r.get("pred") or {}
         ptxt = " / ".join(f"D+{k[1:]} 상승확률 {v['p_up']*100:.0f}% · 중앙값 {v['q50']:+.1f}%"
                           for k, v in p.items() if isinstance(v, dict) and "p_up" in v) or "예측 없음"
-        sim = (r.get("similar") or {}).get("summary") or {}
+        sim = (r.get("similar_cases") or {}).get("summary") or {}
         blocks.append(
             f"[{r['name']} ({r['code']})] {r['change_pct']:+.2f}%, 거래대금 {r['trading_value']/1e8:,.0f}억, "
             f"유형 {r['surge_type']}\n"
@@ -917,7 +917,7 @@ def main():
                              "url": d.get("url", "")} for d in dart.get(code, [])[:3]],
             "flow": flow or {},
             "market_ctx": {"index": idx_today, "sector": sec_info},
-            "ohlcv": ohlcv, "pred": pred, "similar": similar, "ai_comment": "",
+            "ohlcv": ohlcv, "pred": pred, "similar_cases": similar, "ai_comment": "",
             "model_version": version if pred else "", "generated_time": gen_time,
         })
         log(f"  #{rank} {p['name']} {p['change_pct']:+.2f}% · {stype} · {main_cause}"
