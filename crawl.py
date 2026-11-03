@@ -2639,7 +2639,8 @@ def crawl_issue_stocks(krx_data, themes=None, sectors=None, news=None, stock_the
 OVERSOLD_MIN_MARKET_CAP = 300_000_000_000  # 시총 3000억 원
 OVERSOLD_THRESHOLD = -20.0                  # MA20 대비 -20% 이하
 OVERSOLD_MA_WINDOW = 20                     # 이동평균 일수
-OVERSOLD_HISTORY_DAYS = 60                  # daily_prices 보존 기간
+OVERSOLD_HISTORY_DAYS = 75                  # daily_prices 보존 기간 (최근 20거래일 이력 검사에 40거래일 필요)
+OVERSOLD_TRACK_COOLDOWN = 20                # 성과 추적: 직전 N거래일 안에 MA20 -20% 이하였던 종목은 편입 안 함
 OVERSOLD_MIN_TRADING_VALUE = 100_000_000_000  # 당일 거래대금 1,000억 원 이상
 
 # ── 과대 낙폭 성과 추적 (oversold_track) ──
@@ -2715,7 +2716,7 @@ def _fetch_naver_daily(symbol, count=40):
     return []
 
 
-def repair_daily_price_gaps(krx_data, lookback=30):
+def repair_daily_price_gaps(krx_data, lookback=45):
     """daily_prices에 빠진 거래일(크롤링이 멈췄던 날)을 네이버 일봉으로 채운다.
 
     MA20·10일선이 공백 때문에 몇 주 전 가격으로 계산되는 문제를 막기 위함.
@@ -2754,15 +2755,37 @@ def repair_daily_price_gaps(krx_data, lookback=30):
     return len(rows)
 
 
+# 성과 추적 제외용: {종목코드: 직전 20거래일 안에 MA20 -20% 이하였던 가장 최근 날짜}
+_OVERSOLD_RECENT = {}
+
+
+def _recent_oversold_day(closes, dates):
+    """오늘 이전 OVERSOLD_TRACK_COOLDOWN 거래일 중 종가가 그날 MA20 대비 -20% 이하였던 가장 최근 날짜.
+
+    closes/dates 는 최신순. 오늘 행은 빼고 본다. MA20을 구할 종가가 모자란 날은 검사하지 않는다.
+    """
+    prior = [(dt, c) for dt, c in zip(dates, closes) if dt < TODAY]
+    pc = [c for _dt, c in prior]
+    for k in range(min(OVERSOLD_TRACK_COOLDOWN, len(prior))):
+        win = pc[k:k + OVERSOLD_MA_WINDOW]
+        if len(win) < OVERSOLD_MA_WINDOW:
+            break
+        ma = sum(win) / OVERSOLD_MA_WINDOW
+        if ma > 0 and (pc[k] - ma) / ma * 100.0 <= OVERSOLD_THRESHOLD:
+            return prior[k][0]
+    return None
+
+
 def crawl_oversold_stocks(krx_data):
     """MA20 대비 -20% 이하 낙폭 종목을 거래대금 순으로 산출.
 
-    1) daily_prices에서 최근 60일치 가져옴 (모든 종목 한 번에)
+    1) daily_prices에서 최근 75일치 가져옴 (모든 종목 한 번에)
     2) 종목별로 최근 20개 종가 평균 계산 → 현재가와 비교
     3) (price - ma20) / ma20 * 100 <= -20% AND 시총 3000억+ AND 거래대금 1000억+ AND 데이터 충분(>=20개)
     4) 거래대금 내림차순 정렬
     """
     log("📉 과대 낙폭 종목 산출 시작...")
+    _OVERSOLD_RECENT.clear()
 
     # daily_prices에서 최근 60일 데이터 fetch (페이지네이션)
     cutoff = (datetime.now(timezone(timedelta(hours=9))) - timedelta(days=OVERSOLD_HISTORY_DAYS)).strftime("%Y-%m-%d")
@@ -2829,6 +2852,9 @@ def crawl_oversold_stocks(krx_data):
         deviation = (price - ma20) / ma20 * 100.0
         if deviation <= OVERSOLD_THRESHOLD:
             candidates.append((d, ma20, deviation))
+            hit = _recent_oversold_day(closes, dates_by_code[code])
+            if hit:
+                _OVERSOLD_RECENT[code] = hit
 
     if stale_skip:
         log(f"  ⚠️ 일봉 공백으로 MA20 계산 제외 {stale_skip}종목 (daily_prices 빠진 날 확인 필요)")
@@ -3758,10 +3784,13 @@ def seed_oversold_track(oversold):
         "pick_date": f"eq.{TODAY}", "select": "code"}) or [])}
     supabase_request("DELETE", "oversold_track", params={"pick_date": f"eq.{TODAY}"})
 
-    rows = []
+    rows, skipped = [], []
     for o in oversold:
         price = float(o.get("price") or 0)
         if price <= 0 or int(o.get("trading_value") or 0) < OVERSOLD_MIN_TRADING_VALUE:
+            continue
+        if o["code"] in _OVERSOLD_RECENT:
+            skipped.append(f"{o.get('name', o['code'])}({_OVERSOLD_RECENT[o['code']][5:]})")
             continue
         rows.append({
             "pick_date": TODAY,
@@ -3784,8 +3813,10 @@ def seed_oversold_track(oversold):
             "status": "open",
         })
 
+    if skipped:
+        log(f"  ⏭ 직전 {OVERSOLD_TRACK_COOLDOWN}거래일 안에 이미 -20% 이탈 → 성과 추적 제외: {', '.join(skipped)}")
     if not rows:
-        log("  ℹ️ 성과 추적 편입 종목 없음 (과대 낙폭 0개)")
+        log("  ℹ️ 성과 추적 편입 종목 없음")
         return []
     result = supabase_request("POST", "oversold_track", data=rows)
     log(f"  📈 과대 낙폭 성과 추적 편입 {len(rows)}종목 {'✅' if result else '❌'}")
@@ -4973,7 +5004,7 @@ def main():
         log(f"  🧹 {cutoff_sa} 이전 종목/테마 분석 정리")
         supabase_request("DELETE", "theme_history", params={"date": f"lt.{cutoff_ai}"})
         log(f"  🧹 {cutoff_ai} 이전 테마 히스토리 정리")
-        # daily_prices 60일 + oversold_stocks 90일 초과 정리
+        # daily_prices 75일 + oversold_stocks 90일 초과 정리
         cutoff_dp = (datetime.now() - timedelta(days=OVERSOLD_HISTORY_DAYS)).strftime("%Y-%m-%d")
         supabase_request("DELETE", "daily_prices", params={"date": f"lt.{cutoff_dp}"})
         cutoff_os = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
