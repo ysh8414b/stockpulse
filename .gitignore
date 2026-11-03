@@ -5,3 +5,4 @@ __pycache__/
 theme_stock_map.json
 ai_themes_cache.json
 .claude/worktrees/
+surge_cache/

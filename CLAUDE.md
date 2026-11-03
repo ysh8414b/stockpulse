@@ -9,7 +9,6 @@
 - `chat.html` — 실시간 익명 토론방 (Supabase Realtime, WebSocket)
 - `board.html` — 자유게시판 (익명 글/댓글, 비밀번호 기반 삭제)
 - `theme_calendar.html` — 테마 캘린더 (매일 인기 테마 TOP 3 캘린더 뷰, 날짜별 TOP 10 상세)
-- `archive.html` — AI 브리핑 아카이브 (캘린더 기반 과거 브리핑 탐색)
 - `guide.html` — 투자 정보 가이드 (독창적 교육 콘텐츠)
 - `about.html` — 서비스 소개 + 연락처
 - `privacy.html` — 개인정보처리방침
@@ -20,6 +19,7 @@
 - `shared.js` — 공통 JS (Supabase 설정, db() 함수, 테마 유틸)
 - `sitemap.xml` — SEO용 사이트맵
 - `crawl.py` — Python 크롤러 (데이터 수집/가공, GitHub Actions로 실행)
+- `surge_ai.py` + `.github/workflows/surge.yml` — 급등 종목 AI (평일 16:30, 원인 분석 + 딥러닝 예측)
 - `kakao_setup.py` — 카카오톡 알림 최초 연결 스크립트 (PC에서 1회 실행, refresh token → Supabase `app_secrets`)
 - `.github/workflows/crawl.yml` — 장중 5분 간격 + 장 마감 후 1회 실행
 - 데이터 저장: Supabase (PostgreSQL)
@@ -31,7 +31,7 @@
 - Yahoo Finance API: 시장 지수/환율 + 스파크라인 데이터
 - 네이버 검색 API: 뉴스, 테마 관련 뉴스
 - Groq AI (주 1회): 뉴스 기반 인기 테마 감지
-- Groq AI (매 크롤링): 시장 브리핑 자동 생성 → `ai_summary` 테이블
+- 네이버 차트(fchart.stock.naver.com): 급등 종목 AI 일봉 (약 3년)
 
 ## 주요 수정 이력
 
@@ -1997,6 +1997,23 @@
   - 휴대폰 아래 탭바 선택 표시도 `--accent`
   - 상승 초록 / 하락 빨강, 테마·재료 등 각 탭 안 개별 스타일(인라인)은 그대로
   - 확인: 1280px(어두움·밝음), 659px, 375px 화면 캡처, 가로 넘침 없음
+
+### AI 브리핑 탭 삭제 + 🚀 급등 종목 AI 탭 신설 (2026-11-03)
+- 사용자 요청: AI 브리핑 탭을 데이터까지 완전히 삭제하고, 매일 +5% 이상 · 거래대금 3,000억 이상 종목 상위 10개의 상승 원인을 시황·차트로 분석하는 딥러닝 예측 모델을 메인에 탑재
+- **AI 브리핑 삭제**: index.html `TabAI`·`aiSum`·`ai_summary` 조회 제거(옛 주소 `#ai`는 `#surge`로 이동), crawl.py `generate_ai_summary`·`load_economic_calendar`·`format_calendar_block`·저장·정리 코드 삭제, 실행 모드는 close(15:35/16:00)만 남김(premarket/market 삭제), crawl.yml 08:00 cron 삭제. 파일 삭제: `archive.html`, `guide-ai-briefing.html`, `economic_calendar.json`. 모든 페이지의 아카이브·브리핑 가이드 링크와 sitemap 항목 제거, guide.html 4장은 "급등 종목 AI 활용법"으로 교체, about.html 기능 카드 교체. **`setup_surge.sql`이 `DROP TABLE ai_summary`로 데이터 삭제**
+- 아래 기존 이력 중 AI 브리핑·아카이브 관련 항목(2026-03-02/03-04/03-05/03-10/03-14/05-10)은 기록으로만 남음
+- **`setup_surge.sql`** (1회 실행): `surge_stocks`(date·rank·code·…·surge_type·main_cause·causes·chart_tags·themes·news·disclosures·flow·market_ctx·ohlcv(최근 80일)·pred·similar·ai_comment·ret_d1/d5/d20, UNIQUE(date,code)) + `surge_model_runs`(metrics JSONB), RLS anon SELECT
+- **`surge_ai.py`** (crawl.py 함수 재사용):
+  - 선정: 네이버 전종목 시세에서 +5% 이상 & 거래대금 3,000억 이상(ETF 제외) → 거래대금 상위 10
+  - 일봉: 네이버 차트 `fchart.stock.naver.com/sise.nhn`(800일), 시총 3,000억+ 약 700종목 + 코스피/코스닥, 캐시 `surge_cache/prices.pkl`(Actions 캐시, 이후엔 최근 30일만 받아 합침). 기준 거래일 = 코스피 차트 마지막 날짜(오늘과 다르면 휴장으로 보고 종료, `--force`로 무시)
+  - 원인 분석 `analyze_causes`: 시황(지수 ±, 같은 display_sector 평균, `theme_stocks_all`로 소속 테마 동반 상승, DART 공시(1일 이내), 뉴스 키워드(`NEWS_MATERIAL_KEYWORDS`), 외국인·기관 순매수) + 차트(`chart_signals`: N년/52주 신고가, 20일 박스 돌파, 거래량 3배+, 갭 3%+, 장대양봉, 긴 윗꼬리, 낙폭 반등, 60일선 회복, 정배열, 연속 상승, 상한가). 가중치 최고 원인으로 유형(개별 재료형/테마·섹터·시장 동반형/수급 주도형/기술적 돌파형/낙폭 반등형/원인 불명확)
+  - 딥러닝: 과거 급등 이벤트(+5% · 거래대금 1,000억+, 30% 초과 제외, 이전 90거래일 필요)로 학습. 입력 = 60일 × 8채널 시퀀스(수익률·고저·갭·거래량·20일선 이격·60일 고점 대비·지수) + 18개 지표(`TAB_NAMES`). 모델 = Conv1d×2 → GRU → 지표 MLP와 합침 → D+1/5/20 상승 확률(BCE) + 10/50/90% 분위수(pinball). 시간 순 분할(마지막 20% 날짜 시험, 사이 20거래일 비움, 학습 끝 15% 검증으로 조기 종료), 시드 3개 앙상블, 비교 = 로지스틱(지표만)·기본 확률. 최종 모델은 정답 있는 전체로 재학습해 예측. 유사 사례 = 임베딩(표준화 후 코사인) 상위 20건 평균 + 6건 표시
+  - 성과 추적: 최근 50일 선정분의 ret_d1/d5/d20을 일봉으로 채움(PATCH). 급등 종목 1년, 모델 기록 120개 보관
+  - Groq 해설(종목당 3~4문장, 주어진 숫자만). `--dry-run --universe N --skip-groq --seeds N --out 파일`로 로컬 시험(SUPABASE_KEY 없으면 자동 드라이런)
+- **`surge.yml`**: 평일 UTC 07:30(KST 16:30), CPU PyTorch 설치, `surge_cache`·`sector_map.json` 캐시, 수동 실행 `force`
+- **index.html `TabSurge`** (탭 `#surge` "급등 AI", 재료 포착 오른쪽 / 휴대폰 탭바 "급등"): 열 때만 조회(폴링 없음). 날짜 선택(‹ › + 목록), 유형별 개수 칩, 종목 카드(순위·유형 뱃지·주 원인·D+5 상승확률·실제 D+5) → 펼치면 `SurgeChart`(60일 캔들 SVG + 20/60일선 + 거래량, 급등일 강조) / 시황·차트 원인 목록(가중치 막대) / AI 해설 / D+1·5·20 예측(상승 확률 막대, 중앙값, 80% 범위, 기간별 모델 신뢰도, 실제 결과) / 비슷한 과거 급등 표 / 공시·뉴스. 아래 `SurgeModelCard`(기간별 AUC vs 단순 모델, 상위·하위 20% 실제 수익률, 80% 범위 적중) + `SurgeTrackCard`(지금까지 D+1/5/20 평균, D+5 방향 적중률). AUC 0.58+ "참고할 만함", 0.54+ "약한 신호", 그 미만 "신호 거의 없음"
+- **운영 순서**: (1) Supabase에서 `setup_surge.sql` 실행(ai_summary 삭제 포함) → (2) 커밋·푸시 → (3) Actions → 급등 종목 AI → Run workflow(force 체크하면 마지막 거래일 기준) → (4) 메인 `#surge`
+- 한계: 학습 종목은 지금 시총 3,000억+ 종목만(상장폐지 종목 없음 → 생존 편향). 거래대금은 종가×거래량 근사. 단기 수익률 예측은 구분력이 낮을 수 있어 성적표를 함께 표시. 테마는 16:00 크롤링이 저장한 `theme_stocks_all` 기준
 
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용

@@ -73,10 +73,6 @@
             <div style="font-weight:600;color:var(--text);margin-bottom:2px">외국인·기관 수급 읽기</div>
             <div style="font-size:12px;color:var(--muted)">매매 주체별 특성, 환율 연동, 프로그램 매매</div>
           </a>
-          <a href="guide-ai-briefing.html" style="display:block;padding:10px 14px;border-radius:8px;background:var(--card-bg);border:1px solid var(--card-bd);font-size:13px;color:var(--text-sub);transition:all .2s">
-            <div style="font-weight:600;color:var(--text);margin-bottom:2px">AI 브리핑 활용</div>
-            <div style="font-size:12px;color:var(--muted)">7개 섹션 의미, 시장 무드 해석, 한계와 검증</div>
-          </a>
         </div>
       </div>
 
@@ -84,7 +80,7 @@
         <li><a href="#indices">시장 지표 읽는 법</a></li>
         <li><a href="#sectors">섹터 분석 기초</a></li>
         <li><a href="#themes">테마주 투자 이해</a></li>
-        <li><a href="#ai-briefing">AI 브리핑 활용법</a></li>
+        <li><a href="#surge-ai">급등 종목 AI 활용법</a></li>
         <li><a href="#terms">투자 용어 사전</a></li>
       </ul>
 
@@ -157,29 +153,26 @@
         <div class="tip-box">STOCKPULSE의 테마 순위는 뉴스 언급 빈도와 관련 종목 등락률을 기반으로 합니다. 순위가 높다고 해서 투자 추천이 아니며, 시장의 관심도를 나타내는 지표로만 활용하세요.</div>
       </div>
 
-      <!-- 4. AI 브리핑 -->
-      <div class="page-section" id="ai-briefing">
-        <h2>4. AI 브리핑 활용법</h2>
-        <p>STOCKPULSE의 AI 브리핑은 Groq AI가 시장 데이터를 종합 분석하여 자동 생성합니다. 하루 3회 업데이트되며, 다음 7개 섹션으로 구성됩니다.</p>
+      <!-- 4. 급등 종목 AI -->
+      <div class="page-section" id="surge-ai">
+        <h2>4. 급등 종목 AI 활용법</h2>
+        <p>대시보드의 "급등 AI" 탭은 하루에 5% 이상 오르면서 거래대금이 3,000억 원 이상 몰린 종목을 거래대금 순으로 최대 10개 골라, 왜 올랐는지와 그 뒤 어떻게 움직였는지를 함께 보여 줍니다. 큰돈이 한꺼번에 들어온 급등은 시장의 관심이 어디로 옮겨 가는지 알려 주는 단서가 되기 때문입니다.</p>
 
-        <h3>브리핑 구조</h3>
+        <h3>상승 원인은 두 갈래로 나눠 봅니다</h3>
         <ul>
-          <li><strong>🔥 핵심 촉발/파급:</strong> 시장을 움직인 핵심 이벤트와 연쇄 영향 분석</li>
-          <li><strong>💱 환율·금리·유가:</strong> 매크로 변수들의 연쇄 반응 분석</li>
-          <li><strong>💰 수급 분석:</strong> 외국인·기관·개인의 매매 동향과 의미</li>
-          <li><strong>🩺 시장 체력 진단:</strong> 상승/하락 종목 비율, AD비율, 패닉 단계 진단</li>
-          <li><strong>📊 섹터·테마:</strong> 자금이 몰리는/빠지는 섹터와 테마 분석</li>
-          <li><strong>⚔️ 매매 전략:</strong> 구체적인 대응 전략과 리스크 관리</li>
-          <li><strong>🧠 결론:</strong> 반등 조건, 추가 하락 트리거, 최종 판단</li>
+          <li><strong>🌐 시황:</strong> 지수 전체가 올랐는지, 같은 섹터·테마 종목이 함께 올랐는지, 당일 공시나 뉴스가 있었는지, 외국인·기관이 샀는지를 확인합니다. 지수가 2% 오른 날의 6% 상승과 지수가 하락한 날의 6% 상승은 의미가 다릅니다.</li>
+          <li><strong>📊 차트:</strong> 신고가·20일 박스권 돌파, 평소의 몇 배인지 보여 주는 거래량, 갭 상승, 장대양봉, 긴 윗꼬리처럼 가격 자체가 보여 주는 신호입니다. 오랜 박스권을 대량 거래로 뚫은 급등은 이미 많이 오른 뒤의 급등과 성격이 다릅니다.</li>
         </ul>
+        <p>가장 큰 원인을 기준으로 "개별 재료형·테마 동반형·섹터 동반형·시장 동반형·기술적 돌파형" 등으로 분류합니다. 테마 동반형은 테마의 열기가 식으면 함께 빠지는 경우가 많고, 개별 재료형은 재료의 크기와 지속성이 관건입니다.</p>
 
-        <h3>시장 무드 (Market Mood)</h3>
+        <h3>딥러닝 예측을 읽는 법</h3>
         <ul>
-          <li>🟢 <strong>강세 (Bullish):</strong> 시장 전체가 상승 추세로 판단</li>
-          <li>🔴 <strong>약세 (Bearish):</strong> 시장 전체가 하락 추세로 판단</li>
-          <li>⚪ <strong>보합 (Neutral):</strong> 방향성이 불분명한 상태</li>
+          <li><strong>학습 방식:</strong> 시가총액 3,000억 원 이상 종목의 약 3년치 일봉에서 과거 급등일 수천 건을 찾아, 급등 전 60일 차트와 그날의 상황을 입력으로 그 뒤 1일·5일·20일 수익률을 맞히도록 학습합니다(CNN+GRU 신경망).</li>
+          <li><strong>상승 확률:</strong> 비슷한 과거 급등 가운데 그 기간 뒤 주가가 더 높았던 비율에 가깝습니다. 50% 근처라면 모델도 방향을 모른다는 뜻입니다.</li>
+          <li><strong>80% 범위:</strong> 수익률이 열 번 중 여덟 번 들어올 것으로 보는 구간입니다. 범위가 넓을수록 결과가 크게 갈린다는 뜻입니다.</li>
+          <li><strong>성적표 먼저 보기:</strong> 마지막 기간은 학습에 쓰지 않고 시험에만 씁니다. 구분력(AUC)이 0.5면 찍기와 같고, 0.55~0.6만 되어도 단기 주가 예측에서는 쉽지 않은 수준입니다. 성적이 낮은 기간의 예측은 무시하는 것이 맞습니다.</li>
         </ul>
-        <div class="tip-box">AI 브리핑은 자동 생성된 콘텐츠로, 정확성이나 수익을 보장하지 않습니다. 시장 상황을 빠르게 파악하는 참고자료로만 활용하세요. 아카이브 페이지에서 과거 브리핑의 시장 무드 적중률을 직접 확인해볼 수 있습니다.</div>
+        <div class="tip-box">급등 원인은 공개 데이터로 자동 추정한 것이고, 예측은 과거 패턴에서 나온 확률일 뿐입니다. 급등 직후에는 변동성이 커서 같은 확률이라도 결과의 폭이 큽니다. 투자 판단은 본인의 책임입니다.</div>
       </div>
 
       <!-- 5. 용어 사전 -->
@@ -373,7 +366,6 @@
     <div><span style="font-weight:600;color:var(--dim)">STOCKPULSE</span> © 2026</div>
     <div class="footer-links">
       <a href="index.html">대시보드</a>
-      <a href="archive.html">AI 브리핑 아카이브</a>
       <a href="about.html">서비스 소개</a>
       <a href="privacy.html">개인정보처리방침</a>
       <a href="terms.html">이용약관</a>

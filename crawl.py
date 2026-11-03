@@ -1992,364 +1992,6 @@ def discover_new_themes(news_titles, krx_data, theme_map):
         log(f"  ⚠️ 신규 테마 발굴 실패 (기존 테마로 계속): {e}")
 
 
-def load_economic_calendar(days_ahead=3):
-    """경제 캘린더 JSON 로드 → 오늘부터 days_ahead 이내 이벤트만 반환.
-    AI가 향후 이벤트(FOMC, CPI 등)를 환각하지 못하도록 프롬프트에 주입할 화이트리스트."""
-    cal_path = os.path.join(os.path.dirname(__file__), "economic_calendar.json")
-    if not os.path.exists(cal_path):
-        log("  ⚠️ economic_calendar.json 없음 — 캘린더 블록 생략")
-        return []
-
-    try:
-        with open(cal_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as e:
-        log(f"  ⚠️ economic_calendar.json 파싱 실패: {e}")
-        return []
-
-    kst = timezone(timedelta(hours=9))
-    today = datetime.now(kst).date()
-    end = today + timedelta(days=days_ahead)
-
-    events = data.get("events", [])
-
-    # 만료 임박 경고: 마지막 이벤트가 30일 안쪽이면 갱신 필요
-    if events:
-        try:
-            last_date = max(datetime.strptime(e["date"], "%Y-%m-%d").date() for e in events)
-            days_left = (last_date - today).days
-            if days_left < 30:
-                log(f"  ⚠️ economic_calendar.json 갱신 필요 (마지막 이벤트까지 {days_left}일 남음)")
-        except Exception:
-            pass
-
-    upcoming = []
-    for e in events:
-        try:
-            d = datetime.strptime(e["date"], "%Y-%m-%d").date()
-            if today <= d <= end:
-                upcoming.append(e)
-        except Exception:
-            continue
-
-    upcoming.sort(key=lambda e: (e["date"], e.get("time", "")))
-    return upcoming
-
-
-def format_calendar_block(upcoming):
-    """프롬프트 주입용 텍스트 블록 생성. 빈 리스트면 명시적 '없음' 메시지를 반환해 환각 방지."""
-    if not upcoming:
-        return "[향후 3일 예정 매크로 이벤트]\n향후 3일 내 예정된 주요 매크로 이벤트 없음. 시장 자체 모멘텀과 종목 재료에 집중하라."
-    lines = ["[향후 3일 예정 매크로 이벤트]"]
-    for e in upcoming:
-        impact = e.get("impact", "medium")
-        time_str = e.get("time", "")
-        lines.append(f"- {e['date']} {time_str} {e['name']} (영향도: {impact})")
-    return "\n".join(lines)
-
-
-def generate_ai_summary(indices, stocks, sectors, themes, news, mode="market", krx_data=None):
-    """Groq AI로 시장 브리핑 생성. mode: 'premarket'(장전 해외시장) / 'market'(장중) / 'close'(마감)"""
-    if not GROQ_API_KEY:
-        log("  ⚠️ GROQ_API_KEY 미설정 - AI 요약 건너뜀")
-        return None
-
-    kst = timezone(timedelta(hours=9))
-    now_kst = datetime.now(kst)
-    now_str = now_kst.strftime("%Y-%m-%d %H:%M")
-
-    # 향후 3일 매크로 이벤트 화이트리스트 (AI 환각 방지)
-    upcoming_events = load_economic_calendar(days_ahead=3)
-    calendar_block = format_calendar_block(upcoming_events)
-
-    # 컨텍스트 구성
-    idx_text = "\n".join(
-        f"- {m['name']}: {m['value']} ({m['change_pct']})" for m in (indices or [])
-    )
-    news_text = "\n".join(
-        f"- {n['title']} ({n.get('source','')}, {n.get('time_ago','')})"
-        for n in (news or [])[:15]
-    )
-
-    # ── 시장 breadth 지표 계산 (krx_data 활용) ──
-    breadth_text = ""
-    if krx_data and mode != "premarket":
-        all_stocks = [d for d in krx_data.values() if d["price"] > 0 and not is_etf_etn(d["name"])]
-        total = len(all_stocks)
-        up_cnt = sum(1 for d in all_stocks if d["change_pct"] > 0)
-        down_cnt = sum(1 for d in all_stocks if d["change_pct"] < 0)
-        flat_cnt = total - up_cnt - down_cnt
-
-        # 등락률 분포
-        surge = sum(1 for d in all_stocks if d["change_pct"] >= 3)  # 3%이상 급등
-        mild_up = sum(1 for d in all_stocks if 0 < d["change_pct"] < 3)
-        mild_dn = sum(1 for d in all_stocks if -3 < d["change_pct"] < 0)
-        plunge = sum(1 for d in all_stocks if d["change_pct"] <= -3)  # 3%이상 급락
-        limit_up = sum(1 for d in all_stocks if d["change_pct"] >= 29)  # 상한가
-        limit_dn = sum(1 for d in all_stocks if d["change_pct"] <= -29)  # 하한가
-
-        # 총 거래대금
-        total_val = sum(d["trading_value"] for d in all_stocks)
-        total_val_str = f"{total_val / 1e12:.1f}조원"
-
-        # KOSPI / KOSDAQ 분리 평균
-        kospi = [d for d in all_stocks if d.get("market") == "KOSPI"]
-        kosdaq = [d for d in all_stocks if d.get("market") == "KOSDAQ"]
-        kospi_avg = sum(d["change_pct"] for d in kospi) / len(kospi) if kospi else 0
-        kosdaq_avg = sum(d["change_pct"] for d in kosdaq) / len(kosdaq) if kosdaq else 0
-
-        # 거래대금 TOP 5
-        by_val = sorted(all_stocks, key=lambda x: x["trading_value"], reverse=True)[:5]
-        val_top = ", ".join(f"{d['name']}({d['change_pct']:+.1f}%, {d['trading_value']/1e8:.0f}억)" for d in by_val)
-
-        # 시총 TOP 10 등락률
-        by_cap = sorted(all_stocks, key=lambda x: x["market_cap"], reverse=True)[:10]
-        cap_top = ", ".join(f"{d['name']}({d['change_pct']:+.1f}%)" for d in by_cap)
-
-        ad_ratio = f"{up_cnt/down_cnt:.2f}" if down_cnt > 0 else "N/A"
-
-        # 모멘텀 지표: 등락률 TOP5 (상승/하락)
-        by_change_up = sorted(all_stocks, key=lambda x: x["change_pct"], reverse=True)[:5]
-        by_change_dn = sorted(all_stocks, key=lambda x: x["change_pct"])[:5]
-        top5_up = ", ".join(f"{d['name']}({d['change_pct']:+.1f}%)" for d in by_change_up)
-        top5_dn = ", ".join(f"{d['name']}({d['change_pct']:+.1f}%)" for d in by_change_dn)
-
-        # 거래대금 상위 종목의 상승/하락 비율 (수급 방향 지표)
-        val_top10 = sorted(all_stocks, key=lambda x: x["trading_value"], reverse=True)[:10]
-        val_top10_up = sum(1 for d in val_top10 if d["change_pct"] > 0)
-        val_top10_dn = sum(1 for d in val_top10 if d["change_pct"] < 0)
-
-        # 급등/급락 강도
-        big_surge = sum(1 for d in all_stocks if d["change_pct"] >= 10)
-        big_plunge = sum(1 for d in all_stocks if d["change_pct"] <= -10)
-
-        breadth_text = f"""[시장 체력 지표]
-전체 종목: {total}개 | 상승 {up_cnt} : 하락 {down_cnt} : 보합 {flat_cnt} | AD비율 {ad_ratio}
-등락분포: 급등(+3%↑) {surge}개, 상승 {mild_up}개, 하락 {mild_dn}개, 급락(-3%↓) {plunge}개
-상한가 {limit_up}개 / 하한가 {limit_dn}개 | 10%↑ {big_surge}개 / 10%↓ {big_plunge}개
-총 거래대금: {total_val_str}
-KOSPI 평균 등락률: {kospi_avg:+.2f}% | KOSDAQ 평균: {kosdaq_avg:+.2f}%
-거래대금 TOP5: {val_top}
-거래대금 TOP10 방향: 상승 {val_top10_up}개 / 하락 {val_top10_dn}개 (돈이 몰리는 종목의 방향)
-시총 TOP10 등락: {cap_top}
-등락률 TOP5 상승: {top5_up}
-등락률 TOP5 하락: {top5_dn}"""
-
-    if mode == "premarket":
-        # ── 장 시작 전: 해외시장 위주 브리핑 ──
-        # 해외 지수만 필터 (다우, 나스닥, S&P500, USD/KRW)
-        global_names = {"다우", "나스닥", "S&P500", "USD/KRW"}
-        global_idx = [m for m in (indices or []) if m["name"] in global_names]
-        kr_idx = [m for m in (indices or []) if m["name"] in {"코스피", "코스닥"}]
-        global_text = "\n".join(f"- {m['name']}: {m['value']} ({m['change_pct']})" for m in global_idx)
-        kr_text = "\n".join(f"- {m['name']}: {m['value']} ({m['change_pct']})" for m in kr_idx)
-
-        prompt = f"""너는 증권사 리서치센터 출신 시장 전문가다. 장 시작 전 해외시장 동향을 후배 트레이더에게 브리핑하듯 자연스럽게 설명하라.
-
-기준 시각: {now_str} (장 시작 전)
-
-[해외 지수]
-{global_text}
-
-[국내 지수 (전일)]
-{kr_text}
-
-[주요 뉴스]
-{news_text}
-
-{calendar_block}
-
-## 분석 구조 (3개 섹션):
-
-1) 해외시장 흐름
-미국 3대 지수 움직임의 배경과 맥락을 설명한다. 환율·유가·금 등 관련 변수가 있으면 자연스럽게 엮어서 하나의 흐름으로 서술한다. 개별 나열이 아니라 "왜 이렇게 움직였는지"에 초점을 맞춘다.
-
-2) 국내 영향 전망
-해외 흐름이 오늘 코스피·코스닥에 어떤 영향을 줄지 분석한다. 수혜/피해 예상 섹터를 근거와 함께 언급한다. 오늘 장에서 주목할 이벤트나 변수는 위 [향후 3일 예정 매크로 이벤트] 리스트에서만 인용하고, 리스트에 없으면 언급하지 않는다.
-
-3) 한 줄 결론
-오늘 시장 전망을 한 문장으로 요약한다.
-
-## 작성 규칙:
-- "~다/~했다" 간결체 (존댓말 금지)
-- 한글과 숫자만 사용
-- 같은 말 반복하지 말 것. 각 문장이 새로운 정보를 담아야 한다
-- 숫자는 데이터 그대로 인용하되, 맥락을 붙여라 (예: "나스닥 +1.2%로 3거래일 연속 상승")
-- 불확실한 과거 수치를 단정하지 말 것
-- 향후 매크로 이벤트(FOMC, CPI, PPI, 고용보고서, 금통위 등)는 위 [향후 3일 예정 매크로 이벤트] 리스트에 있는 것만 언급하라. 리스트에 없는 일정을 추측·창작하지 마라
-- 800~1200자
-
-## 출력 (JSON):
-{{
-  "summary": "브리핑 전문 (섹션 번호와 제목 포함, 줄바꿈 구분)",
-  "market_mood": "bullish 또는 bearish 또는 neutral"
-}}
-
-market_mood: 해외 전반 상승+원화 강세면 bullish, 하락+원화 약세면 bearish, 혼조면 neutral"""
-
-    else:
-        # ── 장중 / 장 마감: 국내시장 위주 브리핑 ──
-        stk_text = "\n".join(
-            f"- {s['name']}({s['code']}): {s['price']}원, {s['change_pct']}, 거래대금 {s.get('volume','N/A')}, 사유: {s.get('reason','N/A')}"
-            for s in (stocks or [])[:15]
-        )
-        up_sectors = [s for s in (sectors or []) if s.get("trend") == "up"]
-        down_sectors = [s for s in (sectors or []) if s.get("trend") == "down"]
-        sec_text = "상승 섹터: " + ", ".join(f"{s['name']}({s['change_pct']}, {s.get('stock_count',0)}종목)" for s in up_sectors)
-        sec_text += "\n하락 섹터: " + ", ".join(f"{s['name']}({s['change_pct']}, {s.get('stock_count',0)}종목)" for s in down_sectors)
-        thm_text = "\n".join(
-            f"- {t['name']}: {t['change_pct']}, 상승{t.get('up_count',0)}/하락{t.get('down_count',0)}, 대장주: {t.get('leading_stocks','N/A')}"
-            for t in (themes or [])[:7]
-        )
-
-        # breadth 데이터 블록
-        breadth_block = f"\n\n{breadth_text}" if breadth_text else ""
-
-        # ── 시장 팩트 요약 (AI가 뉴스 서사에 끌려가지 않도록 방향을 명시) ──
-        fact_lines = []
-        for m in (indices or []):
-            if m["name"] in ("코스피", "코스닥"):
-                try:
-                    pct_str = str(m.get("change_pct", "0")).replace("%", "").replace("+", "").strip()
-                    pct_val = float(pct_str) if pct_str else 0
-                    direction = "상승" if pct_val > 0 else "하락" if pct_val < 0 else "보합"
-                    fact_lines.append(f"{m['name']}: {m['value']} ({m['change_pct']}) → 오늘 {direction}")
-                except:
-                    fact_lines.append(f"{m['name']}: {m['value']} ({m['change_pct']})")
-        # breadth 기반 방향
-        if breadth_text:
-            import re
-            ad_match = re.search(r"상승 (\d+) : 하락 (\d+)", breadth_text)
-            if ad_match:
-                up_n, dn_n = int(ad_match.group(1)), int(ad_match.group(2))
-                if up_n > dn_n * 2:
-                    fact_lines.append(f"전체 종목: 상승 {up_n} vs 하락 {dn_n} → 압도적 매수 우위")
-                elif dn_n > up_n * 2:
-                    fact_lines.append(f"전체 종목: 상승 {up_n} vs 하락 {dn_n} → 압도적 매도 우위")
-                else:
-                    fact_lines.append(f"전체 종목: 상승 {up_n} vs 하락 {dn_n}")
-        fact_block = "\n".join(fact_lines)
-
-        prompt = f"""너는 증권사 리서치센터 출신 시장 전문가다. 동료 트레이더에게 오늘 시장을 브리핑하듯 자연스럽고 읽기 쉽게 작성하라.
-
-기준 시각: {now_str}
-
-★ 오늘 시장 팩트 ★
-{fact_block}
-지수·종목 데이터가 오늘의 실제 결과다. 뉴스에 과거 폭락/급등 기사가 남아있어도 오늘 지수 방향과 혼동하지 마라.
-
-[지수]
-{idx_text}
-{breadth_block}
-
-[이슈 종목 TOP 15]
-{stk_text}
-
-[섹터]
-{sec_text}
-
-[인기 테마 TOP 7]
-{thm_text}
-
-[뉴스]
-{news_text}
-
-{calendar_block}
-
-## 분석 구조 (4개 섹션):
-
-1) 오늘의 핵심
-오늘 시장을 움직인 핵심 재료 1~2가지를 짚고, 그 파급 흐름을 서술한다. 매크로(환율·금리·유가·지정학) 요인과 종목/테마 레벨 재료를 자연스럽게 연결한다. 이슈 종목에 왜 돈이 몰렸는지, 어떤 뉴스/정책이 방아쇠였는지 설명한다. 원인→결과를 자연스럽게 이어가되, 나열식("첫째~, 둘째~")이 아니라 이야기처럼 흐르게 쓴다.
-
-2) 돈의 흐름
-거래대금 상위 종목들의 방향으로 "큰 돈이 사는 중인지 파는 중인지" 판단한다. 외국인·기관·개인 각 주체의 움직임을 환율과 연결해 추정한다. 어떤 섹터/테마로 자금이 몰리고 어디서 빠지는지, 로테이션 흐름을 읽는다. 총 거래대금 수준이 평소 대비 어떤지도 언급한다.
-
-3) 시장 체력과 온도
-AD비율, 급등/급락 종목 비율, 대형주 vs 전체 괴리 등으로 시장의 현재 상태를 진단한다. 하락장이면 패닉 단계(초입/중반/막바지)를, 상승장이면 과열 수준을 판단한다.
-
-4) 전략과 시나리오
-현금 비중, 유망 섹터, 진입/이탈 조건을 구체적으로 제시한다. "추가 상승 시나리오"와 "하락 전환 시나리오" 각각의 트리거를 명시한다. 향후 1~3일 주목할 이벤트는 위 [향후 3일 예정 매크로 이벤트] 리스트에 있는 항목만 인용한다. 리스트가 비어 있으면 매크로 이벤트 언급 없이 "이번 주 예정된 주요 매크로 이벤트가 없으므로 시장 자체 모멘텀과 종목 재료에 집중"이라고 쓴다. 마지막에 핵심 결론을 한 문장으로 마무리한다.
-
-## 작성 규칙:
-- "~다/~했다" 간결체 (존댓말 금지)
-- 한글과 숫자만 사용
-- 같은 말을 다른 섹션에서 반복하지 말 것. 각 문장이 새로운 정보를 담아야 한다
-- 인과관계를 자연스럽게 연결하되, 억지로 "1차→2차→3차" 형식에 맞추지 말 것
-- 숫자는 데이터 그대로 인용하면서 맥락을 붙여라
-- "관망", "지켜보자" 같은 애매한 표현 대신 구체적 행동과 조건을 제시
-- 불확실한 과거 수치를 단정하지 말 것
-- 향후 매크로 이벤트(FOMC, CPI, PPI, 고용보고서, 금통위, 옵션만기 등)는 위 [향후 3일 예정 매크로 이벤트] 리스트에 있는 것만 언급하라. 리스트에 없는 일정(예: "Fed 금리 결정이 곧 있다")을 추측·창작하면 안 된다
-- 1500~2500자
-
-## 출력 (JSON):
-{{
-  "summary": "브리핑 전문 (섹션 번호와 제목 포함, 줄바꿈 구분)",
-  "market_mood": "bullish 또는 bearish 또는 neutral"
-}}
-
-market_mood: 코스피·코스닥 모두 상승이면 bullish, 모두 하락이면 bearish, 혼조면 neutral"""
-
-    try:
-        resp = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {GROQ_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": GROQ_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.5,
-                "max_tokens": 4096,
-                "response_format": {"type": "json_object"},
-            },
-            timeout=60,
-        )
-
-        if resp.status_code != 200:
-            log(f"  ⚠️ Groq AI 요약 오류: {resp.status_code} - {resp.text[:200]}")
-            return None
-
-        result = resp.json()
-        content = result["choices"][0]["message"]["content"]
-        parsed = json.loads(content)
-
-        summary = parsed.get("summary", "")
-        mood = parsed.get("market_mood", "neutral")
-        if mood not in ("bullish", "bearish", "neutral"):
-            mood = "neutral"
-
-        # ── mood 검증: 지수 데이터와 AI mood 불일치 감지 ──
-        if summary and mode != "premarket":
-            expected_mood = None
-            for m in (indices or []):
-                if m["name"] == "코스피":
-                    try:
-                        pct_str = str(m.get("change_pct", "0")).replace("%", "").replace("+", "").strip()
-                        kospi_pct = float(pct_str) if pct_str else 0
-                        if kospi_pct >= 2.0:
-                            expected_mood = "bullish"
-                        elif kospi_pct <= -2.0:
-                            expected_mood = "bearish"
-                    except:
-                        pass
-                    break
-
-            if expected_mood and expected_mood != mood:
-                log(f"  ⚠️ mood 불일치 감지: AI={mood}, 지수 기반={expected_mood} (코스피 {kospi_pct:+.2f}%) → mood 강제 보정")
-                mood = expected_mood
-
-        if summary:
-            log(f"  🤖 AI 시장 브리핑 생성 완료 (mood: {mood}, {len(summary)}자)")
-            generated_time = now_kst.strftime("%H:%M")
-            return {"summary": summary, "market_mood": mood, "date": TODAY, "generated_time": generated_time}
-        return None
-
-    except Exception as e:
-        log(f"  ⚠️ AI 요약 생성 실패: {e}")
-        return None
-
-
 def generate_stock_analysis(stocks, themes, sectors, news, krx_data):
     """이슈 종목 TOP 5 심층 분석 생성 (Groq AI)"""
     if not GROQ_API_KEY:
@@ -4964,23 +4606,19 @@ def main():
     log(f"📅 날짜: {TODAY}")
     log("=" * 50)
 
-    # AI 브리핑 모드 판정 (크롤링 전에 미리 결정 — 크롤링 소요시간으로 인한 타이밍 누락 방지)
+    # 실행 모드 판정 (크롤링 전에 미리 결정 — 크롤링 소요시간으로 인한 타이밍 누락 방지)
+    #   close = 장 마감 후(15:35/16:00): 종목·테마 분석, 과대 낙폭·재료 포착·성과 추적
     kst_start = datetime.now(timezone(timedelta(hours=9)))
-    ai_schedule = [(8, 0, 30, "premarket"), (12, 5, 15, "market"), (15, 35, 15, "close"), (16, 0, 15, "close")]
+    run_schedule = [(15, 35, 15, "close"), (16, 0, 15, "close")]
     ai_mode = None
-    for h, m, tolerance, mode in ai_schedule:
+    for h, m, tolerance, mode in run_schedule:
         if h == kst_start.hour and abs(kst_start.minute - m) <= tolerance:
             ai_mode = mode
             break
-    # 주말(토/일)에는 AI 브리핑 스킵
     if ai_mode and kst_start.weekday() >= 5:  # 5=토, 6=일
-        log(f"  ℹ️ 주말이므로 AI 브리핑 스킵 ({kst_start.strftime('%A')})")
         ai_mode = None
     if ai_mode:
-        label = {"premarket": "장전 해외시장", "market": "장중", "close": "장 마감"}[ai_mode]
-        log(f"  🤖 AI 브리핑 모드 감지: {label} (시작 시각 {kst_start.strftime('%H:%M')})")
-    else:
-        log(f"  ℹ️ AI 브리핑 없음 (시작 시각 {kst_start.strftime('%H:%M')}, 생성 시간: 08:00/12:05/15:35)")
+        log(f"  🕞 장 마감 모드 (시작 시각 {kst_start.strftime('%H:%M')})")
 
     # 과대 낙폭 종목 장중 갱신: 평일 15:00~15:19 KST (확정 종가 전 현재 시세 기준)
     # → close 모드(15:35/16:00)에서 확정 종가로 다시 갱신됨
@@ -5019,9 +4657,9 @@ def main():
     )
     if is_weekday and not is_trading_day:
         log(f"  🏖️ 평일이지만 한국 시장 휴장일로 판단됨 (전종목 등락률 0)")
-        # 장중/마감 AI 브리핑 + 종목/테마 분석 스킵 (premarket는 해외 시장 요약이라 유지)
-        if ai_mode in ("market", "close"):
-            log(f"     → {ai_mode} AI 브리핑/종목분석/테마분석 스킵")
+        # 장 마감 분석(종목/테마 분석, 과대 낙폭 등) 스킵
+        if ai_mode:
+            log("     → 장 마감 분석 스킵")
             ai_mode = None
         # 과대 낙폭 장중 갱신 스킵 (확정 종가도 없으므로 daily_prices 누적도 안 함)
         if oversold_intraday:
@@ -5102,29 +4740,10 @@ def main():
             if catalysts:
                 catalysts = generate_catalyst_commentary(catalysts)
 
-    # 11. AI 시장 브리핑 (Groq) — 하루 3회만 생성 (08:00 해외시장/12:05 장중/15:35 마감)
-    # ai_mode는 main() 시작 시점에 미리 결정됨 (크롤링 소요시간 무관)
-    ai_summary = None
+    # 11. 종목/테마 심층 분석 (Groq, close 모드에서만)
     stock_analysis = None
     theme_analysis = None
     if ai_mode:
-        # 이미 같은 모드의 브리핑이 오늘 생성되었는지 체크 (중복 Groq 호출 방지)
-        mode_hours = {"premarket": ["07", "08"], "market": ["11", "12"], "close": ["15", "16"]}
-        existing = supabase_request("GET", "ai_summary", params={"date": f"eq.{TODAY}", "select": "generated_time"})
-        already_done = False
-        if existing:
-            for rec in existing:
-                gt = rec.get("generated_time", "")
-                if gt[:2] in mode_hours.get(ai_mode, []):
-                    already_done = True
-                    break
-        if already_done:
-            log(f"  ℹ️ AI 브리핑 이미 생성됨 ({ai_mode}) — 스킵")
-        else:
-            label = {"premarket": "장전 해외시장", "market": "장중", "close": "장 마감"}[ai_mode]
-            log(f"  🤖 AI 브리핑 생성 ({label}) — Groq 호출")
-            ai_summary = generate_ai_summary(indices, stocks, sectors, themes, news, mode=ai_mode, krx_data=krx_data)
-
         # ─── 종목 심층 분석 (close 모드에서만) ───
         if ai_mode == "close" and stocks:
             existing_sa = supabase_request("GET", "stock_analysis", params={"date": f"eq.{TODAY}", "select": "id", "limit": "1"})
@@ -5230,17 +4849,6 @@ def main():
             supabase_request("POST", "theme_stocks_all", data=batch)
         log(f"  📊 테마 종목 {len(theme_all_stocks)}개 저장 ✅")
 
-    # AI 요약 저장 (과거 데이터 보존 — 오늘 같은 시간대만 교체)
-    if ai_summary:
-        supabase_request("DELETE", "ai_summary", params={
-            "date": f"eq.{TODAY}",
-            "generated_time": f"eq.{ai_summary['generated_time']}"
-        })
-        result = supabase_request("POST", "ai_summary", data=[ai_summary])
-        log(f"  🤖 AI 요약 저장 {'✅' if result else '❌'}")
-    else:
-        log("  ℹ️ AI 요약 생성 실패 — 기존 데이터 유지")
-
     # 종목 분석 저장 (close 모드에서만)
     if stock_analysis:
         supabase_request("DELETE", "stock_analysis", params={"date": f"eq.{TODAY}"})
@@ -5278,11 +4886,9 @@ def main():
         else:
             log("  ℹ️ 재료 포착 종목 없음 — 빈 상태로 갱신")
 
-    # 365일 초과 AI 요약 정리 + 90일 초과 종목/테마 분석 정리 (close 모드에서만)
+    # 90일 초과 종목/테마 분석 정리 등 (close 모드에서만)
     if ai_mode == "close":
         cutoff_ai = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
-        supabase_request("DELETE", "ai_summary", params={"date": f"lt.{cutoff_ai}"})
-        log(f"  🧹 {cutoff_ai} 이전 AI 요약 정리")
         cutoff_sa = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
         supabase_request("DELETE", "stock_analysis", params={"date": f"lt.{cutoff_sa}"})
         supabase_request("DELETE", "theme_analysis", params={"date": f"lt.{cutoff_sa}"})

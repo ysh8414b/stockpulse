@@ -1,0 +1,50 @@
+name: 급등 종목 AI
+
+on:
+  schedule:
+    # 평일 한국시간 16:30 (UTC 07:30) — 16:00 크롤링(테마 데이터 저장) 이후
+    - cron: '30 7 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: '지수 일봉 날짜가 오늘과 달라도 실행 (마지막 거래일 기준)'
+        type: boolean
+        default: false
+
+jobs:
+  surge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 패키지 설치 (CPU용 PyTorch)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install numpy requests
+
+      - name: 일봉 캐시 복원
+        uses: actions/cache@v4
+        with:
+          path: |
+            surge_cache
+            sector_map.json
+          key: surge-cache-${{ github.run_id }}
+          restore-keys: |
+            surge-cache-
+
+      - name: 급등 종목 AI 실행
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+        run: python -u surge_ai.py ${{ inputs.force && '--force' || '' }}
