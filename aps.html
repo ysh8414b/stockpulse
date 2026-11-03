@@ -2267,6 +2267,7 @@ function PlanForm({adminHash,items,lines,settings,initial,prefill,defaultDate,pl
 
   // 새 계획: 라인을 고르면 그 라인 그날 마지막 계획 뒤로 시작 시각 자동 (시작 시각을 직접 고치면 멈춤)
   const startTouched=useRef(isEdit||!!pf?.start_at);
+  const timeTyped=useRef(false); // 시작·종료 시각을 직접 입력했는지 (자동 당기기에서 이 계획은 고정)
   useEffect(()=>{
     if(startTouched.current||!lineId)return;
     const s=suggestPlanSlot({item:{line_ids:[Number(lineId)]},day:baseDate,qty:1,lines,plans:plans||[],settings,rate:0});
@@ -2477,7 +2478,8 @@ function PlanForm({adminHash,items,lines,settings,initial,prefill,defaultDate,pl
         p_status:status,
         p_memo:memo.trim()
       });
-      onSaved({id:isEdit?initial.id:(Number(rid)||null),line_id:lineId?Number(lineId):null,start_at:kstInputToIso(startAt),prev:isEdit?initial:null});
+      onSaved({id:isEdit?initial.id:(Number(rid)||null),line_id:lineId?Number(lineId):null,start_at:kstInputToIso(startAt),prev:isEdit?initial:null,
+        pinned:isEdit?(Date.parse(kstInputToIso(startAt))!==Date.parse(initial.start_at)||Date.parse(kstInputToIso(endAt))!==Date.parse(initial.end_at)):timeTyped.current});
     }catch(e){
       setErr(errMsg(e,{invalid_times:"종료 시각이 시작 시각 이전입니다",unauthorized:"인증 실패"}));
     }
@@ -2596,11 +2598,16 @@ function PlanForm({adminHash,items,lines,settings,initial,prefill,defaultDate,pl
         </div>
         <div>
           <div className="aps-form-label">시작 시각 * <span style={{color:"var(--muted)",fontWeight:400}}>(KST)</span></div>
-          <input className="aps-input" type="datetime-local" value={startAt} onChange={e=>{startTouched.current=true;setStartAt(e.target.value)}}/>
+          <input className="aps-input" type="datetime-local" value={startAt} onChange={e=>{startTouched.current=true;timeTyped.current=true;
+            // 시작을 옮기면 종료도 같은 만큼 옮김 (작업 길이 유지 — 날짜를 바꿔도 종료가 원래 날짜에 남지 않게)
+            const nv=e.target.value;
+            if(!autoEnd&&nv&&startAt&&endAt){const d=Date.parse(kstInputToIso(nv))-Date.parse(kstInputToIso(startAt)),eMs=Date.parse(kstInputToIso(endAt));
+              if(isFinite(d)&&d!==0&&isFinite(eMs))setEndAt(isoToKstInput(new Date(eMs+d).toISOString()))}
+            setStartAt(nv)}}/>
         </div>
         <div>
           <div className="aps-form-label">종료 시각 * <span style={{color:"var(--muted)",fontWeight:400}}>(KST)</span></div>
-          <input className="aps-input" type="datetime-local" value={endAt} onChange={e=>{setEndAt(e.target.value);setAutoEnd(false)}}/>
+          <input className="aps-input" type="datetime-local" value={endAt} onChange={e=>{timeTyped.current=true;setEndAt(e.target.value);setAutoEnd(false)}}/>
         </div>
         {canEditActualStart&&<div style={{gridColumn:"1 / -1",padding:"10px 12px",background:"rgba(34,197,94,0.06)",border:"1px solid rgba(34,197,94,0.35)",borderRadius:8}}>
           <div className="aps-form-label" style={{color:"#22c55e"}}>▶ 실제 시작 시각 <span style={{color:"var(--muted)",fontWeight:400}}>(시작 버튼을 누른 시각 · KST)</span></div>
@@ -5476,7 +5483,7 @@ function swapPlanTimes(a,b,settings){
 // - 지난 날짜는 건드리지 않음, 오늘이면 지금 이전으로 당기지 않음
 // - focusId: 시작 시각이 같을 때 이 계획을 앞에 둠 (방금 옮긴/수정한 계획)
 // 반환: [{plan,start_at,end_at}] — 바뀌는 계획만
-function repackLineDay(plans,lineId,day,settings,focusId){
+function repackLineDay(plans,lineId,day,settings,focusId,pinId){
   if(lineId==null||!day||day<todayStr())return[];
   const ds=kstDayStartMs(day),de=ds+86400000;
   const ws=parseInt(settings?.work_start_hour)||8;
@@ -5486,7 +5493,8 @@ function repackLineDay(plans,lineId,day,settings,focusId){
   const skip=t=>(lunch&&t>=lS&&t<lE)?lE:t;
   const ms=p=>[new Date(p.start_at).getTime(),new Date(p.end_at).getTime()];
   const onLine=(plans||[]).filter(p=>Number(p.line_id)===Number(lineId)&&p.status!=="canceled"&&p.start_at&&p.end_at);
-  const movable=onLine.filter(p=>p.status==="planned"&&isoToKstDateStr(p.start_at)===day);
+  // pinId = 사용자가 방금 시간을 직접 정한 계획 → 그 시간 그대로 두고 나머지만 당김
+  const movable=onLine.filter(p=>p.status==="planned"&&isoToKstDateStr(p.start_at)===day&&(pinId==null||Number(p.id)!==Number(pinId)));
   if(!movable.length)return[];
   const fixed=onLine.filter(p=>!movable.includes(p)).map(ms).filter(([s,e])=>s<de&&e>ds);
   const ord=p=>Number(p.sort_order??p.id)||0;
@@ -5861,7 +5869,7 @@ function PlansTab({adminHash}){
   const[autoPack,setAutoPack]=useState(()=>{try{return localStorage.getItem("aps-auto-pack")!=="0"}catch(e){return true}});
   useEffect(()=>{try{localStorage.setItem("aps-auto-pack",autoPack?"1":"0")}catch(e){}},[autoPack]);
   const keyOf=(lineId,iso)=>lineId!=null&&iso?`${lineId}|${isoToKstDateStr(iso)}`:null;
-  const repackKeys=async(keys,focusId,force)=>{
+  const repackKeys=async(keys,focusId,force,pinId)=>{
     if(!autoPack&&!force)return 0;
     const ks=[...new Set((keys||[]).filter(Boolean))];
     if(!ks.length)return 0;
@@ -5869,7 +5877,7 @@ function PlansTab({adminHash}){
     let n=0;
     for(const k of ks){
       const i=k.indexOf("|");
-      const ch=repackLineDay(fresh,Number(k.slice(0,i)),k.slice(i+1),settings,focusId);
+      const ch=repackLineDay(fresh,Number(k.slice(0,i)),k.slice(i+1),settings,focusId,pinId);
       for(const{plan:q,start_at,end_at} of ch){
         await rpc("aps_upsert_plan",{p_admin_hash:adminHash,p_id:q.id,p_item_id:q.item_id,p_line_id:q.line_id,p_qty:q.qty,
           p_start_at:start_at,p_end_at:end_at,p_status:q.status,p_memo:q.memo||""});
@@ -6077,7 +6085,7 @@ function PlansTab({adminHash}){
         p_status:p.status,
         p_memo:p.memo||""
       });
-      await repackKeys([keyOf(p.line_id,p.start_at),keyOf(p.line_id,new Date(newStartMs).toISOString())],p.id).catch(e=>console.warn("[repack]",e));
+      await repackKeys([keyOf(p.line_id,p.start_at),keyOf(p.line_id,new Date(newStartMs).toISOString())],p.id,false,p.id).catch(e=>console.warn("[repack]",e));
       load();
     }catch(e){
       alert("시간 변경 실패: "+errMsg(e,{invalid_times:"종료 시각이 시작 시각 이전입니다"}));
@@ -6279,7 +6287,7 @@ function PlansTab({adminHash}){
     }
 
     {showForm&&<PlanForm key={editing?"e"+editing.id:prefill?"p"+prefill.item_id+prefill.day:"new"} adminHash={adminHash} items={items} lines={lines} settings={settings} initial={editing} prefill={editing?null:prefill} defaultDate={allDates?todayStr():dayStr} onCancel={()=>{setShowForm(false);setPrefill(null)}} plans={plans} onSaved={async(info)=>{setShowForm(false);setPrefill(null);
-      if(info)await repackKeys([keyOf(info.line_id,info.start_at),info.prev?keyOf(info.prev.line_id,info.prev.start_at):null],info.id).catch(e=>console.warn("[repack]",e));
+      if(info)await repackKeys([keyOf(info.line_id,info.start_at),info.prev?keyOf(info.prev.line_id,info.prev.start_at):null],info.id,false,info.pinned?info.id:null).catch(e=>console.warn("[repack]",e));
       load()}}/>}
     {showWO&&<WorkOrderModal adminHash={adminHash} dayStr={dayStr} plans={plans} lines={lines} items={items} invData={invData} settings={settings}
       onClose={()=>setShowWO(false)} onSaved={load}/>}
