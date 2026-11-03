@@ -49,6 +49,7 @@
     .aps-back:hover{color:var(--text)}
     .aps-header-right{margin-left:auto;display:flex;align-items:center;gap:8px}
     .aps-who{font-size:12px;color:var(--muted);white-space:nowrap}
+    .aps-ro-badge{font-size:12px;font-weight:700;white-space:nowrap;color:#b45309;background:rgba(245,158,11,0.14);border:1px solid rgba(245,158,11,0.35);padding:3px 9px;border-radius:999px}
     .aps-icon-btn{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;border:1px solid var(--card-bd);background:var(--card-bg);color:var(--text);cursor:pointer;font-size:15px;line-height:1}
     .aps-icon-btn:hover{border-color:var(--card-hbd)}
 
@@ -401,7 +402,39 @@ async function hashPassword(pw){
   const buf=await crypto.subtle.digest("SHA-256",enc);
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
 }
+// ═══ 👁 읽기 전용 접속 ═══
+// 로그인 화면 "읽기 전용으로 보기" → 비밀번호 대신 이 값을 보냄. 서버(setup_aps_readonly.sql)가 쓰기를 모두 거부하고,
+// 화면에서도 조회용 RPC 외에는 보내지 않는다.
+const APS_RO_TOKEN="aps-readonly";
+let APS_RO=false;
+const APS_RO_MSG="읽기 전용 모드라 수정할 수 없습니다";
+function apsRoReadable(name){
+  return /^(admin_login|aps_(get|list)_|aps_ai_(status|result|list_)|ol_list_)/.test(name);
+}
+let _roToastT=null;
+function apsRoToast(){
+  // 사용자가 직접 누른 동작일 때만 안내 (화면이 열릴 때 자동으로 보내는 저장은 조용히 막음)
+  if(navigator.userActivation&&!navigator.userActivation.isActive)return;
+  let el=document.getElementById("aps-ro-toast");
+  if(!el){
+    el=document.createElement("div");el.id="aps-ro-toast";el.setAttribute("role","status");
+    el.setAttribute("data-html2canvas-ignore","true");
+    el.style.cssText="position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:10000;background:#1f2937;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;box-shadow:0 6px 24px rgba(0,0,0,.35);pointer-events:none";
+    document.body.appendChild(el);
+  }
+  el.textContent="👁 "+APS_RO_MSG;el.style.display="block";
+  clearTimeout(_roToastT);_roToastT=setTimeout(()=>{el.style.display="none"},2200);
+}
+// 파일 올리기(엑셀 업로드 등)도 막음
+document.addEventListener("click",e=>{
+  if(!APS_RO)return;
+  const t=e.target;
+  const inp=t&&t.closest&&(t.closest('input[type="file"]')||(t.closest("label")&&t.closest("label").querySelector('input[type="file"]')));
+  if(inp){e.preventDefault();e.stopPropagation();apsRoToast()}
+},true);
+
 async function rpc(name,body){
+  if(APS_RO&&!apsRoReadable(name)){apsRoToast();throw new Error(APS_RO_MSG)}
   const r=await fetch(SB_URL+"/rest/v1/rpc/"+name,{
     method:"POST",
     headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,"Content-Type":"application/json"},
@@ -895,7 +928,7 @@ function ApsMenu({label,items}){
   </div>;
 }
 
-function LoginScreen({onLogin}){
+function LoginScreen({onLogin,onReadOnly}){
   const[pw,setPw]=useState("");
   const[err,setErr]=useState("");
   const[loading,setLoading]=useState(false);
@@ -930,6 +963,11 @@ function LoginScreen({onLogin}){
       {err&&<div className="aps-err">{err}</div>}
       <button className="aps-btn aps-btn-primary" onClick={submit} disabled={loading||cooldown} style={{width:"100%",marginTop:"14px"}}>{loading?"확인 중...":cooldown?"잠시 후 다시":"로그인"}</button>
       <div style={{marginTop:"14px",textAlign:"center",fontSize:"12px",color:"var(--dimmer)"}}>관리자 페이지(admin.html)와 동일한 비밀번호 사용</div>
+      <div style={{display:"flex",alignItems:"center",gap:10,margin:"18px 0 12px",color:"var(--dimmer)",fontSize:12}}>
+        <span style={{flex:1,height:1,background:"var(--card-bd)"}}/>또는<span style={{flex:1,height:1,background:"var(--card-bd)"}}/>
+      </div>
+      <button className="aps-btn aps-btn-secondary" onClick={onReadOnly} style={{width:"100%"}}>👁 읽기 전용으로 보기</button>
+      <div style={{marginTop:"8px",textAlign:"center",fontSize:"12px",color:"var(--dimmer)"}}>비밀번호 없이 볼 수만 있습니다 · 수정·삭제·업로드 불가</div>
     </div>
   </div>;
 }
@@ -6825,7 +6863,7 @@ function StatsTab({adminHash}){
     const key="aps-cleanup-last";
     const last=localStorage.getItem(key);
     const today=todayStr();
-    if(last===today)return;
+    if(APS_RO||last===today)return;
     (async()=>{
       try{
         const removed=await rpc("aps_cleanup_old_plans",{p_admin_hash:adminHash,p_days:365});
@@ -10532,9 +10570,12 @@ function getTabFromHash(){
 
 function App(){
   const[theme,setTheme]=useState(getStoredTheme());
-  const[adminHash,setAdminHash]=useState(sessionStorage.getItem("sp-admin-hash")||"");
-  const[adminInfo,setAdminInfo]=useState(null);
-  const[checking,setChecking]=useState(!!sessionStorage.getItem("sp-admin-hash"));
+  const roStart=sessionStorage.getItem("sp-aps-readonly")==="1";
+  APS_RO=roStart;
+  const[readOnly,setReadOnly]=useState(roStart);
+  const[adminHash,setAdminHash]=useState(roStart?APS_RO_TOKEN:(sessionStorage.getItem("sp-admin-hash")||""));
+  const[adminInfo,setAdminInfo]=useState(roStart?{nickname:"읽기 전용"}:null);
+  const[checking,setChecking]=useState(!roStart&&!!sessionStorage.getItem("sp-admin-hash"));
   const[tab,setTab]=useState(getTabFromHash());
 
   useEffect(()=>{applyTheme(theme)},[theme]);
@@ -10553,6 +10594,7 @@ function App(){
 
   // 세션 복원
   useEffect(()=>{
+    if(readOnly)return;
     if(!adminHash){setChecking(false);return}
     (async()=>{
       try{
@@ -10565,11 +10607,17 @@ function App(){
   },[]);
 
   const handleLogin=(hash,info)=>{
+    APS_RO=false;sessionStorage.removeItem("sp-aps-readonly");setReadOnly(false);
     sessionStorage.setItem("sp-admin-hash",hash);
     setAdminHash(hash);setAdminInfo(info);
   };
+  const handleReadOnly=()=>{
+    APS_RO=true;sessionStorage.setItem("sp-aps-readonly","1");setReadOnly(true);
+    setAdminHash(APS_RO_TOKEN);setAdminInfo({nickname:"읽기 전용"});
+  };
   const handleLogout=()=>{
-    sessionStorage.removeItem("sp-admin-hash");
+    if(readOnly){APS_RO=false;sessionStorage.removeItem("sp-aps-readonly");setReadOnly(false)}
+    else sessionStorage.removeItem("sp-admin-hash");
     setAdminHash("");setAdminInfo(null);
   };
 
@@ -10584,15 +10632,16 @@ function App(){
         </div>
         <div className="aps-header-right">
           <a className="aps-back" href="index.html">STOCKPULSE로 가기</a>
-          {loggedIn&&<span className="aps-who">{adminInfo.nickname}</span>}
-          {loggedIn&&<button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={handleLogout}>로그아웃</button>}
+          {loggedIn&&readOnly&&<span className="aps-ro-badge" title={APS_RO_MSG}>👁 읽기 전용</span>}
+          {loggedIn&&!readOnly&&<span className="aps-who">{adminInfo.nickname}</span>}
+          {loggedIn&&<button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={handleLogout}>{readOnly?"나가기":"로그아웃"}</button>}
           <button className="aps-icon-btn" onClick={toggleTheme} title={theme==="dark"?"밝은 화면으로":"어두운 화면으로"} aria-label="화면 밝기 바꾸기">{theme==="dark"?"☀":"☾"}</button>
         </div>
       </div>
     </header>
 
     <div className="aps-shell" style={{flex:1}}>
-      {checking?<Loader/>:!loggedIn?<LoginScreen onLogin={handleLogin}/>:<>
+      {checking?<Loader/>:!loggedIn?<LoginScreen onLogin={handleLogin} onReadOnly={handleReadOnly}/>:<>
         <nav className="aps-tabs" aria-label="APS 메뉴">
           {TAB_GROUPS.map((g,gi)=><div className="aps-tab-group" key={gi}>
             {g.map(([id,ic,label])=><button key={id} className={"aps-tab"+(tab===id?" active":"")} aria-current={tab===id?"page":undefined} onClick={()=>setTab(id)}><span className="ic">{ic}</span>{label}</button>)}

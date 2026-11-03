@@ -99,6 +99,11 @@ BEGIN
   IF p_admin_hash IS NULL OR p_admin_hash = '' THEN
     RAISE EXCEPTION 'unauthorized';
   END IF;
+  -- 읽기 전용 접속 (setup_aps_readonly.sql 참고 — 쓰기는 트리거가 막음)
+  IF p_admin_hash = 'aps-readonly' THEN
+    PERFORM set_config('aps.readonly', 'on', true);
+    RETURN;
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM board_admins WHERE password_hash = p_admin_hash) THEN
     RAISE EXCEPTION 'unauthorized';
   END IF;

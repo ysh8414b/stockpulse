@@ -53,6 +53,7 @@ DECLARE
   v_id BIGINT;
 BEGIN
   PERFORM aps_assert_admin(p_admin_hash);
+  IF p_admin_hash = 'aps-readonly' THEN RAISE EXCEPTION 'read_only'; END IF;
   SELECT value INTO v_key FROM aps_secrets WHERE key = 'groq_api_key';
   IF v_key IS NULL THEN RAISE EXCEPTION 'no_ai_key'; END IF;
   v_model := COALESCE((SELECT value FROM aps_secrets WHERE key = 'groq_model'), 'openai/gpt-oss-120b');
@@ -103,6 +104,7 @@ DECLARE
   v_id BIGINT;
 BEGIN
   PERFORM aps_assert_admin(p_admin_hash);
+  IF p_admin_hash = 'aps-readonly' THEN RAISE EXCEPTION 'read_only'; END IF;
   SELECT value INTO v_key FROM aps_secrets WHERE key = 'groq_api_key';
   IF v_key IS NULL THEN RAISE EXCEPTION 'no_ai_key'; END IF;
   SELECT net.http_get(
