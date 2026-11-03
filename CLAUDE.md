@@ -2030,6 +2030,14 @@
   - 상승 초록 / 하락 빨강, 테마·재료 등 각 탭 안 개별 스타일(인라인)은 그대로
   - 확인: 1280px(어두움·밝음), 659px, 375px 화면 캡처, 가로 넘침 없음
 
+### 앱 설치 — 크롬이 아니면 크롬에서 설치 안내 (2026-11-04)
+- 사용자 요청: 메인·APS·발주리스트 앱 설치 버튼을 누르면, 크롬이 아닌 브라우저(삼성 인터넷·웨일·엣지·카카오톡/네이버 앱 안 브라우저 등)에서는 크롬에서 설치하라는 안내
+- `pwa.js`: `isChrome`(UA에 Chrome/CriOS가 있고 Edg·OPR·Whale·SamsungBrowser·NAVER·KAKAOTALK·DaumApps·Line·FBAN·Instagram·`; wv)`(웹뷰)·Brave 등이 아님) — 노드로 UA 7종 판별 확인
+- 크롬이 아니면 설치 버튼 → `chromeMsg()` 안내 창: 안드로이드는 "크롬으로 열기"(`intent://…;package=com.android.chrome`, 크롬 없으면 플레이스토어) + "주소 복사", 그 외(PC 등)는 "주소 복사". 바깥·닫기로 닫힘
+- 설치 이벤트(beforeinstallprompt)가 안 오는 브라우저(파이어폭스·앱 안 브라우저)도 1.5초 뒤 설치 안내 줄을 띄우고 설치 버튼 → 같은 안내 창. 크롬은 기존대로 바로 설치
+- 아이폰: 사파리·크롬은 기존 "공유 → 홈 화면에 추가" 안내(크롬도 포함하도록 변경), 그 외 아이폰 앱 안 브라우저는 크롬 안내 창
+- 실제 휴대폰에서는 미확인
+
 ### AI 브리핑 탭 삭제 + 🚀 급등 종목 AI 탭 신설 (2026-11-03)
 - 사용자 요청: AI 브리핑 탭을 데이터까지 완전히 삭제하고, 매일 +5% 이상 · 거래대금 3,000억 이상 종목 상위 10개의 상승 원인을 시황·차트로 분석하는 딥러닝 예측 모델을 메인에 탑재
 - **AI 브리핑 삭제**: index.html `TabAI`·`aiSum`·`ai_summary` 조회 제거(옛 주소 `#ai`는 `#surge`로 이동), crawl.py `generate_ai_summary`·`load_economic_calendar`·`format_calendar_block`·저장·정리 코드 삭제, 실행 모드는 close(15:35/16:00)만 남김(premarket/market 삭제), crawl.yml 08:00 cron 삭제. 파일 삭제: `archive.html`, `guide-ai-briefing.html`, `economic_calendar.json`. 모든 페이지의 아카이브·브리핑 가이드 링크와 sitemap 항목 제거, guide.html 4장은 "급등 종목 AI 활용법"으로 교체, about.html 기능 카드 교체. **`setup_surge.sql`이 `DROP TABLE ai_summary`로 데이터 삭제**

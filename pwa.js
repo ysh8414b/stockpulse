@@ -1,4 +1,4 @@
-// APS·발주리스트 앱 설치 지원
+// 메인·APS·발주리스트 앱 설치 지원 (크롬이 아니면 크롬에서 설치하라고 안내)
 // 사용: <script src="pwa.js" data-scope="./aps.html" data-name="APS" defer></script>
 (function () {
   var me = document.currentScript;
@@ -38,22 +38,74 @@
     document.body.appendChild(d);
   }
 
-  // 안드로이드·PC 크롬/엣지/웨일: 설치 버튼
+  var ua = navigator.userAgent || "";
+  var ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  var android = /Android/.test(ua);
+  // 진짜 크롬인지 (엣지·웨일·삼성 인터넷·카카오톡/네이버 앱 안 브라우저 등은 제외)
+  var isChrome = /Chrome\/|CriOS\//.test(ua) &&
+    !/Edg|OPR|Opera|Whale|SamsungBrowser|NAVER|KAKAOTALK|DaumApps|Line\/|FBAN|FBAV|Instagram|YaBrowser|UCBrowser|MiuiBrowser|HuaweiBrowser|; wv\)/.test(ua) &&
+    !navigator.brave;
+  var iosSafari = ios && /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|Whale|NAVER|KAKAOTALK|DaumApps/.test(ua);
+
+  // 크롬이 아닐 때: 크롬에서 설치하라는 안내 창
+  function chromeMsg() {
+    if (document.getElementById("sp-pwa-msg")) return;
+    var bg = document.createElement("div");
+    bg.id = "sp-pwa-msg";
+    bg.setAttribute("data-html2canvas-ignore", "true");
+    bg.style.cssText = "position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px";
+    var btn = "border:0;border-radius:8px;padding:10px 14px;font:inherit;cursor:pointer;";
+    bg.innerHTML = "<div style='max-width:340px;width:100%;background:#111827;color:#f9fafb;border-radius:14px;padding:20px;" +
+      "font:500 14px/1.6 Pretendard,-apple-system,sans-serif;box-shadow:0 10px 40px rgba(0,0,0,.4)'>" +
+      "<div style='font-size:16px;font-weight:700;margin-bottom:8px'>📲 크롬에서 설치해 주세요</div>" +
+      "<div style='color:#d1d5db'>" + appName + " 앱은 <b style='color:#fff'>Chrome(크롬) 브라우저</b>에서 설치해야 제대로 동작해요. " +
+      "지금 브라우저에서는 설치나 일부 기능이 안 될 수 있어요.</div>" +
+      (android ? "" : "<div style='color:#9ca3af;font-size:13px;margin-top:8px'>크롬을 열고 아래 주소로 접속한 뒤 설치 버튼을 눌러 주세요.</div>") +
+      "<div style='display:flex;gap:8px;margin-top:16px;flex-wrap:wrap'>" +
+      (android ? "<button data-a='open' style='" + btn + "flex:1;background:#06b6d4;color:#fff;font-weight:700'>크롬으로 열기</button>" : "") +
+      "<button data-a='copy' style='" + btn + "flex:1;background:" + (android ? "#374151" : "#06b6d4") + ";color:#fff;font-weight:700'>주소 복사</button>" +
+      "<button data-a='close' style='" + btn + "background:none;color:#9ca3af'>닫기</button>" +
+      "</div></div>";
+    bg.addEventListener("click", function (ev) {
+      var a = ev.target && ev.target.getAttribute && ev.target.getAttribute("data-a");
+      if (ev.target === bg || a === "close") { bg.remove(); return; }
+      if (a === "open") {
+        location.href = "intent://" + location.host + location.pathname + location.search +
+          "#Intent;scheme=" + location.protocol.replace(":", "") + ";package=com.android.chrome;S.browser_fallback_url=" +
+          encodeURIComponent("https://play.google.com/store/apps/details?id=com.android.chrome") + ";end";
+      }
+      if (a === "copy") {
+        var url = location.href.split("#")[0];
+        var done = function () { ev.target.textContent = "✓ 복사됨"; };
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done, function () { window.prompt("주소를 복사해 주세요", url); });
+        else window.prompt("주소를 복사해 주세요", url);
+      }
+    });
+    document.body.appendChild(bg);
+  }
+
+  // 안드로이드·PC: 설치 버튼 (크롬이면 바로 설치, 다른 브라우저면 크롬 안내)
+  var prompted = false;
   window.addEventListener("beforeinstallprompt", function (ev) {
     ev.preventDefault();
+    prompted = true;
     var promptEv = ev;
     bar("📲 " + appName + "을(를) 앱으로 설치할 수 있어요", function () {
+      if (!isChrome) { chromeMsg(); return; }
       promptEv.prompt();
       promptEv.userChoice.then(function (r) { if (r && r.outcome !== "accepted") hideLater(); }).catch(function () {});
     });
   });
 
-  // 아이폰·아이패드 사파리: 직접 추가 안내
-  var ua = navigator.userAgent || "";
-  var ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-  if (ios && /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|Whale/.test(ua)) {
+  if (iosSafari || (ios && /CriOS/.test(ua))) {
+    // 아이폰·아이패드 사파리/크롬: 직접 추가 안내
     window.addEventListener("load", function () {
-      setTimeout(function () { bar("📲 앱으로 쓰려면 아래 <b>공유</b> 버튼 → <b>홈 화면에 추가</b>"); }, 1500);
+      setTimeout(function () { bar("📲 앱으로 쓰려면 <b>공유</b> 버튼 → <b>홈 화면에 추가</b>"); }, 1500);
+    });
+  } else if (!isChrome) {
+    // 설치 버튼 이벤트가 없는 브라우저(파이어폭스·앱 안 브라우저 등)도 안내
+    window.addEventListener("load", function () {
+      setTimeout(function () { if (!prompted) bar("📲 " + appName + "을(를) 앱으로 설치할 수 있어요", chromeMsg); }, 1500);
     });
   }
 })();
