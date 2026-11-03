@@ -2691,6 +2691,69 @@ def save_daily_close(krx_data):
     return len(rows)
 
 
+_NAVER_CHART_RE = re.compile(r'data="(\d{8})\|([\d.]+)\|([\d.]+)\|([\d.]+)\|([\d.]+)\|(\d+)"')
+
+
+def _fetch_naver_daily(symbol, count=40):
+    """네이버 차트 일봉 → [(YYYY-MM-DD, 종가, 거래량)] 날짜 오름차순. 실패 시 []."""
+    for attempt in range(3):
+        try:
+            r = requests.get("https://fchart.stock.naver.com/sise.nhn",
+                             params={"symbol": symbol, "timeframe": "day", "count": count, "requestType": 0},
+                             headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+            if r.status_code != 200:
+                time.sleep(1 + attempt)
+                continue
+            out = []
+            for m in _NAVER_CHART_RE.finditer(r.text):
+                d, _o, _h, _l, c, v = m.groups()
+                if float(c) > 0:
+                    out.append((f"{d[:4]}-{d[4:6]}-{d[6:]}", float(c), float(v)))
+            return out
+        except Exception:
+            time.sleep(1 + attempt)
+    return []
+
+
+def repair_daily_price_gaps(krx_data, lookback=30):
+    """daily_prices에 빠진 거래일(크롤링이 멈췄던 날)을 네이버 일봉으로 채운다.
+
+    MA20·10일선이 공백 때문에 몇 주 전 가격으로 계산되는 문제를 막기 위함.
+    거래일 기준 = 네이버 코스피 차트. 대표 종목(삼성전자)에 없는 날짜를 '빠진 날'로 본다.
+    """
+    ref = [d for d, _c, _v in _fetch_naver_daily("KOSPI", lookback + 5) if d < TODAY][-lookback:]
+    if not ref:
+        log("  ⚠️ 거래일 기준(코스피 차트) 조회 실패 — 일봉 공백 검사 건너뜀")
+        return 0
+    have = {r["date"] for r in (supabase_request("GET", "daily_prices", params={
+        "code": "eq.005930", "date": f"gte.{ref[0]}", "select": "date"}) or [])}
+    missing = [d for d in ref if d not in have]
+    if not missing:
+        return 0
+    log(f"  🩹 daily_prices 빠진 거래일 {len(missing)}일 ({missing[0]} ~ {missing[-1]}) → 네이버 일봉으로 채움")
+
+    miss_set = set(missing)
+    rows = []
+    targets = [d for d in krx_data.values()
+               if d.get("market_cap", 0) >= OVERSOLD_MIN_MARKET_CAP and not is_etf_etn(d["name"])]
+    for i, d in enumerate(targets):
+        for day, close, vol in _fetch_naver_daily(d["code"], lookback + 10):
+            if day in miss_set:
+                rows.append({"code": d["code"], "date": day, "close": close,
+                             "trading_value": int(close * vol),          # 근사 (종가×거래량)
+                             "market_cap": int(d.get("market_cap", 0))})  # 근사 (현재 시총)
+        if i % 20 == 19:
+            time.sleep(0.2)
+    if not rows:
+        log("  ⚠️ 채울 일봉을 가져오지 못함")
+        return 0
+    supabase_request("DELETE", "daily_prices", params={"date": f"in.({','.join(missing)})"})
+    for i in range(0, len(rows), 1000):
+        supabase_request("POST", "daily_prices", data=rows[i:i + 1000])
+    log(f"  🩹 일봉 {len(rows)}행 보충 완료 ({len(targets)}종목)")
+    return len(rows)
+
+
 def crawl_oversold_stocks(krx_data):
     """MA20 대비 -20% 이하 낙폭 종목을 거래대금 순으로 산출.
 
@@ -2710,7 +2773,7 @@ def crawl_oversold_stocks(krx_data):
         params = {
             "date": f"gte.{cutoff}",
             "select": "code,date,close",
-            "order": "code,date.desc",
+            "order": "code.asc,date.desc",
             "limit": str(page_size),
             "offset": str(offset),
         }
@@ -2727,10 +2790,15 @@ def crawl_oversold_stocks(krx_data):
         return []
 
     # 종목별 최근 N일 종가 모음
-    by_code = {}
+    by_code, dates_by_code = {}, {}
     for r in all_rows:
         c = r["code"]
         by_code.setdefault(c, []).append(float(r["close"]))
+        dates_by_code.setdefault(c, []).append(r["date"])
+    # 20번째 종가가 이보다 오래되면 중간에 빠진 날이 있다는 뜻 → 계산하지 않음
+    # (20거래일 ≈ 달력 28일, 명절 연휴 여유 포함 40일)
+    stale_cut = (datetime.now(timezone(timedelta(hours=9))) - timedelta(days=40)).strftime("%Y-%m-%d")
+    stale_skip = 0
 
     # 후보 필터링 + MA20 계산
     candidates = []
@@ -2752,12 +2820,18 @@ def crawl_oversold_stocks(krx_data):
         # 오늘 종가는 by_code에 이미 들어있을 수 있음(save_daily_close 후 호출) → MA20 모집단으로 그대로 사용
         if len(closes) < OVERSOLD_MA_WINDOW:
             continue
+        if dates_by_code[code][OVERSOLD_MA_WINDOW - 1] < stale_cut:
+            stale_skip += 1
+            continue
         ma20 = sum(closes[:OVERSOLD_MA_WINDOW]) / OVERSOLD_MA_WINDOW
         if ma20 <= 0:
             continue
         deviation = (price - ma20) / ma20 * 100.0
         if deviation <= OVERSOLD_THRESHOLD:
             candidates.append((d, ma20, deviation))
+
+    if stale_skip:
+        log(f"  ⚠️ 일봉 공백으로 MA20 계산 제외 {stale_skip}종목 (daily_prices 빠진 날 확인 필요)")
 
     # 거래대금 내림차순 정렬
     candidates.sort(key=lambda x: x[0].get("trading_value", 0), reverse=True)
@@ -4704,6 +4778,10 @@ def main():
     oversold = None
     if ai_mode == "close" or oversold_intraday:
         save_daily_close(krx_data)
+        try:
+            repair_daily_price_gaps(krx_data)   # 크롤링이 멈췄던 날 채우기 (MA20·10일선 왜곡 방지)
+        except Exception as e:
+            log(f"  ⚠️ 일봉 공백 보충 실패: {e}")
         oversold = crawl_oversold_stocks(krx_data)
     track_closed, leader_new, oversold_new = [], [], []
     if ai_mode == "close":
