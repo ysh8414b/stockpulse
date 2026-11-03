@@ -2015,6 +2015,11 @@
 - **운영 순서**: (1) Supabase에서 `setup_surge.sql` 실행(ai_summary 삭제 포함) → (2) 커밋·푸시 → (3) Actions → 급등 종목 AI → Run workflow(force 체크하면 마지막 거래일 기준) → (4) 메인 `#surge`
 - 한계: 학습 종목은 지금 시총 3,000억+ 종목만(상장폐지 종목 없음 → 생존 편향). 거래대금은 종가×거래량 근사. 단기 수익률 예측은 구분력이 낮을 수 있어 성적표를 함께 표시. 테마는 16:00 크롤링이 저장한 `theme_stocks_all` 기준
 
+### 종목 링크 → 네이버 새 종목홈 주소 (2026-11-03)
+- 사용자 보고: 종목명을 누르면 종목홈이 아니라 네이버 증권 첫 화면으로 감
+- 원인: 휴대폰에서 `finance.naver.com/item/main.naver?code=` → `m.stock.naver.com/item/index.nhn?code=` → `m.stock.naver.com/`(메인)으로 넘어감 (네이버 주소 개편)
+- 변경: index·analysis·theme_detail·theme_calendar의 종목 링크를 `https://stock.naver.com/domestic/stock/{code}/total`로 교체 (PC는 종목 시세 화면, 휴대폰은 m.stock 종목 화면으로 이동 — curl로 확인). crawl.py의 같은 주소는 크롤링용이라 그대로
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)

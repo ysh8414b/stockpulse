@@ -145,7 +145,7 @@ function StockCard({stock,rank}){
     </div>
 
     <div style={{display:"flex",justifyContent:"flex-end",marginTop:"14px"}}>
-      <a href={`https://finance.naver.com/item/main.naver?code=${stock.code}`} target="_blank" rel="noopener noreferrer" style={{display:"inline-flex",alignItems:"center",gap:"6px",padding:"8px 16px",borderRadius:"8px",background:"rgba(6,182,212,0.08)",border:"1px solid rgba(6,182,212,0.2)",color:"#06b6d4",fontSize:"14px",fontWeight:600,textDecoration:"none",transition:"all .2s",flexShrink:0}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(6,182,212,0.15)"}} onMouseLeave={e=>{e.currentTarget.style.background="rgba(6,182,212,0.08)"}}>네이버 증권 →</a>
+      <a href={`https://stock.naver.com/domestic/stock/${stock.code}/total`} target="_blank" rel="noopener noreferrer" style={{display:"inline-flex",alignItems:"center",gap:"6px",padding:"8px 16px",borderRadius:"8px",background:"rgba(6,182,212,0.08)",border:"1px solid rgba(6,182,212,0.2)",color:"#06b6d4",fontSize:"14px",fontWeight:600,textDecoration:"none",transition:"all .2s",flexShrink:0}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(6,182,212,0.15)"}} onMouseLeave={e=>{e.currentTarget.style.background="rgba(6,182,212,0.08)"}}>네이버 증권 →</a>
     </div>
   </Box>;
 }

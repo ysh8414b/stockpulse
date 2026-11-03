@@ -64,7 +64,7 @@ function StockRow({s,i,mobile}){
   const clr=s.trend==="up"?"#22c55e":(s.trend==="down"?"#ef4444":"#6b7280");
   const arrow=s.trend==="up"?"▲":(s.trend==="down"?"▼":"─");
   const cols=mobile?"32px 1fr 80px":"42px 1fr 110px 100px 100px";
-  return <a href={`https://finance.naver.com/item/main.naver?code=${s.code}`} target="_blank" rel="noopener noreferrer"
+  return <a href={`https://stock.naver.com/domestic/stock/${s.code}/total`} target="_blank" rel="noopener noreferrer"
     onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)}
     style={{display:"grid",gridTemplateColumns:cols,alignItems:"center",padding:mobile?"10px 12px":"12px 16px",
       borderBottom:"1px solid var(--div)",textDecoration:"none",color:"inherit",cursor:"pointer",

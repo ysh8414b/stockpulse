@@ -120,7 +120,7 @@ function ThemeStockPanel({themeName,onClose}){
           :sorted.map((s,i)=>{
             const clr=s.trend==="up"?"#22c55e":(s.trend==="down"?"#ef4444":"#6b7280");
             const arrow=s.trend==="up"?"▲":(s.trend==="down"?"▼":"─");
-            return <a key={s.code} href={`https://finance.naver.com/item/main.naver?code=${s.code}`} target="_blank" rel="noopener noreferrer"
+            return <a key={s.code} href={`https://stock.naver.com/domestic/stock/${s.code}/total`} target="_blank" rel="noopener noreferrer"
               style={{display:"grid",gridTemplateColumns:isMob?"28px 1fr 72px":"36px 1fr 90px 80px 80px",alignItems:"center",padding:isMob?"9px 12px":"10px 16px",borderBottom:"1px solid var(--div)",textDecoration:"none",color:"inherit",cursor:"pointer",transition:"background .15s",gap:isMob?"4px":"6px"}}
               onMouseEnter={e=>e.currentTarget.style.background="rgba(245,158,11,0.06)"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
               <span style={{width:isMob?24:28,height:isMob?24:28,borderRadius:"6px",fontSize:isMob?"11px":"12px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",background:i<3?"rgba(245,158,11,0.12)":"var(--badge-bg)",color:i<3?"#f59e0b":"var(--muted)"}}>{i+1}</span>
@@ -253,7 +253,7 @@ function ThemeDayDetail({themes,date,onThemeClick}){
             const name=parts[0];const code=parts[1];const pct=parts[2]||"";
             const sp=parseFloat(pct);const sc=sp>0?"#22c55e":sp<0?"#ef4444":"#6b7280";
             const validCode=code&&/^\d{6}$/.test(code);
-            return <a key={si} href={validCode?`https://finance.naver.com/item/main.naver?code=${code}`:"#"} target="_blank" rel="noopener noreferrer" onClick={e=>{if(!validCode)e.preventDefault()}} style={{
+            return <a key={si} href={validCode?`https://stock.naver.com/domestic/stock/${code}/total`:"#"} target="_blank" rel="noopener noreferrer" onClick={e=>{if(!validCode)e.preventDefault()}} style={{
               padding:"5px 10px",background:"var(--badge-bg)",borderRadius:"6px",fontSize:"13px",textDecoration:"none",color:"var(--text)",transition:"all .15s",border:"1px solid transparent",display:"inline-flex",alignItems:"center",gap:"5px"
             }} onMouseEnter={e=>{e.currentTarget.style.background="rgba(249,115,22,0.1)";e.currentTarget.style.borderColor="rgba(249,115,22,0.3)";e.currentTarget.style.color="#f97316"}} onMouseLeave={e=>{e.currentTarget.style.background="var(--badge-bg)";e.currentTarget.style.borderColor="transparent";e.currentTarget.style.color="var(--text)"}}>
               {name}{pct&&<span style={{fontWeight:600,fontSize:"12px",color:sc}}>{pct}</span>}
