@@ -340,6 +340,30 @@ def supabase_request(method, table, data=None, params=None):
                 return None
 
 
+def replace_table_rows(table, rows, label, batch_size=500):
+    """새 행을 먼저 저장하고, 전부 성공했을 때만 예전 행(id가 더 작은 것)을 지운다.
+    새 데이터가 비었거나 저장이 실패하면 예전 데이터를 그대로 둔다 (빈 테이블 방지)."""
+    if not rows:
+        log(f"  ⚠️ {label}: 새 데이터 0건 — 기존 데이터 유지")
+        return False
+    new_ids = []
+    ok = True
+    for i in range(0, len(rows), batch_size):
+        res = supabase_request("POST", table, data=rows[i:i + batch_size])
+        if not isinstance(res, list) or not res:
+            ok = False
+            break
+        new_ids.extend(r.get("id") for r in res if isinstance(r, dict) and r.get("id") is not None)
+    if not ok or not new_ids:
+        log(f"  ❌ {label} 저장 실패 — 기존 데이터 유지")
+        if new_ids:  # 일부만 들어간 새 행은 지움
+            supabase_request("DELETE", table, params={"id": f"gte.{min(new_ids)}"})
+        return False
+    supabase_request("DELETE", table, params={"id": f"lt.{min(new_ids)}"})
+    log(f"  📊 {label} {len(rows)}개 저장 ✅")
+    return True
+
+
 def clear_today_data(table):
     """데이터 삭제 (중복 방지)"""
     if table in ("market_index", "sectors", "issue_stocks", "themes"):
@@ -4881,9 +4905,7 @@ def main():
     clear_today_data("market_index")
     clear_today_data("sectors")
     clear_today_data("themes")
-    supabase_request("DELETE", "all_themes", params={"id": "gt.0"})
-    supabase_request("DELETE", "sector_stocks", params={"id": "gt.0"})
-    supabase_request("DELETE", "theme_stocks_all", params={"id": "gt.0"})
+    # all_themes / sector_stocks / theme_stocks_all 은 아래에서 "저장 후 예전 것 삭제" (replace_table_rows)
 
     # 뉴스 저장
     if news:
@@ -4906,9 +4928,7 @@ def main():
         log(f"  🏭 섹터 {len(sectors)}개 저장 {'✅' if result else '❌'}")
 
     # 섹터별 종목 저장
-    if sector_stocks:
-        result = supabase_request("POST", "sector_stocks", data=sector_stocks)
-        log(f"  🏷️ 섹터 종목 {len(sector_stocks)}개 저장 {'✅' if result else '❌'}")
+    replace_table_rows("sector_stocks", sector_stocks, "섹터 종목")
 
     # 테마 저장
     if themes:
@@ -4945,18 +4965,10 @@ def main():
         log(f"  🏖️ 휴장일 마커 저장 {'✅' if result else '❌'}")
 
     # 전체 테마 저장
-    if all_themes_data:
-        result = supabase_request("POST", "all_themes", data=all_themes_data)
-        log(f"  📊 전체 테마 {len(all_themes_data)}개 저장 {'✅' if result else '❌'}")
+    replace_table_rows("all_themes", all_themes_data, "전체 테마")
 
     # 전체 테마 종목 저장 (테마 상세 페이지용)
-    if theme_all_stocks:
-        # 대량 데이터 → 500개씩 배치 저장
-        batch_size = 500
-        for bi in range(0, len(theme_all_stocks), batch_size):
-            batch = theme_all_stocks[bi:bi+batch_size]
-            supabase_request("POST", "theme_stocks_all", data=batch)
-        log(f"  📊 테마 종목 {len(theme_all_stocks)}개 저장 ✅")
+    replace_table_rows("theme_stocks_all", theme_all_stocks, "테마 종목")
 
     # 종목 분석 저장 (close 모드에서만)
     if stock_analysis:

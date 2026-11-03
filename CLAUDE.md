@@ -2053,6 +2053,12 @@
 - 변경: index·analysis·theme_detail·theme_calendar의 종목 링크를 `https://stock.naver.com/domestic/stock/{code}/total`로 교체 (PC는 종목 시세 화면, 휴대폰은 m.stock 종목 화면으로 이동 — curl로 확인). crawl.py의 같은 주소는 크롤링용이라 그대로
 - **지수 카드도 (2026-11-04)**: 사용자 보고 — 코스피·코스닥 카드를 누르면 지수 화면이 아니라 증권 첫 화면. `finance.naver.com/sise/sise_index.naver?code=KOSPI|KOSDAQ`가 휴대폰에서 `m.stock.naver.com/`(메인)으로 넘어감 → `https://stock.naver.com/domestic/index/{KOSPI|KOSDAQ}/total`로 교체(PC·휴대폰 모두 지수 화면, curl로 확인). 다우·나스닥·S&P500·환율 주소는 휴대폰에서도 해당 화면으로 가서 그대로
 
+### 테마 상세 "종목 데이터가 없습니다" — 저장 후 삭제로 변경 (2026-11-04)
+- 사용자 보고: 테마명 클릭 → theme_detail.html이 "종목 데이터가 없습니다"
+- 확인: `theme_stocks_all`·`all_themes`가 0행(같은 시각 `themes`·`sector_stocks`는 정상). crawl.py가 저장 단계 시작에서 세 테이블을 `DELETE id=gt.0`으로 먼저 비우고 맨 뒤에서 INSERT → 새 데이터가 비었거나 INSERT가 실패하면 빈 테이블로 남음. 정확한 실패 원인은 Actions 로그(로그인 필요)를 못 봐서 미확정
+- 변경: `replace_table_rows(table, rows, label)` — 새 행을 500개씩 먼저 INSERT(응답 id 수집), 전부 성공하면 `id < 새 최소 id` 삭제, 새 데이터 0건이면 그대로 두고, 실패하면 일부 들어간 새 행만 지움. `all_themes`·`theme_stocks_all`·`sector_stocks`에 적용. 가짜 DB로 세 경우 확인
+- 참고: 장 시작 전(08:00~09:00, 네이버 `marketStatus: PREOPEN`)엔 네이버 시세의 거래량·거래대금이 `"-"`라 `fetch_naver_market_data`가 0종목 → KRX도 실패해 그 실행은 "크롤링 중단"으로 끝남(데이터는 안 건드림)
+
 ## 알려진 이슈
 - KRX API (`data.krx.co.kr`) 차단됨 — fallback으로만 사용
 - 네이버 섹터 매핑 첫 실행 시 ~60초 소요 (79개 업종 페이지 순차 조회)
