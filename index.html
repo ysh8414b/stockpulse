@@ -275,7 +275,7 @@
         <li><strong>재료 포착 TOP 10</strong> — 시가총액 3,000억 이상 전 종목을 섹터 구분 없이 비교해, 최근 5일 내 DART 공시·주요 언론으로 실체가 확인된 재료(공급계약·수주·설비투자·M&amp;A·품목허가·기술이전 등)를 보유한 종목만 선별. 뉴스 신뢰도, 기업가치 영향, 주가 미반영 정도, 거래대금·수급, 추가 모멘텀 5개 축 100점으로 채점하며, 단기 급등으로 재료가 이미 반영된 종목은 감점</li>
         <li><strong>인기 테마 TOP 10</strong> — 뉴스 빈도와 평균 등락률 복합 점수, 클릭 시 촉발 요인·수혜·리스크 종목 AI 심층 분석</li>
         <li><strong>섹터별 등락</strong> — 반도체·2차전지·바이오·자동차 등 10대 섹터 평균 등락률과 대장주</li>
-        <li><strong>급등 종목 AI</strong> — 매일 +5% 이상·거래대금 3,000억 이상 종목 상위 10개의 상승 원인을 시황(지수·섹터·테마·공시·뉴스·수급)과 차트(신고가·박스권 돌파·거래량)로 분석하고, 과거 급등 사례를 학습한 딥러닝 모델(CNN+GRU)로 1일·5일·20일 뒤 상승 확률과 수익률 범위를 예측. 모델 시험 성적과 실제 결과를 함께 공개</li>
+        <li><strong>급등 종목 AI</strong> — 매일 +5% 이상·거래대금 1,000억 이상 종목 상위 10개의 상승 원인을 시황(지수·섹터·테마·공시·뉴스·수급)과 차트(신고가·박스권 돌파·거래량)로 분석하고, 과거 급등 사례를 학습한 딥러닝 모델(CNN+GRU)로 1일·5일·20일 뒤 상승 확률과 수익률 범위를 예측. 모델 시험 성적과 실제 결과를 함께 공개</li>
         <li><strong>실시간 뉴스</strong> — 시장·종목·테마 관련 기사 자동 수집</li>
       </ul>
     </div>
@@ -1134,7 +1134,7 @@ function TabSurge(){
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",flexWrap:"wrap",gap:"10px",marginBottom:"16px"}}>
       <div>
         <h2 style={{fontSize:"22px",fontWeight:700,marginBottom:"4px"}}><span style={{color:"#f59e0b"}}>▲</span> 급등 종목 AI</h2>
-        <p style={{color:"var(--muted)",fontSize:"15px",lineHeight:1.6}}>하루 <b>+5% 이상</b> 오르고 <b>거래대금 3,000억 이상</b> 터진 종목 중 거래대금 상위 10개 — 상승 원인을 시황·차트로 나누고, 과거 급등 수천 건을 학습한 딥러닝 모델이 이후 흐름을 확률로 예측합니다.</p>
+        <p style={{color:"var(--muted)",fontSize:"15px",lineHeight:1.6}}>하루 <b>+5% 이상</b> 오르고 <b>거래대금 1,000억 이상</b> 터진 종목 중 거래대금 상위 10개 — 상승 원인을 시황·차트로 나누고, 과거 급등 수천 건을 학습한 딥러닝 모델이 이후 흐름을 확률로 예측합니다.</p>
       </div>
       {dates.length>0&&<div style={{display:"flex",alignItems:"center",gap:"6px"}}>
         <button onClick={()=>{const i=dates.indexOf(date);if(i<dates.length-1)setDate(dates[i+1])}} disabled={dates.indexOf(date)>=dates.length-1} style={{padding:"6px 10px",borderRadius:"8px",border:"1px solid var(--card-bd)",background:"var(--card-bg)",color:"var(--text)",cursor:"pointer"}}>‹</button>
@@ -1153,7 +1153,7 @@ function TabSurge(){
           <span style={{fontSize:"13px",color:"var(--muted)",marginRight:"4px"}}>{surgeDay(date)} · {rows.length}종목</span>
           {typeCount.map(([t,n])=><span key={t} style={{fontSize:"12.5px",padding:"3px 10px",borderRadius:"20px",border:`1px solid ${SURGE_TYPE_COLOR[t]||"#6b7280"}55`,color:SURGE_TYPE_COLOR[t]||"#6b7280",fontWeight:600}}>{t} {n}</span>)}
         </div>
-        {rows.length===0&&<Box hover={false} style={{padding:"30px",textAlign:"center",color:"var(--dim)"}}>이날은 조건(+5% · 거래대금 3,000억)을 만족한 종목이 없습니다</Box>}
+        {rows.length===0&&<Box hover={false} style={{padding:"30px",textAlign:"center",color:"var(--dim)"}}>이날은 조건(+5% · 거래대금 1,000억)을 만족한 종목이 없습니다</Box>}
         <div style={{display:"grid",gap:"10px"}}>{rows.map(r=>{const isOpen=open===r.code;const c=SURGE_TYPE_COLOR[r.surge_type]||"#6b7280";const p5=r.pred&&r.pred.d5;
           return <Box key={r.code} hover={false} style={{overflow:"hidden"}}>
             <div onClick={()=>setOpen(isOpen?null:r.code)} style={{display:"grid",gridTemplateColumns:"34px 1fr auto",gap:"12px",alignItems:"center",padding:"14px 18px",cursor:"pointer"}}>

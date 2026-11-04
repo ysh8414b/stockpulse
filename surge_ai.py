@@ -1,6 +1,6 @@
 """급등 종목 AI — 매일 장 마감 후 실행 (GitHub Actions surge.yml)
 
-1. 오늘 +5% 이상 & 거래대금 3,000억 이상 종목 → 거래대금 상위 10개
+1. 오늘 +5% 이상 & 거래대금 1,000억 이상 종목 → 거래대금 상위 10개
 2. 상승 원인 분석
    - 시황: 지수, 같은 섹터·테마 동반 상승, 공시(DART), 뉴스, 투자자 수급
    - 차트: 신고가·박스권 돌파, 거래량 급증, 갭 상승, 장대양봉, 윗꼬리, 낙폭 반등 등
@@ -52,7 +52,7 @@ TODAY_INT = int(TODAY.replace("-", ""))
 
 # ── 선정 기준 ──
 PICK_MIN_CHANGE = 5.0            # %
-PICK_MIN_TV = 3000 * 10**8       # 거래대금 3,000억
+PICK_MIN_TV = 1000 * 10**8       # 거래대금 1,000억
 PICK_TOP = 10
 UNIVERSE_MIN_CAP = 3000 * 10**8  # 학습 종목: 시총 3,000억+
 
@@ -682,7 +682,7 @@ def groq_comments(rows):
             f"- 모델 예측: {ptxt}\n"
             f"- 비슷한 과거 급등 {sim.get('n', 0)}건: D+5 평균 {sim.get('d5_avg', 0):+.1f}%, 상승 비율 {sim.get('d5_up', 0)*100:.0f}%"
         )
-    prompt = f"""당신은 한국 주식시장 애널리스트입니다. 오늘({TODAY}) 5% 이상 오르고 거래대금 3,000억 이상인 종목들입니다.
+    prompt = f"""당신은 한국 주식시장 애널리스트입니다. 오늘({TODAY}) 5% 이상 오르고 거래대금 1,000억 이상인 종목들입니다.
 
 {chr(10).join(blocks)}
 
@@ -786,7 +786,7 @@ def main():
     if not any(abs(d.get("change_pct", 0)) > 0 for d in list(krx.values())[:200]):
         log("🏖️ 휴장일 — 종료"); return
 
-    # 일봉 (학습 종목 + 지수) — 급등 종목은 거래대금 3,000억+라 시총 3,000억+ 안에 들어 있음
+    # 일봉 (학습 종목 + 지수)
     universe = [d for d in krx.values() if d.get("market_cap", 0) >= UNIVERSE_MIN_CAP and not crawl.is_etf_etn(d["name"])]
     universe.sort(key=lambda d: d["market_cap"], reverse=True)
     if args.universe:
@@ -838,6 +838,9 @@ def main():
     picks.sort(key=lambda d: d["trading_value"], reverse=True)
     picks = picks[:PICK_TOP]
     log(f"  🚀 {TODAY} 급등 종목 {len(picks)}개: " + ", ".join(f"{p['name']}({p['change_pct']:+.1f}%)" for p in picks))
+    extra = [p["code"] for p in picks if p["code"] not in cache]
+    if extra:   # 시총 3,000억 미만 급등 종목은 따로 일봉 받기
+        cache.update(update_prices({}, extra))
     codes = sorted(set(codes) | {p["code"] for p in picks})
     markets = {c: krx[c]["market"] for c in codes if c in krx}
     idx_map = {"KOSPI": IndexSeries(cache.get("KOSPI")), "KOSDAQ": IndexSeries(cache.get("KOSDAQ"))}
