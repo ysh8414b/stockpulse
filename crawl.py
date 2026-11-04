@@ -2664,7 +2664,7 @@ OVERSOLD_MIN_MARKET_CAP = 300_000_000_000  # 시총 3000억 원
 OVERSOLD_THRESHOLD = -20.0                  # MA20 대비 -20% 이하
 OVERSOLD_MA_WINDOW = 20                     # 이동평균 일수
 OVERSOLD_HISTORY_DAYS = 75                  # daily_prices 보존 기간 (최근 20거래일 이력 검사에 40거래일 필요)
-OVERSOLD_TRACK_COOLDOWN = 20                # 성과 추적: 직전 N거래일 안에 MA20 -20% 이하였던 종목은 편입 안 함
+OVERSOLD_TRACK_COOLDOWN = 20                # 성과 추적: 연속 이탈 시작일(어제) 전 N거래일 안에 MA20 -20% 이하였던 종목은 편입 안 함
 OVERSOLD_MIN_TRADING_VALUE = 100_000_000_000  # 당일 거래대금 1,000억 원 이상
 
 # ── 과대 낙폭 성과 추적 (oversold_track) ──
@@ -2787,18 +2787,36 @@ def repair_daily_price_gaps(krx_data, lookback=45):
     return len(rows)
 
 
-# 성과 추적 제외용: {종목코드: 직전 20거래일 안에 MA20 -20% 이하였던 가장 최근 날짜}
+# 성과 추적 제외용: {종목코드: 연속 이탈 시작일 전 20거래일 안에 MA20 -20% 이하였던 가장 최근 날짜}
 _OVERSOLD_RECENT = {}
+# 성과 추적 편입 조건: 전 거래일에도 과대 낙폭 조건(MA20 -20% · 하락/보합 · 거래대금 1,000억+)이었던 종목
+_OVERSOLD_PREV = set()
+
+
+def _prev_day_oversold(closes, dates, tvs):
+    """전 거래일(오늘 이전 가장 최근 일봉)이 과대 낙폭 조건이었나. closes/dates/tvs 는 최신순."""
+    prior = [(dt, c, tv) for dt, c, tv in zip(dates, closes, tvs) if dt < TODAY]
+    if len(prior) < OVERSOLD_MA_WINDOW + 1:
+        return False
+    pc = [c for _d, c, _t in prior]
+    ma = sum(pc[:OVERSOLD_MA_WINDOW]) / OVERSOLD_MA_WINDOW
+    if ma <= 0 or pc[1] <= 0:
+        return False
+    return ((pc[0] - ma) / ma * 100.0 <= OVERSOLD_THRESHOLD
+            and pc[0] <= pc[1]
+            and (prior[0][2] or 0) >= OVERSOLD_MIN_TRADING_VALUE)
 
 
 def _recent_oversold_day(closes, dates):
-    """오늘 이전 OVERSOLD_TRACK_COOLDOWN 거래일 중 종가가 그날 MA20 대비 -20% 이하였던 가장 최근 날짜.
+    """연속 이탈 시작일(전 거래일) 이전 OVERSOLD_TRACK_COOLDOWN 거래일 중
+    종가가 그날 MA20 대비 -20% 이하였던 가장 최근 날짜.
 
-    closes/dates 는 최신순. 오늘 행은 빼고 본다. MA20을 구할 종가가 모자란 날은 검사하지 않는다.
+    closes/dates 는 최신순. 오늘·전 거래일은 빼고 본다 (어제→오늘 2일 연속은 편입 조건).
+    MA20을 구할 종가가 모자란 날은 검사하지 않는다.
     """
     prior = [(dt, c) for dt, c in zip(dates, closes) if dt < TODAY]
     pc = [c for _dt, c in prior]
-    for k in range(min(OVERSOLD_TRACK_COOLDOWN, len(prior))):
+    for k in range(1, min(OVERSOLD_TRACK_COOLDOWN + 1, len(prior))):
         win = pc[k:k + OVERSOLD_MA_WINDOW]
         if len(win) < OVERSOLD_MA_WINDOW:
             break
@@ -2818,6 +2836,7 @@ def crawl_oversold_stocks(krx_data):
     """
     log("📉 과대 낙폭 종목 산출 시작...")
     _OVERSOLD_RECENT.clear()
+    _OVERSOLD_PREV.clear()
 
     # daily_prices에서 최근 60일 데이터 fetch (페이지네이션)
     cutoff = (datetime.now(timezone(timedelta(hours=9))) - timedelta(days=OVERSOLD_HISTORY_DAYS)).strftime("%Y-%m-%d")
@@ -2827,7 +2846,7 @@ def crawl_oversold_stocks(krx_data):
     while True:
         params = {
             "date": f"gte.{cutoff}",
-            "select": "code,date,close",
+            "select": "code,date,close,trading_value",
             "order": "code.asc,date.desc",
             "limit": str(page_size),
             "offset": str(offset),
@@ -2845,11 +2864,12 @@ def crawl_oversold_stocks(krx_data):
         return []
 
     # 종목별 최근 N일 종가 모음
-    by_code, dates_by_code = {}, {}
+    by_code, dates_by_code, tv_by_code = {}, {}, {}
     for r in all_rows:
         c = r["code"]
         by_code.setdefault(c, []).append(float(r["close"]))
         dates_by_code.setdefault(c, []).append(r["date"])
+        tv_by_code.setdefault(c, []).append(float(r.get("trading_value") or 0))
     # 20번째 종가가 이보다 오래되면 중간에 빠진 날이 있다는 뜻 → 계산하지 않음
     # (20거래일 ≈ 달력 28일, 명절 연휴 여유 포함 40일)
     stale_cut = (datetime.now(timezone(timedelta(hours=9))) - timedelta(days=40)).strftime("%Y-%m-%d")
@@ -2887,6 +2907,8 @@ def crawl_oversold_stocks(krx_data):
             hit = _recent_oversold_day(closes, dates_by_code[code])
             if hit:
                 _OVERSOLD_RECENT[code] = hit
+            if _prev_day_oversold(closes, dates_by_code[code], tv_by_code[code]):
+                _OVERSOLD_PREV.add(code)
 
     if stale_skip:
         log(f"  ⚠️ 일봉 공백으로 MA20 계산 제외 {stale_skip}종목 (daily_prices 빠진 날 확인 필요)")
@@ -3804,7 +3826,8 @@ JSON 형식으로만 답하라:
 
 
 def seed_oversold_track(oversold):
-    """오늘 과대 낙폭 종목(엔벨로프 20 하단 이탈 + 거래대금 1000억+)을 성과 추적에 편입.
+    """오늘 과대 낙폭 종목(엔벨로프 20 하단 이탈 + 거래대금 1000억+) 중
+    전 거래일에도 같은 조건이었던 종목(2일 연속)을 성과 추적에 편입.
 
     entry_price = 선정일 종가 (= 그날 종가에 샀다고 가정한 가상 매수단가).
     같은 날 재실행되면 오늘분만 지우고 다시 넣으므로 중복되지 않는다.
@@ -3816,10 +3839,13 @@ def seed_oversold_track(oversold):
         "pick_date": f"eq.{TODAY}", "select": "code"}) or [])}
     supabase_request("DELETE", "oversold_track", params={"pick_date": f"eq.{TODAY}"})
 
-    rows, skipped = [], []
+    rows, skipped, first_day = [], [], []
     for o in oversold:
         price = float(o.get("price") or 0)
         if price <= 0 or int(o.get("trading_value") or 0) < OVERSOLD_MIN_TRADING_VALUE:
+            continue
+        if o["code"] not in _OVERSOLD_PREV:   # 2일 연속 과대 낙폭일 때만 편입
+            first_day.append(o.get("name", o["code"]))
             continue
         if o["code"] in _OVERSOLD_RECENT:
             skipped.append(f"{o.get('name', o['code'])}({_OVERSOLD_RECENT[o['code']][5:]})")
@@ -3845,8 +3871,10 @@ def seed_oversold_track(oversold):
             "status": "open",
         })
 
+    if first_day:
+        log(f"  ⏳ 오늘 처음 과대 낙폭 (내일도 조건이면 편입): {', '.join(first_day)}")
     if skipped:
-        log(f"  ⏭ 직전 {OVERSOLD_TRACK_COOLDOWN}거래일 안에 이미 -20% 이탈 → 성과 추적 제외: {', '.join(skipped)}")
+        log(f"  ⏭ 연속 이탈 전 {OVERSOLD_TRACK_COOLDOWN}거래일 안에 이미 -20% 이탈 → 성과 추적 제외: {', '.join(skipped)}")
     if not rows:
         log("  ℹ️ 성과 추적 편입 종목 없음")
         return []

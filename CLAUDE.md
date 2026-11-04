@@ -1697,6 +1697,14 @@
 - 확인: 가짜 데이터로 10일선 아래 매도(+15% → 익절, -5% → 손절), 위면 보유, 종가 부족 시 보유, 과대 낙폭 +10/-10 그대로. 화면 문구·10일선 표시 확인
 - 한계: daily_prices는 시총 3000억+ 종목만 저장 — 시총이 그 아래로 떨어지면 10일선을 못 구해 계속 보유로 남을 수 있음. 편입 다음 거래일부터 판단(편입일엔 매도 없음)
 
+### 과대 낙폭 성과 추적 — 2일 연속 이탈 시 편입 (2026-11-04)
+- 사용자 요청: 과대 낙폭 조건에 오늘 들어오고 다음 거래일에도 들어오면 그때 편입
+- crawl.py `_prev_day_oversold(closes, dates, tvs)`: daily_prices로 전 거래일이 과대 낙폭 조건(종가 MA20 대비 -20% 이하 · 전날 대비 하락/보합 · 거래대금 1,000억+)이었는지 확인 → `_OVERSOLD_PREV`. `crawl_oversold_stocks`가 daily_prices를 읽을 때 trading_value도 함께 조회
+- `seed_oversold_track`: 전 거래일에도 조건이었던 종목만 편입(진입가 = 두 번째 날 종가), 첫날 종목은 로그 "⏳ 오늘 처음 과대 낙폭"
+- 기존 20거래일 이력 제외는 기준을 하루 앞당김: 연속 이탈 시작일(전 거래일) **이전** 20거래일 안에 -20% 이하였던 종목 제외 → 3일·4일 연속 이탈해도 다시 편입되지 않음
+- 과대 낙폭 탭 목록(`oversold_stocks`)은 그대로 첫날부터 표시. 성과 추적 화면 안내 문구 변경. 이미 편입된 기록은 그대로
+- 한계: 전 거래일 시총 3,000억 조건은 보지 않음(오늘 시총만). daily_prices에 전 거래일이 빠지면(보충 실패) 편입 안 됨
+
 ### 성과 추적에 📉 급등주 급락 추가 (2026-11-04)
 - 사용자 요청: +10% 이상 · 거래대금 3,000억 이상 터진 종목이 이후 20거래일 안에 그 급등일 **시가보다 아래로** 내려오면 매수 시작, 익절·손절 각 10%
 - **`setup_pullback_track.sql`** (신규, 1회 실행): `pullback_track` — 급등일 스냅샷(signal_date·signal_open(급등일 시가)·signal_close·signal_change·trading_value·market_cap·rank) + watch_days + 진입(pick_date·entry_price, 감시 중엔 NULL) + 기존 추적·마감 컬럼. status = watch(감시) | open(보유) | closed(마감) | expired(20거래일 동안 진입 없음). UNIQUE(signal_date, code), RLS anon SELECT만

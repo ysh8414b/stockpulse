@@ -443,9 +443,9 @@ function OvsResBadge({r}){
 const jsonArr=v=>{if(Array.isArray(v))return v;try{const a=JSON.parse(v||"[]");return Array.isArray(a)?a:[]}catch(e){return[]}};
 const BET_KINDS={
   oversold:{table:"oversold_track",rule:"종가 기준 +10% 익절 / -10% 손절",color:"#3b82f6",
-    title:"과대 낙폭 성과 추적",sub:"엔벨로프 20 하단 이탈 · +10% / -10% 청산",
-    intro:<>매일 장 마감 후 <b style={{color:"#3b82f6"}}>엔벨로프 20 하단을 깬 종목</b>(종가가 20일 이동평균 대비 -20% 이하 · 그날 거래대금 1,000억 이상 · 시총 3,000억 이상 · 당일 상승 제외)을
-      <b> 선정일 종가에 샀다고 가정</b>합니다. 이후 매 거래일 종가 기준으로 <b style={{color:"#22c55e"}}>+10% 이상이면 익절</b>, <b style={{color:"#ef4444"}}>-10% 이하면 손절</b>로 마감하고,
+    title:"과대 낙폭 성과 추적",sub:"엔벨로프 20 하단 2일 연속 이탈 · +10% / -10% 청산",
+    intro:<>매일 장 마감 후 <b style={{color:"#3b82f6"}}>엔벨로프 20 하단을 깬 종목</b>(종가가 20일 이동평균 대비 -20% 이하 · 그날 거래대금 1,000억 이상 · 시총 3,000억 이상 · 당일 상승 제외)이 <b>이틀 연속</b> 나오면
+      <b> 두 번째 날 종가에 샀다고 가정</b>합니다(처음 이탈한 날은 편입하지 않음). 이후 매 거래일 종가 기준으로 <b style={{color:"#22c55e"}}>+10% 이상이면 익절</b>, <b style={{color:"#ef4444"}}>-10% 이하면 손절</b>로 마감하고,
       둘 다 닿지 않았으면 진행 중으로 남습니다.</>,
     sql:"setup_oversold_track.sql",empty:"장 마감 후(15:35) 과대 낙폭 종목이 나오면 쌓이기 시작합니다",
     note:r=>[`MA20 ${catPct(r.deviation)}`,`거래대금 ${Math.round((Number(r.trading_value)||0)/1e8).toLocaleString()}억`,r.display_sector].filter(Boolean).join(" · "),
