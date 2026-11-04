@@ -4,12 +4,19 @@ on:
   schedule:
     # 평일 한국시간 16:30 (UTC 07:30) — 16:00 크롤링(테마 데이터 저장) 이후
     - cron: '30 7 * * 1-5'
+    # 예약 실행이 늦거나 빠졌을 때를 위한 보조 실행 (이미 저장된 날짜면 바로 끝남)
+    - cron: '30 10 * * 1-5'
+    - cron: '30 22 * * 0-4'
   workflow_dispatch:
     inputs:
       force:
-        description: '지수 일봉 날짜가 오늘과 달라도 실행 (마지막 거래일 기준)'
+        description: '이미 저장된 거래일도 다시 계산'
         type: boolean
         default: false
+      date:
+        description: '지난 거래일 채우기 (YYYY-MM-DD, 비우면 마지막 거래일)'
+        type: string
+        default: ''
 
 jobs:
   surge:
@@ -47,4 +54,4 @@ jobs:
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           DART_API_KEY: ${{ secrets.DART_API_KEY }}
-        run: python -u surge_ai.py ${{ inputs.force && '--force' || '' }}
+        run: python -u surge_ai.py ${{ inputs.force && '--force' || '' }} ${{ inputs.date && format('--date {0}', inputs.date) || '' }}

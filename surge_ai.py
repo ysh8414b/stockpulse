@@ -741,6 +741,24 @@ def update_realized(cache, dry):
     log(f"  📊 지난 선정 종목 실제 수익률 {n}건 갱신")
 
 
+def krx_from_chart(krx, cache, day):
+    """실시간 시세 대신 그날 일봉으로 가격·등락률·거래대금(종가×거래량) 계산"""
+    out = {}
+    for code, d in krx.items():
+        nd = dict(d)
+        arr = cache.get(code)
+        pos = np.where(arr[:, 0] == day)[0] if arr is not None and len(arr) else []
+        if len(pos) and pos[0] > 0:
+            i = int(pos[0])
+            c, pc, v = float(arr[i, 4]), float(arr[i - 1, 4]), float(arr[i, 5])
+            nd.update({"price": c, "change_pct": round((c / pc - 1) * 100, 2) if pc > 0 else 0.0,
+                       "trading_value": c * v, "volume": v})
+        else:
+            nd.update({"change_pct": 0.0, "trading_value": 0})
+        out[code] = nd
+    return out
+
+
 # ═════════════════════════════════════════
 # main
 # ═════════════════════════════════════════
@@ -752,7 +770,8 @@ def main():
     ap.add_argument("--skip-groq", action="store_true")
     ap.add_argument("--seeds", type=int, default=3)
     ap.add_argument("--out", default="", help="드라이런 결과(전체 행 + 성적)를 JSON 파일로 저장")
-    ap.add_argument("--force", action="store_true", help="지수 일봉 날짜가 오늘과 달라도 실행")
+    ap.add_argument("--date", default="", help="이 거래일을 계산 (YYYY-MM-DD, 지난 날짜 채우기)")
+    ap.add_argument("--force", action="store_true", help="이미 저장된 날짜도 다시 계산")
     args = ap.parse_args()
     dry = args.dry_run or not HAS_SERVICE_KEY
     if dry:
@@ -767,33 +786,60 @@ def main():
     if not any(abs(d.get("change_pct", 0)) > 0 for d in list(krx.values())[:200]):
         log("🏖️ 휴장일 — 종료"); return
 
-    # 오늘 급등 종목
-    picks = [d for d in krx.values() if d["change_pct"] >= PICK_MIN_CHANGE and d["trading_value"] >= PICK_MIN_TV
-             and not crawl.is_etf_etn(d["name"])]
-    picks.sort(key=lambda d: d["trading_value"], reverse=True)
-    picks = picks[:PICK_TOP]
-    log(f"  🚀 오늘 급등 종목 {len(picks)}개: " + ", ".join(f"{p['name']}({p['change_pct']:+.1f}%)" for p in picks))
-
-    # 일봉 (학습 종목 + 오늘 종목 + 지수)
+    # 일봉 (학습 종목 + 지수) — 급등 종목은 거래대금 3,000억+라 시총 3,000억+ 안에 들어 있음
     universe = [d for d in krx.values() if d.get("market_cap", 0) >= UNIVERSE_MIN_CAP and not crawl.is_etf_etn(d["name"])]
     universe.sort(key=lambda d: d["market_cap"], reverse=True)
     if args.universe:
         universe = universe[:args.universe]
-    codes = sorted({d["code"] for d in universe} | {p["code"] for p in picks})
+    codes = sorted({d["code"] for d in universe})
     markets = {c: krx[c]["market"] for c in codes if c in krx}
     cache = load_cache()
     cache = update_prices(cache, codes + ["KOSPI", "KOSDAQ"])
     save_cache(cache)
-    # 거래일 = 코스피 차트의 마지막 날짜 (장 시작 전·휴장일엔 오늘과 다름)
+
+    # 기준 거래일 = 마지막으로 장이 끝난 날
+    #  - 코스피 차트 마지막 날짜. 단 오늘 장중(15:40 전)이면 그 전 거래일
+    #  - GitHub 예약 실행이 늦어져 자정을 넘겨도, 장 시작 전에도 전 거래일을 처리
     kospi = cache.get("KOSPI")
     if kospi is None:
         log("❌ 지수 차트 조회 실패"); return
-    trade_int = int(kospi[-1, 0])
-    if trade_int != TODAY_INT and not (args.force or dry):
-        log(f"🏖️ 오늘({TODAY}) 지수 일봉 없음 — 휴장일로 보고 종료"); return
+    now = datetime.now(KST)
+    real_today = int(now.strftime("%Y%m%d"))
+    bars = kospi[:, 0].astype(int)
+    trade_int = int(bars[-1])
+    if trade_int == real_today and now.hour * 60 + now.minute < 15 * 60 + 40 and len(bars) > 1:
+        trade_int = int(bars[-2])
+    if args.date:
+        want = int(args.date.replace("-", ""))
+        if want not in set(bars.tolist()):
+            log(f"❌ {args.date}은 거래일이 아님 (코스피 일봉 없음)"); return
+        if want > trade_int:
+            log(f"❌ {args.date}은 아직 장이 끝나지 않음"); return
+        trade_int = want
     TODAY_INT = trade_int
     TODAY = f"{str(trade_int)[:4]}-{str(trade_int)[4:6]}-{str(trade_int)[6:]}"
     log(f"  📅 기준 거래일 {TODAY}")
+    if not (args.force or dry):
+        done = crawl.supabase_request("GET", "surge_stocks", params={"select": "id", "date": f"eq.{TODAY}", "limit": "1"})
+        if done:
+            log(f"  ✅ {TODAY} 급등 종목은 이미 저장됨 — 종료 (다시 하려면 force)"); return
+
+    # 그날 시세: 오늘 장 마감 후면 실시간 시세, 아니면 일봉으로 다시 만듦
+    if trade_int != real_today:
+        log("  🔁 실시간 시세가 기준 거래일과 달라 일봉 종가·거래량으로 계산 (거래대금 ≈ 종가×거래량)")
+        krx = krx_from_chart(krx, cache, trade_int)
+    # 기준 거래일 이후 일봉(오늘 장중분)은 계산에서 뺌 (저장된 캐시는 그대로)
+    cache = {k: (a[a[:, 0] <= trade_int] if a is not None and len(a) and a[-1, 0] > trade_int else a)
+             for k, a in cache.items()}
+
+    # 급등 종목
+    picks = [d for d in krx.values() if d["change_pct"] >= PICK_MIN_CHANGE and d["trading_value"] >= PICK_MIN_TV
+             and not crawl.is_etf_etn(d["name"])]
+    picks.sort(key=lambda d: d["trading_value"], reverse=True)
+    picks = picks[:PICK_TOP]
+    log(f"  🚀 {TODAY} 급등 종목 {len(picks)}개: " + ", ".join(f"{p['name']}({p['change_pct']:+.1f}%)" for p in picks))
+    codes = sorted(set(codes) | {p["code"] for p in picks})
+    markets = {c: krx[c]["market"] for c in codes if c in krx}
     idx_map = {"KOSPI": IndexSeries(cache.get("KOSPI")), "KOSDAQ": IndexSeries(cache.get("KOSDAQ"))}
     idx_today = {k: round(v.r(TODAY_INT) * 100, 2) for k, v in idx_map.items()}
     log(f"  📊 지수: 코스피 {idx_today['KOSPI']:+.2f}% · 코스닥 {idx_today['KOSDAQ']:+.2f}%")
