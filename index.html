@@ -275,7 +275,7 @@
         <li><strong>재료 포착 TOP 10</strong> — 시가총액 3,000억 이상 전 종목을 섹터 구분 없이 비교해, 최근 5일 내 DART 공시·주요 언론으로 실체가 확인된 재료(공급계약·수주·설비투자·M&amp;A·품목허가·기술이전 등)를 보유한 종목만 선별. 뉴스 신뢰도, 기업가치 영향, 주가 미반영 정도, 거래대금·수급, 추가 모멘텀 5개 축 100점으로 채점하며, 단기 급등으로 재료가 이미 반영된 종목은 감점</li>
         <li><strong>인기 테마 TOP 10</strong> — 뉴스 빈도와 평균 등락률 복합 점수, 클릭 시 촉발 요인·수혜·리스크 종목 AI 심층 분석</li>
         <li><strong>섹터별 등락</strong> — 반도체·2차전지·바이오·자동차 등 10대 섹터 평균 등락률과 대장주</li>
-        <li><strong>급등 종목 AI</strong> — 매일 +5% 이상·거래대금 3,000억 이상 종목 상위 10개의 상승 원인을 시황(지수·섹터·테마·공시·뉴스·수급)과 차트(신고가·박스권 돌파·거래량)로 분석하고, 과거 급등 사례를 학습한 딥러닝 모델(CNN+GRU)로 1일·5일·20일 뒤 상승 확률과 수익률 범위를 예측. 모델 시험 성적과 실제 결과를 함께 공개</li>
+        <li><strong>급등 종목 AI</strong> — 매일 +5% 이상·거래대금 1,000억 이상·52주 신고가 종목 상위 10개의 상승 원인을 시황(지수·섹터·테마·공시·뉴스·수급)과 차트(신고가·박스권 돌파·거래량)로 분석하고, 과거 급등 사례를 학습한 딥러닝 모델(CNN+GRU)로 1일·5일·20일 뒤 상승 확률과 수익률 범위를 예측. 모델 시험 성적과 실제 결과를 함께 공개</li>
         <li><strong>실시간 뉴스</strong> — 시장·종목·테마 관련 기사 자동 수집</li>
       </ul>
     </div>
@@ -1027,7 +1027,7 @@ function SurgePredRow({k,label,sub,p,real,metric}){
 }
 
 function SurgeDetail({r,metrics}){
-  const causes=r.causes||[];const sim=r.similar_cases||{};const ss=sim.summary;const hz=metrics?.horizons||{};
+  const causes=r.causes||[];const sim=r.similar_cases||{};const ss=sim.summary;const hz=surgeHz(metrics);
   const grp=g=>causes.filter(c=>c.group===g);
   const CauseList=({g,icon})=>{const list=grp(g);return <div style={{marginBottom:"12px"}}>
     <div style={{fontSize:"12px",fontWeight:700,color:"var(--muted)",marginBottom:"6px",letterSpacing:".04em"}}>{icon} {g}</div>
@@ -1077,13 +1077,30 @@ function SurgeDetail({r,metrics}){
   </div>;
 }
 
+// 좋은 조건 3가지 (과거 52주 신고가 급등 시험에서 두 기간 모두 20일 뒤 수익이 좋았던 것)
+const surgeQualityItems=q=>q?[
+  ["near_high","종가가 그날 고가 근처",q.close_pos!=null?`하루 범위의 위쪽 ${Math.round(q.close_pos*100)}% 지점 마감`:"고가·저가 정보 없음"],
+  ["not_hot","시장 과열 아님",`그날 급등 종목 ${q.heat}개 (15개 이상이면 과열)`],
+  ["idx_ok","코스피 하락일 아님",`코스피 ${q.kospi>0?"+":""}${Number(q.kospi).toFixed(2)}%`],
+]:[];
+function SurgeQualityBadge({q}){
+  if(!q)return null;const n=q.score;const col=n>=3?"#16a34a":n===2?"#0e7490":"#6b7280";
+  return <span title={surgeQualityItems(q).map(([k,t,d])=>`${q[k]?"✓":"✗"} ${t} — ${d}`).join("\n")} style={{fontSize:"12px",padding:"1px 8px",borderRadius:"10px",border:`1px solid ${col}66`,color:col,fontWeight:700}}>⭐ 좋은 조건 {n}/3</span>;
+}
+function SurgeQualityList({q}){
+  if(!q)return null;
+  return <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"8px"}}>{surgeQualityItems(q).map(([k,t,d])=><span key={k} style={{fontSize:"12px",padding:"3px 9px",borderRadius:"8px",background:q[k]?"rgba(22,163,74,.12)":"rgba(107,114,128,.12)",color:q[k]?"#16a34a":"var(--dim)"}}>{q[k]?"✓":"✗"} {t} <span style={{opacity:.75}}>· {d}</span></span>)}</div>;
+}
+// 화면에 뜨는 종목은 52주 신고가 급등 → 그 사례만 따로 잰 성적을 우선 사용
+const surgeHz=m=>{const nh=m?.horizons_nh;return nh&&Object.keys(nh).length?nh:(m?.horizons||{})};
 function SurgeModelCard({m}){
-  if(!m)return null;const hz=m.horizons||{};
+  if(!m)return null;const hz=surgeHz(m);const isNh=!!(m.horizons_nh&&Object.keys(m.horizons_nh).length);const all=m.horizons||{};
   return <Box hover={false} style={{padding:"16px 18px",marginBottom:"16px"}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",flexWrap:"wrap",gap:"6px",marginBottom:"10px"}}>
       <div style={{fontWeight:700,fontSize:"16px"}}>🧠 딥러닝 모델 성적표</div>
       <div style={{fontSize:"12px",color:"var(--dim)"}}>CNN+GRU · 과거 급등 {Number(m.n_labeled||0).toLocaleString()}건 학습 · {m.test_period?`시험 ${m.test_period[0].slice(2,4)}.${m.test_period[0].slice(4,6)}~${m.test_period[1].slice(2,4)}.${m.test_period[1].slice(4,6)} (${Number(m.n_test||0).toLocaleString()}건, 학습에 안 씀)`:"시험 전"}</div>
     </div>
+    <div style={{fontSize:"12.5px",color:"var(--muted)",marginBottom:"8px"}}>{isNh?<>아래 성적은 화면에 뜨는 종목과 같은 <b style={{color:"var(--text)"}}>52주 신고가 급등</b>만 따로 잰 값입니다 (시험 {Number(m.n_test_nh||0).toLocaleString()}건). 학습은 전체 급등으로 합니다.</>:"전체 급등 기준 성적입니다."}</div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:"10px"}}>
       {SURGE_H.map(([k,l,s])=>{const h=hz[k];const v=surgeAucVerdict(h?.auc);return <div key={k} style={{padding:"10px 12px",borderRadius:"10px",border:"1px solid var(--card-bd)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}><b style={{fontSize:"14px"}}>{l} <span style={{fontWeight:400,color:"var(--dim)",fontSize:"12px"}}>{s}</span></b><span style={{fontSize:"12px",fontWeight:700,color:v.c}}>{v.t}</span></div>
@@ -1091,6 +1108,7 @@ function SurgeModelCard({m}){
           구분력(AUC) <b style={{color:"var(--text)"}}>{h.auc.toFixed(3)}</b> <span style={{color:"var(--dim)"}}>· 단순 모델 {h.auc_lin.toFixed(3)} · 0.5=찍기</span><br/>
           모델 상위 20% 평균 <b style={{color:catRetColor(h.top_ret)}}>{catPct(h.top_ret)}</b> vs 하위 20% <b style={{color:catRetColor(h.bottom_ret)}}>{catPct(h.bottom_ret)}</b><br/>
           급등 뒤 실제 상승 비율 {Math.round(h.test_up_rate*100)}% · 80% 범위 적중 {Math.round(h.coverage*100)}%
+          {isNh&&all[k]&&<><br/><span style={{color:"var(--dim)"}}>참고: 전체 급등 AUC {all[k].auc.toFixed(3)} · 평균 {catPct(all[k].avg_ret)} / 신고가만 평균 {catPct(h.avg_ret)}</span></>}
         </div>:<div style={{fontSize:"12.5px",color:"var(--dimmer)",marginTop:"4px"}}>시험 데이터 부족</div>}
       </div>})}
     </div>
@@ -1134,7 +1152,7 @@ function TabSurge(){
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",flexWrap:"wrap",gap:"10px",marginBottom:"16px"}}>
       <div>
         <h2 style={{fontSize:"22px",fontWeight:700,marginBottom:"4px"}}><span style={{color:"#f59e0b"}}>▲</span> 급등 종목 AI</h2>
-        <p style={{color:"var(--muted)",fontSize:"15px",lineHeight:1.6}}>하루 <b>+5% 이상</b> 오르고 <b>거래대금 3,000억 이상</b> 터진 종목 중 거래대금 상위 10개 — 상승 원인을 시황·차트로 나누고, 과거 급등 수천 건을 학습한 딥러닝 모델이 이후 흐름을 확률로 예측합니다.</p>
+        <p style={{color:"var(--muted)",fontSize:"15px",lineHeight:1.6}}>하루 <b>+5% 이상</b> 오르고 <b>거래대금 1,000억 이상</b> 터지며 <b>52주 신고가</b>로 마감한 종목 중 <b>좋은 조건</b>(종가 고가 근처 · 시장 과열 아님 · 코스피 하락일 아님)을 많이 만족한 순, 같으면 거래대금 순으로 최대 10개 — 상승 원인을 시황·차트로 나누고, 과거 급등 수천 건을 학습한 딥러닝 모델이 이후 흐름을 확률로 예측합니다.</p>
       </div>
       {dates.length>0&&<div style={{display:"flex",alignItems:"center",gap:"6px"}}>
         <button onClick={()=>{const i=dates.indexOf(date);if(i<dates.length-1)setDate(dates[i+1])}} disabled={dates.indexOf(date)>=dates.length-1} style={{padding:"6px 10px",borderRadius:"8px",border:"1px solid var(--card-bd)",background:"var(--card-bg)",color:"var(--text)",cursor:"pointer"}}>‹</button>
@@ -1153,7 +1171,7 @@ function TabSurge(){
           <span style={{fontSize:"13px",color:"var(--muted)",marginRight:"4px"}}>{surgeDay(date)} · {rows.length}종목</span>
           {typeCount.map(([t,n])=><span key={t} style={{fontSize:"12.5px",padding:"3px 10px",borderRadius:"20px",border:`1px solid ${SURGE_TYPE_COLOR[t]||"#6b7280"}55`,color:SURGE_TYPE_COLOR[t]||"#6b7280",fontWeight:600}}>{t} {n}</span>)}
         </div>
-        {rows.length===0&&<Box hover={false} style={{padding:"30px",textAlign:"center",color:"var(--dim)"}}>이날은 조건(+5% · 거래대금 3,000억)을 만족한 종목이 없습니다</Box>}
+        {rows.length===0&&<Box hover={false} style={{padding:"30px",textAlign:"center",color:"var(--dim)"}}>이날은 조건(+5% · 거래대금 1,000억 · 52주 신고가)을 만족한 종목이 없습니다</Box>}
         <div style={{display:"grid",gap:"10px"}}>{rows.map(r=>{const isOpen=open===r.code;const c=SURGE_TYPE_COLOR[r.surge_type]||"#6b7280";const p5=r.pred&&r.pred.d5;
           return <Box key={r.code} hover={false} style={{overflow:"hidden"}}>
             <div onClick={()=>setOpen(isOpen?null:r.code)} style={{display:"grid",gridTemplateColumns:"34px 1fr auto",gap:"12px",alignItems:"center",padding:"14px 18px",cursor:"pointer"}}>
@@ -1163,8 +1181,10 @@ function TabSurge(){
                   <span style={{fontWeight:700,fontSize:"17px"}}>{r.name}</span>
                   <span style={{fontSize:"12px",color:"var(--dim)"}}>{r.code} · {r.market==="KOSDAQ"?"코스닥":"코스피"}{r.display_sector?` · ${r.display_sector}`:""}</span>
                   <span style={{fontSize:"12px",padding:"1px 8px",borderRadius:"10px",background:c+"22",color:c,fontWeight:700}}>{r.surge_type}</span>
+                  <SurgeQualityBadge q={r.market_ctx?.quality}/>
                 </div>
                 <div style={{fontSize:"13.5px",color:"var(--muted)",marginTop:"3px",whiteSpace:isOpen?"normal":"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{r.main_cause}</div>
+                {isOpen&&<SurgeQualityList q={r.market_ctx?.quality}/>}
               </div>
               <div style={{textAlign:"right",fontVariantNumeric:"tabular-nums"}}>
                 <div style={{fontWeight:800,fontSize:"18px",color:catRetColor(r.change_pct)}}>{catPct(r.change_pct)}</div>

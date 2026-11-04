@@ -1,6 +1,6 @@
 """급등 종목 AI — 매일 장 마감 후 실행 (GitHub Actions surge.yml)
 
-1. 오늘 +5% 이상 & 거래대금 3,000억 이상 종목 → 거래대금 상위 10개
+1. 오늘 +5% 이상 & 거래대금 1,000억 이상 & 52주 신고가 종목 → 거래대금 상위 10개
 2. 상승 원인 분석
    - 시황: 지수, 같은 섹터·테마 동반 상승, 공시(DART), 뉴스, 투자자 수급
    - 차트: 신고가·박스권 돌파, 거래량 급증, 갭 상승, 장대양봉, 윗꼬리, 낙폭 반등 등
@@ -52,8 +52,10 @@ TODAY_INT = int(TODAY.replace("-", ""))
 
 # ── 선정 기준 ──
 PICK_MIN_CHANGE = 5.0            # %
-PICK_MIN_TV = 3000 * 10**8       # 거래대금 3,000억
+PICK_MIN_TV = 1000 * 10**8       # 거래대금 1,000억
 PICK_TOP = 10
+PICK_HIGH_DAYS = 250             # 종가가 직전 52주(250거래일) 최고가 이상(52주 신고가)인 종목만
+PICK_HIGH_MIN_BARS = 60          # 상장 1년 안 된 종목은 60거래일 이상이면 상장 후 최고가로 판단
 UNIVERSE_MIN_CAP = 3000 * 10**8  # 학습 종목: 시총 3,000억+
 
 # ── 학습 이벤트 기준 (표본을 늘리려고 거래대금 기준만 낮춤) ──
@@ -186,11 +188,11 @@ class IndexSeries:
 N_SEQ_CH = 8
 TAB_NAMES = ["등락률", "갭", "윗꼬리", "종가위치", "거래대금", "거래량배수", "직전5일", "직전20일",
              "직전60일", "52주고점거리", "60일선이격", "연속상승", "지수당일", "지수5일",
-             "시장과열도", "최근급등횟수", "코스닥", "상한가"]
+             "시장과열도", "최근급등횟수", "코스닥", "상한가", "52주신고가"]
 
 
 def make_features(arr, t, idx, heat, prior_surges, is_kosdaq):
-    """arr[t] = 급등일. 반환: (seq[60,8], tab[18]) — t 이후 데이터는 절대 쓰지 않음"""
+    """arr[t] = 급등일. 반환: (seq[60,8], tab[19]) — t 이후 데이터는 절대 쓰지 않음"""
     d = arr[:, 0]; o = arr[:, 1]; h = arr[:, 2]; l = arr[:, 3]; c = arr[:, 4]; v = arr[:, 5]
     s0 = t - SEQ_LEN + 1
     ma20 = _ma(c[:t + 1], 20)
@@ -236,6 +238,7 @@ def make_features(arr, t, idx, heat, prior_surges, is_kosdaq):
         prior_surges / 3,
         1.0 if is_kosdaq else 0.0,
         1.0 if ret_t >= 0.295 else 0.0,
+        1.0 if c[t] >= hi250 else 0.0,
     ], dtype=np.float32)
     return seq, np.nan_to_num(tab)
 
@@ -271,7 +274,8 @@ def find_events(cache, markets, idx_map):
         c = arr[:, 4]
         y = [c[t + hh] / c[t] - 1 if t + hh < len(c) else np.nan for hh in HORIZONS]
         S.append(seq); T.append(tab); Y.append(y)
-        meta.append({"code": code, "date": d, "chg": round((c[t] / c[t - 1] - 1) * 100, 2)})
+        meta.append({"code": code, "date": d, "chg": round((c[t] / c[t - 1] - 1) * 100, 2),
+                     "nh": bool(c[t] >= arr[max(0, t - PICK_HIGH_DAYS):t, 2].max())})
     if not S:
         return None
     return (np.stack(S), np.stack(T), np.array(Y, dtype=np.float32), meta, heat)
@@ -419,6 +423,34 @@ def auc(y, p):
     return float((ranks[y].sum() - n1 * (n1 + 1) / 2) / (n1 * n0))
 
 
+def horizon_metrics(Yte, p, q, p_lin, Ytr):
+    """기간별 시험 성적 (Yte: 시험 정답, Ytr: 기본 확률용 학습 정답)"""
+    hz = {}
+    for k, hh in enumerate(HORIZONS):
+        m = ~np.isnan(Yte[:, k])
+        if m.sum() < 30:
+            continue
+        yk = Yte[m, k]; pk = p[m, k]; up = yk > 0
+        base = float(np.nanmean(Ytr[:, k] > 0))
+        brier = float(np.mean((pk - up) ** 2)); brier_b = float(np.mean((base - up) ** 2))
+        hi = pk >= np.quantile(pk, 0.8); lo = pk <= np.quantile(pk, 0.2)
+        cover = float(np.mean((yk >= q[m, k, 0]) & (yk <= q[m, k, 2])))
+        hz[f"d{hh}"] = {
+            "n": int(m.sum()),
+            "auc": round(auc(up, pk) or 0.5, 4),
+            "auc_lin": round(auc(up, p_lin[m, k]) or 0.5, 4),
+            "base_rate": round(base, 4),
+            "test_up_rate": round(float(up.mean()), 4),
+            "brier_skill": round(1 - brier / brier_b, 4) if brier_b > 0 else 0,
+            "hit": round(float(np.mean((pk >= 0.5) == up)), 4),
+            "top_ret": round(float(yk[hi].mean() * 100), 2),
+            "bottom_ret": round(float(yk[lo].mean() * 100), 2),
+            "avg_ret": round(float(yk.mean() * 100), 2),
+            "coverage": round(cover, 4),
+        }
+    return hz
+
+
 def evaluate_and_train(ev, seeds=3):
     """시간 순서대로 나눠 시험 → 성적 기록 → 전체 데이터로 최종 모델 학습"""
     S, T, Y, meta, _ = ev
@@ -454,35 +486,21 @@ def evaluate_and_train(ev, seeds=3):
         p, q, _ = predict(nets, te_s, te_t)
         p_lin = train_logistic(b, Y[tr2], te_t)
         Yte = Y[te]
-        hz = {}
-        for k, hh in enumerate(HORIZONS):
-            m = ~np.isnan(Yte[:, k])
-            if m.sum() < 30:
-                continue
-            yk = Yte[m, k]; pk = p[m, k]; up = yk > 0
-            base = float(np.nanmean(Y[tr2][:, k] > 0))
-            brier = float(np.mean((pk - up) ** 2)); brier_b = float(np.mean((base - up) ** 2))
-            hi = pk >= np.quantile(pk, 0.8); lo = pk <= np.quantile(pk, 0.2)
-            cover = float(np.mean((yk >= q[m, k, 0]) & (yk <= q[m, k, 2])))
-            hz[f"d{hh}"] = {
-                "n": int(m.sum()),
-                "auc": round(auc(up, pk) or 0.5, 4),
-                "auc_lin": round(auc(up, p_lin[m, k]) or 0.5, 4),
-                "base_rate": round(base, 4),
-                "test_up_rate": round(float(up.mean()), 4),
-                "brier_skill": round(1 - brier / brier_b, 4) if brier_b > 0 else 0,
-                "hit": round(float(np.mean((pk >= 0.5) == up)), 4),
-                "top_ret": round(float(yk[hi].mean() * 100), 2),
-                "bottom_ret": round(float(yk[lo].mean() * 100), 2),
-                "avg_ret": round(float(yk.mean() * 100), 2),
-                "coverage": round(cover, 4),
-            }
+        nh = np.array([m.get("nh", False) for m in meta])
+        hz = horizon_metrics(Yte, p, q, p_lin, Y[tr2])
+        # 52주 신고가 급등만 따로 (화면에 뜨는 종목과 같은 조건)
+        nh_te = nh[te]
+        hz_nh = horizon_metrics(Yte[nh_te], p[nh_te], q[nh_te], p_lin[nh_te], Y[tr2 & nh])
+        metrics["horizons_nh"] = hz_nh
+        metrics["n_test_nh"] = int(nh_te.sum())
         metrics.update({
             "n_train": int(tr2.sum()), "n_val": int(va.sum()), "n_test": int(te.sum()),
             "train_period": [str(int(dates[tr2].min())), str(int(dates[tr2].max()))],
             "test_period": [str(int(test_start)), str(int(dates[te].max()))],
             "horizons": hz, "epochs": best_ep,
         })
+        for k, vv in hz_nh.items():
+            log(f"  🧪 {k} (52주 신고가만): AUC {vv['auc']:.3f} · 상위20% {vv['top_ret']:+.2f}% vs 하위20% {vv['bottom_ret']:+.2f}% · n={vv['n']}")
         for k, vv in hz.items():
             log(f"  🧪 {k}: AUC 딥러닝 {vv['auc']:.3f} / 단순모델 {vv['auc_lin']:.3f} · "
                 f"상위20% 평균 {vv['top_ret']:+.2f}% vs 하위20% {vv['bottom_ret']:+.2f}% · n={vv['n']}")
@@ -682,7 +700,7 @@ def groq_comments(rows):
             f"- 모델 예측: {ptxt}\n"
             f"- 비슷한 과거 급등 {sim.get('n', 0)}건: D+5 평균 {sim.get('d5_avg', 0):+.1f}%, 상승 비율 {sim.get('d5_up', 0)*100:.0f}%"
         )
-    prompt = f"""당신은 한국 주식시장 애널리스트입니다. 오늘({TODAY}) 5% 이상 오르고 거래대금 3,000억 이상인 종목들입니다.
+    prompt = f"""당신은 한국 주식시장 애널리스트입니다. 오늘({TODAY}) 5% 이상 오르고 거래대금 1,000억 이상이며 52주 신고가로 마감한 종목들입니다.
 
 {chr(10).join(blocks)}
 
@@ -739,6 +757,37 @@ def update_realized(cache, dry):
             if not dry:
                 crawl.supabase_request("PATCH", "surge_stocks", data=patch, params={"id": f"eq.{r['id']}"})
     log(f"  📊 지난 선정 종목 실제 수익률 {n}건 갱신")
+
+
+def prev_high(arr, day, n, min_n=PICK_HIGH_MIN_BARS):
+    """day 이전 n거래일 고가 최고치 (일봉이 min_n개 미만이면 None, n개 미만이면 있는 만큼)"""
+    if arr is None or not len(arr):
+        return None
+    before = arr[arr[:, 0] < day]
+    if len(before) < min_n:
+        return None
+    return float(before[-n:, 2].max())
+
+
+QUALITY_HOT = 15        # 그날 급등 종목이 이만큼 이상이면 시장 과열
+QUALITY_POS = 0.8       # 종가가 그날 (고가-저가) 범위의 위쪽 20% 안
+QUALITY_IDX = -0.5      # 코스피 등락률(%)이 이보다 낮으면 하락일
+
+
+def pick_quality(arr, day, price, heat, kospi_pct):
+    """좋은 조건 3가지 만족 여부: 종가가 고가 근처 / 시장 과열 아님 / 코스피 하락일 아님"""
+    pos = None
+    if arr is not None and len(arr):
+        i = np.where(arr[:, 0] == day)[0]
+        if len(i):
+            h, l = float(arr[i[0], 2]), float(arr[i[0], 3])
+            if h > l:
+                pos = (price - l) / (h - l)
+    q = {"near_high": pos is not None and pos >= QUALITY_POS, "close_pos": None if pos is None else round(pos, 3),
+         "not_hot": heat < QUALITY_HOT, "heat": int(heat),
+         "idx_ok": kospi_pct > QUALITY_IDX, "kospi": kospi_pct}
+    q["score"] = int(q["near_high"]) + int(q["not_hot"]) + int(q["idx_ok"])
+    return q
 
 
 def krx_from_chart(krx, cache, day):
@@ -833,19 +882,37 @@ def main():
              for k, a in cache.items()}
 
     # 급등 종목
-    picks = [d for d in krx.values() if d["change_pct"] >= PICK_MIN_CHANGE and d["trading_value"] >= PICK_MIN_TV
+    cands = [d for d in krx.values() if d["change_pct"] >= PICK_MIN_CHANGE and d["trading_value"] >= PICK_MIN_TV
              and not crawl.is_etf_etn(d["name"])]
-    picks.sort(key=lambda d: d["trading_value"], reverse=True)
-    picks = picks[:PICK_TOP]
-    log(f"  🚀 {TODAY} 급등 종목 {len(picks)}개: " + ", ".join(f"{p['name']}({p['change_pct']:+.1f}%)" for p in picks))
-    extra = [p["code"] for p in picks if p["code"] not in cache]
+    cands.sort(key=lambda d: d["trading_value"], reverse=True)
+    extra = [p["code"] for p in cands if p["code"] not in cache]
     if extra:   # 시총 3,000억 미만 급등 종목은 따로 일봉 받기
-        cache.update(update_prices({}, extra))
+        got = update_prices({}, extra)
+        cache.update({k: (a[a[:, 0] <= trade_int] if a is not None and len(a) else a) for k, a in got.items()})
+    # 52주 신고가: 기준일 종가 ≥ 직전 52주 최고가
+    picks, not_high = [], []
+    for d in cands:
+        hi = prev_high(cache.get(d["code"]), trade_int, PICK_HIGH_DAYS)
+        if hi is not None and d["price"] >= hi:
+            picks.append(d)
+        else:
+            not_high.append(d["name"])
+    if not_high:
+        log(f"  ⏭ 52주 신고가 아님 {len(not_high)}개: " + ", ".join(not_high[:15]))
+    log(f"  🚀 {TODAY} 급등 종목 {len(picks)}개: " + ", ".join(f"{p['name']}({p['change_pct']:+.1f}%)" for p in picks))
     codes = sorted(set(codes) | {p["code"] for p in picks})
     markets = {c: krx[c]["market"] for c in codes if c in krx}
     idx_map = {"KOSPI": IndexSeries(cache.get("KOSPI")), "KOSDAQ": IndexSeries(cache.get("KOSDAQ"))}
     idx_today = {k: round(v.r(TODAY_INT) * 100, 2) for k, v in idx_map.items()}
     log(f"  📊 지수: 코스피 {idx_today['KOSPI']:+.2f}% · 코스닥 {idx_today['KOSDAQ']:+.2f}%")
+
+    # 좋은 조건 (과거 시험에서 두 기간 모두 20일 뒤 수익이 좋았던 것) → 많이 만족한 종목을 위로
+    heat = len(cands)   # 그날 +5% · 거래대금 기준 넘은 종목 수
+    for p in picks:
+        p["quality"] = pick_quality(cache.get(p["code"]), trade_int, p["price"], heat, idx_today["KOSPI"])
+    picks.sort(key=lambda d: (-d["quality"]["score"], -d["trading_value"]))
+    picks = picks[:PICK_TOP]
+    log("  ⭐ 좋은 조건 순: " + ", ".join(f"{p['name']}({p['quality']['score']}/3)" for p in picks))
 
     # 지난 선정 종목 실제 수익률
     update_realized(cache, dry)
@@ -863,7 +930,8 @@ def main():
         log(f"  🧠 학습 완료 ({metrics['train_seconds']}초)")
     version = f"cnn-gru-{TODAY}"
     metrics.update({"version": version, "universe": len(sub_cache), "today_count": len(picks),
-                    "pick_rule": {"min_change": PICK_MIN_CHANGE, "min_tv_eok": PICK_MIN_TV // 10**8, "top": PICK_TOP},
+                    "pick_rule": {"min_change": PICK_MIN_CHANGE, "min_tv_eok": PICK_MIN_TV // 10**8, "top": PICK_TOP,
+                                  "new_high_days": PICK_HIGH_DAYS},
                     "event_rule": {"min_ret": EV_MIN_RET * 100, "min_tv_eok": EV_MIN_TV // 10**8},
                     "features": {"seq_days": SEQ_LEN, "seq_channels": N_SEQ_CH, "tabular": TAB_NAMES}})
 
@@ -965,7 +1033,7 @@ def main():
             "disclosures": [{"type": d.get("type", ""), "title": d.get("title", ""), "date": d.get("date", ""),
                              "url": d.get("url", "")} for d in dart.get(code, [])[:3]],
             "flow": flow or {},
-            "market_ctx": {"index": idx_today, "sector": sec_info},
+            "market_ctx": {"index": idx_today, "sector": sec_info, "quality": p.get("quality")},
             "ohlcv": ohlcv, "pred": pred, "similar_cases": similar, "ai_comment": "",
             "model_version": version if pred else "", "generated_time": gen_time,
         })
