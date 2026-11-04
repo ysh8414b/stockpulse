@@ -5223,6 +5223,9 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
   const[msg,setMsg]=useState("");
   const[saving,setSaving]=useState("");
   const[ask,setAsk]=useState(false);
+  // 출고 확정 확인 중에 차감 전 이미지·PDF를 저장했는지 (확인 창을 열 때마다 초기화)
+  const[askSaved,setAskSaved]=useState("");
+  useEffect(()=>{if(ask)setAskSaved("")},[ask]);
   const[progress,setProgress]=useState(null);
   const printRef=useRef(null);
 
@@ -5456,6 +5459,7 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
       }
       if(kind==="pdf"){shipPdf(all,name);count=all.length}
       setMsg(`${kind==="pdf"?"PDF":"이미지"} 저장했습니다 (A4 ${count}${kind==="pdf"?"쪽":"장"})`);
+      setAskSaved(kind==="pdf"?"PDF":"이미지");
     }catch(e){setMsg("저장 실패: "+errMsg(e))}
     setSaving("");
   };
@@ -5486,10 +5490,19 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
             :<span style={{display:"inline-flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
               <button className="ol-btn ol-btn-primary" disabled title="이미 출고 확정된 날짜입니다. 다시 차감하려면 먼저 되돌리세요">🔒 출고 확정됨</button>
               <button className="ol-btn ol-btn-secondary" onClick={()=>setAskUndo(true)} title="확정 때 뺀 수량을 냉동재고에 다시 넣고 잠금을 풉니다">↩ 출고 되돌리기</button></span>)
-           :ask?<span style={{display:"inline-flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+           :ask?<span style={{display:"flex",flexDirection:"column",gap:6,padding:"8px 10px",border:"1.5px solid #ef4444",borderRadius:10,background:"rgba(239,68,68,.06)"}}>
               <span style={{fontSize:13,fontWeight:700,color:"#ef4444"}}>로트 {moves.length}건, {fmtBoxes(moves.reduce((a,m)=>a+m.x.out,0))}박스를 냉동재고에서 차감할까요?</span>
-              <button className="ol-btn ol-btn-danger ol-btn-sm" onClick={confirm}>차감</button>
-              <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setAsk(false)}>취소</button></span>
+              <span style={{display:"inline-flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                <span style={{fontSize:12,fontWeight:700,color:askSaved?"#16a34a":"#b45309"}}>{askSaved?`✓ 차감 전 ${askSaved} 저장함`:"① 차감 전 상태로 먼저 저장 →"}</span>
+                <button className="ol-btn ol-btn-secondary ol-btn-sm" disabled={!!saving||(view==="floor"&&!selGroups.length)} onClick={()=>save("png")}>{saving==="png"?"저장 중…":"🖼 이미지 저장"}</button>
+                <button className="ol-btn ol-btn-secondary ol-btn-sm" disabled={!!saving||(view==="floor"&&!selGroups.length)} onClick={()=>save("pdf")}>{saving==="pdf"?"저장 중…":"📄 PDF 저장"}</button>
+                {view==="floor"&&selGroups.length>1&&<button className="ol-btn ol-btn-secondary ol-btn-sm" disabled={!!saving} onClick={()=>save("png",true)}>{saving==="png-floor"?"저장 중…":`🖼 지점별 (${selGroups.length}장)`}</button>}
+              </span>
+              <span style={{display:"inline-flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                {!askSaved&&<span style={{fontSize:12,color:"var(--muted)"}}>② 저장 안 했어요 — 차감하면 이 화면은 다시 못 뽑습니다</span>}
+                <button className="ol-btn ol-btn-danger ol-btn-sm" disabled={!!saving} onClick={confirm}>{askSaved?"② 차감":"저장 없이 차감"}</button>
+                <button className="ol-btn ol-btn-secondary ol-btn-sm" disabled={!!saving} onClick={()=>setAsk(false)}>취소</button>
+              </span></span>
            :<button className="ol-btn ol-btn-primary" disabled={!moves.length} onClick={()=>setAsk(true)} title="배정된 출고 수량만큼 냉동재고에서 출고 처리">✅ 출고 확정 (재고 차감)</button>}
           <div className="ol-subtabs">
             <button className={view==="product"?"on":""} onClick={()=>setView("product")}>📦 제품별</button>
