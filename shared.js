@@ -42,28 +42,46 @@ function applyTheme(t){
   var base=null, pending=false, lastAct=Date.now(), lastCheck=0, checking=false;
   var bar=null, msg=null, countLeft=0, countTimer=null;
 
-  function sigOf(url){
-    var u=url+(url.indexOf("?")<0?"?":"&")+"_v="+Date.now();
-    return fetch(u,{method:"HEAD",cache:"no-store"}).then(function(r){
-      if(!r.ok)return null;
-      var s=r.headers.get("etag")||r.headers.get("last-modified");
-      if(s)return s;
-      return fetch(u,{cache:"no-store"}).then(function(r2){
-        return r2.ok?r2.text().then(function(t){var h=0;for(var i=0;i<t.length;i++)h=(h*31+t.charCodeAt(i))|0;return t.length+":"+h}):null;
-      });
+  // GitHub Pages는 배포할 때마다 모든 파일의 ETag/Last-Modified(배포 시각)를 바꾼다.
+  // 그래서 헤더는 "바뀌었을 수 있음" 신호로만 쓰고, 실제 새 버전 여부는 파일 내용으로 판단한다.
+  function bust(url){return url+(url.indexOf("?")<0?"?":"&")+"_v="+Date.now()}
+  function hashText(t){var h=0;for(var i=0;i<t.length;i++)h=(h*31+t.charCodeAt(i))|0;return t.length+":"+h}
+  function headOf(url){
+    return fetch(bust(url),{method:"HEAD",cache:"no-store"}).then(function(r){
+      return r.ok?(r.headers.get("etag")||r.headers.get("last-modified")||null):null;
     }).catch(function(){return null});
+  }
+  function bodyOf(url,fresh){
+    // 처음엔 방금 받은 사본(브라우저 캐시)으로, 확인할 땐 서버 최신본으로
+    return fetch(fresh?bust(url):url,{cache:fresh?"no-store":"force-cache"}).then(function(r){
+      return r.ok?r.text().then(hashText):null;
+    }).catch(function(){return null});
+  }
+  function init(){
+    checking=true;lastCheck=Date.now();
+    Promise.all(files.map(function(f){
+      return Promise.all([headOf(f),bodyOf(f,false)]).then(function(x){return{h:x[0],c:x[1]}});
+    })).then(function(b){base=b;checking=false});
   }
   function check(){
     if(checking||pending)return;
+    if(!base){init();return}
     checking=true;lastCheck=Date.now();
-    Promise.all(files.map(sigOf)).then(function(sigs){
+    Promise.all(files.map(function(f,i){
+      var b=base[i];
+      return headOf(f).then(function(h){
+        if(!h||h===b.h)return false;                 // 헤더 그대로 → 바뀐 것 없음
+        return bodyOf(f,true).then(function(c){
+          if(!c)return false;
+          if(!b.c){b.c=c;b.h=h;return false}           // 처음 내용을 못 읽었으면 지금 것을 기준으로
+          if(c===b.c){b.h=h;return false}              // 재배포만 됨(내용 같음) → 기준 헤더만 갱신
+          return true;
+        });
+      });
+    })).then(function(changed){
       checking=false;
-      if(!base){base=sigs;return}
-      for(var i=0;i<sigs.length;i++){
-        if(sigs[i]&&base[i]&&sigs[i]!==base[i]){pending=true;showBar();return}
-        if(sigs[i]&&!base[i])base[i]=sigs[i];
-      }
-    });
+      if(changed.indexOf(true)>=0){pending=true;showBar()}
+    },function(){checking=false});
   }
 
   function busy(){
