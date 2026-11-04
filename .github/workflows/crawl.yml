@@ -19,10 +19,14 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: read
+  actions: write   # 급등 AI 워크플로를 대신 실행하기 위해
+
 jobs:
   crawl:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: 코드 체크아웃
         uses: actions/checkout@v4
@@ -61,3 +65,29 @@ jobs:
           KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
           KAKAO_TEST: ${{ inputs.kakao_test }}
         run: python crawl.py
+
+      # GitHub 예약 실행(schedule)은 몇 시간씩 늦거나 빠지는 일이 많음 →
+      # 장 마감 후(평일 16:35~23:59 KST) 크롤링이 돌 때, 오늘 급등 AI 결과가 없고
+      # 실행 중인 것도 없으면 급등 AI 워크플로를 대신 실행
+      - name: 급등 AI 대신 실행 (예약 실행이 늦을 때)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          DOW=$(TZ=Asia/Seoul date +%u); HM=$(TZ=Asia/Seoul date +%H%M); TODAY=$(TZ=Asia/Seoul date +%F)
+          if [ "$DOW" -gt 5 ] || [ "$HM" -lt 1635 ]; then echo "급등 AI 시간 아님 ($DOW $HM)"; exit 0; fi
+          DONE=$(curl -s "$SUPABASE_URL/rest/v1/surge_model_runs?select=id&date=eq.$TODAY&limit=1" \
+            -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY")
+          if [ "$DONE" != "[]" ]; then echo "오늘($TODAY) 급등 AI 이미 실행됨: $DONE"; exit 0; fi
+          API="https://api.github.com/repos/${{ github.repository }}/actions/workflows/surge.yml"
+          BUSY=0
+          for S in queued in_progress waiting pending requested; do
+            N=$(curl -s -H "Authorization: Bearer $GH_TOKEN" "$API/runs?status=$S&per_page=1" | jq -r '.total_count // 0')
+            BUSY=$((BUSY + N))
+          done
+          if [ "$BUSY" -gt 0 ]; then echo "급등 AI 실행 중 — 건너뜀"; exit 0; fi
+          CODE=$(curl -s -o /tmp/out -w '%{http_code}' -X POST -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" "$API/dispatches" -d '{"ref":"main"}')
+          echo "급등 AI 실행 요청: HTTP $CODE"; cat /tmp/out || true
