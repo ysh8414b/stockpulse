@@ -460,7 +460,42 @@ const BET_KINDS={
     sql:"setup_leader_track.sql",empty:"장 마감 후(15:35) 주도 테마가 나온 날부터 쌓이기 시작합니다 — 조건을 만족하는 테마가 없는 날은 편입이 없습니다",
     note:r=>[`🔥 ${r.theme_name||"-"}`,`동반 ${r.theme_count||0}종목`,`당일 ${catPct(r.change_pct)}`,r.status!=="closed"&&r.last_ma?`10일선 ₩${Math.round(Number(r.last_ma)).toLocaleString()}`:`거래대금 ${Math.round((Number(r.trading_value)||0)/1e8).toLocaleString()}억`].join(" · "),
     colLabel:"종목 · 주도 테마",expandable:true},
+  pullback:{table:"pullback_track",rule:"종가 기준 +10% 익절 / -10% 손절",color:"#a855f7",
+    title:"급등주 급락 성과 추적",sub:"급등일 시가 이탈 시 매수 · +10% / -10% 청산",
+    intro:<><b style={{color:"#a855f7"}}>+10% 이상 · 거래대금 3,000억 이상</b> 터진 종목을 감시 목록에 올리고,
+      <b> 그 뒤 20거래일 안에 종가가 급등일 시가보다 아래로 내려오면</b> 그날 종가에 샀다고 가정합니다.
+      이후 매 거래일 종가 기준으로 <b style={{color:"#22c55e"}}>+10% 이상이면 익절</b>, <b style={{color:"#ef4444"}}>-10% 이하면 손절</b>로 마감합니다.
+      20거래일 동안 시가 아래로 내려오지 않으면 감시를 끝냅니다(만료). 표의 날짜는 <b>매수(진입)일</b>입니다.</>,
+    sql:"setup_pullback_track.sql",empty:"장 마감 후(15:35) 감시 종목이 급등일 시가 아래로 내려오면 쌓이기 시작합니다",
+    note:r=>[`급등 ${String(r.signal_date||"").slice(5)} ${catPct(r.signal_change)}`,`시가 ₩${Math.round(Number(r.signal_open)||0).toLocaleString()}`,`${r.watch_days||0}일째 진입`,`거래대금 ${Math.round((Number(r.trading_value)||0)/1e8).toLocaleString()}억`].join(" · "),
+    colLabel:"종목 · 급등일",watch:true},
 };
+function PullbackWatch({rows,expiredN,color}){
+  const[open,setOpen]=useState(true);
+  return <Box style={{marginBottom:"16px",overflow:"hidden"}} hover={false}>
+    <div onClick={()=>setOpen(!open)} style={{display:"flex",alignItems:"center",gap:"10px",padding:"14px 18px",cursor:"pointer",flexWrap:"wrap"}}>
+      <span style={{fontSize:"15px",fontWeight:700}}>👀 감시 중 <span style={{color}}>{rows.length}</span>종목</span>
+      <span style={{fontSize:"13px",color:"var(--muted)"}}>급등일 시가 아래로 내려오면 매수 · 만료 {expiredN}건</span>
+      <span style={{marginLeft:"auto",color:"var(--dimmer)",fontSize:"16px",transform:open?"rotate(90deg)":"none",transition:"transform .2s"}}>›</span>
+    </div>
+    {open&&(rows.length?<div style={{borderTop:"1px solid var(--div3)",overflowX:"auto"}}>
+      <div style={{display:"grid",gridTemplateColumns:"1.3fr 96px 96px 90px 70px",gap:"6px",padding:"10px 18px",background:"var(--row-head)",fontSize:"12px",color:"var(--muted)",fontWeight:600,minWidth:"560px"}}>
+        <span>종목 · 급등일</span><span style={{textAlign:"right"}}>급등일 시가</span><span style={{textAlign:"right"}}>최근 종가</span><span style={{textAlign:"right"}}>시가까지</span><span style={{textAlign:"right"}}>남은 일</span>
+      </div>
+      {rows.map(r=>{const op=Number(r.signal_open)||0,lp=Number(r.last_price)||0,gap=op&&lp?(op-lp)/lp*100:null;const left=Math.max(0,20-(Number(r.watch_days)||0));
+        return <div key={r.id} style={{display:"grid",gridTemplateColumns:"1.3fr 96px 96px 90px 70px",gap:"6px",padding:"11px 18px",borderTop:"1px solid var(--div)",fontSize:"14px",alignItems:"center",minWidth:"560px"}}>
+          <div style={{minWidth:0}}>
+            <a href={`https://stock.naver.com/domestic/stock/${r.code}/total`} target="_blank" rel="noopener noreferrer" style={{fontWeight:600,color:"var(--text)",textDecoration:"none"}}>{r.name}</a>
+            <div style={{fontSize:"12px",color:"var(--muted)",marginTop:"2px"}}>{r.signal_date} <b style={{color:catRetColor(r.signal_change)}}>{catPct(r.signal_change)}</b> · 거래대금 {Math.round((Number(r.trading_value)||0)/1e8).toLocaleString()}억</div>
+          </div>
+          <span style={{textAlign:"right",fontVariantNumeric:"tabular-nums"}}>₩{Math.round(op).toLocaleString()}</span>
+          <span style={{textAlign:"right",fontVariantNumeric:"tabular-nums",color:"var(--text-sub)"}}>₩{Math.round(lp).toLocaleString()}</span>
+          <span style={{textAlign:"right",fontVariantNumeric:"tabular-nums",color:"#ef4444",fontWeight:600}}>{gap===null?"—":`${gap.toFixed(1)}%`}</span>
+          <span style={{textAlign:"right",fontSize:"13px",color:"var(--muted)",fontVariantNumeric:"tabular-nums"}}>{left}일</span>
+        </div>})}
+    </div>:<div style={{padding:"0 18px 14px",fontSize:"13px",color:"var(--dim)"}}>지금 감시 중인 종목이 없습니다</div>)}
+  </Box>;
+}
 function LeaderDetail({r}){
   const stocks=jsonArr(r.theme_stocks),news=jsonArr(r.news_list),others=jsonArr(r.other_themes);
   return <div style={{padding:"12px 18px 16px 56px",background:"var(--row-head)",borderTop:"1px solid var(--div)",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:"16px",fontSize:"13px"}}>
@@ -481,20 +516,22 @@ function LeaderDetail({r}){
 }
 function BetTrack({kind}){
   const K=BET_KINDS[kind];
-  const[rows,setRows]=useState(null);const[err,setErr]=useState(false);
+  const[allRows,setRows]=useState(null);const[err,setErr]=useState(false);
   const[expDate,setExpDate]=useState(null);const[expRow,setExpRow]=useState(null);const[q,setQ]=useState("");const[flt,setFlt]=useState("all");
   useEffect(()=>{let alive=true;setRows(null);setErr(false);setExpDate(null);setExpRow(null);
-    db(K.table,"order=pick_date.desc,rank.asc&limit=2000").then(r=>{
+    db(K.table,K.watch?"order=pick_date.desc.nullslast,rank.asc&limit=3000":"order=pick_date.desc,rank.asc&limit=2000").then(r=>{
       if(!alive)return;
       if(r===null){setErr(true);setRows([])}else setRows(r);
     });
     return()=>{alive=false};
   },[kind]);
-  if(rows===null)return <Loader/>;
+  if(allRows===null)return <Loader/>;
+  const rows=K.watch?allRows.filter(r=>r.status==="open"||r.status==="closed"):allRows;
+  const watchList=K.watch?<PullbackWatch rows={allRows.filter(r=>r.status==="watch").sort((a,b)=>String(b.signal_date).localeCompare(String(a.signal_date)))} expiredN={allRows.filter(r=>r.status==="expired").length} color={K.color}/>:null;
   const intro=<div style={{marginBottom:"16px",padding:"14px 16px",background:`${K.color}0d`,border:`1px solid ${K.color}26`,borderRadius:"10px",fontSize:"14px",lineHeight:1.65,color:"var(--text-sub)"}}>
     {K.intro}<span style={{color:"var(--dim)"}}> 장중 고가·저가가 아니라 종가만 보며, 수수료·세금·슬리피지는 반영하지 않았습니다.</span>
   </div>;
-  if(!rows.length)return <div>{intro}<Empty msg={err?`성과 데이터를 불러오지 못했습니다 — Supabase에 ${K.table} 테이블(${K.sql})을 만들었는지 확인하세요`:`아직 누적된 기록이 없습니다 — ${K.empty}`}/></div>;
+  if(!rows.length)return <div>{intro}{!err&&watchList}<Empty msg={err?`성과 데이터를 불러오지 못했습니다 — Supabase에 ${K.table} 테이블(${K.sql})을 만들었는지 확인하세요`:`아직 누적된 기록이 없습니다 — ${K.empty}`}/></div>;
 
   const num=v=>v===null||v===undefined||v===""?null:Number(v);
   const isWin=r=>r.status==="closed"&&r.result==="win";
@@ -523,6 +560,7 @@ function BetTrack({kind}){
 
   return <div>
     {intro}
+    {watchList}
     <div className="cat-trk-stats" style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:"10px",marginBottom:"16px"}}>
       <CatTrackStat label="승률 (익절 ÷ 마감)" value={winRate===null?"—":`${winRate.toFixed(0)}%`} color={winRate===null?"var(--dim)":(winRate>=50?"#22c55e":"#ef4444")} sub={closed.length?`${wins} / ${closed.length} 마감`:"마감된 종목 없음"}/>
       <CatTrackStat label="평균 수익률 (마감)" value={avgClosed===null?"—":catPct(avgClosed)} color={avgClosed===null?"var(--dim)":catRetColor(avgClosed)} sub={avgAll===null?null:`진행 중 포함 ${catPct(avgAll)}`}/>
@@ -532,7 +570,7 @@ function BetTrack({kind}){
 
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"12px",flexWrap:"wrap",gap:"10px"}}>
       <div style={{display:"flex",alignItems:"center",gap:"6px",flexWrap:"wrap"}}>
-        <span style={{fontSize:"14px",fontWeight:700,marginRight:"4px"}}>🗓 선정일별</span>
+        <span style={{fontSize:"14px",fontWeight:700,marginRight:"4px"}}>🗓 {K.watch?"매수일별":"선정일별"}</span>
         {fBtn("all","전체",rows.length)}{fBtn("win","익절",wins,"#22c55e")}{fBtn("loss","손절",losses,"#ef4444")}{fBtn("open","진행 중",openN,"#3b82f6")}
       </div>
       <div style={{position:"relative"}}><input value={q} onChange={e=>setQ(e.target.value)} placeholder={K.expandable?"종목·테마 검색":"종목 검색"} style={{background:"var(--inp-bg)",border:"1px solid var(--inp-bd)",borderRadius:"8px",padding:"9px 12px 9px 32px",color:"var(--text)",fontSize:"14px",width:200,outline:"none",fontFamily:"inherit"}}/><span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"var(--dim)",fontSize:"14px"}}>⌕</span></div>
@@ -596,7 +634,7 @@ function BetTrack({kind}){
 function TabStocks({cat,loading}){
   const[q,setQ]=useState("");const[hov,setHov]=useState(null);const[exp,setExp]=useState(null);
   const[view,setView]=useState("picks");
-  const[trk,setTrk]=useState(()=>{try{return localStorage.getItem("sp-track-kind")==="leader"?"leader":"oversold"}catch(e){return"oversold"}});
+  const[trk,setTrk]=useState(()=>{try{const k=localStorage.getItem("sp-track-kind");return BET_KINDS[k]?k:"oversold"}catch(e){return"oversold"}});
   const pickTrk=k=>{setTrk(k);try{localStorage.setItem("sp-track-kind",k)}catch(e){}};
   const viewToggle=<div style={{display:"inline-flex",gap:"4px",padding:"4px",background:"var(--hover)",borderRadius:"9px",marginBottom:"14px"}}>
     {[{id:"picks",l:"◆ 오늘의 재료 포착"},{id:"track",l:"📈 성과 추적"}].map(v=>
@@ -607,7 +645,7 @@ function TabStocks({cat,loading}){
     <h2 style={{fontSize:"20px",fontWeight:700,marginBottom:"14px"}}><span style={{color:BET_KINDS[trk].color}}>📈</span> {BET_KINDS[trk].title} <span style={{fontSize:"14px",color:"var(--dim)",fontWeight:400}}>{BET_KINDS[trk].sub}</span></h2>
     {viewToggle}
     <div style={{display:"flex",gap:"6px",marginBottom:"14px",flexWrap:"wrap"}}>
-      {[{id:"oversold",l:"▼ 과대 낙폭"},{id:"leader",l:"🔥 주도주"}].map(v=>{const on=trk===v.id,c=BET_KINDS[v.id].color;
+      {[{id:"oversold",l:"▼ 과대 낙폭"},{id:"leader",l:"🔥 주도주"},{id:"pullback",l:"📉 급등주 급락"}].map(v=>{const on=trk===v.id,c=BET_KINDS[v.id].color;
         return <button key={v.id} onClick={()=>pickTrk(v.id)} style={{padding:"8px 16px",fontFamily:"inherit",fontSize:"14px",fontWeight:700,border:"1px solid",borderColor:on?c:"var(--div2)",background:on?`${c}1a`:"transparent",color:on?c:"var(--muted)",borderRadius:"18px",cursor:"pointer"}}>{v.l}</button>})}
     </div>
     <BetTrack kind={trk}/>

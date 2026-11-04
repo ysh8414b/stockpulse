@@ -1697,6 +1697,16 @@
 - 확인: 가짜 데이터로 10일선 아래 매도(+15% → 익절, -5% → 손절), 위면 보유, 종가 부족 시 보유, 과대 낙폭 +10/-10 그대로. 화면 문구·10일선 표시 확인
 - 한계: daily_prices는 시총 3000억+ 종목만 저장 — 시총이 그 아래로 떨어지면 10일선을 못 구해 계속 보유로 남을 수 있음. 편입 다음 거래일부터 판단(편입일엔 매도 없음)
 
+### 성과 추적에 📉 급등주 급락 추가 (2026-11-04)
+- 사용자 요청: +10% 이상 · 거래대금 3,000억 이상 터진 종목이 이후 20거래일 안에 그 급등일 **시가보다 아래로** 내려오면 매수 시작, 익절·손절 각 10%
+- **`setup_pullback_track.sql`** (신규, 1회 실행): `pullback_track` — 급등일 스냅샷(signal_date·signal_open(급등일 시가)·signal_close·signal_change·trading_value·market_cap·rank) + watch_days + 진입(pick_date·entry_price, 감시 중엔 NULL) + 기존 추적·마감 컬럼. status = watch(감시) | open(보유) | closed(마감) | expired(20거래일 동안 진입 없음). UNIQUE(signal_date, code), RLS anon SELECT만
+- **crawl.py** (close 모드, 상수 `PULLBACK_*`): ① `update_pullback_track` — 보유 종목 공통 `_update_bet_track`(+10 / -10) ② `update_pullback_watch` — 감시 종목(last_date≠오늘)의 오늘 종가 < 급등일 시가면 그 종가에 매수(status open, 다음 거래일부터 익절·손절 판정), 아니면 watch_days+1, 20일째에도 안 내려오면 expired ③ `seed_pullback_signals` — 오늘 조건 충족 종목(ETF 제외, 거래대금 순)을 감시 등록. 시가는 krx_data에 없어 `_fetch_naver_today_open`(네이버 일봉 차트 오늘 봉 시가)로 조회, 실패하면 등록 제외. 이미 감시·보유 중인 종목은 새 신호로 다시 등록 안 함. 오늘분 watch 행 DELETE 후 INSERT(16:00 재실행 안전). 실패해도 크롤링 계속. 365일(signal_date) 초과 정리
+- 카카오톡: 매수 진입 종목 묶음 알림(`notify_track_kakao(..., pullback_new)`), 마감은 기존 매도 알림에 `[급등주 급락]`으로 포함. 감시 등록 자체는 알림 안 함
+- **index.html**: `BET_KINDS.pullback`(보라 `#a855f7`, `watch:true`) + 전환 버튼 `📉 급등주 급락`. 위에 `PullbackWatch` 카드(감시 중 종목: 급등일·등락률·급등일 시가·최근 종가·시가까지 남은 %·남은 일 + 만료 건수), 아래는 기존 성과 표(open·closed만, 날짜 = 매수일, 부가정보에 급등일·시가·며칠째 진입)
+- 확인: 가짜 DB로 진입·만료·감시 계속·중복 신호 제외 확인, 삼성전자 오늘 시가 조회 확인, JSX 컴파일 확인. 실제 크롤링·화면 미확인
+- 한계: 종가 기준만(장중 시가 아래로 잠깐 내려간 건 진입 아님). 급등일 당일은 판정 안 함(다음 거래일부터). 감시 기간에 같은 종목이 다시 +10% 터져도 새 신호로 안 잡음
+- 이름 변경 (같은 날): 사용자 요청으로 '주도주 급락' → '급등주 급락' (화면·로그·카카오 문구, 테이블명 pullback_track은 그대로)
+
 ### 성과 추적 카카오톡 알림 (나에게 보내기) (2026-11-02)
 - 사용자 요청: 성과 추적에 종목이 포착되면 알림. 텔레그램과 비교 후 사용자가 **카카오톡**(본인만 받는 "나에게 보내기", 무료) 선택
 - **`setup_kakao.sql`** (신규, 1회 실행): `app_secrets(key PK, value, updated_at)` — RLS ON + 정책 없음 + anon/authenticated 권한 회수 → service role(크롤러)만 접근. 카카오 refresh token 보관용 (쓸 때마다 새로 바뀔 수 있어 GitHub Secrets 대신 DB)
@@ -2075,7 +2085,7 @@
 - 테마 순위가 장 마감 후에도 변동됨 (뉴스 갱신 때문)
 - 과대 낙폭 탭은 평일 15:00(장중, 현재 시세 기준) + close 모드(15:35/16:00, 확정 종가)에 갱신됨. 그 외 시간대에는 마지막 갱신 데이터 표시
 - 재료 포착 탭은 close 모드(15:35/16:00) 하루 1회만 산출됨. 장중에는 전 거래일 데이터가 표시되며, `DART_API_KEY` 미설정 시 공시 원출처 없이 뉴스 추정으로만 동작
-- 성과 추적은 2026-11-02부터 과대 낙폭(`oversold_track`) + 주도주(`leader_track`) 두 가지 기준 — `setup_oversold_track.sql` 실행 이후 선정분부터만 쌓임. 재료 포착 추적(`catalyst_track`)은 중단(기존 기록만 남음)
+- 성과 추적은 과대 낙폭(`oversold_track`) + 주도주(`leader_track`) + 급등주 급락(`pullback_track`, 2026-11-04) 세 가지 기준 — `setup_oversold_track.sql` 실행 이후 선정분부터만 쌓임. 재료 포착 추적(`catalyst_track`)은 중단(기존 기록만 남음)
 - GitHub Actions 크롤링 워크플로(crawl.yml)가 비활성화(disabled_inactivity)되면 데이터가 쌓이지 않음 — Actions 탭에서 다시 Enable 필요
 
 ## 개발 서버
