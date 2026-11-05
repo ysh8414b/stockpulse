@@ -42,6 +42,7 @@ jobs:
           path: |
             surge_cache
             sector_map.json
+            naver_theme_map.json
           key: surge-cache-${{ github.run_id }}
           restore-keys: |
             surge-cache-

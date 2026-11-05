@@ -44,6 +44,7 @@ jobs:
         with:
           path: |
             theme_stock_map.json
+            naver_theme_map.json
             ai_themes_cache.json
             sector_map.json
             new_theme_cache.json

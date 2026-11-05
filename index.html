@@ -1077,19 +1077,26 @@ function SurgeDetail({r,metrics}){
   </div>;
 }
 
-// 좋은 조건 3가지 (과거 52주 신고가 급등 시험에서 두 기간 모두 20일 뒤 수익이 좋았던 것)
+// 좋은 조건 4가지 (과거 52주 신고가 급등 시험에서 두 기간 모두 결과가 좋았던 것)
+// 예전에 저장된 날짜는 3가지(max 없음)
+const surgeEok=n=>{const v=Number(n)||0;return `${v>0?"+":""}${v.toLocaleString()}억`};
 const surgeQualityItems=q=>q?[
   ["near_high","종가가 그날 고가 근처",q.close_pos!=null?`하루 범위의 위쪽 ${Math.round(q.close_pos*100)}% 지점 마감`:"고가·저가 정보 없음"],
   ["not_hot","시장 과열 아님",`그날 급등 종목 ${q.heat}개 (15개 이상이면 과열)`],
   ["idx_ok","코스피 하락일 아님",`코스피 ${q.kospi>0?"+":""}${Number(q.kospi).toFixed(2)}%`],
+  ...(q.max>=4?[["foreign_buy","외국인 순매수",q.flow_known?`외국인 ${surgeEok(q.foreign_net)} · 기관 ${surgeEok(q.institution_net)}`:"그날 자료 아직 없음 (나오면 자동 반영)"]]:[]),
+  ...(q.max>=5?[["theme_together","테마 동반 상승",q.theme_peers>0?`${q.theme_name} · 함께 +5% ${q.theme_peers}종목${(q.theme_peer_names||[]).length?` (${q.theme_peer_names.slice(0,3).join(", ")})`:""}${q.theme_lead?" · 테마 1등":""}`:"같은 테마에서 함께 +5% 오른 종목 없음 (3종목 이상이면 ✓)"]]:[]),
 ]:[];
+const surgeQMark=(q,k)=>k==="foreign_buy"&&!q.flow_known?"⏳":q[k]?"✓":"✗";
 function SurgeQualityBadge({q}){
-  if(!q)return null;const n=q.score;const col=n>=3?"#16a34a":n===2?"#0e7490":"#6b7280";
-  return <span title={surgeQualityItems(q).map(([k,t,d])=>`${q[k]?"✓":"✗"} ${t} — ${d}`).join("\n")} style={{fontSize:"12px",padding:"1px 8px",borderRadius:"10px",border:`1px solid ${col}66`,color:col,fontWeight:700}}>⭐ 좋은 조건 {n}/3</span>;
+  if(!q)return null;const n=q.score;const mx=q.max||3;const col=n>=mx?"#16a34a":n>=mx-1?"#0e7490":"#6b7280";
+  return <><span title={surgeQualityItems(q).map(([k,t,d])=>`${surgeQMark(q,k)} ${t} — ${d}`).join("\n")} style={{fontSize:"12px",padding:"1px 8px",borderRadius:"10px",border:`1px solid ${col}66`,color:col,fontWeight:700}}>⭐ 좋은 조건 {n}/{mx}{mx>=4&&!q.flow_known?" · 수급 대기":""}</span>
+    {q.theme_lead&&<span title={`${q.theme_name} 테마에서 그날 가장 많이 오른 종목 (함께 +5% ${q.theme_peers}종목) — 과거 52주 신고가 급등에서 테마 대장은 20일 뒤 오른 비율 50~51%로 후발(41~46%)보다 나았음`} style={{fontSize:"12px",padding:"1px 8px",borderRadius:"10px",background:"rgba(234,179,8,.15)",color:"#ca8a04",fontWeight:700}}>👑 테마 대장</span>}
+    {q.retail_only&&<span title="외국인·기관이 둘 다 팔고 개인만 산 날 — 과거 52주 신고가 급등에서 5일 뒤 오른 비율이 38~39%로 가장 낮았음" style={{fontSize:"12px",padding:"1px 8px",borderRadius:"10px",background:"rgba(220,38,38,.12)",color:"#dc2626",fontWeight:700}}>⚠ 개인만 매수</span>}</>;
 }
 function SurgeQualityList({q}){
   if(!q)return null;
-  return <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"8px"}}>{surgeQualityItems(q).map(([k,t,d])=><span key={k} style={{fontSize:"12px",padding:"3px 9px",borderRadius:"8px",background:q[k]?"rgba(22,163,74,.12)":"rgba(107,114,128,.12)",color:q[k]?"#16a34a":"var(--dim)"}}>{q[k]?"✓":"✗"} {t} <span style={{opacity:.75}}>· {d}</span></span>)}</div>;
+  return <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"8px"}}>{surgeQualityItems(q).map(([k,t,d])=><span key={k} style={{fontSize:"12px",padding:"3px 9px",borderRadius:"8px",background:q[k]?"rgba(22,163,74,.12)":"rgba(107,114,128,.12)",color:q[k]?"#16a34a":"var(--dim)"}}>{surgeQMark(q,k)} {t} <span style={{opacity:.75}}>· {d}</span></span>)}</div>;
 }
 // 화면에 뜨는 종목은 52주 신고가 급등 → 그 사례만 따로 잰 성적을 우선 사용
 const surgeHz=m=>{const nh=m?.horizons_nh;return nh&&Object.keys(nh).length?nh:(m?.horizons||{})};
@@ -1152,7 +1159,7 @@ function TabSurge(){
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",flexWrap:"wrap",gap:"10px",marginBottom:"16px"}}>
       <div>
         <h2 style={{fontSize:"22px",fontWeight:700,marginBottom:"4px"}}><span style={{color:"#f59e0b"}}>▲</span> 급등 종목 AI</h2>
-        <p style={{color:"var(--muted)",fontSize:"15px",lineHeight:1.6}}>하루 <b>+5% 이상</b> 오르고 <b>거래대금 1,000억 이상</b> 터지며 <b>52주 신고가</b>로 마감한 종목 중 <b>좋은 조건</b>(종가 고가 근처 · 시장 과열 아님 · 코스피 하락일 아님)을 많이 만족한 순, 같으면 거래대금 순으로 최대 10개 — 상승 원인을 시황·차트로 나누고, 과거 급등 수천 건을 학습한 딥러닝 모델이 이후 흐름을 확률로 예측합니다.</p>
+        <p style={{color:"var(--muted)",fontSize:"15px",lineHeight:1.6}}>하루 <b>+5% 이상</b> 오르고 <b>거래대금 1,000억 이상</b> 터지며 <b>52주 신고가</b>로 마감한 종목 중 <b>좋은 조건</b>(종가 고가 근처 · 시장 과열 아님 · 코스피 하락일 아님 · 외국인 순매수 · 테마 동반 상승)을 많이 만족한 순, 같으면 거래대금 순으로 최대 10개 — 상승 원인을 시황·차트로 나누고, 과거 급등 수천 건을 학습한 딥러닝 모델이 이후 흐름을 확률로 예측합니다.</p>
       </div>
       {dates.length>0&&<div style={{display:"flex",alignItems:"center",gap:"6px"}}>
         <button onClick={()=>{const i=dates.indexOf(date);if(i<dates.length-1)setDate(dates[i+1])}} disabled={dates.indexOf(date)>=dates.length-1} style={{padding:"6px 10px",borderRadius:"8px",border:"1px solid var(--card-bd)",background:"var(--card-bg)",color:"var(--text)",cursor:"pointer"}}>‹</button>

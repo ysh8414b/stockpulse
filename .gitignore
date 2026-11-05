@@ -3,6 +3,7 @@ kis_token.json
 __pycache__/
 *.pyc
 theme_stock_map.json
+naver_theme_map.json
 ai_themes_cache.json
 .claude/worktrees/
 surge_cache/

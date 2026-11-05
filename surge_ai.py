@@ -730,6 +730,34 @@ JSON으로만 답하라: {{"stocks":[{{"code":"6자리","comment":"3~4문장"}}]
 # ═════════════════════════════════════════
 # 6. 성과 추적
 # ═════════════════════════════════════════
+def backfill_flow(dry):
+    """최근 7일 선정 종목 중 외국인·기관 자료가 늦게 나온 것을 채움 (순위는 그대로, 좋은 조건 점수·뱃지만 갱신)"""
+    if dry:
+        return
+    since = (datetime.now(KST) - timedelta(days=7)).strftime("%Y-%m-%d")
+    rows = crawl.supabase_request("GET", "surge_stocks", params={
+        "select": "id,date,code,price,market_ctx", "date": f"gte.{since}", "limit": "200"}) or []
+    n = 0
+    for r in rows:
+        ctx = r.get("market_ctx") or {}
+        q = ctx.get("quality")
+        if not q or q.get("flow_known") or "max" not in q:
+            continue
+        flow = fetch_flow_on(r["code"], int(r["date"].replace("-", "")), float(r.get("price") or 0))
+        if not flow:
+            continue
+        q.update({"flow_known": True, "foreign_buy": flow["foreign_qty"] > 0,
+                  "retail_only": flow["foreign_qty"] <= 0 and flow["institution_qty"] <= 0,
+                  "foreign_net": flow["foreign_net"], "institution_net": flow["institution_net"]})
+        q["score"] = (int(q.get("near_high")) + int(q.get("not_hot")) + int(q.get("idx_ok")) + int(q["foreign_buy"])
+                      + int(bool(q.get("theme_together"))))
+        ctx["quality"] = q
+        crawl.supabase_request("PATCH", "surge_stocks", data={"flow": flow, "market_ctx": ctx}, params={"id": f"eq.{r['id']}"})
+        n += 1
+    if n:
+        log(f"  🔁 늦게 나온 외국인·기관 자료 {n}건 채움")
+
+
 def update_realized(cache, dry):
     since = (datetime.now(KST) - timedelta(days=50)).strftime("%Y-%m-%d")
     rows = crawl.supabase_request("GET", "surge_stocks", params={
@@ -772,10 +800,59 @@ def prev_high(arr, day, n, min_n=PICK_HIGH_MIN_BARS):
 QUALITY_HOT = 15        # 그날 급등 종목이 이만큼 이상이면 시장 과열
 QUALITY_POS = 0.8       # 종가가 그날 (고가-저가) 범위의 위쪽 20% 안
 QUALITY_IDX = -0.5      # 코스피 등락률(%)이 이보다 낮으면 하락일
+QUALITY_THEME_PEERS = 3      # 같은 테마에서 함께 +5% 오른 종목이 이만큼 이상이면 '테마 동반'
+QUALITY_THEME_MAX_SIZE = 50  # 너무 넓은 테마(자동차부품·2차전지 등 50종목 초과)는 아무 종목이나 엮여서 제외
+QUALITY_THEME_SKIP = ("밸류업", "지주사")
 
 
-def pick_quality(arr, day, price, heat, kospi_pct):
-    """좋은 조건 3가지 만족 여부: 종가가 고가 근처 / 시장 과열 아님 / 코스피 하락일 아님"""
+def theme_together(code, krx, themes_raw):
+    """네이버 테마 기준: 같은 테마(50종목 이하)에서 그날 +5% 오른 시총 3,000억+ 다른 종목 수가 가장 많은 테마.
+    반환 {name, peers, lead(그 테마에서 가장 많이 오름), peer_names}"""
+    me = krx.get(code) or {}
+    my_chg = me.get("change_pct", 0)
+    best = {"name": "", "peers": 0, "lead": False, "peer_names": []}
+    for name, codes in (themes_raw or {}).items():
+        if code not in codes or len(codes) > QUALITY_THEME_MAX_SIZE or any(k in name for k in QUALITY_THEME_SKIP):
+            continue
+        peers = [krx[c] for c in codes if c != code and c in krx and krx[c].get("market_cap", 0) >= UNIVERSE_MIN_CAP]
+        up = sorted([p for p in peers if p.get("change_pct", 0) >= PICK_MIN_CHANGE], key=lambda p: -p["change_pct"])
+        if len(up) > best["peers"]:
+            best = {"name": name, "peers": len(up), "lead": all(p.get("change_pct", 0) <= my_chg for p in peers),
+                    "peer_names": [p["name"] for p in up[:5]]}
+    return best
+
+
+def fetch_flow_on(code, day, price):
+    """그 거래일(day, YYYYMMDD int)의 외국인·기관·개인 순매수 (억원). 그날 자료가 없으면 None"""
+    nxt = (datetime.strptime(str(day), "%Y%m%d") + timedelta(days=1)).strftime("%Y%m%d")
+    for _ in range(2):
+        try:
+            r = requests.get(f"https://m.stock.naver.com/api/stock/{code}/trend",
+                             params={"pageSize": 1, "bizdate": nxt}, headers=crawl.NAVER_STOCK_HEADERS, timeout=10)
+            if r.status_code != 200:
+                continue
+            rows = r.json() or []
+            if not rows or str(rows[0].get("bizdate")) != str(day):
+                return None
+            x = rows[0]
+            num = lambda v: int(str(v or "0").replace(",", "").replace("+", "") or 0)
+            fq, oq, iq = num(x.get("foreignerPureBuyQuant")), num(x.get("organPureBuyQuant")), num(x.get("individualPureBuyQuant"))
+            px = num(x.get("closePrice")) or price
+            try:
+                hold = float(str(x.get("foreignerHoldRatio", "0")).replace("%", "").replace(",", ""))
+            except ValueError:
+                hold = 0.0
+            return {"foreign_net": round(fq * px / 1e8), "institution_net": round(oq * px / 1e8),
+                    "individual_net": round(iq * px / 1e8), "foreign_ratio": hold,
+                    "foreign_qty": fq, "institution_qty": oq, "date": str(day)}
+        except Exception:
+            time.sleep(1)
+    return None
+
+
+def pick_quality(arr, day, price, heat, kospi_pct, flow=None, theme=None):
+    """좋은 조건 4가지 만족 여부: 종가가 고가 근처 / 시장 과열 아님 / 코스피 하락일 아님 / 외국인 순매수
+    + 경고: 외국인·기관 둘 다 순매도(개인만 매수)"""
     pos = None
     if arr is not None and len(arr):
         i = np.where(arr[:, 0] == day)[0]
@@ -785,8 +862,19 @@ def pick_quality(arr, day, price, heat, kospi_pct):
                 pos = (price - l) / (h - l)
     q = {"near_high": pos is not None and pos >= QUALITY_POS, "close_pos": None if pos is None else round(pos, 3),
          "not_hot": heat < QUALITY_HOT, "heat": int(heat),
-         "idx_ok": kospi_pct > QUALITY_IDX, "kospi": kospi_pct}
-    q["score"] = int(q["near_high"]) + int(q["not_hot"]) + int(q["idx_ok"])
+         "idx_ok": kospi_pct > QUALITY_IDX, "kospi": kospi_pct,
+         "flow_known": flow is not None,
+         "foreign_buy": bool(flow and flow["foreign_qty"] > 0),
+         "retail_only": bool(flow and flow["foreign_qty"] <= 0 and flow["institution_qty"] <= 0),
+         "foreign_net": flow["foreign_net"] if flow else None,
+         "institution_net": flow["institution_net"] if flow else None,
+         "theme_together": bool(theme and theme["peers"] >= QUALITY_THEME_PEERS),
+         "theme_lead": bool(theme and theme["peers"] >= QUALITY_THEME_PEERS and theme["lead"]),
+         "theme_name": (theme or {}).get("name", ""), "theme_peers": (theme or {}).get("peers", 0),
+         "theme_peer_names": (theme or {}).get("peer_names", [])}
+    q["score"] = (int(q["near_high"]) + int(q["not_hot"]) + int(q["idx_ok"]) + int(q["foreign_buy"])
+                  + int(q["theme_together"]))
+    q["max"] = 5
     return q
 
 
@@ -868,6 +956,10 @@ def main():
     TODAY_INT = trade_int
     TODAY = f"{str(trade_int)[:4]}-{str(trade_int)[4:6]}-{str(trade_int)[6:]}"
     log(f"  📅 기준 거래일 {TODAY}")
+    try:
+        backfill_flow(dry)
+    except Exception as e:
+        log(f"  ⚠️ 외국인·기관 자료 채우기 실패: {e}")
     if not (args.force or dry):
         done = crawl.supabase_request("GET", "surge_stocks", params={"select": "id", "date": f"eq.{TODAY}", "limit": "1"})
         if done:
@@ -908,11 +1000,27 @@ def main():
 
     # 좋은 조건 (과거 시험에서 두 기간 모두 20일 뒤 수익이 좋았던 것) → 많이 만족한 종목을 위로
     heat = len(cands)   # 그날 +5% · 거래대금 기준 넘은 종목 수
+    try:
+        themes_raw = crawl.fetch_naver_themes()
+    except Exception as e:
+        log(f"  ⚠️ 네이버 테마 실패: {e}"); themes_raw = None
+    if not themes_raw:
+        log("  ⚠️ 네이버 테마 없음 — 테마 동반 조건은 불만족으로 처리")
+    elif trade_int != real_today:
+        log("  ℹ️ 지난 날짜 계산: 테마 동반은 그날 일봉 등락률 기준 (시총 3,000억+ 종목만)")
     for p in picks:
-        p["quality"] = pick_quality(cache.get(p["code"]), trade_int, p["price"], heat, idx_today["KOSPI"])
-    picks.sort(key=lambda d: (-d["quality"]["score"], -d["trading_value"]))
+        p["flow"] = fetch_flow_on(p["code"], trade_int, p["price"])
+        p["theme"] = theme_together(p["code"], krx, themes_raw)
+        p["quality"] = pick_quality(cache.get(p["code"]), trade_int, p["price"], heat, idx_today["KOSPI"],
+                                    p["flow"], p["theme"])
+    # 만족 개수 많은 순 → 같으면 '개인만 매수'는 뒤로 → 거래대금 순
+    picks.sort(key=lambda d: (-d["quality"]["score"], d["quality"]["retail_only"], -d["trading_value"]))
     picks = picks[:PICK_TOP]
-    log("  ⭐ 좋은 조건 순: " + ", ".join(f"{p['name']}({p['quality']['score']}/3)" for p in picks))
+    nf = sum(1 for p in picks if p["flow"] is None)
+    if nf:
+        log(f"  ⏳ 그날 외국인·기관 자료가 아직 없음 {nf}개 — 다음 실행 때 채움 (지금은 외국인 조건 제외하고 순위)")
+    log("  ⭐ 좋은 조건 순: " + ", ".join(
+        f"{p['name']}({p['quality']['score']}/5{' 👑' if p['quality']['theme_lead'] else ''}{' ⚠개인만' if p['quality']['retail_only'] else ''})" for p in picks))
 
     # 지난 선정 종목 실제 수익률
     update_realized(cache, dry)
@@ -959,7 +1067,7 @@ def main():
             pr = float(p["price"])
             arr = np.vstack([arr, [TODAY_INT, pr, pr, pr, pr, float(p.get("volume", 0))]])
         news = crawl.fetch_stock_news(p["name"], max_count=5)
-        flow = crawl.fetch_investor_trend(code, p["price"])
+        flow = p.get("flow")
         causes, ctags, th, sec_info, stype, main_cause = analyze_causes(
             p, arr, krx, idx_today, stock_themes, members, dart.get(code, []), news, flow)
         vol_ratio = 0

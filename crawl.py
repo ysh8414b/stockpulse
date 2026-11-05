@@ -1352,6 +1352,127 @@ def build_theme_stock_map(krx_data):
 
 
 # ─────────────────────────────────────────
+# 네이버 증권 테마 (인기 테마 탭·주도주·급등 AI 공통 기준)
+# ─────────────────────────────────────────
+# 하루 1번 네이버 테마 목록(약 260개)과 테마별 종목을 받아 저장.
+# 네이버가 종목을 넣고 빼면 다음 날 첫 크롤링에서 자동 반영.
+NAVER_THEME_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "naver_theme_map.json")
+NAVER_THEME_API = "https://m.stock.naver.com/api/stocks/theme"
+NAVER_THEME_MIN_COUNT = 100        # 이보다 적게 받으면 실패로 보고 저장본 사용
+NAVER_THEME_ACTIVE = False         # 이번 실행에서 theme_map이 네이버 테마인지 (뉴스 점수 방식 선택용)
+
+
+def _fetch_naver_theme_members(no):
+    codes, page = [], 1
+    while page <= 10:
+        r = requests.get(f"{NAVER_THEME_API}/{no}", params={"page": page, "pageSize": 100},
+                         headers=NAVER_STOCK_HEADERS, timeout=10)
+        if r.status_code != 200:
+            return None
+        st = (r.json() or {}).get("stocks") or []
+        codes += [s.get("itemCode") for s in st if s.get("itemCode")]
+        if len(st) < 100:
+            break
+        page += 1
+    return codes
+
+
+def fetch_naver_themes(force=False):
+    """네이버 테마 {테마명: [종목코드...]} (전 종목, 시총 컷 없음). 오늘 받은 저장본이 있으면 그대로."""
+    cached = None
+    if os.path.exists(NAVER_THEME_FILE):
+        try:
+            with open(NAVER_THEME_FILE, "r", encoding="utf-8") as f:
+                cached = json.load(f)
+        except Exception:
+            cached = None
+    if cached and cached.get("date") == TODAY and cached.get("themes") and not force:
+        return cached["themes"]
+
+    log("  🌐 네이버 테마 목록 받는 중...")
+    groups = []
+    try:
+        for page in range(1, 6):
+            r = requests.get(NAVER_THEME_API, params={"page": page, "pageSize": 100},
+                             headers=NAVER_STOCK_HEADERS, timeout=10)
+            g = (r.json() or {}).get("groups") or [] if r.status_code == 200 else []
+            groups += g
+            if len(g) < 100:
+                break
+    except Exception as e:
+        log(f"  ⚠️ 네이버 테마 목록 실패: {e}")
+
+    themes = {}
+    if groups:
+        from concurrent.futures import ThreadPoolExecutor
+        def one(g):
+            try:
+                return g.get("name", "").strip(), _fetch_naver_theme_members(g.get("no"))
+            except Exception:
+                return g.get("name", "").strip(), None
+        with ThreadPoolExecutor(5) as ex:
+            for name, codes in ex.map(one, groups):
+                if name and codes:
+                    themes[name] = list(dict.fromkeys(codes))
+
+    if len(themes) < NAVER_THEME_MIN_COUNT:
+        if cached and cached.get("themes"):
+            log(f"  ⚠️ 네이버 테마 {len(themes)}개만 받음 → 저장본({cached.get('date')}) 사용")
+            return cached["themes"]
+        log(f"  ⚠️ 네이버 테마 {len(themes)}개만 받음, 저장본도 없음")
+        return themes or None
+
+    # 바뀐 점 기록 (로그)
+    if cached and cached.get("themes"):
+        old = cached["themes"]
+        added = [t for t in themes if t not in old]
+        gone = [t for t in old if t not in themes]
+        moved = sum(len(set(themes[t]) ^ set(old[t])) for t in themes if t in old)
+        log(f"  🔄 네이버 테마 변경: 새 테마 {len(added)}개 · 없어진 테마 {len(gone)}개 · 종목 편입/편출 {moved}건"
+            + (f" (새: {', '.join(added[:5])})" if added else ""))
+    try:
+        with open(NAVER_THEME_FILE, "w", encoding="utf-8") as f:
+            json.dump({"date": TODAY, "themes": themes}, f, ensure_ascii=False)
+    except Exception as e:
+        log(f"  ⚠️ 네이버 테마 저장 실패: {e}")
+    log(f"  ✅ 네이버 테마 {len(themes)}개 · 평균 {sum(map(len, themes.values())) / len(themes):.0f}종목")
+    return themes
+
+
+def build_naver_theme_map(krx_data, min_cap=300_000_000_000):
+    """네이버 테마 → theme_map 형식 {테마명: [{code,name,market}]} (시총 컷, 시총 큰 순). 실패하면 None"""
+    raw = fetch_naver_themes()
+    if not raw:
+        return None
+    out = {}
+    for name, codes in raw.items():
+        rows = []
+        for c in codes:
+            d = krx_data.get(c)
+            if not d or d.get("market_cap", 0) < min_cap or is_etf_etn(d.get("name", "")):
+                continue
+            rows.append({"code": c, "name": d.get("name", ""), "market": d.get("market", ""),
+                         "_cap": d.get("market_cap", 0)})
+        if len(rows) >= 2:
+            rows.sort(key=lambda x: -x["_cap"])
+            out[name] = [{k: v for k, v in r.items() if k != "_cap"} for r in rows]
+    return out or None
+
+
+_THEME_STOP = {"관련", "관련주", "등", "기타", "테마", "산업", "사업", "종목", "및", "외"}
+
+
+def naver_theme_keywords(name):
+    """네이버 테마명에서 뉴스 매칭용 단어 (+ 기존 키워드 사전에서 이름이 겹치는 테마의 키워드)"""
+    toks = [t for t in re.split(r"[\s/(),·\-\[\]&+]+", name) if len(t) >= 2 and t not in _THEME_STOP]
+    kws = set(toks)
+    for old, words in NEWS_THEME_KEYWORDS.items():
+        if len(old) >= 2 and old in name:
+            kws.update(words)
+    return [k for k in kws if len(k) >= 2]
+
+
+# ─────────────────────────────────────────
 # 규칙 기반 테마 감지 (뉴스 키워드 매칭)
 # ─────────────────────────────────────────
 # 뉴스 헤드라인 → 테마 매칭 키워드
@@ -1539,7 +1660,13 @@ def detect_themes_rule_based(news_titles, theme_map=None, krx_data=None):
 
     # theme_map에 존재하는 테마만 필터 (유사 이름 매칭 포함)
     valid_scores = {}
-    for theme, score in theme_scores.items():
+    if NAVER_THEME_ACTIVE:
+        # 네이버 테마: 테마명 단어 + 겹치는 기존 키워드로 헤드라인을 직접 셈
+        for map_key in theme_map:
+            kws = naver_theme_keywords(map_key)
+            if kws:
+                valid_scores[map_key] = sum(1 for t in news_titles if any(k in t for k in kws))
+    for theme, score in ({} if NAVER_THEME_ACTIVE else theme_scores).items():
         if theme in theme_map:
             valid_scores[theme] = valid_scores.get(theme, 0) + score
         else:
@@ -1586,7 +1713,28 @@ def detect_themes_rule_based(news_titles, theme_map=None, krx_data=None):
         combined_scores.items(),
         key=lambda x: (x[1], len(theme_map.get(x[0], []))),
         reverse=True,
-    )[:10]
+    )
+    if NAVER_THEME_ACTIVE:
+        # 네이버 테마는 비슷한 테마가 많음(반도체 대표주/장비/재료/HBM…) →
+        # 대표 종목 5개 중 절반 이상이 이미 고른 테마와 겹치면 건너뜀
+        # + 이름 첫 단어가 같은 테마(반도체 대표주/반도체 장비/반도체 기판…)는 2개까지만
+        picked, seen, fam = [], [], {}
+        for name, sc in sorted_themes:
+            top5 = {(s["code"] if isinstance(s, dict) else s) for s in theme_map.get(name, [])[:5]}
+            if len(theme_map.get(name, [])) < 3:
+                continue
+            if any(len(top5 & prev) >= max(1, len(top5) // 2 + 1) for prev in seen):
+                continue
+            f0 = re.split(r"[\s/(]", name)[0]
+            if fam.get(f0, 0) >= 2:
+                continue
+            fam[f0] = fam.get(f0, 0) + 1
+            picked.append((name, sc)); seen.append(top5)
+            if len(picked) >= 10:
+                break
+        sorted_themes = picked
+    else:
+        sorted_themes = sorted_themes[:10]
 
     result = []
     for theme_name, score in sorted_themes:
@@ -4982,7 +5130,23 @@ def main():
     sector_stocks = crawl_sector_stocks(krx_data)
 
     # 8. 테마-종목 매핑 DB 구축 (기업개요 기반, 하루 1회 캐싱)
+    #    (종목 태그용 짧은 분류 stock_themes는 계속 이 방식)
     theme_map, stock_themes = build_theme_stock_map(krx_data)
+
+    # 8-1. 인기 테마·전체 테마·주도주는 네이버 테마 기준 (하루 1번 갱신, 편입/편출 자동 반영)
+    #      네이버를 못 받으면 저장본 → 없으면 위 기업개요 기반 theme_map 그대로
+    global NAVER_THEME_ACTIVE
+    try:
+        naver_map = build_naver_theme_map(krx_data)
+    except Exception as e:
+        log(f"  ⚠️ 네이버 테마 사용 실패: {e}")
+        naver_map = None
+    if naver_map:
+        theme_map = naver_map
+        NAVER_THEME_ACTIVE = True
+        log(f"  🏷️ 테마 기준: 네이버 테마 {len(theme_map)}개")
+    else:
+        log("  🏷️ 테마 기준: 기업개요 키워드 (네이버 테마 없음)")
 
     # 9. 테마 (AI 핫테마 선정 + 매핑 DB 종목 조회)
     news_titles = [n["title"] for n in news]
