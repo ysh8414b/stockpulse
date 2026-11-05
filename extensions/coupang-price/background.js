@@ -40,7 +40,8 @@ function extractCoupangPrice() {
   for (const s of document.querySelectorAll('script[type="application/ld+json"]')) { try { walk(JSON.parse(s.textContent)); } catch (e) {} }
   const curItem = itemId || skuItem;   // 링크에 itemId가 없으면 페이지가 보여 주는 옵션
   if (curItem) {
-    const re = new RegExp('\\\\*"itemId\\\\*":' + curItem + '[\\s\\S]{0,800}?\\\\*"soldOut\\\\*":(true|false)');
+    // 다른 옵션("itemId":…)을 넘어가 그 옵션의 soldOut을 읽지 않도록 막음
+    const re = new RegExp('\\\\*"itemId\\\\*":' + curItem + '\\D(?:(?!\\\\*"itemId\\\\*":)[\\s\\S]){0,800}?\\\\*"soldOut\\\\*":(true|false)');
     for (const s of document.scripts) { const m = (s.textContent || "").match(re); if (m) { soldOut = m[1] === "true"; break; } }
   }
   if (soldOut == null) {
@@ -49,7 +50,10 @@ function extractCoupangPrice() {
   }
   // 구매 버튼 글씨 (추천 상품 칸은 제외)
   const buyText = [...document.querySelectorAll(".prod-buy-footer, .prod-buy-btn")].map((e) => e.innerText || "").join(" ");
-  if (soldOut == null && /일시\s*품절|품절(?!\s*임박)|구매\s*불가/.test(buyText)) soldOut = true;
+  const buySoldOut = /일시\s*품절|품절(?!\s*임박)|구매\s*불가/.test(buyText);
+  if (soldOut == null && buySoldOut) soldOut = true;
+  // 구매 버튼이 살아 있으면(품절 글씨 없음) 판매 중 — 페이지 데이터만 보고 품절로 잘못 잡는 것 방지
+  if (soldOut === true && !buySoldOut && /바로\s*구매|구매하기|장바구니/.test(buyText)) soldOut = false;
   // 품절임박 N개
   const lm = ((document.querySelector(".product-buy-header") || document.body).innerText || "").match(/품절\s*임박\s*[•·]?\s*(\d+)\s*개/);
   const stockLeft = soldOut ? 0 : lm ? Number(lm[1]) : null;
@@ -65,10 +69,19 @@ function extractCoupangPrice() {
     if (m) { dataSales = Number(m[1]); break; }
   }
 
+  // 글씨로 읽기: "15,900원 (100g당 …) 쿠팡판매가" / "14,890원 (…) 와우할인" — 칸 이름이 바뀌어도 동작
+  const ptext = ((box !== document ? box : document.body) || {}).innerText || "";
+  const byLabel = (label) => {
+    const m = ptext.replace(/\s+/g, " ").match(new RegExp("(\\d{1,3}(?:,\\d{3})+|\\d+)\\s*원(?:\\s*\\([^)]*\\))?\\s*" + label));
+    return m ? Number(m[1].replace(/,/g, "")) : null;
+  };
+  const textSales = byLabel("쿠팡\\s*판매가");
+  const textWow = byLabel("와우\\s*할인");
+
   return {
     blocked,
     soldOut, stockLeft,
-    dataSales,
+    dataSales, textSales, textWow,
     isProduct: /\/v[pm]\/products\/\d+/.test(location.pathname),
     sales: pick(".sales-price-amount"),
     final: pick(".final-price-amount"),
@@ -104,8 +117,9 @@ async function readPrice(url) {
         r = { error: "페이지를 읽지 못했습니다 (" + String(err && err.message || err).slice(0, 80) + ")" };
       }
       // 쿠팡판매가 칸이 와우할인 칸보다 늦게 그려질 수 있어, 최종가만 보이면 3초까지 더 기다림
-      if (r && (r.blocked || r.error || r.sales != null || r.soldOut === true)) break;
-      if (r && r.final != null && i >= 6) break;
+      // (예전엔 품절로 보이면 바로 멈춰서, 판매가 칸이 그려지기 전 와우가만 읽는 일이 있었음)
+      if (r && (r.blocked || r.error || r.sales != null || r.textSales != null)) break;
+      if (r && (r.final != null || r.soldOut === true) && i >= 6) break;
       await sleep(500);
     }
     if (!r) return { error: "페이지를 읽지 못했습니다" };
@@ -115,10 +129,11 @@ async function readPrice(url) {
     const want = (url.match(/[?&]itemId=(\d+)/) || [])[1];
     if (want && r.itemId && r.itemId !== want) return { error: "다른 옵션 페이지로 바뀌었습니다 (옵션 품절·판매중지 가능)", title: r.title };
     // 판매가: 화면의 쿠팡판매가 → 페이지 데이터의 판매가(최종가 이상일 때만) → 최종가
-    const sale = r.sales != null ? r.sales
-      : (r.dataSales != null && (r.final == null || r.dataSales >= r.final)) ? r.dataSales
-      : r.final;
-    const disc = r.final != null ? r.final : r.sales;
+    // 판매가: 쿠팡판매가 칸 → "…원 쿠팡판매가" 글씨 → 페이지 데이터 (모두 최종가 이상일 때만) → 최종가
+    const fin = r.final != null ? r.final : r.textWow;
+    const okSale = (v) => v != null && (fin == null || v >= fin);
+    const sale = okSale(r.sales) ? r.sales : okSale(r.textSales) ? r.textSales : okSale(r.dataSales) ? r.dataSales : fin;
+    const disc = fin != null ? fin : sale;
     const stock = { sold_out: r.soldOut, stock_left: r.stockLeft };
     if (sale == null) {
       if (r.soldOut === true) return { sale_price: null, discount_price: null, ...stock, title: r.title };   // 품절이라 가격이 안 보임
