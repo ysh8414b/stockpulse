@@ -174,6 +174,17 @@
     .fz-lot-sum{background:var(--card-bg);border:1px solid var(--card-bd);border-radius:8px;padding:12px 14px;margin-bottom:14px}
     @media (max-width:900px){.fz-stats{grid-template-columns:repeat(3,1fr)}}
     @media (max-width:600px){.fz-stats{grid-template-columns:repeat(2,1fr)}.fz-group-total{font-size:16px}.fz-group-hd{padding:10px 12px}}
+    /* 💰 판매가 시트: 스크롤해도 시트 제목·열 제목 고정 */
+    .ol-price-scroll thead th{position:sticky;top:0;z-index:3}
+    @media (min-width:1150px){
+      .ol-price-group{overflow:visible}
+      .ol-price-group .fz-group-hd{position:sticky;top:var(--ol-tabs-h,49px);z-index:6;background:var(--card-bg);height:46px;box-sizing:border-box;border-radius:10px 10px 0 0}
+      .ol-price-scroll{overflow:visible}
+      .ol-price-scroll thead th{top:calc(var(--ol-tabs-h,49px) + 46px)}
+    }
+    @media (max-width:1149px){
+      .ol-price-scroll{max-height:calc(100vh - var(--ol-tabs-h,49px) - 24px);overflow:auto}
+    }
     .ol-img-wrap{overflow-x:auto;border:1px solid var(--card-bd);border-radius:8px;margin-bottom:10px}
     @media (max-width:900px){
       .ol-layout{grid-template-columns:1fr}
@@ -2319,12 +2330,12 @@ function PriceView({adminHash}){
       <div style={{fontSize:13,color:"var(--muted)",lineHeight:1.7}}>쓰고 계신 <b>판매링크 엑셀</b>(시트 이름 "업체(냉장)" / "업체(냉동)")을 <b>📁 엑셀 가져오기</b>로 올리면<br/>상품·링크·가격이 한 번에 등록됩니다.</div>
     </div>:
     groups.length===0?<Empty emoji="🔍" text="조건에 맞는 상품이 없습니다"/>:
-    groups.map(g=><div key={g.key} className="fz-group" style={{marginBottom:14}}>
+    groups.map(g=><div key={g.key} className="fz-group ol-price-group" style={{marginBottom:14}}>
       <div className="fz-group-hd" style={{borderLeftColor:g.storage==="frozen"?"#3b82f6":"#06b6d4"}}>
         <div className="fz-group-name">{g.name}</div>
         <div style={{fontSize:12,color:"var(--muted)"}}>{g.list.length}개 · 할인 중 {g.list.filter(isDiscounting).length}개{g.list.some(p=>p.sold_out===true)&&<span style={{color:"#ef4444",fontWeight:700}}> · 품절 {g.list.filter(p=>p.sold_out===true).length}개</span>}</div>
       </div>
-      <div className="ol-scroll"><table className="ol-table" style={{minWidth:1080}}>
+      <div className="ol-scroll ol-price-scroll"><table className="ol-table" style={{minWidth:1080}}>
         <thead><tr><th className="center">No</th><th>상품명</th><th className="right">입수</th><th className="right">공급가</th><th className="right">판매가</th><th className="right">현재 할인가</th><th className="right">할인액</th><th className="right">스토어가</th><th className="center">확인</th><th className="center">링크</th><th></th></tr></thead>
         <tbody>{g.list.map((p,i)=>{
           const disc=isDiscounting(p);
@@ -5588,6 +5599,10 @@ function App(){
   const[tab,setTab]=useState(getTabFromHash());
   const tabsRef=useRef(null);
   useEffect(()=>{const b=tabsRef.current;scrollRowTo(b,b&&b.querySelector(".ol-tab.active"))},[tab]);
+  // 위에 붙는 탭 줄 높이 → 판매가 시트 제목·열 제목을 그 아래에 고정할 때 사용
+  useEffect(()=>{const b=tabsRef.current;if(!b||!window.ResizeObserver)return;
+    const set=()=>document.documentElement.style.setProperty("--ol-tabs-h",b.offsetHeight+"px");
+    set();const ro=new ResizeObserver(set);ro.observe(b);return()=>ro.disconnect()},[]);
   const[masters,setMasters]=useState({products:[],box_specs:[],methods:[],sites:[],settings:{}});
   const[mastersErr,setMastersErr]=useState("");
 
