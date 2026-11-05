@@ -2039,8 +2039,13 @@ function PriceView({adminHash}){
       if(d.error)res={error:d.error};
       else{
         const hasPrice=d.sale_price!=null;
+        // 확장이 쿠팡판매가 칸을 못 읽으면 판매가를 와우가로 채워 보냄 → 와우가가 그대로면 저장된 판매가 유지
+        //  (갱신할 때마다 판매가가 정상가 ↔ 와우가로 번갈아 바뀌던 문제)
+        const keptSale=hasPrice&&old&&old.sale_price!=null&&old.discount_price!=null
+          &&d.sale_price===d.discount_price&&Number(old.discount_price)===d.discount_price&&Number(old.sale_price)>d.discount_price;
+        if(keptSale)d={...d,sale_price:Number(old.sale_price)};
         const changed=hasPrice&&(!old||Number(old.sale_price)!==d.sale_price||Number(old.discount_price??old.sale_price)!==d.discount_price);
-        res={sale:d.sale_price,disc:d.discount_price,oldSale:old?.sale_price??null,oldDisc:old?.discount_price??null,changed,
+        res={sale:d.sale_price,disc:d.discount_price,oldSale:old?.sale_price??null,oldDisc:old?.discount_price??null,changed,keptSale,
           soldOut:d.sold_out===true,wasSold:old?.sold_out===true,stockLeft:d.stock_left??null};
         try{
           if(hasPrice){
