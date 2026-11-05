@@ -452,6 +452,18 @@ async function rpc(name,body){
   if(name==="aps_get_item_stats")return adjustItemStatsForLunch(body,out); // 통계 시간에서 점심 제외
   return out;
 }
+// 🤖 자동 생성 저장 실패 이유 (서버 오류 문구 → 알기 쉬운 말)
+function autoPlanFailReason(e){
+  const s=String(e?.message||e||"");
+  if(s.includes(APS_RO_MSG)||s.includes("read_only"))return "읽기 전용 모드라 저장할 수 없습니다 — 관리자 비밀번호로 로그인하세요";
+  if(s.includes("unauthorized"))return "로그인이 풀렸습니다 — 다시 로그인하세요";
+  if(s.includes("invalid_times")||s.includes("end_at > start_at"))return "종료 시각이 시작 시각보다 앞입니다";
+  if(s.includes("qty_check")||s.includes("qty > 0"))return "수량이 0 이하입니다";
+  if(s.includes("foreign key")||s.includes("23503"))return "품목이나 라인이 삭제됐습니다 — 창을 닫고 다시 여세요";
+  if(s.includes("Failed to fetch")||s.includes("NetworkError"))return "인터넷 연결 오류";
+  let m=s;try{const j=JSON.parse(s);m=j.message||s}catch(_){}
+  return "오류: "+m.slice(0,120);
+}
 function errMsg(e,map){
   const s=String(e?.message||e||"");
   for(const k in map){if(s.includes(k))return map[k]}
@@ -4796,7 +4808,7 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
         made[r.day+":"+r.item.id]={qty:r.qty,planId:typeof pid==="number"?pid:null};
         if(r.lineId!=null)madeKeys.push(`${r.lineId}|${isoToKstDateStr(new Date(r.startMs).toISOString())}`);
         ok++;
-      }catch(e){fails.push(r.item.name)}
+      }catch(e){fails.push({name:r.item.name,why:autoPlanFailReason(e)})}
     }
     // 🤖 규칙 제안 기록 (보정 모델 학습용 — 나중에 고치거나 지워도 처음 제안은 남음)
     let logFailed=false;
@@ -4831,7 +4843,11 @@ function AutoPlanModal({adminHash,dayStr,items,lines,plans,settings,invData,onLi
       if(fb.length)await rpc("aps_ai_log_feedback",{p_admin_hash:adminHash,p_rows:fb}).catch(()=>{});
     }
     setCreating(false);
-    if(fails.length)alert(`${ok}건 생성, ${fails.length}건 실패: ${fails.join(", ")}`);
+    if(fails.length){
+      // 이유별로 묶어서 표시 (예: 읽기 전용이면 한 줄로)
+      const byWhy={};fails.forEach(f=>(byWhy[f.why]=byWhy[f.why]||[]).push(f.name));
+      alert(`${ok}건 생성, ${fails.length}건 실패\n\n`+Object.entries(byWhy).map(([why,names])=>`▶ ${why}\n   ${names.join(", ")}`).join("\n\n"));
+    }
     if(logFailed&&ok>0)alert("계획은 생성됐지만 제안 기록은 저장되지 않았습니다 — Supabase에서 setup_aps_autoplan_log.sql 을 실행하세요.");
     onCreated(ok,madeKeys);
   };
