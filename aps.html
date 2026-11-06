@@ -9528,6 +9528,15 @@ function computeStaffing(data,opts){
   stats180.forEach(s=>{if(Number(s.qty_per_hour)>0)rateOf[s.item_id]={r:Number(s.qty_per_hour),src:"실적 180일"}});
   const lineCount={};plans.forEach(p=>{const k=p.item_id+"|"+(p.line_id??"none");lineCount[k]=(lineCount[k]||0)+1});
   const itemByCode={};items.filter(i=>i.type!=="material").forEach(i=>itemByCode[salesCodeKey(i.code)]=i);
+  // 품목 속도 (180일 실적 → 전체 실적 → 품목 입력값), 품목 라인 (지정 라인 중 실적 많은 곳 → 실적 최다 라인)
+  const rateFor=(it)=>{if(rateOf[it.id])return rateOf[it.id];if(Number(it.units_per_hour)>0)return{r:Number(it.units_per_hour),src:"품목 입력값"};return null};
+  const lineFor=(it)=>{
+    const cand=(Array.isArray(it.line_ids)?it.line_ids:[]).map(String);
+    let lk=null;
+    if(cand.length)lk=cand.slice().sort((a,b)=>(lineCount[it.id+"|"+b]||0)-(lineCount[it.id+"|"+a]||0))[0];
+    else{const best=Object.keys(lineCount).filter(k=>k.startsWith(it.id+"|")).sort((a,b)=>lineCount[b]-lineCount[a])[0];lk=best?best.split("|")[1]:"none"}
+    const l=lines.find(l=>String(l.id)===String(lk));return l?l.id:"none";
+  };
 
   const rows=[],skipped=[];
   let totalDemand=0;
@@ -9537,14 +9546,9 @@ function computeStaffing(data,opts){
     const it=itemByCode[code];
     const nm=it?.name||(sales.find(s=>salesCodeKey(s.code)===code)?.name)||code;
     if(!it){skipped.push({code,name:nm,qty:base,why:"📦 품목에 없음"});continue}
-    let rate=rateOf[it.id];
-    if(!rate&&Number(it.units_per_hour)>0)rate={r:Number(it.units_per_hour),src:"품목 입력값"};
+    const rate=rateFor(it);
     if(!rate){skipped.push({code,name:nm,qty:base,why:"생산 속도 없음"});continue}
-    let cand=(Array.isArray(it.line_ids)?it.line_ids:[]).map(String);
-    let lk=null;
-    if(cand.length)lk=cand.slice().sort((a,b)=>(lineCount[it.id+"|"+b]||0)-(lineCount[it.id+"|"+a]||0))[0];
-    else{const best=Object.keys(lineCount).filter(k=>k.startsWith(it.id+"|")).sort((a,b)=>lineCount[b]-lineCount[a])[0];lk=best?best.split("|")[1]:"none"}
-    const lineKey=lines.find(l=>String(l.id)===String(lk))?lines.find(l=>String(l.id)===String(lk)).id:"none";
+    const lineKey=lineFor(it);
     const qty=base*growth;
     const lineH=qty/rate.r,crew=crewOf(lineKey);
     rows.push({id:it.id,code,name:nm,unit:it.unit||"박스",qty,rate:rate.r,rateSrc:rate.src,lineKey,lineH,crew,manH:lineH*crew});
@@ -9585,7 +9589,7 @@ function computeStaffing(data,opts){
     needInt:Math.ceil(need-1e-9),needPeakInt:Math.ceil(needPeak-1e-9),
     lineRows,lineCap,recentCount:recent.length,actWeeks,
     actManHWeek:actWeeks>0?actManH/Math.max(1,actWeeks):null,otManHWeek:actWeeks>0?otManH/Math.max(1,actWeeks):null,
-    hasLunch:!!lunch,ws,we};
+    hasLunch:!!lunch,ws,we,crewOf,rateFor,lineFor,lineName,weeklyByCode};
 }
 
 // 보고용 이미지 (라이트 820px)
@@ -11374,20 +11378,301 @@ function ProductionLossTab({adminHash}){
 }
 
 // ═══════════════════════════════════════════
+// 💵 원가 — 제품별 박스당 원가·이익
+//  원육 = 생산일보 원육 매입금액 ÷ 생산 박스 (로스 포함)
+//  인건비 = 라인 투입 인원 ÷ 시간당 생산량 × 시급 (인원·속도는 📐 인원 산정과 같은 값)
+//  포장비 = 품목별 입력 (없으면 기본값), 간접비 = 월 간접비 ÷ 월 생산 박스
+//  판매가 = 품목별 입력 → 없으면 발주리스트 💰 판매가의 쿠팡 공급가 × 입수량
+// ═══════════════════════════════════════════
+const COST_WEEKS_PER_MONTH=4.345;
+function fmtWon(n){return n==null||!isFinite(n)?"–":Math.round(n).toLocaleString("ko-KR")}
+function computeCost(d,cfg,sr){
+  const wage=(Number(cfg.wage)||0)*(1+(Number(cfg.wageExtra)||0)/100);
+  const packDef=Number(cfg.packDefault)||0,ohMonth=Number(cfg.overheadMonth)||0;
+  const itemCfg=cfg.items||{};
+  // 생산일보 (기간 안 chain) → 제품코드별 합계
+  const byCode={},dates=new Set();let logBoxes=0;
+  (d.chains||[]).forEach(c=>{
+    const b=Number(c.product_boxes)||0;if(!(b>0))return;
+    const k=salesCodeKey(c.product_code);
+    const o=byCode[k]||(byCode[k]={boxes:0,raw:0,rawKg:0,outKg:0,chains:0,last:""});
+    o.boxes+=b;o.raw+=Number(c.chain_raw_amount)||0;o.rawKg+=Number(c.chain_raw_kg)||0;
+    const pw=extractPackWeightFromName(c.product_name);
+    o.outKg+=pw!=null?(Number(c.product_kg)||0)*pw:(Number(c.product_kg)||0);
+    o.chains++;const dt=String(c.date).slice(0,10);if(dt>o.last)o.last=dt;
+    logBoxes+=b;dates.add(dt);
+  });
+  const ds=[...dates].sort();
+  const logDays=ds.length?(Date.parse(ds[ds.length-1])-Date.parse(ds[0]))/86400000+1:0;
+  const monthBoxes=logDays>0?logBoxes/logDays*30.4:0;
+  const ohPerBox=ohMonth>0&&monthBoxes>0?ohMonth/monthBoxes:0;
+  // 쿠팡 공급가 (발주 제품 🔗 APS 품목 연결 → 판매가 표의 같은 SKU)
+  const priceBySku={};(d.prices||[]).forEach(p=>{if(Number(p.supply_price)>0)priceBySku[String(p.sku_id||"").trim()]=p});
+  const cpBy={};
+  (d.olProducts||[]).forEach(op=>{
+    if(op.aps_item_id==null)return;
+    const pr=priceBySku[String(op.code||"").trim()];if(!pr)return;
+    const per=Number(op.per_box)||Number(pr.per_box)||1;
+    (cpBy[op.aps_item_id]=cpBy[op.aps_item_id]||[]).push({box:Number(pr.supply_price)*per,name:pr.name,per,unit:Number(pr.supply_price)});
+  });
+  const weekly=sr?.weeklyByCode||{};
+  const rows=[];
+  (d.items||[]).filter(i=>i.type!=="material"&&i.active!==false).forEach(it=>{
+    const code=salesCodeKey(it.code),ch=byCode[code];
+    const ic=itemCfg[it.id]||{};
+    const cp=cpBy[it.id]||[];
+    const cpPrice=cp.length?cp.reduce((a,b)=>a+b.box,0)/cp.length:null;
+    const wk=Number(weekly[code])||0;
+    if(!ch&&!wk&&ic.price==null&&cpPrice==null)return;
+    const rawSet=ic.raw!=null&&ic.raw!=="";
+    const raw=rawSet?Number(ic.raw):(ch?ch.raw/ch.boxes:null);
+    const lossPct=ch&&ch.rawKg>0?Math.max(0,ch.rawKg-ch.outKg)/ch.rawKg:null;
+    const lossWon=ch&&ch.rawKg>0?Math.max(0,ch.rawKg-ch.outKg)*(ch.raw/ch.rawKg)/ch.boxes:null;
+    const rate=sr?sr.rateFor(it):null,line=sr?sr.lineFor(it):"none",crew=sr?sr.crewOf(line):1;
+    const labor0=rate&&wage>0?crew/rate.r*wage:null;
+    const pack=ic.pack!=null&&ic.pack!==""?Number(ic.pack):packDef;
+    const price=ic.price!=null&&ic.price!==""?Number(ic.price):cpPrice;
+    const priceSrc=ic.price!=null&&ic.price!==""?"입력":(cpPrice!=null?"쿠팡":null);
+    const missing=[];
+    if(raw==null)missing.push("원육(생산일보 없음 — 직접 입력)");
+    if(labor0==null)missing.push(rate?"인건비(시급 입력)":"인건비(생산 속도 없음)");
+    rows.push({id:it.id,code:it.code,name:it.name,unit:it.unit||"박스",ch,raw,rawSet,lossPct,lossWon,rate,line,lineName:sr?.lineName?.[line]||"",crew,labor0,pack,packSet:ic.pack!=null&&ic.pack!=="",oh:ohPerBox,
+      price,priceSrc,cpPrice,cp,missing,wk,monthLoss:lossWon!=null?lossWon*wk*COST_WEEKS_PER_MONTH:0});
+  });
+  // 인건비: 표준(인원 ÷ 속도) 합계 vs 실제 생산 인원 급여 — "실제 급여에 맞춤"이면 비율만큼 키움
+  const laborCalcMonth=rows.reduce((a,x)=>a+(x.labor0||0)*x.wk*COST_WEEKS_PER_MONTH,0);
+  const payrollMonth=sr&&wage>0?sr.current*sr.dayHours*sr.workDays*COST_WEEKS_PER_MONTH*wage:0;
+  const laborScale=cfg.laborMode==="payroll"&&laborCalcMonth>0&&payrollMonth>0?payrollMonth/laborCalcMonth:1;
+  rows.forEach(x=>{
+    x.labor=x.labor0!=null?x.labor0*laborScale:null;
+    x.cost=(x.raw||0)+(x.labor||0)+x.pack+x.oh;
+    // 원육 단가가 없으면 원가의 대부분이 빠지므로 이익을 계산하지 않음
+    x.profit=x.price!=null&&x.raw!=null?x.price-x.cost:null;
+    x.margin=x.profit!=null&&x.price>0?x.profit/x.price:null;
+    x.monthRev=x.profit!=null?x.price*x.wk*COST_WEEKS_PER_MONTH:0;
+    x.monthProfit=x.profit!=null?x.profit*x.wk*COST_WEEKS_PER_MONTH:null;
+  });
+  const priced=rows.filter(r=>r.profit!=null&&r.wk>0);
+  const sum=(a,f)=>a.reduce((x,r)=>x+(f(r)||0),0);
+  const monthRev=sum(priced,r=>r.monthRev),monthProfit=sum(priced,r=>r.monthProfit);
+  return{rows,wage,ohPerBox,laborCalcMonth,payrollMonth,laborScale,team:sr?.current||0,monthBoxes,logBoxes,logDays,logFrom:ds[0],logTo:ds[ds.length-1],
+    monthRev,monthProfit,monthCost:monthRev-monthProfit,margin:monthRev>0?monthProfit/monthRev:null,
+    monthLoss:sum(rows,r=>r.monthLoss),
+    nPriced:priced.length,nNoPrice:rows.filter(r=>r.price==null&&r.wk>0).length,
+    nNoRaw:rows.filter(r=>r.price!=null&&r.raw==null&&r.wk>0).length,
+    nIncomplete:rows.filter(r=>r.missing.length).length,
+    lossItems:priced.filter(r=>r.profit<0).length};
+}
+
+function CostTab({adminHash,readOnly}){
+  const[cfg,setCfg]=useState(null);
+  const[cfgErr,setCfgErr]=useState("");
+  const[data,setData]=useState(null);
+  const[loading,setLoading]=useState(true);
+  const[err,setErr]=useState("");
+  const[saveState,setSaveState]=useState("");// saving | saved | error
+  const[sortKey,setSortKey]=useState(()=>{try{return localStorage.getItem("aps-cost-sort")||"profit"}catch(e){return"profit"}});
+  const[q,setQ]=useState("");
+  const[onlySold,setOnlySold]=useState(true);
+  const dirty=useRef(false);
+  useEffect(()=>{try{localStorage.setItem("aps-cost-sort",sortKey)}catch(e){}},[sortKey]);
+  const days=Number(cfg?.days)||90;
+
+  // 설정 (시급 등) — 읽기 전용이면 서버가 거부
+  useEffect(()=>{
+    if(readOnly){setLoading(false);return}
+    let c=false;
+    rpc("aps_cost_get_config",{p_admin_hash:adminHash}).then(r=>{if(!c)setCfg(r?.cfg||{})}).catch(e=>{
+      if(c)return;const s=String(e.message||e);
+      setCfgErr(/PGRST202|does not exist|aps_cost_get_config/.test(s)?"sql":s.slice(0,160));setCfg({});
+    });
+    return()=>{c=true};
+  },[adminHash,readOnly]);
+
+  useEffect(()=>{
+    if(readOnly||!cfg)return;
+    let c=false;
+    (async()=>{
+      setLoading(true);setErr("");
+      try{
+        const so=loadStaffCalcOpts(),sdays=so.weeks*7,today=todayStr();
+        const A=x=>Array.isArray(x)?x:[];
+        const[items,s180,sAll,sales,sDates,plans,staff,lines,settings,chains,masters,prices]=await Promise.all([
+          rpc("aps_list_items",{p_admin_hash:adminHash}).catch(()=>[]),
+          rpc("aps_get_item_stats",{p_admin_hash:adminHash,p_days_back:180}).catch(()=>[]),
+          rpc("aps_get_item_stats",{p_admin_hash:adminHash,p_days_back:null}).catch(()=>[]),
+          rpc("aps_get_sales_stats",{p_admin_hash:adminHash,p_days:sdays}).catch(()=>[]),
+          rpc("aps_get_sales_dates",{p_admin_hash:adminHash,p_days:400}).catch(()=>[]),
+          rpc("aps_get_done_plans_all",{p_admin_hash:adminHash,p_days_back:Math.max(180,sdays)}).catch(()=>[]),
+          rpc("aps_list_staff",{p_admin_hash:adminHash,p_only_active:false}).catch(()=>[]),
+          rpc("aps_list_lines",{p_admin_hash:adminHash}).catch(()=>[]),
+          rpc("aps_get_settings",{p_admin_hash:adminHash}).catch(()=>({})),
+          rpc("aps_get_product_chain_stats",{p_admin_hash:adminHash,p_days_back:days}).catch(()=>[]),
+          rpc("ol_list_masters",{p_admin_hash:""}).catch(()=>({})),
+          rpc("ol_list_prices",{p_admin_hash:""}).catch(()=>({}))
+        ]);
+        const att=await rpc("aps_get_attendance_range",{p_admin_hash:adminHash,p_start:addDays(today,-Math.max(180,sdays)),p_end:today}).catch(()=>[]);
+        if(c)return;
+        setData({items:A(items),stats180:A(s180),statsAll:A(sAll),sales:A(sales),salesDates:A(sDates),plans:A(plans),staff:A(staff),lines:A(lines),att:A(att),settings:settings||{},forecast:[],
+          chains:A(chains),olProducts:A(masters?.products),prices:A(prices?.items||prices)});
+      }catch(e){if(!c)setErr("불러오기 실패: "+String(e.message||e).slice(0,160))}
+      if(!c)setLoading(false);
+    })();
+    return()=>{c=true};
+  },[adminHash,readOnly,!!cfg,days]);
+
+  // 설정이 바뀌면 0.8초 뒤 저장
+  useEffect(()=>{
+    if(!cfg||!dirty.current||cfgErr==="sql")return;
+    setSaveState("saving");
+    const t=setTimeout(()=>{
+      rpc("aps_cost_set_config",{p_admin_hash:adminHash,p_cfg:cfg}).then(()=>{dirty.current=false;setSaveState("saved")}).catch(()=>setSaveState("error"));
+    },800);
+    return()=>clearTimeout(t);
+  },[cfg]);
+  const setC=(k,v)=>{dirty.current=true;setCfg(o=>({...o,[k]:v}))};
+  const setItem=(id,k,v)=>{dirty.current=true;setCfg(o=>{const items={...(o.items||{})};const cur={...(items[id]||{})};if(v==null||v==="")delete cur[k];else cur[k]=v;if(Object.keys(cur).length)items[id]=cur;else delete items[id];return{...o,items}})};
+
+  const sr=useMemo(()=>data?computeStaffing(data,loadStaffCalcOpts()):null,[data]);
+  const r=useMemo(()=>data&&cfg&&sr?computeCost(data,cfg,sr):null,[data,cfg,sr]);
+
+  if(readOnly)return <div className="aps-empty" style={{padding:30}}>🔒 원가·시급은 👁 읽기 전용 접속에서는 볼 수 없습니다. 관리자 비밀번호로 로그인하세요.</div>;
+  if(!cfg||loading)return <Loader/>;
+  if(err)return <div style={{color:"#ef4444",fontSize:13}}>{err}</div>;
+  if(!r)return null;
+
+  const ql=q.trim().toLowerCase();
+  let rows=r.rows.filter(x=>(!onlySold||x.wk>0)&&(!ql||String(x.name).toLowerCase().includes(ql)||String(x.code).toLowerCase().includes(ql)));
+  const S={profit:(a,b)=>(b.monthProfit??-1e15)-(a.monthProfit??-1e15),margin:(a,b)=>(a.margin??9)-(b.margin??9),wk:(a,b)=>b.wk-a.wk,loss:(a,b)=>b.monthLoss-a.monthLoss,cost:(a,b)=>b.cost-a.cost};
+  rows=rows.slice().sort(S[sortKey]||S.profit);
+
+  const card=(t,v,sub,color)=><div style={{flex:"1 1 170px",padding:"12px 14px",border:`1px solid ${color||"var(--div2)"}`,borderRadius:10}}>
+    <div style={{fontSize:11,color:"var(--muted)",fontWeight:600}}>{t}</div>
+    <div style={{fontSize:24,fontWeight:800,marginTop:4,color:color||"var(--text)"}}>{v}</div>
+    {sub&&<div style={{fontSize:11,color:"var(--muted)",marginTop:2,lineHeight:1.5}}>{sub}</div>}
+  </div>;
+  const lbl={fontSize:11,color:"var(--muted)",fontWeight:600,marginBottom:4};
+  const numIn=(v,on,ph,w=110)=><input type="number" className="aps-input" style={{width:w,padding:"5px 8px"}} value={v??""} placeholder={ph} min="0" onChange={e=>on(e.target.value===""?null:Number(e.target.value))}/>;
+  const man=n=>n==null?"–":(Math.abs(n)>=1e8?(n/1e8).toFixed(2)+"억":Math.round(n/1e4).toLocaleString("ko-KR")+"만")+"원";
+  const pct=x=>x==null?"–":(x*100).toFixed(1)+"%";
+  const mColor=m=>m==null?"var(--muted)":m<0?"#ef4444":m<0.1?"#f59e0b":"#22c55e";
+  const th={textAlign:"right",padding:"7px 8px",fontSize:11,color:"var(--muted)",fontWeight:700,whiteSpace:"nowrap",borderBottom:"1px solid var(--div2)",background:"var(--row-head,transparent)"};
+  const td={textAlign:"right",padding:"6px 8px",fontSize:12,borderBottom:"1px solid var(--div)",whiteSpace:"nowrap"};
+  const cellIn=(v,on,ph)=><input type="number" className="aps-input" style={{width:86,padding:"3px 6px",fontSize:12,textAlign:"right"}} value={v??""} placeholder={ph} min="0"
+    onChange={e=>on(e.target.value===""?null:Number(e.target.value))}/>;
+
+  return <div>
+    {cfgErr==="sql"&&<div style={{padding:"10px 12px",border:"1px solid #ef4444",borderRadius:8,color:"#ef4444",fontSize:12,marginBottom:12}}>
+      설정 저장 기능이 아직 없습니다 — Supabase에서 <b>setup_aps_cost.sql</b>을 실행하세요. 지금 입력한 값은 이 화면에서만 쓰이고 저장되지 않습니다.</div>}
+    {cfgErr&&cfgErr!=="sql"&&<div style={{color:"#ef4444",fontSize:12,marginBottom:10}}>설정 불러오기 실패: {cfgErr}</div>}
+
+    {/* 기본값 입력 */}
+    <div style={{display:"flex",flexWrap:"wrap",gap:14,alignItems:"flex-end",padding:"12px 14px",border:"1px solid var(--div2)",borderRadius:10,marginBottom:14}}>
+      <div><div style={lbl}>생산직 시급 (원)</div>{numIn(cfg.wage,v=>setC("wage",v),"예: 11000")}</div>
+      <div><div style={lbl} title="4대보험·퇴직금·주휴수당 등 시급 외 회사 부담 (보통 20~30%)">보험·퇴직금 등 가산 %</div>{numIn(cfg.wageExtra,v=>setC("wageExtra",v),"예: 25",80)}</div>
+      <div><div style={lbl}>박스당 기본 포장비 (원)</div>{numIn(cfg.packDefault,v=>setC("packDefault",v),"예: 1500")}</div>
+      <div><div style={lbl} title="전기·수도·임대료·관리직 급여·소모품 등 생산과 직접 관련 없는 월 비용">월 간접비 (원)</div>{numIn(cfg.overheadMonth,v=>setC("overheadMonth",v),"예: 30000000",130)}</div>
+      <div><div style={lbl} title="표준: 인원 ÷ 속도로 계산한 시간만 / 실제 급여: 생산 인원 전체 급여를 생산 시간 비율로 나눔 (대기·청소·준비 시간까지 원가에 넣음)">인건비 계산</div>
+        <div className="aps-filter">{[["rate","표준 시간"],["payroll","실제 급여에 맞춤"]].map(([k,t])=><button key={k} className={(cfg.laborMode||"rate")===k?"on":""} onClick={()=>setC("laborMode",k)}>{t}</button>)}</div></div>
+      <div><div style={lbl}>생산일보 기간</div>
+        <div className="aps-filter">{[30,60,90,180].map(n=><button key={n} className={days===n?"on":""} onClick={()=>setC("days",n)}>{n}일</button>)}</div></div>
+      <div style={{fontSize:11,color:saveState==="error"?"#ef4444":"var(--muted)",marginLeft:"auto"}}>
+        {saveState==="saving"?"저장 중…":saveState==="saved"?"✓ 저장됨":saveState==="error"?"⚠ 저장 실패":""}</div>
+    </div>
+
+    {/* 요약 */}
+    <div style={{display:"flex",flexWrap:"wrap",gap:10,marginBottom:12}}>
+      {card("월 매출 (추정)",man(r.monthRev),`판매가 있는 ${r.nPriced}개 품목 · 주 판매 × ${COST_WEEKS_PER_MONTH}주`)}
+      {card("월 이익 (추정)",man(r.monthProfit),r.margin!=null?`이익률 ${pct(r.margin)} · 원가 ${man(r.monthCost)}`:"판매가를 입력하세요",mColor(r.margin))}
+      {card("적자 품목",r.lossItems+"개",r.lossItems?"이익이 마이너스인 품목 — 아래 표에서 빨간색":"판매가가 있는 품목 중",r.lossItems?"#ef4444":undefined)}
+      {card("로스로 나간 돈 (월)",man(r.monthLoss),"원육 kg − 완성 kg × kg당 원육 단가","#f59e0b")}
+      {r.payrollMonth>0&&card("인건비 확인 (월)",man(r.laborCalcMonth*r.laborScale),
+        <>표준 시간 기준 {man(r.laborCalcMonth)} · 생산 인원 {r.team}명 급여 약 {man(r.payrollMonth)}
+          {r.laborScale===1&&r.laborCalcMonth>0&&r.payrollMonth>r.laborCalcMonth*1.2&&<><br/><span style={{color:"#f59e0b"}}>급여의 {Math.round(r.laborCalcMonth/r.payrollMonth*100)}%만 원가에 잡힘 — 나머지는 대기·준비·청소 또는 속도 정보 없는 제품</span></>}</>)}
+    </div>
+    <div style={{fontSize:11,color:"var(--muted)",lineHeight:1.7,marginBottom:12}}>
+      생산일보 {r.logFrom?`${fmtMD(r.logFrom)} ~ ${fmtMD(r.logTo)} (${r.logDays}일)`:"없음"} · 월 생산 약 {fmtNum(Math.round(r.monthBoxes))}박스
+      {r.ohPerBox>0&&<> · 간접비 박스당 {fmtWon(r.ohPerBox)}원</>}
+      {r.wage>0&&<> · 인건비 시간당 {fmtWon(r.wage)}원 (가산 포함)</>}
+      {r.nNoPrice>0&&<> · <span style={{color:"#f59e0b"}}>판매가 없는 품목 {r.nNoPrice}개</span></>}
+      {r.nIncomplete>0&&<> · <span style={{color:"#f59e0b"}}>원가 일부 빠진 품목 {r.nIncomplete}개</span></>}
+      {r.nNoRaw>0&&<> · <span style={{color:"#ef4444"}}>원육 단가 없어 이익 계산 못 한 품목 {r.nNoRaw}개 (원육 칸에 직접 입력)</span></>}
+    </div>
+    {r.logTo&&r.logTo<addDays(todayStr(),-14)&&<div style={{fontSize:12,color:"#f59e0b",marginBottom:10}}>⚠ 생산일보가 {fmtMD(r.logTo)} 이후로 안 올라왔습니다 — 원육 단가가 지금과 다를 수 있어요 (🩸 로스 탭에서 업로드)</div>}
+
+    {/* 표 */}
+    <div style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"center",marginBottom:8}}>
+      <input className="aps-input" style={{width:200,padding:"5px 8px"}} placeholder="품목 검색" value={q} onChange={e=>setQ(e.target.value)}/>
+      <div className="aps-filter">{[["profit","월 이익순"],["margin","이익률 낮은순"],["loss","로스 금액순"],["wk","판매량순"],["cost","원가 높은순"]].map(([k,t])=><button key={k} className={sortKey===k?"on":""} onClick={()=>setSortKey(k)}>{t}</button>)}</div>
+      <label style={{fontSize:12,color:"var(--muted)",display:"flex",gap:5,alignItems:"center"}}><input type="checkbox" checked={onlySold} onChange={e=>setOnlySold(e.target.checked)}/>최근 판매 있는 품목만</label>
+      <span style={{fontSize:11,color:"var(--muted)"}}>{rows.length}개</span>
+    </div>
+    <div style={{overflowX:"auto",border:"1px solid var(--div2)",borderRadius:10}}>
+      <table style={{width:"100%",borderCollapse:"collapse",minWidth:1080}}>
+        <thead><tr>
+          <th style={{...th,textAlign:"left"}}>품목</th>
+          <th style={th} title="입력값 → 없으면 쿠팡 공급가 × 입수량">판매가/박스</th>
+          <th style={th} title="생산일보 원육 매입금액 ÷ 생산 박스 (로스 포함)">원육</th>
+          <th style={th} title="라인 투입 인원 ÷ 시간당 생산량 × 시급">인건비</th>
+          <th style={th}>포장</th>
+          <th style={th}>간접비</th>
+          <th style={th}>원가 합</th>
+          <th style={th}>이익/박스</th>
+          <th style={th}>이익률</th>
+          <th style={th} title="📐 인원 산정과 같은 기간의 주 평균 판매">주 판매</th>
+          <th style={th}>월 이익</th>
+          <th style={th} title="로스로 버린 원육 금액 (월)">월 로스</th>
+        </tr></thead>
+        <tbody>{rows.map(x=><tr key={x.id} style={x.profit!=null&&x.profit<0?{background:"rgba(239,68,68,.07)"}:undefined}>
+          <td style={{...td,textAlign:"left",whiteSpace:"normal"}}>
+            <div className="aps-nm2" title={x.name} style={{fontWeight:700}}>{x.name}</div>
+            <div style={{fontSize:10,color:"var(--muted)"}}>{x.code}{x.lineName&&` · ${x.lineName} ${x.crew}명`}{x.rate&&` · 시간당 ${fmtNum(Math.round(x.rate.r*10)/10)}`}</div>
+            {x.missing.length>0&&<div style={{fontSize:10,color:"#f59e0b"}}>빠짐: {x.missing.join(", ")}</div>}
+          </td>
+          <td style={td}>
+            {cellIn(cfg.items?.[x.id]?.price,v=>setItem(x.id,"price",v),x.cpPrice!=null?fmtWon(x.cpPrice):"입력")}
+            <div style={{fontSize:10,color:"var(--muted)"}} title={x.cp.map(c=>`${c.name} · ${fmtWon(c.unit)} × ${c.per}`).join("\n")}>{x.priceSrc==="쿠팡"?"쿠팡 공급가":x.priceSrc==="입력"?"직접 입력":""}</div>
+          </td>
+          <td style={td}>{x.ch&&!x.rawSet?fmtWon(x.raw):cellIn(cfg.items?.[x.id]?.raw,v=>setItem(x.id,"raw",v),x.ch?fmtWon(x.ch.raw/x.ch.boxes):"입력")}{x.lossPct!=null&&<div style={{fontSize:10,color:x.lossPct>0.1?"#f59e0b":"var(--muted)"}}>로스 {pct(x.lossPct)}</div>}</td>
+          <td style={td}>{fmtWon(x.labor)}</td>
+          <td style={td}>{cellIn(cfg.items?.[x.id]?.pack,v=>setItem(x.id,"pack",v),fmtWon(Number(cfg.packDefault)||0))}</td>
+          <td style={td}>{fmtWon(x.oh)}</td>
+          <td style={{...td,fontWeight:700}}>{fmtWon(x.cost)}</td>
+          <td style={{...td,fontWeight:800,color:mColor(x.margin)}}>{fmtWon(x.profit)}</td>
+          <td style={{...td,color:mColor(x.margin)}}>{pct(x.margin)}</td>
+          <td style={td}>{x.wk>0?fmtNum(Math.round(x.wk*10)/10):"–"}</td>
+          <td style={{...td,fontWeight:700,color:mColor(x.margin)}}>{x.monthProfit==null?"–":man(x.monthProfit)}</td>
+          <td style={{...td,color:"#f59e0b"}}>{x.monthLoss>0?man(x.monthLoss):"–"}</td>
+        </tr>)}
+        {!rows.length&&<tr><td colSpan={12} style={{...td,textAlign:"center",color:"var(--muted)",padding:20}}>표시할 품목이 없습니다</td></tr>}</tbody>
+      </table>
+    </div>
+    <div style={{fontSize:11,color:"var(--muted)",lineHeight:1.8,marginTop:12}}>
+      <b>계산 방법</b><br/>
+      · 원육 = 생산일보의 원육 매입금액 ÷ 그 제품 생산 박스 (로스로 버린 원육 값까지 포함)<br/>
+      · 인건비 = 라인 투입 인원 ÷ 시간당 생산량 × 시급 × (1 + 가산%) — 인원·속도는 👥 인원 → 📐 인원 산정과 같은 값(거기서 라인 인원을 고치면 여기도 바뀜)<br/>
+      · 간접비 = 월 간접비 ÷ 월 생산 박스(생산일보 기준) — 모든 박스에 똑같이 나눔<br/>
+      · 판매가 = 직접 입력 → 없으면 발주리스트 💰 판매가의 쿠팡 공급가 × 입수량 (부가세 포함 여부 확인 필요) · 쿠팡 외 거래처 판매가는 직접 입력하세요<br/>
+      · 월 이익 = 이익/박스 × 주 판매 × {COST_WEEKS_PER_MONTH}주. 판매가·원가 일부가 빠진 품목은 그만큼 이익이 크게 보입니다
+    </div>
+  </div>;
+}
+
+// ═══════════════════════════════════════════
 // App (탭 네비게이션 + 로그인 게이트)
 // ═══════════════════════════════════════════
 // 탭: 하는 일끼리 묶음 — 계획 / 재고 / 분석 / 기록
 const TAB_GROUPS=[
   [["plans","📅","생산계획"],["lines","🏭","라인"],["staff","👥","인원"]],
   [["inventory","📊","재고"],["sheet","📋","재고 시트"],["items","📦","품목 / BOM"]],
-  [["stats","📈","통계"],["sales","💰","매출"],["loss","🩸","로스"]],
+  [["stats","📈","통계"],["sales","💰","매출"],["loss","🩸","로스"],["cost","💵","원가"]],
   [["meetings","📝","회의록"]],
 ];
 function fmtTodayKo(){
   const d=new Date(Date.now()+9*3600e3);
   return `${d.getUTCMonth()+1}월 ${d.getUTCDate()}일 (${"일월화수목금토"[d.getUTCDay()]})`;
 }
-const VALID_TABS=["items","lines","plans","staff","inventory","stats","sheet","sales","meetings","loss"];
+const VALID_TABS=["items","lines","plans","staff","inventory","stats","sheet","sales","meetings","loss","cost"];
 function getTabFromHash(){
   const h=(window.location.hash||"").replace(/^#/,"");
   return VALID_TABS.includes(h)?h:"plans";
@@ -11482,6 +11767,7 @@ function App(){
         {tab==="sales"&&<SalesTab adminHash={adminHash}/>}
         {tab==="meetings"&&<MeetingsTab adminHash={adminHash}/>}
         {tab==="loss"&&<ProductionLossTab adminHash={adminHash}/>}
+        {tab==="cost"&&<CostTab adminHash={adminHash} readOnly={readOnly}/>}
       </>}
     </div>
 
