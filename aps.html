@@ -199,6 +199,30 @@
     .aps-oa-short{font-weight:800;color:#ef4444;white-space:nowrap}
     .aps-oa-btns{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
     .aps-oa-late{font-size:12px;font-weight:700;color:#ef4444}
+    .aps-oapply-sec{font-weight:800;font-size:13px;margin-bottom:6px}
+    .aps-oapply-jobs{display:flex;flex-direction:column;gap:2px;max-height:240px;overflow-y:auto;border:1px solid var(--card-bd);border-radius:8px;padding:4px 8px}
+    .aps-oapply-job{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:5px 0;border-bottom:1px solid var(--card-bd);font-size:13px;cursor:pointer}
+    .aps-oapply-job:last-child{border-bottom:none}
+    .aps-oapply-job.off{opacity:.45}
+    .aps-oapply-job .nm{flex:1;min-width:180px}
+    .aps-oapply-job .qty{font-weight:800;color:#ef4444;white-space:nowrap}
+    .aps-oapply-job .due{font-size:12px;color:var(--muted);white-space:nowrap}
+    .aps-oapply-job select{padding:3px 6px;font-size:12px;width:auto}
+    .aps-oapply-tag{font-size:10px;padding:1px 6px;border-radius:6px;border:1px solid var(--card-bd);color:var(--muted);font-weight:600}
+    .aps-oapply-day{margin-top:8px;border:1px solid var(--card-bd);border-radius:8px;padding:6px 10px}
+    .aps-oapply-dayhd{font-weight:800;font-size:13px;padding:2px 0 4px;border-bottom:1px dashed var(--card-bd);margin-bottom:2px}
+    .aps-oapply-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:5px 0;font-size:13px;border-bottom:1px solid var(--card-bd)}
+    .aps-oapply-row:last-child{border-bottom:none}
+    .aps-oapply-row .ic{width:18px;text-align:center;font-weight:800}
+    .aps-oapply-row.new .ic{color:#10b981}
+    .aps-oapply-row.next .ic{color:#f59e0b}
+    .aps-oapply-row.shift .ic{color:var(--muted)}
+    .aps-oapply-row .nm{flex:1;min-width:180px}
+    .aps-oapply-row .ln{font-size:12px;color:var(--muted);white-space:nowrap}
+    .aps-oapply-row .tm{font-size:12px;white-space:nowrap}
+    .aps-oapply-row.next .nm,.aps-oapply-row.shift .nm{color:var(--muted)}
+    .aps-oapply-warn{font-size:12px;font-weight:700;color:#ef4444;padding:4px 0}
+    .aps-oapply-warn-inline{font-size:11px;color:#f59e0b;width:100%;padding-left:28px}
     .aps-plans-main{flex:1;min-width:0}
     .aps-inv-panel{width:280px;flex-shrink:0;background:var(--card-bg);border:1px solid var(--card-bd);border-radius:8px;padding:10px 10px 12px;max-height:82vh;overflow-y:auto;position:sticky;top:14px;box-sizing:border-box}
     .aps-inv-panel-title{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:var(--text);padding:2px 2px 8px;border-bottom:1px solid var(--div2);margin-bottom:6px}
@@ -5471,7 +5495,7 @@ function computeOrderShortages({orders,olProducts,items,plans,invProducts,prodDa
       const m=(demand[it.id]=demand[it.id]||{});
       const slot=(m[due]=m[due]||{boxes:0,sources:[]});
       slot.boxes+=boxes;
-      slot.sources.push({vendor:o.vendor,center:o.center,order_no:o.order_no,code,name:op.ship_name||op.name||ln.name,qty,per,boxes,extra:!!o.is_extra});
+      slot.sources.push({vendor:o.vendor,center:o.center,order_no:o.order_no,code,name:op.ship_name||op.name||ln.name,qty,per,boxes,extra:!!o.is_extra,frozen:op.storage==="frozen"});
     }
   }
   const rows=[];
@@ -5494,8 +5518,10 @@ function computeOrderShortages({orders,olProducts,items,plans,invProducts,prodDa
       // 앞 입고일 부족분은 그 날 알림으로 만들어질 것으로 보고 빼 줌 → 재고를 두 번 세지 않음
       const short=Math.ceil(Math.max(0,cumDemand-avail-planned-cumShort)-1e-9);
       if(short>0){
+        // 냉장 = 발주가 입고 2일 전에 들어오므로 입고 전날 생산이 정상 (냉동은 2생산일 전 권장 유지)
+        const chilled=slot.sources.some(s=>!s.frozen);
         rows.push({item:it,due,deadline,recommend,need:slot.boxes,cumDemand,stock,stockKnown,safety,avail,planned,short,sources:slot.sources,
-          late:deadline<today,recOk:recommend>=today});
+          late:deadline<today,recOk:recommend>=today,chilled});
         cumShort+=short;
       }
     }
@@ -5600,12 +5626,217 @@ function repackLineDay(plans,lineId,day,settings,focusId,pinId){
   return out;
 }
 
-function OrderShortagePanel({adminHash,items,lines,plans,settings,invData,onAddPlan}){
+// ═══ 📦 발주 한 번에 반영 (2026-11-06) ═══
+// 부족분을 고른 생산일(냉장 기본 = 입고 전날)에 넣음.
+// 라인 끝에 붙여서 근무시간 안에 들어가면 다른 계획은 그대로,
+// 넘치면 그 라인 그날의 뒤쪽 '일반 계획'부터 다음 생산일로 미룸.
+// 움직이지 않는 것: 진행중·완료 계획, 발주로 만든 계획(메모 "입고 발주분"), 이미 시작 시각이 지난 계획
+const ORDER_MEMO_RE=/입고 발주분/;
+function computeOrderApply({jobs,plans,lines,settings,prodDays}){
+  const wsH=parseInt(settings?.work_start_hour)||8,weH=parseInt(settings?.work_end_hour)||17;
+  const lunch=getLunch(settings);
+  const nowMs=Date.now(),today=todayStr();
+  const ms=p=>[new Date(p.start_at).getTime(),new Date(p.end_at).getTime()];
+  const geo=day=>{const ds=kstDayStartMs(day);return{ds,de:ds+86400000,lS:lunch?ds+lunch.s*3600000:0,lE:lunch?ds+lunch.e*3600000:0,ws:ds+wsH*3600000,we:ds+weH*3600000}};
+  const lunchIn=(g,s,e)=>lunch?Math.max(0,Math.min(e,g.lE)-Math.max(s,g.lS)):0;
+  const workOf=p=>{const[s,e]=ms(p);const g=geo(isoToKstDateStr(p.start_at));return Math.max(QUARTER_MS,(e-s)-lunchIn(g,s,e))};
+  const lineIdSet=new Set((lines||[]).map(l=>Number(l.id)));
+  const live=(plans||[]).filter(p=>p.status!=="canceled"&&p.start_at&&p.end_at);
+  const st={};
+  const stateOf=(lid,day)=>{
+    const k=lid+"|"+day;if(st[k])return st[k];
+    const g=geo(day);
+    const onLine=live.filter(p=>Number(p.line_id)===lid);
+    const movable=onLine.filter(p=>p.status==="planned"&&isoToKstDateStr(p.start_at)===day&&!ORDER_MEMO_RE.test(p.memo||"")&&ms(p)[0]>=nowMs)
+      .sort((a,b)=>ms(a)[0]-ms(b)[0]||(Number(a.sort_order??a.id)-Number(b.sort_order??b.id)));
+    const fixed=onLine.filter(p=>!movable.includes(p)).map(ms).filter(([s,e])=>s<g.de&&e>g.ds);
+    return st[k]={lid,day,g,fixed,touched:false,seq:movable.map(p=>({kind:"old",plan:p,work:workOf(p),orig:ms(p)[0]}))};
+  };
+  const layout=(S,seq)=>{
+    const g=S.g;
+    let cur=g.ws;if(S.day===today)cur=Math.max(cur,ceilQuarter(nowMs));
+    const skip=t=>(lunch&&t>=g.lS&&t<g.lE)?g.lE:t;
+    const out=[];
+    for(const en of seq){
+      let s=en.kind==="old"?Math.max(cur,en.orig):cur,e=s;
+      for(let guard=0;guard<60;guard++){
+        s=skip(s);e=s+en.work;if(lunch&&s<g.lS&&e>g.lS)e+=g.lE-g.lS;
+        const hit=S.fixed.find(([fs,fe])=>fs<e&&fe>s);if(!hit)break;s=hit[1];
+      }
+      out.push({...en,s,e});cur=e;
+    }
+    const end=out.length?out[out.length-1].e:0;
+    return{out,over:Math.max(0,end-g.we)};
+  };
+  // 일반 계획을 뒤에서부터 빼며 근무시간 안에 맞춤 → {seq, bumped, over}
+  const fit=(S,seq)=>{
+    seq=[...seq];const bumped=[];let lay=layout(S,seq);
+    while(lay.over>0){
+      let idx=-1;for(let i=seq.length-1;i>=0;i--)if(seq[i].kind!=="job"){idx=i;break}
+      if(idx<0)break;
+      bumped.push(seq.splice(idx,1)[0]);lay=layout(S,seq);
+    }
+    return{seq,bumped,over:lay.over,end:lay.out.length?lay.out[lay.out.length-1].e:S.g.ws};
+  };
+  const sorted=[...jobs].sort((a,b)=>a.day.localeCompare(b.day)||a.due.localeCompare(b.due)||b.qty-a.qty);
+  const noLine=[];
+  for(const j of sorted){
+    const work=j.rate>0?Math.max(QUARTER_MS,ceilQuarter(j.qty/j.rate*3600000)):3600000;
+    const entry={kind:"job",job:j,work};
+    const cands=(Array.isArray(j.item.line_ids)?j.item.line_ids:[]).map(Number).filter(id=>lineIdSet.has(id));
+    if(!cands.length){noLine.push({job:j,work});continue}
+    let best=null;
+    for(const lid of cands){
+      const S=stateOf(lid,j.day);
+      const r=fit(S,[...S.seq,entry]);
+      const bw=r.bumped.reduce((a,b)=>a+b.work,0);
+      const score=[r.over>0?1:0,r.over,bw,r.end];
+      // 근무시간 안에 들어감 → 넘친 시간 적음 → 미루는 시간 적음 → 일찍 끝남
+      const better=!best||(()=>{for(let i=0;i<score.length;i++){if(score[i]!==best.score[i])return score[i]<best.score[i]}return false})();
+      if(better)best={lid,S,r,score};
+    }
+    const{S,r}=best;
+    S.seq=r.seq;S.touched=true;
+    if(r.bumped.length){
+      const nd=nthProdDayAfter(j.day,1,prodDays);
+      const S2=stateOf(best.lid,nd);S2.touched=true;
+      r.bumped.forEach(en=>S2.seq.push({kind:"in",plan:en.plan,work:en.work,fromDay:en.fromDay||j.day}));
+    }
+  }
+  // 결과 정리
+  const created=[],moves=[],warns=[];
+  for(const S of Object.values(st)){
+    if(!S.touched)continue;
+    const lay=layout(S,S.seq);
+    const lineNm=(lines||[]).find(l=>Number(l.id)===S.lid)?.name||"라인";
+    for(const en of lay.out){
+      const late=en.e>S.g.we;
+      if(en.kind==="job")created.push({job:en.job,line_id:S.lid,lineName:lineNm,startMs:en.s,endMs:en.e,late});
+      else if(en.kind==="in")moves.push({plan:en.plan,type:"next",fromDay:en.fromDay,day:S.day,line_id:S.lid,lineName:lineNm,startMs:en.s,endMs:en.e,late});
+      else{const[os,oe]=ms(en.plan);if(Math.abs(os-en.s)>=60000||Math.abs(oe-en.e)>=60000)moves.push({plan:en.plan,type:"shift",day:S.day,line_id:S.lid,lineName:lineNm,startMs:en.s,endMs:en.e,origStart:os,origEnd:oe,late})}
+    }
+    if(lay.over>0)warns.push({day:S.day,lineName:lineNm,overMin:Math.round(lay.over/60000)});
+  }
+  // 라인 미지정 품목: 그날 첫 시간대로 (라인 지정 안내)
+  for(const{job:j,work} of noLine){
+    const g=geo(j.day);let s=g.ws;if(j.day===today)s=Math.max(s,ceilQuarter(nowMs));
+    if(lunch&&s>=g.lS&&s<g.lE)s=g.lE;let e=s+work;if(lunch&&s<g.lS&&e>g.lS)e+=g.lE-g.lS;
+    created.push({job:j,line_id:null,lineName:"라인 미지정",startMs:s,endMs:e,late:e>g.we,noLine:true});
+  }
+  created.sort((a,b)=>a.job.day.localeCompare(b.job.day)||String(a.lineName).localeCompare(String(b.lineName))||a.startMs-b.startMs);
+  moves.sort((a,b)=>a.day.localeCompare(b.day)||a.startMs-b.startMs);
+  warns.sort((a,b)=>a.day.localeCompare(b.day));
+  return{created,moves,warns};
+}
+
+function OrderApplyModal({adminHash,rows,rates,lines,plans,settings,prodDays,onClose,onApplied}){
+  const today=todayStr();
+  const defDay=r=>r.chilled?r.deadline:(r.recOk?r.recommend:r.deadline);
+  const keyOf=r=>r.item.id+":"+r.due;
+  const[dayOf,setDayOf]=useState(()=>{const m={};rows.forEach(r=>{m[keyOf(r)]=defDay(r)});return m});
+  const[off,setOff]=useState(new Set());
+  const[saving,setSaving]=useState(false);
+  const[err,setErr]=useState("");
+  const jobs=useMemo(()=>rows.filter(r=>!off.has(keyOf(r))).map(r=>({key:keyOf(r),item:r.item,qty:r.short,due:r.due,day:dayOf[keyOf(r)]||defDay(r),
+    rate:rates[r.item.id]||Number(r.item.units_per_hour)||0,chilled:r.chilled})),[rows,off,dayOf,rates]);
+  const plan=useMemo(()=>computeOrderApply({jobs,plans,lines,settings,prodDays}),[jobs,plans,lines,settings,prodDays]);
+  const fmtT=t=>fmtKstTime(new Date(t).toISOString());
+  const noRate=jobs.filter(j=>!(j.rate>0));
+  const byDay={};
+  plan.created.forEach(c=>{(byDay[c.job.day]=byDay[c.job.day]||{created:[],moves:[],warns:[]}).created.push(c)});
+  plan.moves.forEach(m=>{(byDay[m.day]=byDay[m.day]||{created:[],moves:[],warns:[]}).moves.push(m)});
+  plan.warns.forEach(w=>{(byDay[w.day]=byDay[w.day]||{created:[],moves:[],warns:[]}).warns.push(w)});
+  const days=Object.keys(byDay).sort();
+  const nNext=plan.moves.filter(m=>m.type==="next").length,nShift=plan.moves.filter(m=>m.type==="shift").length;
+
+  const save=async()=>{
+    setSaving(true);setErr("");
+    const fails=[];
+    try{
+      const fresh=await rpc("aps_list_plans",{p_admin_hash:adminHash,p_status:null})||[];
+      const byId={};fresh.forEach(p=>{byId[p.id]=p});
+      for(const m of plan.moves){
+        const q=byId[m.plan.id];
+        if(!q){fails.push(`${m.plan.item_name}: 다른 컴퓨터에서 삭제됨`);continue}
+        if(q.status!=="planned"){fails.push(`${q.item_name}: 이미 시작/완료되어 옮기지 않음`);continue}
+        try{
+          await rpc("aps_upsert_plan",{p_admin_hash:adminHash,p_id:q.id,p_item_id:q.item_id,p_line_id:m.line_id,p_qty:q.qty,
+            p_start_at:new Date(m.startMs).toISOString(),p_end_at:new Date(m.endMs).toISOString(),p_status:q.status,p_memo:q.memo||""});
+        }catch(e){fails.push(`${q.item_name}: ${autoPlanFailReason(e)}`)}
+      }
+      for(const c of plan.created){
+        try{
+          await rpc("aps_upsert_plan",{p_admin_hash:adminHash,p_id:null,p_item_id:c.job.item.id,p_line_id:c.line_id,p_qty:c.job.qty,
+            p_start_at:new Date(c.startMs).toISOString(),p_end_at:new Date(c.endMs).toISOString(),p_status:"planned",p_memo:`${fmtMD(c.job.due)} 입고 발주분`});
+        }catch(e){fails.push(`${c.job.item.name}: ${autoPlanFailReason(e)}`)}
+      }
+    }catch(e){fails.push(String(e?.message||e))}
+    setSaving(false);
+    if(fails.length){setErr("일부 실패:\n"+fails.join("\n"));onApplied&&onApplied(false);return}
+    onApplied&&onApplied(true);
+  };
+
+  return <div className="aps-modal-bg" onClick={()=>!saving&&onClose()}>
+    <div className="aps-modal aps-modal-lg" onClick={e=>e.stopPropagation()} style={{maxWidth:860}}>
+      <div style={{fontWeight:800,fontSize:17,marginBottom:4}}>📦 냉장 발주 부족분 한 번에 반영</div>
+      <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.6,marginBottom:12}}>
+        냉장 부족분을 입고 전날 계획에 넣습니다 (냉동은 알림의 행마다 버튼으로). 라인 끝에 붙여서 근무시간 안에 들어가면 다른 계획은 그대로 두고,
+        넘치면 <b>그 라인 그날의 뒤쪽 일반 계획부터 다음 생산일로</b> 미룹니다. 진행중·완료 계획, 발주로 만든 계획은 움직이지 않습니다.
+      </div>
+
+      <div className="aps-oapply-sec">① 넣을 부족분 <span style={{color:"var(--muted)",fontWeight:400}}>· 체크를 빼면 제외</span></div>
+      <div className="aps-oapply-jobs">
+        {rows.map(r=>{const k=keyOf(r);const on=!off.has(k);const opts=[];
+          if(r.recOk&&r.recommend!==r.deadline)opts.push([r.recommend,"2생산일 전"]);
+          if(r.deadline>=today)opts.push([r.deadline,"입고 전날"]);
+          return <label key={k} className={"aps-oapply-job"+(on?"":" off")}>
+            <input type="checkbox" checked={on} onChange={()=>setOff(s=>{const n=new Set(s);n.has(k)?n.delete(k):n.add(k);return n})}/>
+            <span className="nm"><b>{r.item.name}</b> <span className="aps-oapply-tag">{r.chilled?"냉장":"❄ 냉동"}</span></span>
+            <span className="qty">{fmtNum(r.short)}박스</span>
+            <span className="due">입고 {fmtMDDow(r.due)}</span>
+            <select className="aps-input" value={dayOf[k]} disabled={!on} onClick={e=>e.stopPropagation()} onChange={e=>setDayOf(m=>({...m,[k]:e.target.value}))}>
+              {opts.map(([d,t])=><option key={d} value={d}>{t} · {fmtMDDow(d)}</option>)}
+            </select>
+          </label>})}
+      </div>
+      {noRate.length>0&&<div className="aps-oa-note">⏱ 생산 속도 기록이 없는 품목은 1시간으로 넣었습니다: {noRate.map(j=>j.item.name).join(", ")}</div>}
+
+      <div className="aps-oapply-sec" style={{marginTop:14}}>② 바뀌는 계획 <span style={{color:"var(--muted)",fontWeight:400}}>· 새 계획 {plan.created.length} · 다음 날로 {nNext} · 시간만 이동 {nShift}</span></div>
+      {days.length===0&&<div style={{fontSize:13,color:"var(--muted)",padding:"6px 2px"}}>넣을 부족분이 없습니다.</div>}
+      {days.map(d=>{const g=byDay[d];return <div key={d} className="aps-oapply-day">
+        <div className="aps-oapply-dayhd">{fmtMDDow(d)}{d===today?" · 오늘":""}</div>
+        {g.warns.map((w,i)=><div key={"w"+i} className="aps-oapply-warn">⚠ {w.lineName} 근무시간을 {w.overMin}분 넘습니다 — 잔업하거나 다른 날·라인으로 옮겨야 합니다</div>)}
+        {g.created.map((c,i)=><div key={"c"+i} className="aps-oapply-row new">
+          <span className="ic">＋</span><span className="nm"><b>{c.job.item.name}</b> {fmtNum(c.job.qty)}박스 <span style={{color:"var(--muted)"}}>· {fmtMD(c.job.due)} 입고</span></span>
+          <span className="ln">{c.lineName}</span><span className="tm">{fmtT(c.startMs)}~{fmtT(c.endMs)}{c.late&&<b style={{color:"#ef4444"}}> 초과</b>}</span>
+          {c.noLine&&<span className="aps-oapply-warn-inline">품목에 생산 라인이 없어 라인 없이 넣습니다</span>}
+        </div>)}
+        {g.moves.map((m,i)=><div key={"m"+i} className={"aps-oapply-row "+m.type}>
+          <span className="ic">{m.type==="next"?"➡":"⏱"}</span>
+          <span className="nm">{m.plan.item_name} {fmtNum(m.plan.qty)}{m.plan.item_unit||""}</span>
+          <span className="ln">{m.lineName}</span>
+          <span className="tm">{m.type==="next"?<>{fmtMDDow(m.fromDay)}에서 밀려옴 · {fmtT(m.startMs)}~{fmtT(m.endMs)}</>:<><s>{fmtT(m.origStart)}~{fmtT(m.origEnd)}</s> → {fmtT(m.startMs)}~{fmtT(m.endMs)}</>}{m.late&&<b style={{color:"#ef4444"}}> 초과</b>}</span>
+        </div>)}
+      </div>})}
+
+      {err&&<div style={{whiteSpace:"pre-wrap",color:"#ef4444",fontSize:12,marginTop:10}}>{err}</div>}
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
+        <button className="aps-btn aps-btn-secondary" onClick={onClose} disabled={saving}>{err?"닫기":"취소"}</button>
+        <button className="aps-btn aps-btn-primary" onClick={save} disabled={saving||plan.created.length===0||!!err}>
+          {saving?"반영 중…":`새 계획 ${plan.created.length}건 반영${plan.moves.length?` · ${plan.moves.length}건 이동`:""}`}
+        </button>
+      </div>
+    </div>
+  </div>;
+}
+
+function OrderShortagePanel({adminHash,items,lines,plans,settings,invData,onAddPlan,onApplied}){
   const[data,setData]=useState(null); // {orders, products, linkMissing} | {error}
   const[rates,setRates]=useState({});
   const[open,setOpen]=useState(()=>{try{return localStorage.getItem("aps-order-alert-open")!=="0"}catch(e){return true}});
   useEffect(()=>{try{localStorage.setItem("aps-order-alert-open",open?"1":"0")}catch(e){}},[open]);
   const[showUnlinked,setShowUnlinked]=useState(false);
+  const[applyOpen,setApplyOpen]=useState(false);
   const[tick,setTick]=useState(0);
   const today=todayStr();
   useEffect(()=>{
@@ -5648,6 +5879,7 @@ function OrderShortagePanel({adminHash,items,lines,plans,settings,invData,onAddP
   const{unlinked,unregistered,deletedLink}=result;
   // 마감일(입고 1생산일 전)이 이미 지난 건은 표시하지 않음 (계산에는 그대로 들어가 뒤 입고일 부족분이 두 번 잡히지 않음)
   const rows=result.rows.filter(r=>!r.late);
+  const chilledRows=rows.filter(r=>r.chilled); // 한 번에 반영은 냉장만 (냉동은 행마다 버튼)
   const missCount=unlinked.length+unregistered.length+deletedLink.length;
   const invOld=invData?.savedAt&&isoToKstDateStr(invData.savedAt)<today;
   const noInv=!invData?.products?.length;
@@ -5666,6 +5898,7 @@ function OrderShortagePanel({adminHash,items,lines,plans,settings,invData,onAddP
       <span className="aps-oa-sub">앞으로 {ORDER_ALERT_DAYS}일 입고 발주 {orderCount}건 · 안전재고는 남기고 계산</span>
       {missCount>0&&<span className="aps-oa-chip" onClick={e=>{e.stopPropagation();setOpen(true);setShowUnlinked(v=>!v)}}>🔗 APS 연결 안 된 발주 제품 {missCount}개</span>}
       <span style={{flex:1}}/>
+      {chilledRows.length>0&&<button className="aps-btn aps-btn-primary aps-btn-sm" onClick={e=>{e.stopPropagation();setApplyOpen(true)}} title="냉장 부족분을 입고 전날 계획에 한 번에 넣고, 시간이 모자라면 일반 계획을 다음 날로 미룸 (저장 전에 미리 보여 줌)">📦 냉장 한 번에 반영 ({chilledRows.length})</button>}
       <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={e=>{e.stopPropagation();setTick(t=>t+1)}} title="발주서 다시 불러오기">↻</button>
       <span className="aps-oa-tog">{open?"접기 ▲":"펼치기 ▼"}</span>
     </div>
@@ -5692,7 +5925,11 @@ function OrderShortagePanel({adminHash,items,lines,plans,settings,invData,onAddP
           </div>
           <div className="aps-oa-short">{fmtNum(r.short)}박스 부족</div>
           <div className="aps-oa-btns">
-            {r.late?<span className="aps-oa-late">⛔ 늦음 (마감 {fmtMDDow(r.deadline)})</span>:<>
+            {r.late?<span className="aps-oa-late">⛔ 늦음 (마감 {fmtMDDow(r.deadline)})</span>:r.chilled?<>
+              {/* 냉장: 발주가 입고 2일 전에 오므로 입고 전날 생산이 정상 */}
+              <button className="aps-btn aps-btn-primary aps-btn-sm" onClick={()=>add(r,r.deadline)} title="냉장 — 입고 전날 생산">입고 전날 {fmtMDDow(r.deadline)}에 추가</button>
+              {r.recOk&&r.recommend!==r.deadline&&<button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>add(r,r.recommend)} title="하루 일찍 (2생산일 전)">{fmtMDDow(r.recommend)}에 추가</button>}
+            </>:<>
               {r.recOk&&<button className="aps-btn aps-btn-primary aps-btn-sm" onClick={()=>add(r,r.recommend)} title="입고 2생산일 전 (권장)">권장 {fmtMDDow(r.recommend)}에 추가</button>}
               <button className={"aps-btn aps-btn-sm "+(r.recOk?"aps-btn-secondary":"aps-btn-primary")} onClick={()=>add(r,r.deadline)} title="입고 1생산일 전 (늦어도 이날까지)">{r.recOk?"마감":"⚠ 마감"} {fmtMDDow(r.deadline)}에 추가</button>
             </>}
@@ -5701,6 +5938,9 @@ function OrderShortagePanel({adminHash,items,lines,plans,settings,invData,onAddP
         </div>)}
       </div>)}
     </div>}
+    {applyOpen&&<OrderApplyModal adminHash={adminHash} rows={chilledRows} rates={rates} lines={lines} plans={plans} settings={settings} prodDays={prodDays}
+      onClose={()=>setApplyOpen(false)}
+      onApplied={ok=>{if(ok)setApplyOpen(false);onApplied&&onApplied()}}/>}
   </div>;
 }
 
@@ -6268,7 +6508,8 @@ function PlansTab({adminHash}){
     </div>
 
     {!loading&&<OrderShortagePanel adminHash={adminHash} items={items} lines={lines} plans={plans} settings={settings} invData={invDataFz}
-      onAddPlan={pf=>{setDayStr(pf.day);setAllDates(false);setEditing(null);setPrefill(pf);setShowForm(true)}}/>}
+      onAddPlan={pf=>{setDayStr(pf.day);setAllDates(false);setEditing(null);setPrefill(pf);setShowForm(true)}}
+      onApplied={()=>load()}/>}
 
     {loading?<Loader/>:
       <div className={invPanelOpen?"aps-plans-layout":""}>
