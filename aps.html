@@ -5755,6 +5755,30 @@ function PlansTab({adminHash}){
   },[adminHash]);
   useEffect(()=>{load()},[load]);
 
+  // 다른 컴퓨터에서 바꾼 계획 가져오기 — 화면이 보일 때 20초마다 + 이 탭으로 돌아올 때
+  // 끄는 중(간트 드래그)·입력 중·창(계획 추가/수정 등)이 열려 있으면 건너뜀. 바뀐 게 없으면 화면 그대로
+  useEffect(()=>{
+    let busy=false,down=false;
+    const pd=()=>{down=true},pu=()=>{down=false};
+    const typing=()=>{const a=document.activeElement;return !!a&&(a.tagName==="INPUT"||a.tagName==="TEXTAREA"||a.tagName==="SELECT"||a.isContentEditable)};
+    const run=async()=>{
+      if(busy||down||document.visibilityState!=="visible"||typing()||document.querySelector(".aps-modal-bg"))return;
+      busy=true;
+      try{
+        const pl=await rpc("aps_list_plans",{p_admin_hash:adminHash,p_status:null});
+        if(Array.isArray(pl)&&!down&&!typing()&&!document.querySelector(".aps-modal-bg"))
+          setPlans(p=>JSON.stringify(p)===JSON.stringify(pl)?p:pl);
+      }catch(e){}
+      busy=false;
+    };
+    const onVis=()=>{if(document.visibilityState==="visible")run()};
+    const t=setInterval(run,20000);
+    addEventListener("pointerdown",pd,true);addEventListener("pointerup",pu,true);addEventListener("pointercancel",pu,true);
+    document.addEventListener("visibilitychange",onVis);addEventListener("focus",run);
+    return()=>{clearInterval(t);removeEventListener("pointerdown",pd,true);removeEventListener("pointerup",pu,true);
+      removeEventListener("pointercancel",pu,true);document.removeEventListener("visibilitychange",onVis);removeEventListener("focus",run)};
+  },[adminHash]);
+
   // 선택된 날짜와 겹치는 계획만 (KST 00:00 ~ 24:00)
   const overlapsDay=useMemo(()=>{
     const dayStartMs=new Date(dayStr+"T00:00:00+09:00").getTime();
@@ -5976,10 +6000,17 @@ function PlansTab({adminHash}){
 
   const[swapTimes,setSwapTimes]=useState(()=>{try{return localStorage.getItem("aps-swap-times")!=="0"}catch(e){return true}});
   useEffect(()=>{try{localStorage.setItem("aps-swap-times",swapTimes?"1":"0")}catch(e){}},[swapTimes]);
-  const movePlan=async(p,direction,neighbor)=>{
+  // 서버의 최신 계획 — 다른 컴퓨터가 바꾼 품목·수량·메모를 옛 값으로 되돌리지 않게, 저장 직전에 다시 읽음
+  const freshPlansById=async ids=>{
+    const all=await rpc("aps_list_plans",{p_admin_hash:adminHash,p_status:null})||[];
+    return ids.map(id=>all.find(x=>x.id===id)||null);
+  };
+  const movePlan=async(p0,direction,neighbor0)=>{
     try{
+      const[p,neighbor]=await freshPlansById([p0.id,neighbor0?.id]);
+      if(!p){alert("다른 컴퓨터에서 삭제된 계획입니다");load();return}
       await rpc("aps_move_plan_order",{p_admin_hash:adminHash,p_id:p.id,p_direction:direction});
-      const sw=swapTimes?swapPlanTimes(p,neighbor,settings):null;
+      const sw=swapTimes&&neighbor?swapPlanTimes(p,neighbor,settings):null;
       if(sw){
         for(const{plan:q,start_at,end_at} of sw){
           await rpc("aps_upsert_plan",{p_admin_hash:adminHash,p_id:q.id,p_item_id:q.item_id,p_line_id:q.line_id,p_qty:q.qty,
@@ -6124,10 +6155,13 @@ function PlansTab({adminHash}){
   };
 
   // 간트 드래그로 시간 변경 (move/resize-l/resize-r 공통)
-  const updatePlanTime=async(p,newStartMs,newEndMs)=>{
+  const updatePlanTime=async(p0,newStartMs,newEndMs)=>{
     // 낙관적 업데이트 — 서버 응답 전에 화면 즉시 반영
-    setPlans(prev=>prev.map(x=>x.id===p.id?{...x,start_at:new Date(newStartMs).toISOString(),end_at:new Date(newEndMs).toISOString()}:x));
+    setPlans(prev=>prev.map(x=>x.id===p0.id?{...x,start_at:new Date(newStartMs).toISOString(),end_at:new Date(newEndMs).toISOString()}:x));
     try{
+      const[f]=await freshPlansById([p0.id]);
+      if(!f){alert("다른 컴퓨터에서 삭제된 계획입니다");load();return}
+      const p={...f,start_at:p0.start_at};  // 당기기 기준(옮기기 전 날짜)은 화면 값
       await rpc("aps_upsert_plan",{
         p_admin_hash:adminHash,
         p_id:p.id,

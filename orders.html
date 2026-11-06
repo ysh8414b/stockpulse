@@ -2820,6 +2820,62 @@ const boldDigits=(text,dim)=>String(text).split(/(\d+(?:[.,]\d+)*(?:\s*(?:kg|g))
 // 편집 내용은 ol_settings에 key = "img:{발주번호}:{생산지점}" 로 저장 (PC·모바일 공유)
 // sig(파렛트 구성 요약)가 달라지면(발주서 재업로드 등) 이전 편집은 무시
 const imgEditCache=new Map();
+// 여러 컴퓨터가 같은 이미지를 고칠 때: 바뀐 부분(diff)만 서버 최신값에 덮어 저장 → 다른 컴퓨터 편집은 남음
+function imgDiff(a,b){
+  const d={};
+  for(const f of ["pos","text","size"]){
+    const A=a?.[f]||{},B=b?.[f]||{},set={},del=[];
+    for(const k in B)if(!sameJson(A[k],B[k]))set[k]=B[k];
+    for(const k in A)if(!(k in B))del.push(k);
+    if(Object.keys(set).length||del.length)d[f]={set,del};
+  }
+  if((a?.scale||100)!==(b?.scale||100))d.scale=b?.scale||100;
+  const EA=a?.extra||[],EB=b?.extra||[];
+  const eset=EB.filter(x=>!sameJson(EA.find(y=>y.id===x.id),x)),edel=EA.filter(x=>!EB.some(y=>y.id===x.id)).map(x=>x.id);
+  if(eset.length||edel.length)d.extra={set:eset,del:edel};
+  return d;
+}
+function imgApply(base,d){
+  const o={...base};
+  for(const f of ["pos","text","size"])if(d[f]){
+    const m={...(o[f]||{})};d[f].del.forEach(k=>delete m[k]);Object.assign(m,d[f].set);o[f]=m;
+  }
+  if(d.scale!==undefined)o.scale=d.scale;
+  if(d.extra){
+    let e=(o.extra||[]).filter(x=>!d.extra.del.includes(x.id));
+    for(const x of d.extra.set){const i=e.findIndex(y=>y.id===x.id);if(i>=0)e[i]=x;else e=[...e,x]}
+    o.extra=e;
+  }
+  return o;
+}
+// 화면에 떠 있는 이미지들의 편집값을 한 번에 15초마다 다시 읽음 (key → 받을 함수들)
+const imgSyncSubs=new Map();
+let imgSyncTimer=null,_ptrDown=false;
+addEventListener("pointerdown",()=>{_ptrDown=true},true);
+addEventListener("pointerup",()=>{_ptrDown=false},true);
+addEventListener("pointercancel",()=>{_ptrDown=false},true);
+async function imgSyncRun(){
+  if(!imgSyncSubs.size||document.visibilityState!=="visible"||_olPending||_ptrDown||isTyping())return;
+  const seq=_olSaveSeq;
+  try{
+    const vals=await olGetSettings([...imgSyncSubs.keys()]);
+    if(_olPending||_ptrDown||isTyping()||seq!==_olSaveSeq)return;
+    for(const[k,fns]of imgSyncSubs)if(vals[k]!==undefined)fns.forEach(fn=>fn(vals[k]));
+  }catch(e){}
+}
+function useImgSync(key,fn){
+  const ref=useRef(fn);ref.current=fn;
+  useEffect(()=>{
+    const f=v=>ref.current(v);
+    if(!imgSyncSubs.has(key))imgSyncSubs.set(key,new Set());
+    imgSyncSubs.get(key).add(f);
+    if(!imgSyncTimer){
+      imgSyncTimer=setInterval(imgSyncRun,15000);
+      document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")imgSyncRun()});
+    }
+    return()=>{const s=imgSyncSubs.get(key);if(s){s.delete(f);if(!s.size)imgSyncSubs.delete(key)}};
+  },[key]);
+}
 // 저장 용지 (mm, 가로만) — 300dpi로 렌더링, 사방 여백 PAPER_MARGIN_MM
 const PAPER_SIZES={
   "A4-l":{label:"A4 가로",w:297,h:210},
@@ -3095,11 +3151,32 @@ function LoadImageCard({group,date,prefix,adminHash,masters}){
       undoRef.current=[...undoRef.current,edRef.current].slice(-100);
       redoRef.current=[];setHistTick(t=>t+1);
     }
+    const d=imgDiff(edRef.current,next);
     edRef.current=next;setEd(next);imgEditCache.set(key,next);
     setStatus("저장 중…");
-    try{await rpc("ol_set_setting",{p_admin_hash:adminHash,p_key:key,p_value:next});setStatus("✓ 저장됨")}
-    catch(e){setStatus("⚠ "+errMsg(e))}
+    // 저장은 순서대로 (빠르게 여러 번 옮겨도 앞 저장이 사라지지 않게)
+    _olSaveSeq++;_olPending++;
+    const job=saveChain.current.then(async()=>{
+      try{
+        // 서버 최신값(다른 컴퓨터 편집 포함)에 이번에 바꾼 부분만 덮음
+        let merged=next;
+        try{const v=(await olGetSettings([key]))[key];if(v&&v.sig===sig)merged=imgApply(v,d)}catch(e){}
+        await rpc("ol_set_setting",{p_admin_hash:adminHash,p_key:key,p_value:merged});
+        imgEditCache.set(key,merged);
+        if(edRef.current===next&&!sameJson(merged,next)){edRef.current=merged;setEd(merged)}
+        setStatus("✓ 저장됨");
+      }catch(e){setStatus("⚠ "+errMsg(e))}
+      finally{_olPending--}
+    });
+    saveChain.current=job;
+    await job;
   };
+  const saveChain=useRef(Promise.resolve());
+  // 다른 컴퓨터에서 바꾼 편집 가져오기 (같은 파렛트 구성일 때만, 끄는 중·입력 중 제외)
+  useImgSync(key,v=>{
+    if(!v||v.sig!==sig||sameJson(v,edRef.current))return;
+    imgEditCache.set(key,v);edRef.current=v;setEd(v);
+  });
   const onMove=(id,p)=>persist({...edRef.current,pos:{...edRef.current.pos,[id]:p}});
   const onText=(id,t)=>{
     // 추가한 글씨를 비우면 글씨 자체를 삭제
