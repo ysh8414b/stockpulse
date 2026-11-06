@@ -199,6 +199,13 @@
     .aps-oa-short{font-weight:800;color:#ef4444;white-space:nowrap}
     .aps-oa-btns{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
     .aps-oa-late{font-size:12px;font-weight:700;color:#ef4444}
+    .aps-chill-row{cursor:pointer;background:rgba(6,182,212,.07)}
+    .aps-chill-row:hover{background:rgba(6,182,212,.13)}
+    .aps-chill-tog{display:inline-block;width:22px;height:22px;line-height:22px;border-radius:6px;border:1px solid var(--card-bd);font-size:11px;color:var(--aps-accent,#22b8cf)}
+    .aps-chill-names{display:flex;flex-wrap:wrap;gap:2px 10px;margin-top:3px;font-size:12px;color:var(--muted)}
+    .aps-chill-names b{color:var(--text)}
+    .aps-chill-sub td{background:rgba(6,182,212,.035)}
+    .aps-chill-sub td:nth-child(2){padding-left:26px}
     .aps-oapply-sec{font-weight:800;font-size:13px;margin-bottom:6px}
     .aps-oapply-jobs{display:flex;flex-direction:column;gap:2px;max-height:240px;overflow-y:auto;border:1px solid var(--card-bd);border-radius:8px;padding:4px 8px}
     .aps-oapply-job{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:5px 0;border-bottom:1px solid var(--card-bd);font-size:13px;cursor:pointer}
@@ -3424,7 +3431,83 @@ function ExportWeekView({week}){
 // 이미지 저장용 생산계획 리포트 (오프스크린 렌더 → html2canvas 캡처)
 // 라인별 그룹 + 인쇄 친화 라이트 테마. viewMode 무관하게 항상 동일 레이아웃
 // 1주일치 생산계획 긴 이미지 — 날짜 띠 + 날짜별 표 1개 (라인 → 시작 시각 순)
-function ExportWeekLongView({days,lines,matsByPlan,width=820}){
+// ═══ 🧊 냉장 묶어 보기 (2026-11-06) ═══
+// 냉장 = 자동 리스트 생성기 제품리스트에서 보관이 냉장인 제품이 🔗 연결한 APS 품목
+// 같은 라인·같은 날 냉장 계획이 2개 이상이면 한 줄로 묶어 보여 줌 (리스트·계획 이미지)
+let _chilledIdsCache=null,_chilledIdsAt=0;
+async function loadChilledItemIds(force){
+  if(!force&&_chilledIdsCache&&Date.now()-_chilledIdsAt<60000)return _chilledIdsCache;
+  const m=await rpc("ol_list_masters",{p_admin_hash:""});
+  const ids=new Set();
+  (m?.products||[]).forEach(p=>{if(p.aps_item_id!=null&&p.storage!=="frozen")ids.add(Number(p.aps_item_id))});
+  _chilledIdsCache=ids;_chilledIdsAt=Date.now();
+  return ids;
+}
+function useChilledItemIds(){
+  const[ids,setIds]=useState(_chilledIdsCache);
+  useEffect(()=>{let c=false;loadChilledItemIds().then(s=>{if(!c)setIds(s)}).catch(()=>{});return()=>{c=true}},[]);
+  return ids;
+}
+function loadGroupChilled(){try{return localStorage.getItem("aps-group-chilled")!=="0"}catch(e){return true}}
+// plans(순서 유지) → [{type:"plan",p,idx} | {type:"group",key,members:[{p,idx}]}]  (묶음은 첫 냉장 계획 자리에)
+function chilledSegments(plans,chilledIds,keyFn){
+  const isC=p=>!!chilledIds&&chilledIds.has(Number(p.item_id));
+  const kf=keyFn||(p=>isoToKstDateStr(p.start_at));
+  const cnt={};plans.forEach(p=>{if(isC(p)){const k=kf(p);cnt[k]=(cnt[k]||0)+1}});
+  const out=[],seen={};
+  plans.forEach((p,idx)=>{
+    if(isC(p)){const k=kf(p);if(cnt[k]>=2){if(!seen[k]){seen[k]={type:"group",key:k,members:[]};out.push(seen[k])}seen[k].members.push({p,idx});return}}
+    out.push({type:"plan",p,idx});
+  });
+  return out;
+}
+function shortItemName(n){
+  return String(n||"").replace(/^\([^)]*\)\s*/,"").replace(/[\s/]*[\d.]+\s*(kg|g)\s*\*\s*\d+\s*$/i,"").trim()||String(n||"");
+}
+function chilledSummary(members,matsByPlan){
+  const ps=members.map(m=>m.p);
+  const live=ps.filter(p=>p.status!=="canceled");
+  const units={};live.forEach(p=>{const u=p.item_unit||"박스";units[u]=(units[u]||0)+(Number(p.qty)||0)});
+  const kg=live.reduce((s,p)=>{const k=parseSpecKg(p.item_spec);return s+(k==null?0:k*(Number(p.qty)||0))},0);
+  const t=ps.filter(p=>p.start_at&&p.end_at);
+  const start=t.length?t.reduce((a,p)=>p.start_at<a?p.start_at:a,t[0].start_at):null;
+  const end=t.length?t.reduce((a,p)=>p.end_at>a?p.end_at:a,t[0].end_at):null;
+  const sts=[...new Set(ps.map(p=>p.status))];
+  const mats={};
+  if(matsByPlan)ps.forEach(p=>(matsByPlan[p.id]||[]).forEach(m=>{const k=m.name;(mats[k]=mats[k]||{name:m.name,needKg:0}).needKg+=Number(m.needKg)||0}));
+  return{ps,units,kg,start,end,status:sts.length===1?sts[0]:null,mats:Object.values(mats),
+    unitText:Object.entries(units).map(([u,q])=>`${fmtNum(q)}${u}`).join(" · ")};
+}
+
+// 리스트 보기: 라인 그룹 안의 냉장 계획을 묶음 줄로 (펼치면 개별 계획)
+function chilledListRows(g,chilledIds,openSet,toggle,mats,lc,planRow){
+  return chilledSegments(g.plans,chilledIds).flatMap(sg=>{
+    if(sg.type==="plan")return[planRow(sg.p,sg.idx)];
+    const gk=(g.line_id||"none")+"|"+sg.key;
+    const open=openSet.has(gk);
+    const s=chilledSummary(sg.members,mats);
+    const kgTxt=s.kg>0?fmtKg(s.kg):"";
+    const head=<tr key={"cg-"+gk} className="aps-chill-row" onClick={()=>toggle(gk)}>
+      <td className="center" style={{boxShadow:`inset 6px 0 0 ${lc.base}`}}><span className="aps-chill-tog">{open?"▼":"▶"}</span></td>
+      <td>
+        <div style={{fontWeight:800}}>🧊 냉장 {sg.members.length}종 <span style={{fontWeight:500,fontSize:11,color:"var(--muted)"}}>{open?"접기":"눌러서 펼치기"}</span></div>
+        <div className="aps-chill-names">{s.ps.map(p=><span key={p.id}>{shortItemName(p.item_name)} <b>{fmtNum(p.qty)}</b></span>)}</div>
+        {s.mats.length>0&&<div style={{marginTop:3,fontSize:11,color:"#c2410c"}}>{s.mats.map((m,i)=><span key={i} style={{marginRight:10,whiteSpace:"nowrap"}}><b>🥩 {m.name}</b> {fmtKg(m.needKg)}</span>)}</div>}
+      </td>
+      <td className="right" style={{fontWeight:700}}>
+        <div style={{whiteSpace:"nowrap"}}>{s.unitText}</div>
+        {kgTxt&&<div style={{fontSize:12,fontWeight:600,marginTop:2}}>{kgTxt}</div>}
+      </td>
+      <td className="center hide-mobile" style={{fontSize:12,color:"var(--muted)"}}>{s.start?fmtKstDateTime(s.start):""}</td>
+      <td className="center" style={{fontSize:12,color:"var(--muted)"}}>{s.end?fmtKstDateTime(s.end):""}</td>
+      <td className="center">{s.status?<Pill map={STATUS_PILL} k={s.status} label={STATUS_LABEL[s.status]}/>:<span style={{fontSize:11,color:"var(--muted)"}}>여러 상태</span>}</td>
+      <td className="center"><button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={e=>{e.stopPropagation();toggle(gk)}}>{open?"접기":"펼치기"}</button></td>
+    </tr>;
+    return[head,...(open?sg.members.map(m=>{const r=planRow(m.p,m.idx);return React.cloneElement(r,{className:"aps-chill-sub"})}):[])];
+  });
+}
+
+function ExportWeekLongView({days,lines,matsByPlan,width=820,chilledIds}){
   const C={text:"#0f172a",sub:"#475569",muted:"#94a3b8",line:"#e2e8f0",band:"#f1f5f9",sat:"#2563eb",sun:"#dc2626",mat:"#9a3412"};
   const ST={in_progress:{bg:"#cffafe",fg:"#0e7490"},done:{bg:"#dcfce7",fg:"#15803d"},canceled:{bg:"#fee2e2",fg:"#b91c1c"}};
   const today=todayStr();
@@ -3484,13 +3567,47 @@ function ExportWeekLongView({days,lines,matsByPlan,width=820}){
         {ps.length>0&&<table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed",marginTop:2}}>
           <colgroup><col style={{width:92}}/><col style={{width:100}}/><col/><col style={{width:120}}/></colgroup>
           <tbody>
-            {ps.map((p,i)=>{
+            {(()=>{const segs=chilledSegments(ps,chilledIds,p=>String(p.line_id||"none"));return segs.map((sg,i)=>{
+              const first=sg.type==="group"?sg.members[0].p:sg.p;
+              const prevFirst=i>0?(segs[i-1].type==="group"?segs[i-1].members[0].p:segs[i-1].p):null;
+              const newLine=i===0||prevFirst.line_id!==first.line_id;
+              if(sg.type==="group"){
+                const lc=lineColorFor(first.line_id,lines);
+                const s=chilledSummary(sg.members,matsByPlan);
+                const st=s.status?ST[s.status]:null;
+                return <tr key={"cg"+sg.key} style={{borderTop:i===0?"none":`1px solid ${newLine?"#cbd5e1":C.line}`,background:"#f0fdff"}}>
+                  <td style={{padding:"11px 6px 11px 14px",verticalAlign:"top"}}>
+                    <div style={{fontSize:15,fontWeight:800}}>{hm(s.start,d.dayStr)}</div>
+                    <div style={{fontSize:12,color:C.sub,marginTop:1}}>~ {hm(s.end,d.dayStr)}</div>
+                  </td>
+                  <td style={{padding:"11px 6px",verticalAlign:"top"}}>
+                    {newLine&&<span style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:12,fontWeight:800,color:lc.fgLight,background:lc.bgLight,border:`1px solid ${lc.bdLight}`,padding:"3px 8px",borderRadius:12,whiteSpace:"nowrap",maxWidth:"100%",overflow:"hidden",textOverflow:"ellipsis",boxSizing:"border-box"}}>
+                      <span style={{width:7,height:7,borderRadius:4,background:lc.base,flexShrink:0}}/>{first.line_id?first.line_name:"미지정"}
+                    </span>}
+                  </td>
+                  <td style={{padding:"11px 8px",verticalAlign:"top"}}>
+                    <div style={{fontSize:15,fontWeight:800,color:"#0e7490"}}>🧊 냉장 {sg.members.length}종
+                      {st&&<span style={{marginLeft:8,fontSize:11,fontWeight:800,background:st.bg,color:st.fg,padding:"2px 7px",borderRadius:10,verticalAlign:"2px",display:"inline-block"}}>{STATUS_LABEL[s.status]}</span>}
+                    </div>
+                    <div style={{fontSize:12.5,marginTop:3,lineHeight:1.55}}>
+                      {s.ps.map(p=><span key={p.id} style={{display:"inline-block",marginRight:12,whiteSpace:"nowrap",opacity:p.status==="canceled"?.5:1,textDecoration:p.status==="canceled"?"line-through":"none"}}>{shortItemName(p.item_name)} <b>{fmtNum(p.qty)}</b></span>)}
+                    </div>
+                    {s.mats.length>0&&<div style={{fontSize:12,color:C.mat,marginTop:3,lineHeight:1.5}}>
+                      {s.mats.map((m,mi)=><span key={mi} style={{marginRight:10,whiteSpace:"nowrap"}}>🥩 {m.name} <b>{fmtKg(m.needKg)}</b></span>)}
+                    </div>}
+                  </td>
+                  <td style={{padding:"11px 14px 11px 6px",verticalAlign:"top",textAlign:"right"}}>
+                    <div style={{fontSize:17,fontWeight:800,whiteSpace:"nowrap"}}>{s.unitText}</div>
+                    {s.kg>0&&<div style={{fontSize:12,fontWeight:700,color:C.sub,marginTop:1}}>{fmtKg(s.kg)}</div>}
+                  </td>
+                </tr>;
+              }
+              const p=sg.p;
               const lc=lineColorFor(p.line_id,lines);
               const st=ST[p.status];
               const cancel=p.status==="canceled";
               const mats=(matsByPlan&&matsByPlan[p.id])||[];
               const kg=kgOf(p);
-              const newLine=i===0||ps[i-1].line_id!==p.line_id;
               return <tr key={p.id} style={{borderTop:i===0?"none":`1px solid ${newLine?"#cbd5e1":C.line}`,opacity:cancel?.5:1}}>
                 <td style={{padding:"11px 6px 11px 14px",verticalAlign:"top"}}>
                   <div style={{fontSize:15,fontWeight:800}}>{hm(p.start_at,d.dayStr)}</div>
@@ -3516,7 +3633,7 @@ function ExportWeekLongView({days,lines,matsByPlan,width=820}){
                   {kg>0&&<div style={{fontSize:12,fontWeight:700,color:C.sub,marginTop:1}}>{fmtKg(kg)}</div>}
                 </td>
               </tr>;
-            })}
+            })})()}
           </tbody>
         </table>}
       </div>;
@@ -3528,7 +3645,7 @@ function ExportWeekLongView({days,lines,matsByPlan,width=820}){
   </div>;
 }
 
-function ExportPlansView({plans,lines,dayStr,allDates,matsByPlan,width=820,hideFooter=false}){
+function ExportPlansView({plans,lines,dayStr,allDates,matsByPlan,width=820,hideFooter=false,chilledIds}){
   const C={bg:"#ffffff",text:"#0f172a",muted:"#64748b",border:"#e2e8f0",cardBg:"#f8fafc",lineHdr:"#ecfeff",lineHdrBd:"#a5f3fc",rowAlt:"#fafbfc",matBg:"#fff7ed",matBd:"#fed7aa",matName:"#9a3412",matStock:"#166534",matShort:"#b91c1c"};
   const S={
     planned:{bg:"#f1f5f9",fg:"#475569"},
@@ -3605,10 +3722,37 @@ function ExportPlansView({plans,lines,dayStr,allDates,matsByPlan,width=820,hideF
                 <col style={{width:"15%"}}/>
               </colgroup>
               <tbody>
-                {g.plans.map((p,idx)=>{
+                {chilledSegments(g.plans,chilledIds).map((sg,idx)=>{
+                  const rowBg=idx%2===1?C.rowAlt:"transparent";
+                  if(sg.type==="group"){
+                    const s=chilledSummary(sg.members,matsByPlan);
+                    const st=s.status?(S[s.status]||S.planned):null;
+                    return <tr key={"cg"+sg.key} style={{borderTop:idx===0?"none":`1px solid ${C.border}`,background:"#f0fdff"}}>
+                      <td style={{padding:"9px 14px",verticalAlign:"middle"}}>
+                        <div style={{fontWeight:800,fontSize:13,color:"#0e7490"}}>🧊 냉장 {sg.members.length}종</div>
+                        <div style={{marginTop:3,fontSize:11.5,color:C.text,lineHeight:1.55}}>
+                          {s.ps.map(p=><span key={p.id} style={{display:"inline-block",marginRight:10,whiteSpace:"nowrap"}}>{shortItemName(p.item_name)} <b>{fmtNum(p.qty)}</b></span>)}
+                        </div>
+                        {s.mats.length>0&&<div style={{marginTop:3,fontSize:11,color:C.matName,lineHeight:1.45}}>
+                          {s.mats.map((m,mi)=><div key={mi}><span style={{fontWeight:700}}>🥩 {m.name}</span><span> - <b>{fmtKg(m.needKg)}</b></span></div>)}
+                        </div>}
+                      </td>
+                      <td style={{padding:"9px 6px",verticalAlign:"middle",textAlign:"right"}}>
+                        <div style={{fontWeight:700,fontSize:13,whiteSpace:"nowrap"}}>{s.unitText}</div>
+                        {s.kg>0&&<div style={{fontSize:12,color:C.text,marginTop:2,fontWeight:700,whiteSpace:"nowrap"}}>{fmtKg(s.kg)}</div>}
+                      </td>
+                      <td style={{padding:"9px 10px",verticalAlign:"middle",color:C.muted,fontSize:11,lineHeight:1.5}}>
+                        <div>{fmtDtDow(s.start)}</div>
+                        <div>~ {fmtDtDow(s.end)}</div>
+                      </td>
+                      <td style={{padding:"9px 14px 9px 6px",verticalAlign:"middle",textAlign:"right"}}>
+                        {st?<span style={{background:st.bg,color:st.fg,padding:"3px 10px",borderRadius:10,fontSize:11,fontWeight:700,display:"inline-block"}}>{STATUS_LABEL[s.status]}</span>:<span style={{fontSize:11,color:C.muted}}>여러 상태</span>}
+                      </td>
+                    </tr>;
+                  }
+                  const p=sg.p;
                   const st=S[p.status]||S.planned;
                   const mats=(matsByPlan&&matsByPlan[p.id])||[];
-                  const rowBg=idx%2===1?C.rowAlt:"transparent";
                   return <tr key={p.id} style={{borderTop:idx===0?"none":`1px solid ${C.border}`,background:rowBg}}>
                     <td style={{padding:"9px 14px",verticalAlign:"middle"}}>
                       <div style={{fontWeight:700,fontSize:13,color:C.text,lineHeight:1.3}}>{p.item_name}</div>
@@ -6264,6 +6408,13 @@ function PlansTab({adminHash}){
     }catch(e){alert("삭제 실패: "+e.message)}
   };
 
+  // 🧊 냉장 묶어 보기 (리스트·계획 이미지)
+  const chilledIds=useChilledItemIds();
+  const[groupChilled,setGroupChilled]=useState(loadGroupChilled);
+  useEffect(()=>{try{localStorage.setItem("aps-group-chilled",groupChilled?"1":"0")}catch(e){}},[groupChilled]);
+  const[openChilled,setOpenChilled]=useState(()=>new Set());
+  const toggleChilled=k=>setOpenChilled(s=>{const n=new Set(s);n.has(k)?n.delete(k):n.add(k);return n});
+  const chillIdsOn=groupChilled?chilledIds:null;
   const[swapTimes,setSwapTimes]=useState(()=>{try{return localStorage.getItem("aps-swap-times")!=="0"}catch(e){return true}});
   useEffect(()=>{try{localStorage.setItem("aps-swap-times",swapTimes?"1":"0")}catch(e){}},[swapTimes]);
   // 서버의 최신 계획 — 다른 컴퓨터가 바꾼 품목·수량·메모를 옛 값으로 되돌리지 않게, 저장 직전에 다시 읽음
@@ -6496,6 +6647,9 @@ function PlansTab({adminHash}){
       {viewMode==="list"&&<label className="aps-check" title="왼쪽에 주별 생산 요약을 보여 줍니다">
         <input type="checkbox" checked={weekPanelOpen} onChange={()=>setWeekPanelOpen(v=>!v)}/>주간 요약
       </label>}
+      <label className="aps-check" title="같은 라인·같은 날 냉장 제품 계획(자동 리스트 생성기에서 보관 = 냉장으로 연결된 품목)을 리스트와 계획 이미지에서 한 줄로 묶어 보여 줍니다. 리스트에서는 눌러서 펼칠 수 있습니다">
+        <input type="checkbox" checked={groupChilled} onChange={()=>setGroupChilled(v=>!v)}/>🧊 냉장 묶어 보기
+      </label>
       <label className="aps-check" title="리스트에 모든 날짜의 계획을 보여 줍니다 (간트·시간표는 항상 고른 날짜)">
         <input type="checkbox" checked={allDates} onChange={()=>setAllDates(v=>!v)}/>리스트에 전체 날짜
       </label>
@@ -6574,7 +6728,7 @@ function PlansTab({adminHash}){
                     <span style={{marginLeft:10,color:"var(--muted)",fontWeight:500,fontSize:11}}>{g.plans.length}건</span>
                   </td>
                 </tr>,
-                ...g.plans.map((p,idx)=>{
+                ...chilledListRows(g,chillIdsOn,openChilled,toggleChilled,listMats,lc,(p,idx)=>{
                   const endMs=p.end_at?new Date(p.end_at).getTime():0;
                   const overdue=p.status!=="done"&&p.status!=="canceled"&&endMs>0&&endMs<nowMs;
                   const isFirst=idx===0;
@@ -6654,10 +6808,10 @@ function PlansTab({adminHash}){
       <div ref={exportRef}><ExportWeekView week={exportingWeek}/></div>
     </div>}
     {capturing&&<div style={{position:"fixed",left:-99999,top:0,zIndex:-1,pointerEvents:"none"}} aria-hidden="true">
-      <div ref={exportPlansRef}><ExportPlansView plans={listFiltered} lines={lines} dayStr={dayStr} allDates={allDates} matsByPlan={exportMats}/></div>
+      <div ref={exportPlansRef}><ExportPlansView plans={listFiltered} lines={lines} dayStr={dayStr} allDates={allDates} matsByPlan={exportMats} chilledIds={chillIdsOn}/></div>
     </div>}
     {weekLong&&<div style={{position:"fixed",left:-99999,top:0,zIndex:-1,pointerEvents:"none"}} aria-hidden="true">
-      <div ref={weekLongRef} style={{display:"inline-block"}}><ExportWeekLongView days={weekLong.days} lines={lines} matsByPlan={weekLong.mats}/></div>
+      <div ref={weekLongRef} style={{display:"inline-block"}}><ExportWeekLongView days={weekLong.days} lines={lines} matsByPlan={weekLong.mats} chilledIds={chillIdsOn}/></div>
     </div>}
     {combinedCapturing&&combinedStaff!==null&&<div style={{position:"fixed",left:-99999,top:0,zIndex:-1,pointerEvents:"none"}} aria-hidden="true">
       <div ref={combinedExportRef}>
@@ -6681,7 +6835,7 @@ function PlansTab({adminHash}){
             totalAvail={totalAvail}
             plans={listFiltered}
             lines={lines}
-            matsByPlan={combinedMats}/>;
+            matsByPlan={combinedMats} chilledIds={chillIdsOn}/>;
         })()}
       </div>
     </div>}
@@ -9281,9 +9435,9 @@ function ExportStaffView({title,dateStr,deptGroups,offIds,totalAvail,hideHeader=
 }
 
 // 인원 + 생산계획 통합 export (오프스크린) — 생산계획 위, 인원 아래 (헤더 숨김)
-function ExportCombinedView({title,dateStr,deptGroups,offIds,totalAvail,plans,lines,matsByPlan}){
+function ExportCombinedView({title,dateStr,deptGroups,offIds,totalAvail,plans,lines,matsByPlan,chilledIds}){
   return <div style={{background:"#ffffff",fontFamily:"Pretendard, -apple-system, system-ui, sans-serif",width:880,boxSizing:"border-box"}}>
-    <ExportPlansView plans={plans} lines={lines} dayStr={dateStr} allDates={false} matsByPlan={matsByPlan||{}} width={880}/>
+    <ExportPlansView plans={plans} lines={lines} dayStr={dateStr} allDates={false} matsByPlan={matsByPlan||{}} width={880} chilledIds={chilledIds}/>
     <div style={{borderTop:"2px dashed #111827",margin:"4px 22px 6px"}}></div>
     <ExportStaffView title={title} dateStr={dateStr} deptGroups={deptGroups} offIds={offIds} totalAvail={totalAvail} hideHeader={true}/>
   </div>;
@@ -9642,6 +9796,7 @@ function StaffCalcView({adminHash}){
 }
 
 function StaffTab({adminHash}){
+  const chilledIds=useChilledItemIds(); // 인원+계획 이미지의 🧊 냉장 묶음 (생산계획 탭 설정을 따름)
   const[staff,setStaff]=useState([]);
   const[offIds,setOffIds]=useState(new Set()); // 휴무자 staff_id Set
   const[dateStr,setDateStr]=useState(todayStr());
@@ -9925,7 +10080,7 @@ function StaffTab({adminHash}){
         {/* 오프스크린: 인원 + 생산계획 통합 캡처 영역 */}
         {combinedCapturing&&combinedPlans!==null&&<div style={{position:"fixed",left:-99999,top:0,zIndex:-1,pointerEvents:"none"}}>
           <div ref={combinedExportRef}>
-            <ExportCombinedView title={title} dateStr={dateStr} deptGroups={deptGroups} offIds={offIds} totalAvail={totalAvail} plans={combinedPlans} lines={combinedLines} matsByPlan={combinedMats}/>
+            <ExportCombinedView title={title} dateStr={dateStr} deptGroups={deptGroups} offIds={offIds} totalAvail={totalAvail} plans={combinedPlans} lines={combinedLines} matsByPlan={combinedMats} chilledIds={loadGroupChilled()?chilledIds:null}/>
           </div>
         </div>}
       </>
