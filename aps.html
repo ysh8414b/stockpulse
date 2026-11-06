@@ -11385,18 +11385,32 @@ function ProductionLossTab({adminHash}){
 //  판매가 = 품목별 입력 → 없으면 발주리스트 💰 판매가의 쿠팡 공급가 × 입수량
 // ═══════════════════════════════════════════
 const COST_WEEKS_PER_MONTH=4.345;
+// 부자재 = 코드가 이 글자로 시작하는 투입 품목 (기본 Z) — 원육값에서 뺌
+function costSubPrefixes(cfg){const v=cfg?.subPrefixes;const a=(Array.isArray(v)?v:String(v??"Z").split(/[,\s]+/)).map(x=>String(x).trim().toUpperCase()).filter(Boolean);return a}
+function isCostSubCode(code,pre){const c=String(code||"").trim().toUpperCase();return pre.some(p=>c.startsWith(p))}
+// 제품명 "1kg*8", "500g*8" → 박스당 kg (8, 4)
+function costBoxKg(name){const m=String(name||"").match(/(\d+(?:\.\d+)?)\s*(kg|g)\s*[*xX×]\s*(\d+)/i);if(!m)return null;const w=parseFloat(m[1])*(m[2].toLowerCase()==="kg"?1:0.001);return w>0?w*Number(m[3]):null}
 function fmtWon(n){return n==null||!isFinite(n)?"–":Math.round(n).toLocaleString("ko-KR")}
 function computeCost(d,cfg,sr){
   const wage=(Number(cfg.wage)||0)*(1+(Number(cfg.wageExtra)||0)/100);
   const packDef=Number(cfg.packDefault)||0,ohMonth=Number(cfg.overheadMonth)||0;
   const itemCfg=cfg.items||{};
   // 생산일보 (기간 안 chain) → 제품코드별 합계
-  const byCode={},dates=new Set();let logBoxes=0;
+  const byCode={},dates=new Set(),subNames={};let logBoxes=0,subTotal=0;
+  const pre=costSubPrefixes(cfg);
   (d.chains||[]).forEach(c=>{
     const b=Number(c.product_boxes)||0;if(!(b>0))return;
     const k=salesCodeKey(c.product_code);
-    const o=byCode[k]||(byCode[k]={boxes:0,raw:0,rawKg:0,outKg:0,chains:0,last:""});
-    o.boxes+=b;o.raw+=Number(c.chain_raw_amount)||0;o.rawKg+=Number(c.chain_raw_kg)||0;
+    const o=byCode[k]||(byCode[k]={boxes:0,raw:0,rawKg:0,sub:0,outKg:0,chains:0,last:""});
+    o.boxes+=b;
+    if(Array.isArray(c.inputs)){
+      // 투입 품목을 원육 / 부자재로 나눔
+      c.inputs.forEach(x=>{
+        const amt=Number(x.amount)||0,kg=Number(x.kg)||0;
+        if(isCostSubCode(x.code,pre)){o.sub+=amt;subTotal+=amt;subNames[x.code]=x.name||x.code}
+        else{o.raw+=amt;o.rawKg+=kg}
+      });
+    }else{o.raw+=Number(c.chain_raw_amount)||0;o.rawKg+=Number(c.chain_raw_kg)||0}
     const pw=extractPackWeightFromName(c.product_name);
     o.outKg+=pw!=null?(Number(c.product_kg)||0)*pw:(Number(c.product_kg)||0);
     o.chains++;const dt=String(c.date).slice(0,10);if(dt>o.last)o.last=dt;
@@ -11425,9 +11439,16 @@ function computeCost(d,cfg,sr){
     const wk=Number(weekly[code])||0;
     if(!ch&&!wk&&ic.price==null&&cpPrice==null)return;
     const rawSet=ic.raw!=null&&ic.raw!=="";
-    const raw=rawSet?Number(ic.raw):(ch?ch.raw/ch.boxes:null);
-    const lossPct=ch&&ch.rawKg>0?Math.max(0,ch.rawKg-ch.outKg)/ch.rawKg:null;
-    const lossWon=ch&&ch.rawKg>0?Math.max(0,ch.rawKg-ch.outKg)*(ch.raw/ch.rawKg)/ch.boxes:null;
+    let raw=rawSet?Number(ic.raw):(ch?ch.raw/ch.boxes:null);
+    const sub=ch?ch.sub/ch.boxes:0;
+    const kgPrice=ch&&ch.rawKg>0?ch.raw/ch.rawKg:null;            // kg당 원육 단가 (생산일보)
+    const boxKg=costBoxKg(it.name)??(ch&&ch.boxes?ch.outKg/ch.boxes:null); // 박스당 완성 kg
+    const lossCalc=ch&&ch.rawKg>0?Math.max(0,ch.rawKg-ch.outKg)/ch.rawKg:null;
+    // 로스율 직접 입력 → 원육비 = 박스당 완성 kg ÷ (1 − 로스율) × kg당 원육 단가
+    const lossSet=ic.loss!=null&&ic.loss!==""&&kgPrice!=null&&boxKg>0;
+    const lossPct=lossSet?Math.min(95,Math.max(0,Number(ic.loss)))/100:lossCalc;
+    if(lossSet&&!rawSet)raw=boxKg/(1-lossPct)*kgPrice;
+    const lossWon=lossSet?(rawSet?null:raw-boxKg*kgPrice):(ch&&ch.rawKg>0?Math.max(0,ch.rawKg-ch.outKg)*kgPrice/ch.boxes:null);
     const rate=sr?sr.rateFor(it):null,line=sr?sr.lineFor(it):"none",crew=sr?sr.crewOf(line):1;
     const labor0=rate&&wage>0?crew/rate.r*wage:null;
     const pack=ic.pack!=null&&ic.pack!==""?Number(ic.pack):packDef;
@@ -11436,7 +11457,7 @@ function computeCost(d,cfg,sr){
     const missing=[];
     if(raw==null)missing.push("원육(생산일보 없음 — 직접 입력)");
     if(labor0==null)missing.push(rate?"인건비(시급 입력)":"인건비(생산 속도 없음)");
-    rows.push({id:it.id,code:it.code,name:it.name,unit:it.unit||"박스",ch,raw,rawSet,lossPct,lossWon,rate,line,lineName:sr?.lineName?.[line]||"",crew,labor0,pack,packSet:ic.pack!=null&&ic.pack!=="",oh:ohPerBox,
+    rows.push({id:it.id,code:it.code,name:it.name,unit:it.unit||"박스",ch,raw,rawSet,lossPct,lossWon,rate,line,lineName:sr?.lineName?.[line]||"",crew,labor0,sub,pack,kgPrice,boxKg,lossCalc,lossSet,lossInputOk:kgPrice!=null&&boxKg>0,packSet:ic.pack!=null&&ic.pack!=="",oh:ohPerBox,
       price,priceSrc,cpPrice,cp,missing,wk,monthLoss:lossWon!=null?lossWon*wk*COST_WEEKS_PER_MONTH:0});
   });
   // 인건비: 표준(인원 ÷ 속도) 합계 vs 실제 생산 인원 급여 — "실제 급여에 맞춤"이면 비율만큼 키움
@@ -11445,7 +11466,7 @@ function computeCost(d,cfg,sr){
   const laborScale=cfg.laborMode==="payroll"&&laborCalcMonth>0&&payrollMonth>0?payrollMonth/laborCalcMonth:1;
   rows.forEach(x=>{
     x.labor=x.labor0!=null?x.labor0*laborScale:null;
-    x.cost=(x.raw||0)+(x.labor||0)+x.pack+x.oh;
+    x.cost=(x.raw||0)+(x.sub||0)+(x.labor||0)+x.pack+x.oh;
     // 원육 단가가 없으면 원가의 대부분이 빠지므로 이익을 계산하지 않음
     x.profit=x.price!=null&&x.raw!=null?x.price-x.cost:null;
     x.margin=x.profit!=null&&x.price>0?x.profit/x.price:null;
@@ -11455,7 +11476,7 @@ function computeCost(d,cfg,sr){
   const priced=rows.filter(r=>r.profit!=null&&r.wk>0);
   const sum=(a,f)=>a.reduce((x,r)=>x+(f(r)||0),0);
   const monthRev=sum(priced,r=>r.monthRev),monthProfit=sum(priced,r=>r.monthProfit);
-  return{rows,wage,ohPerBox,laborCalcMonth,payrollMonth,laborScale,team:sr?.current||0,monthBoxes,logBoxes,logDays,logFrom:ds[0],logTo:ds[ds.length-1],
+  return{rows,wage,ohPerBox,subTotal,subNames,subSplit:(d.chains||[]).some(c=>Array.isArray(c.inputs)),laborCalcMonth,payrollMonth,laborScale,team:sr?.current||0,monthBoxes,logBoxes,logDays,logFrom:ds[0],logTo:ds[ds.length-1],
     monthRev,monthProfit,monthCost:monthRev-monthProfit,margin:monthRev>0?monthProfit/monthRev:null,
     monthLoss:sum(rows,r=>r.monthLoss),
     nPriced:priced.length,nNoPrice:rows.filter(r=>r.price==null&&r.wk>0).length,
@@ -11507,7 +11528,7 @@ function CostTab({adminHash,readOnly}){
           rpc("aps_list_staff",{p_admin_hash:adminHash,p_only_active:false}).catch(()=>[]),
           rpc("aps_list_lines",{p_admin_hash:adminHash}).catch(()=>[]),
           rpc("aps_get_settings",{p_admin_hash:adminHash}).catch(()=>({})),
-          rpc("aps_get_product_chain_stats",{p_admin_hash:adminHash,p_days_back:days}).catch(()=>[]),
+          rpc("aps_cost_chain_inputs",{p_admin_hash:adminHash,p_days_back:days}).then(x=>Array.isArray(x)?x:Promise.reject(new Error("no_inputs"))).catch(()=>rpc("aps_get_product_chain_stats",{p_admin_hash:adminHash,p_days_back:days})).catch(()=>[]),
           rpc("ol_list_masters",{p_admin_hash:""}).catch(()=>({})),
           rpc("ol_list_prices",{p_admin_hash:""}).catch(()=>({}))
         ]);
@@ -11535,6 +11556,8 @@ function CostTab({adminHash,readOnly}){
 
   const sr=useMemo(()=>data?computeStaffing(data,loadStaffCalcOpts()):null,[data]);
   const r=useMemo(()=>data&&cfg&&sr?computeCost(data,cfg,sr):null,[data,cfg,sr]);
+  // 표 순서: 정렬·검색·데이터가 바뀔 때만 다시 정함 (값을 입력하는 동안 줄이 움직이지 않게)
+  const orderRef=useRef({sig:"",ids:[]});
 
   if(readOnly)return <div className="aps-empty" style={{padding:30}}>🔒 원가·시급은 👁 읽기 전용 접속에서는 볼 수 없습니다. 관리자 비밀번호로 로그인하세요.</div>;
   if(!cfg||loading)return <Loader/>;
@@ -11544,7 +11567,10 @@ function CostTab({adminHash,readOnly}){
   const ql=q.trim().toLowerCase();
   let rows=r.rows.filter(x=>(!onlySold||x.wk>0)&&(!ql||String(x.name).toLowerCase().includes(ql)||String(x.code).toLowerCase().includes(ql)));
   const S={profit:(a,b)=>(b.monthProfit??-1e15)-(a.monthProfit??-1e15),margin:(a,b)=>(a.margin??9)-(b.margin??9),wk:(a,b)=>b.wk-a.wk,loss:(a,b)=>b.monthLoss-a.monthLoss,cost:(a,b)=>b.cost-a.cost};
-  rows=rows.slice().sort(S[sortKey]||S.profit);
+  const sig=[sortKey,ql,onlySold,days,data?.chains?.length||0].join("|");
+  if(orderRef.current.sig!==sig){orderRef.current={sig,ids:rows.slice().sort(S[sortKey]||S.profit).map(x=>x.id)}}
+  const pos=new Map(orderRef.current.ids.map((id,i)=>[id,i]));
+  rows=rows.slice().sort((a,b)=>(pos.get(a.id)??1e9)-(pos.get(b.id)??1e9));
 
   const card=(t,v,sub,color)=><div style={{flex:"1 1 170px",padding:"12px 14px",border:`1px solid ${color||"var(--div2)"}`,borderRadius:10}}>
     <div style={{fontSize:11,color:"var(--muted)",fontWeight:600}}>{t}</div>
@@ -11571,6 +11597,8 @@ function CostTab({adminHash,readOnly}){
       <div><div style={lbl}>생산직 시급 (원)</div>{numIn(cfg.wage,v=>setC("wage",v),"예: 11000")}</div>
       <div><div style={lbl} title="4대보험·퇴직금·주휴수당 등 시급 외 회사 부담 (보통 20~30%)">보험·퇴직금 등 가산 %</div>{numIn(cfg.wageExtra,v=>setC("wageExtra",v),"예: 25",80)}</div>
       <div><div style={lbl}>박스당 기본 포장비 (원)</div>{numIn(cfg.packDefault,v=>setC("packDefault",v),"예: 1500")}</div>
+      <div><div style={lbl} title="생산일보 투입 품목 중 코드가 이 글자로 시작하면 부자재로 보고 원육값에서 뺌 (쉼표로 여러 개)">부자재 코드 시작</div>
+        <input className="aps-input" style={{width:80,padding:"5px 8px"}} value={Array.isArray(cfg.subPrefixes)?cfg.subPrefixes.join(","):(cfg.subPrefixes??"Z")} onChange={e=>setC("subPrefixes",e.target.value)}/></div>
       <div><div style={lbl} title="전기·수도·임대료·관리직 급여·소모품 등 생산과 직접 관련 없는 월 비용">월 간접비 (원)</div>{numIn(cfg.overheadMonth,v=>setC("overheadMonth",v),"예: 30000000",130)}</div>
       <div><div style={lbl} title="표준: 인원 ÷ 속도로 계산한 시간만 / 실제 급여: 생산 인원 전체 급여를 생산 시간 비율로 나눔 (대기·청소·준비 시간까지 원가에 넣음)">인건비 계산</div>
         <div className="aps-filter">{[["rate","표준 시간"],["payroll","실제 급여에 맞춤"]].map(([k,t])=><button key={k} className={(cfg.laborMode||"rate")===k?"on":""} onClick={()=>setC("laborMode",k)}>{t}</button>)}</div></div>
@@ -11598,6 +11626,9 @@ function CostTab({adminHash,readOnly}){
       {r.nIncomplete>0&&<> · <span style={{color:"#f59e0b"}}>원가 일부 빠진 품목 {r.nIncomplete}개</span></>}
       {r.nNoRaw>0&&<> · <span style={{color:"#ef4444"}}>원육 단가 없어 이익 계산 못 한 품목 {r.nNoRaw}개 (원육 칸에 직접 입력)</span></>}
     </div>
+    {!r.subSplit&&r.logBoxes>0&&<div style={{fontSize:12,color:"#ef4444",marginBottom:10}}>⚠ 지금은 생산일보 투입 품목이 원육·부자재 구분 없이 합쳐져 원육값에 부자재가 섞여 있습니다 — Supabase에서 <b>setup_aps_cost.sql</b>을 실행하면 나뉩니다</div>}
+    {r.subSplit&&r.subTotal>0&&<div style={{fontSize:11,color:"var(--muted)",marginBottom:10}} title={Object.entries(r.subNames).map(([c,n])=>`${c} ${n}`).join("\n")}>
+      원육에서 뺀 부자재: {Object.keys(r.subNames).length}종 · 기간 합계 {fmtWon(r.subTotal)}원 ({Object.values(r.subNames).slice(0,3).join(", ")}{Object.keys(r.subNames).length>3?" 외":""}) — "부자재" 칸으로 따로 표시</div>}
     {r.logTo&&r.logTo<addDays(todayStr(),-14)&&<div style={{fontSize:12,color:"#f59e0b",marginBottom:10}}>⚠ 생산일보가 {fmtMD(r.logTo)} 이후로 안 올라왔습니다 — 원육 단가가 지금과 다를 수 있어요 (🩸 로스 탭에서 업로드)</div>}
 
     {/* 표 */}
@@ -11608,11 +11639,12 @@ function CostTab({adminHash,readOnly}){
       <span style={{fontSize:11,color:"var(--muted)"}}>{rows.length}개</span>
     </div>
     <div style={{overflowX:"auto",border:"1px solid var(--div2)",borderRadius:10}}>
-      <table style={{width:"100%",borderCollapse:"collapse",minWidth:1080}}>
+      <table style={{width:"100%",borderCollapse:"collapse",minWidth:1150}}>
         <thead><tr>
           <th style={{...th,textAlign:"left"}}>품목</th>
           <th style={th} title="입력값 → 없으면 쿠팡 공급가 × 입수량">판매가/박스</th>
           <th style={th} title="생산일보 원육 매입금액 ÷ 생산 박스 (로스 포함)">원육</th>
+          <th style={th} title="생산일보 투입 품목 중 부자재 코드(기본 Z…) 매입금액 ÷ 생산 박스">부자재</th>
           <th style={th} title="라인 투입 인원 ÷ 시간당 생산량 × 시급">인건비</th>
           <th style={th}>포장</th>
           <th style={th}>간접비</th>
@@ -11633,7 +11665,12 @@ function CostTab({adminHash,readOnly}){
             {cellIn(cfg.items?.[x.id]?.price,v=>setItem(x.id,"price",v),x.cpPrice!=null?fmtWon(x.cpPrice):"입력")}
             <div style={{fontSize:10,color:"var(--muted)"}} title={x.cp.map(c=>`${c.name} · ${fmtWon(c.unit)} × ${c.per}`).join("\n")}>{x.priceSrc==="쿠팡"?"쿠팡 공급가":x.priceSrc==="입력"?"직접 입력":""}</div>
           </td>
-          <td style={td}>{x.ch&&!x.rawSet?fmtWon(x.raw):cellIn(cfg.items?.[x.id]?.raw,v=>setItem(x.id,"raw",v),x.ch?fmtWon(x.ch.raw/x.ch.boxes):"입력")}{x.lossPct!=null&&<div style={{fontSize:10,color:x.lossPct>0.1?"#f59e0b":"var(--muted)"}}>로스 {pct(x.lossPct)}</div>}</td>
+          <td style={td}>{x.ch&&!x.rawSet?fmtWon(x.raw):cellIn(cfg.items?.[x.id]?.raw,v=>setItem(x.id,"raw",v),x.ch?fmtWon(x.ch.raw/x.ch.boxes):"입력")}{x.lossInputOk?<div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:3,marginTop:3,fontSize:10,color:"var(--muted)"}} title={`생산일보 계산 로스 ${pct(x.lossCalc)} · kg당 원육 ${fmtWon(x.kgPrice)}원 · 박스당 완성 ${Math.round(x.boxKg*100)/100}kg
+로스율을 넣으면 원육 = 완성 kg ÷ (1 − 로스율) × kg당 단가`}>
+              로스<input type="number" className="aps-input" style={{width:52,padding:"1px 4px",fontSize:11,textAlign:"right",borderColor:x.lossSet?"#f59e0b":undefined}} min="0" max="95" step="0.1"
+                value={cfg.items?.[x.id]?.loss??""} placeholder={x.lossCalc!=null?(x.lossCalc*100).toFixed(1):""} onChange={e=>setItem(x.id,"loss",e.target.value===""?null:Number(e.target.value))}/>%</div>
+            :x.lossPct!=null&&<div style={{fontSize:10,color:x.lossPct>0.1?"#f59e0b":"var(--muted)"}}>로스 {pct(x.lossPct)}</div>}</td>
+          <td style={td}>{x.sub>0?fmtWon(x.sub):"–"}</td>
           <td style={td}>{fmtWon(x.labor)}</td>
           <td style={td}>{cellIn(cfg.items?.[x.id]?.pack,v=>setItem(x.id,"pack",v),fmtWon(Number(cfg.packDefault)||0))}</td>
           <td style={td}>{fmtWon(x.oh)}</td>
@@ -11644,12 +11681,13 @@ function CostTab({adminHash,readOnly}){
           <td style={{...td,fontWeight:700,color:mColor(x.margin)}}>{x.monthProfit==null?"–":man(x.monthProfit)}</td>
           <td style={{...td,color:"#f59e0b"}}>{x.monthLoss>0?man(x.monthLoss):"–"}</td>
         </tr>)}
-        {!rows.length&&<tr><td colSpan={12} style={{...td,textAlign:"center",color:"var(--muted)",padding:20}}>표시할 품목이 없습니다</td></tr>}</tbody>
+        {!rows.length&&<tr><td colSpan={13} style={{...td,textAlign:"center",color:"var(--muted)",padding:20}}>표시할 품목이 없습니다</td></tr>}</tbody>
       </table>
     </div>
     <div style={{fontSize:11,color:"var(--muted)",lineHeight:1.8,marginTop:12}}>
       <b>계산 방법</b><br/>
-      · 원육 = 생산일보의 원육 매입금액 ÷ 그 제품 생산 박스 (로스로 버린 원육 값까지 포함)<br/>
+      · 로스율 칸(원육 아래)에 숫자를 넣으면 원육 = 박스당 완성 kg(제품명 1kg*8 → 8kg) ÷ (1 − 로스율) × kg당 원육 단가로 다시 계산 — 비우면 생산일보 실제 값<br/>
+      · 원육 = 생산일보 투입 품목 중 원육 매입금액 ÷ 그 제품 생산 박스 (로스로 버린 원육 값까지 포함) — 코드가 부자재 글자(기본 Z)로 시작하는 투입 품목은 빼서 "부자재" 칸에 따로<br/>
       · 인건비 = 라인 투입 인원 ÷ 시간당 생산량 × 시급 × (1 + 가산%) — 인원·속도는 👥 인원 → 📐 인원 산정과 같은 값(거기서 라인 인원을 고치면 여기도 바뀜)<br/>
       · 간접비 = 월 간접비 ÷ 월 생산 박스(생산일보 기준) — 모든 박스에 똑같이 나눔<br/>
       · 판매가 = 직접 입력 → 없으면 발주리스트 💰 판매가의 쿠팡 공급가 × 입수량 (부가세 포함 여부 확인 필요) · 쿠팡 외 거래처 판매가는 직접 입력하세요<br/>

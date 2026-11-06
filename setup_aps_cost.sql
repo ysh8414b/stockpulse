@@ -54,3 +54,35 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 GRANT EXECUTE ON FUNCTION aps_cost_get_config(TEXT) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION aps_cost_set_config(TEXT, JSONB) TO anon, authenticated;
+
+-- 생산일보 chain별 투입 품목 목록 (원육·부자재를 화면에서 코드로 나누기 위해 합치지 않고 돌려줌)
+CREATE OR REPLACE FUNCTION aps_cost_chain_inputs(p_admin_hash TEXT, p_days_back INT DEFAULT 90)
+RETURNS JSON AS $$
+DECLARE v_cutoff DATE;
+BEGIN
+  PERFORM aps_assert_admin(p_admin_hash);
+  IF p_days_back IS NULL OR p_days_back < 1 THEN p_days_back := 90; END IF;
+  v_cutoff := CURRENT_DATE - p_days_back;
+  RETURN COALESCE((
+    WITH s AS (
+      SELECT date, chain_id, product_code, product_name, product_boxes, product_kg
+      FROM aps_production_log
+      WHERE is_chain_start AND NOT is_loss_summary AND product_code <> '' AND date >= v_cutoff
+    ),
+    i AS (
+      SELECT date, chain_id,
+        json_agg(json_build_object('code', raw_meat_code, 'name', raw_meat_name,
+                                   'kg', raw_meat_kg, 'amount', raw_meat_amount) ORDER BY row_index) AS inputs
+      FROM aps_production_log
+      WHERE NOT is_loss_summary AND raw_meat_code <> '' AND date >= v_cutoff
+      GROUP BY date, chain_id
+    )
+    SELECT json_agg(json_build_object(
+      'date', s.date, 'chain_id', s.chain_id, 'product_code', s.product_code, 'product_name', s.product_name,
+      'product_boxes', s.product_boxes, 'product_kg', s.product_kg, 'inputs', COALESCE(i.inputs, '[]'::json)
+    ) ORDER BY s.date, s.chain_id)
+    FROM s LEFT JOIN i ON i.date = s.date AND i.chain_id = s.chain_id
+  ), '[]'::json);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+GRANT EXECUTE ON FUNCTION aps_cost_chain_inputs(TEXT, INT) TO anon, authenticated;
