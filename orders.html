@@ -3984,6 +3984,10 @@ function fzErr(e){
   if(s.includes("name_required"))return "제품명을 입력하세요.";
   if(s.includes("qty_required"))return "수량을 입력하세요.";
   if(s.includes("lot_not_found"))return "이미 삭제된 재고입니다. 새로고침해 주세요.";
+  if(s.includes("already_undone"))return "이미 되돌린 기록입니다.";
+  if(s.includes("lot_gone"))return "옮긴 재고가 이미 없어져 되돌릴 수 없습니다.";
+  if(s.includes("txn_not_found"))return "기록이 없습니다(2주 지나 정리됐을 수 있음). 새로고침해 주세요.";
+  if(s.includes("cannot_undo"))return "이 기록은 되돌릴 수 없습니다.";
   return errMsg(e);
 }
 function fzQty(n,unit){return <>{fmtNum(n)}<span style={{fontSize:"0.75em",fontWeight:500,color:"var(--muted)",marginLeft:2}}>{unit||"박스"}</span></>}
@@ -4624,11 +4628,42 @@ function FrozenTab({adminHash,masters}){
   const del=async l=>{
     try{await rpc("ol_delete_frozen_lot",{p_admin_hash:adminHash,p_id:l.id});setDelId(null);load()}catch(e){setErr(fzErr(e))}
   };
+  // ↩ 이력 되돌리기 — 그 자리 확인 후 서버에서 반대로 적용
+  const[undoId,setUndoId]=useState(null);
+  const[undoing,setUndoing]=useState(null);
+  const undoTxn=async t=>{
+    setUndoing(t.id);
+    try{await rpc("ol_frozen_undo_txn",{p_admin_hash:adminHash,p_txn_id:t.id});setUndoId(null);setErr("");load()}
+    catch(e){
+      const s=String(e?.message||e||"");
+      setErr(s.includes("PGRST202")||s.includes("Could not find the function")?"되돌리기를 쓰려면 Supabase SQL Editor에서 setup_orders_frozen_undo.sql 을 1회 실행해 주세요."
+        :s.includes("not_enough_stock")?"지금 그 재고가 되돌릴 수량보다 적어서 되돌릴 수 없습니다(이미 출고·이동됐을 수 있음)."
+        :fzErr(e));
+    }
+    setUndoing(null);
+  };
+  const canUndo=t=>!t.undone_at&&t.undo_of==null&&["in","out","adjust","delete","move"].includes(t.kind)&&Number(t.qty_change||0)!==0;
+  const undoText=t=>({delete:`삭제한 ${fmtNum(-t.qty_change)}을(를) 다시 넣을까요?`,in:`입고한 ${fmtNum(t.qty_change)}을(를) 뺄까요?`,
+    out:`출고한 ${fmtNum(-t.qty_change)}을(를) 다시 넣을까요?`,adjust:`수정 전 수량으로 돌릴까요? (${t.qty_change>0?"−":"+"}${fmtNum(Math.abs(t.qty_change))})`,
+    move:`원래 위치로 ${fmtNum(t.qty_change)} 옮길까요?`})[t.kind];
   // 전체 삭제: 기존 로트 삭제 RPC를 5개씩 나눠 반복 호출 (SQL 추가 불필요)
   const[askClear,setAskClear]=useState(false);
   const[clearing,setClearing]=useState(null); // {done,total}
+  const[clearLocs,setClearLocs]=useState(()=>new Set()); // 삭제할 위치(층)
+  const clearLocList=useMemo(()=>{
+    const m=new Map();for(const l of rawLots){const k=fzLoc(l);m.set(k,(m.get(k)||0)+1)}
+    return [...m.entries()].sort((a,b)=>locCmp(a[0],b[0]));
+  },[rawLots]);
+  const clearTargets=rawLots.filter(l=>clearLocs.has(fzLoc(l)));
+  // 열 때: 위치 칩으로 한 곳을 보고 있으면 그곳만, 아니면 전부 선택
+  const openClear=()=>{
+    setClearLocs(new Set(locF!=="all"&&clearLocList.some(([k])=>k===locF)?[locF]:clearLocList.map(([k])=>k)));
+    setAskClear(true);
+  };
+  const toggleClearLoc=k=>setClearLocs(s=>{const n=new Set(s);n.has(k)?n.delete(k):n.add(k);return n});
   const clearAll=async()=>{
-    const ids=rawLots.map(l=>l.id);
+    const ids=clearTargets.map(l=>l.id);
+    if(!ids.length)return;
     setAskClear(false);setClearing({done:0,total:ids.length});
     let fail=0,done=0;
     for(let i=0;i<ids.length;i+=5){
@@ -4710,14 +4745,25 @@ function FrozenTab({adminHash,masters}){
       <button className="ol-btn ol-btn-secondary" title="새로고침" onClick={()=>{load();loadTraces()}}>↻</button>
       {view!=="trace"&&<>
       {clearing?<span style={{fontSize:13,color:"#ef4444",fontWeight:600}}>삭제 중… {clearing.done}/{clearing.total}</span>
-       :askClear?<span style={{display:"inline-flex",gap:6,alignItems:"center"}}>
-          <span style={{fontSize:13,color:"#ef4444",fontWeight:600}}>재고 {rawLots.length}건을 모두 삭제할까요? 되돌릴 수 없습니다.</span>
-          <button className="ol-btn ol-btn-danger ol-btn-sm" onClick={clearAll}>모두 삭제</button>
-          <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setAskClear(false)}>취소</button></span>
-       :<button className="ol-btn ol-btn-danger" disabled={!rawLots.length} onClick={()=>setAskClear(true)}>🗑 전체 삭제</button>}
+       :<button className="ol-btn ol-btn-danger" disabled={!rawLots.length||askClear} onClick={openClear}>🗑 전체 삭제</button>}
       <input className="ol-input" style={{maxWidth:240,marginLeft:"auto"}} placeholder="제품·코드·위치·메모 검색" value={q} onChange={e=>setQ(e.target.value)}/>
       </>}
     </div>
+    {view!=="trace"&&askClear&&!clearing&&<div style={{border:"1.5px solid #ef4444",borderRadius:10,padding:"12px 14px",marginBottom:14,background:"rgba(239,68,68,0.06)"}}>
+      <div style={{fontSize:14,fontWeight:700,color:"#ef4444",marginBottom:8}}>🗑 삭제할 층(위치)을 고르세요</div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+        {clearLocList.map(([k,n])=><label key={k} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 10px",border:"1px solid var(--border)",borderRadius:8,cursor:"pointer",fontSize:13,background:clearLocs.has(k)?"rgba(239,68,68,0.12)":"transparent"}}>
+          <input type="checkbox" checked={clearLocs.has(k)} onChange={()=>toggleClearLoc(k)}/>
+          <b>{k}</b><span style={{color:"var(--muted)"}}>{n}건</span></label>)}
+      </div>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+        <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setClearLocs(new Set(clearLocList.map(([k])=>k)))}>전체 선택</button>
+        <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setClearLocs(new Set())}>선택 해제</button>
+        <span style={{fontSize:13,color:"#ef4444",fontWeight:600,marginLeft:6}}>{clearTargets.length?`선택한 ${clearLocs.size}곳 재고 ${clearTargets.length}건을 삭제합니다. 되돌릴 수 없습니다.`:"삭제할 층을 하나 이상 고르세요"}</span>
+        <button className="ol-btn ol-btn-danger ol-btn-sm" style={{marginLeft:"auto"}} disabled={!clearTargets.length} onClick={clearAll}>{clearTargets.length}건 삭제</button>
+        <button className="ol-btn ol-btn-secondary ol-btn-sm" onClick={()=>setAskClear(false)}>취소</button>
+      </div>
+    </div>}
     {view!=="trace"&&<div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:14,alignItems:"center"}}>
       <div className="ol-chips">
         {[["all","전체 기한"],["expired","기한 지남"],["soon",`${FZ_SOON}일 이내`],["warn",`${FZ_WARN}일 이내`]].map(([v,l])=><button key={v} className={stF===v?"on":""} onClick={()=>setStF(v)}>{l}</button>)}
@@ -4791,9 +4837,9 @@ function FrozenTab({adminHash,masters}){
         <span>🧾 입출고 이력 <span style={{fontWeight:400,fontSize:12,color:"var(--muted)"}}>최근 2주 · {txns.length}건</span></span><span style={{color:"var(--muted)"}}>{showHist?"▲":"▼"}</span>
       </div>
       {showHist&&<div className="ol-scroll" style={{maxHeight:420,overflowY:"auto"}}><table className="ol-table">
-        <thead><tr><th>일시</th><th>구분</th><th>제품</th><th>소비기한</th><th>위치</th><th className="right">변동</th><th className="right">이후</th><th>메모</th></tr></thead>
+        <thead><tr><th>일시</th><th>구분</th><th>제품</th><th>소비기한</th><th>위치</th><th className="right">변동</th><th className="right">이후</th><th>메모</th><th style={{whiteSpace:"nowrap"}}>되돌리기</th></tr></thead>
         <tbody>{txns.map(t=>{const[kl,kc]=FZ_KIND[t.kind]||[t.kind,"var(--muted)"];const d=new Date(t.created_at);const ch=Number(t.qty_change||0);
-          return <tr key={t.id}>
+          return <tr key={t.id} style={t.undone_at?{opacity:.5}:undefined}>
             <td style={{fontSize:12,whiteSpace:"nowrap",color:"var(--muted)"}}>{`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`}</td>
             <td><span className="fz-badge" style={{color:kc,border:`1px solid ${kc}55`}}>{kl}</span></td>
             <td style={{fontWeight:600}}>{fzName(t)}</td>
@@ -4801,7 +4847,14 @@ function FrozenTab({adminHash,masters}){
             <td style={{fontSize:12}}>{(t.location||"").trim()||"–"}</td>
             <td className="right" style={{fontWeight:700,color:t.kind==="move"?"var(--text)":ch>0?"#16a34a":ch<0?"#ef4444":"var(--muted)"}}>{t.kind==="move"?fmtNum(ch):(ch>0?"+":"")+fmtNum(ch)}</td>
             <td className="right">{t.kind==="move"?"–":fmtNum(t.qty_after)}</td>
-            <td style={{fontSize:12,color:"var(--muted)"}}>{t.memo||""}</td>
+            <td style={{fontSize:12,color:"var(--muted)",textDecoration:t.undone_at?"line-through":undefined}}>{t.memo||""}</td>
+            <td style={{whiteSpace:"nowrap"}}>{t.undone_at?<span style={{fontSize:12,color:"var(--muted)"}}>↩ 되돌림</span>
+              :!canUndo(t)?null
+              :undoId===t.id?<span style={{display:"inline-flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                <span style={{fontSize:12,color:"#ef4444",fontWeight:600}}>{undoText(t)}</span>
+                <button className="ol-btn ol-btn-danger ol-btn-sm" disabled={undoing===t.id} onClick={()=>undoTxn(t)}>{undoing===t.id?"되돌리는 중…":"되돌리기"}</button>
+                <button className="ol-btn ol-btn-secondary ol-btn-sm" disabled={undoing===t.id} onClick={()=>setUndoId(null)}>취소</button></span>
+              :<button className="ol-btn ol-btn-secondary ol-btn-sm" disabled={!!undoing} onClick={()=>setUndoId(t.id)}>↩ 되돌리기</button>}</td>
           </tr>})}</tbody>
       </table></div>}
     </div>}
