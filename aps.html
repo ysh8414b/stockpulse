@@ -11513,6 +11513,93 @@ function computeCost(d,cfg,sr){
     lossItems:priced.filter(r=>r.profit<0).length};
 }
 
+// 판매가 엑셀 (예: #매입단가.xlsx) → 상품코드별 팩 판매가
+//  "상품코드"와 "판매가" 칸이 있는 시트를 모두 읽음. 판매가 = 팩 단가, 팩중량(kg)·입수량도 같이
+function parsePriceSheetWorkbook(buf){
+  const wb=XLSX.read(buf,{type:"array"});
+  const byCode={},sheets=[];
+  const norm=v=>String(v??"").replace(/\s/g,"");
+  for(const sn of wb.SheetNames){
+    const a=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:null,raw:true});
+    const hi=a.findIndex(r=>r&&r.some(v=>norm(v)==="상품코드")&&r.some(v=>norm(v)==="판매가"));
+    if(hi<0)continue;
+    const H=a[hi].map(norm);
+    const ci=H.indexOf("상품코드"),pi=H.indexOf("판매가"),qi=H.indexOf("입수량"),ni=H.indexOf("제품명"),wi=H.findIndex(x=>x.startsWith("팩중량"));
+    let n=0;
+    for(const r of a.slice(hi+1)){
+      if(!r||r[ci]==null||String(r[ci]).trim()==="")continue;
+      const price=Number(r[pi]);if(!(price>0))continue;
+      const name=r[ni]!=null?String(r[ni]):"";
+      let w=wi>=0?Number(r[wi]):NaN;
+      if(!(w>0))w=extractPackWeightFromName(name)??NaN;
+      const k=salesCodeKey(r[ci]);
+      (byCode[k]=byCode[k]||[]).push({sheet:sn,name,price,w:w>0?w:null,per:Number(r[qi])>0?Number(r[qi]):1});
+      n++;
+    }
+    sheets.push({name:sn,count:n});
+  }
+  return{byCode,sheets};
+}
+
+// 미리보기 — 품목마다 박스 판매가 = 팩 판매가 ÷ 팩중량(kg당) × APS 박스 kg
+function PriceImportModal({imp,items,rowsById,cfg,onApply,onClose}){
+  const cands=useMemo(()=>{
+    const out=[];
+    items.filter(i=>i.type!=="material").forEach(it=>{
+      const opts=imp.byCode[salesCodeKey(it.code)];if(!opts)return;
+      const row=rowsById[it.id];
+      const boxKg=costBoxKg(it.name)??row?.boxKg??null;
+      const o2=opts.map((o,i)=>{
+        const perKg=o.w?o.price/o.w:null;
+        const box=perKg!=null&&boxKg>0?perKg*boxKg:o.price*o.per;
+        return{...o,i,perKg,box:Math.round(box),how:perKg!=null&&boxKg>0?`${fmtWon(perKg)}원/kg × ${Math.round(boxKg*100)/100}kg`:`${fmtWon(o.price)} × ${o.per}`};
+      });
+      // 기본 선택 = 가장 많이 나온 박스 가격 (같으면 앞 시트)
+      const cnt={};o2.forEach(o=>cnt[o.box]=(cnt[o.box]||0)+1);
+      const best=o2.slice().sort((a,b)=>cnt[b.box]-cnt[a.box]||a.i-b.i)[0];
+      const cur=cfg.items?.[it.id]?.price;
+      out.push({it,boxKg,opts:o2,def:best.i,conflict:Object.keys(cnt).length>1,cur:cur!=null&&cur!==""?Number(cur):null,cp:row?.cpPrice??null});
+    });
+    return out.sort((a,b)=>(b.conflict-a.conflict)||String(a.it.code).localeCompare(String(b.it.code)));
+  },[imp,items,rowsById,cfg]);
+  const[pick,setPick]=useState(()=>Object.fromEntries(cands.map(c=>[c.it.id,c.def])));
+  const[on,setOn]=useState(()=>Object.fromEntries(cands.map(c=>[c.it.id,true])));
+  const nOn=cands.filter(c=>on[c.it.id]).length,nConf=cands.filter(c=>c.conflict).length;
+  const apply=()=>{const m={};cands.forEach(c=>{if(on[c.it.id]){const o=c.opts.find(x=>x.i===pick[c.it.id]);if(o)m[c.it.id]=o.box}});onApply(m)};
+  const td={padding:"6px 8px",fontSize:12,borderBottom:"1px solid var(--div)",verticalAlign:"top"};
+  const th={...td,fontSize:11,color:"var(--muted)",fontWeight:700,textAlign:"left",borderBottom:"1px solid var(--div2)"};
+  return <div className="aps-modal-bg" onClick={onClose}>
+    <div className="aps-modal" onClick={e=>e.stopPropagation()} style={{maxWidth:900}}>
+      <div style={{fontWeight:700,fontSize:16,marginBottom:4}}>📥 판매가 엑셀 불러오기</div>
+      <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.6,marginBottom:10}}>
+        읽은 시트: {imp.sheets.map(s=>`${s.name}(${s.count})`).join(", ")||"없음"} · APS 품목과 코드가 맞은 품목 {cands.length}개
+        {nConf>0&&<> · <span style={{color:"#f59e0b"}}>시트마다 가격이 다른 품목 {nConf}개 — 쓸 값을 고르세요</span></>}<br/>
+        박스 판매가 = 엑셀 판매가(팩 단가) ÷ 팩중량 × APS 박스 kg(품목명 1kg*8 → 8kg, 없으면 생산일보 평균). 팩중량이 없으면 판매가 × 입수량
+      </div>
+      {!cands.length?<div className="aps-empty">APS 품목 코드와 맞는 상품코드가 없습니다</div>:
+      <div style={{overflowX:"auto",maxHeight:"58vh",overflowY:"auto",border:"1px solid var(--div2)",borderRadius:8}}>
+        <table style={{width:"100%",borderCollapse:"collapse",minWidth:680}}>
+          <thead><tr><th style={th}></th><th style={th}>APS 품목</th><th style={th}>엑셀 (시트 · 팩 판매가)</th><th style={{...th,textAlign:"right"}}>박스 판매가</th><th style={{...th,textAlign:"right"}}>지금</th></tr></thead>
+          <tbody>{cands.map(c=>{const o=c.opts.find(x=>x.i===pick[c.it.id]);return <tr key={c.it.id} style={{opacity:on[c.it.id]?1:0.45,background:c.conflict?"rgba(245,158,11,.06)":undefined}}>
+            <td style={td}><input type="checkbox" checked={!!on[c.it.id]} onChange={e=>setOn(s=>({...s,[c.it.id]:e.target.checked}))}/></td>
+            <td style={td}><div style={{fontWeight:700}}>{c.it.name}</div><div style={{fontSize:10,color:"var(--muted)"}}>{c.it.code}</div></td>
+            <td style={td}>{c.opts.map(x=><label key={x.i} style={{display:"flex",gap:5,alignItems:"flex-start",fontSize:11,marginBottom:2,cursor:c.opts.length>1?"pointer":"default"}}>
+              {c.opts.length>1&&<input type="radio" name={"pi"+c.it.id} checked={pick[c.it.id]===x.i} onChange={()=>setPick(s=>({...s,[c.it.id]:x.i}))}/>}
+              <span><b>{x.sheet}</b> · {fmtWon(x.price)}원{x.w?` / ${x.w}kg 팩`:""} × 입수 {x.per}<span style={{color:"var(--muted)"}}> → {fmtWon(x.box)}</span></span></label>)}</td>
+            <td style={{...td,textAlign:"right",whiteSpace:"nowrap"}}><b>{fmtWon(o?.box)}</b><div style={{fontSize:10,color:"var(--muted)"}}>{o?.how}</div></td>
+            <td style={{...td,textAlign:"right",whiteSpace:"nowrap",color:"var(--muted)"}}>{c.cur!=null?<>{fmtWon(c.cur)}<div style={{fontSize:10}}>입력</div></>:c.cp!=null?<>{fmtWon(c.cp)}<div style={{fontSize:10}}>쿠팡</div></>:"–"}</td>
+          </tr>})}</tbody>
+        </table>
+      </div>}
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end",alignItems:"center",marginTop:14}}>
+        <span style={{fontSize:11,color:"var(--muted)",marginRight:"auto"}}>넣은 값은 "직접 입력"이 되어 쿠팡 공급가보다 먼저 씁니다 (칸을 비우면 다시 쿠팡 값)</span>
+        <button className="aps-btn aps-btn-secondary" onClick={onClose}>취소</button>
+        <button className="aps-btn aps-btn-primary" disabled={!nOn} onClick={apply}>{nOn}개 판매가 넣기</button>
+      </div>
+    </div>
+  </div>;
+}
+
 function CostTab({adminHash,readOnly}){
   const[cfg,setCfg]=useState(null);
   const[cfgErr,setCfgErr]=useState("");
@@ -11524,6 +11611,9 @@ function CostTab({adminHash,readOnly}){
   const[q,setQ]=useState("");
   const[onlySold,setOnlySold]=useState(true);
   const dirty=useRef(false);
+  const[imp,setImp]=useState(null);
+  const[impMsg,setImpMsg]=useState("");
+  const fileRef=useRef(null);
   useEffect(()=>{try{localStorage.setItem("aps-cost-sort",sortKey)}catch(e){}},[sortKey]);
   const days=Number(cfg?.days)||90;
 
@@ -11580,6 +11670,20 @@ function CostTab({adminHash,readOnly}){
     return()=>clearTimeout(t);
   },[cfg]);
   const setC=(k,v)=>{dirty.current=true;setCfg(o=>({...o,[k]:v}))};
+  async function onPriceFile(e){
+    const f=e.target.files?.[0];e.target.value="";if(!f)return;
+    setImpMsg("");
+    try{
+      const res=parsePriceSheetWorkbook(await f.arrayBuffer());
+      if(!res.sheets.length){setImpMsg("⚠ \"상품코드\"와 \"판매가\" 칸이 있는 시트를 찾지 못했습니다");return}
+      setImp(res);
+    }catch(err){setImpMsg("⚠ 엑셀 읽기 실패: "+String(err.message||err).slice(0,120))}
+  }
+  function applyImport(m){
+    dirty.current=true;
+    setCfg(o=>{const items={...(o.items||{})};Object.entries(m).forEach(([id,v])=>{items[id]={...(items[id]||{}),price:v}});return{...o,items}});
+    setImp(null);setImpMsg(`✓ ${Object.keys(m).length}개 품목 판매가를 넣었습니다`);
+  }
   const setItem=(id,k,v)=>{dirty.current=true;setCfg(o=>{const items={...(o.items||{})};const cur={...(items[id]||{})};if(v==null||v==="")delete cur[k];else cur[k]=v;if(Object.keys(cur).length)items[id]=cur;else delete items[id];return{...o,items}})};
 
   const sr=useMemo(()=>data?computeStaffing(data,loadStaffCalcOpts()):null,[data]);
@@ -11632,10 +11736,15 @@ function CostTab({adminHash,readOnly}){
         <div className="aps-filter">{[["rate","표준 시간"],["payroll","실제 급여에 맞춤"]].map(([k,t])=><button key={k} className={(cfg.laborMode||"rate")===k?"on":""} onClick={()=>setC("laborMode",k)}>{t}</button>)}</div></div>
       <div><div style={lbl}>생산일보 기간</div>
         <div className="aps-filter">{[30,60,90,180].map(n=><button key={n} className={days===n?"on":""} onClick={()=>setC("days",n)}>{n}일</button>)}</div></div>
+      <div><div style={lbl}>판매가 엑셀</div>
+        <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>fileRef.current?.click()} title="상품코드·판매가(팩 단가)·팩중량·입수량 칸이 있는 엑셀 (예: #매입단가.xlsx)">📥 불러오기</button>
+        <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{display:"none"}} onChange={onPriceFile}/></div>
       <div style={{fontSize:11,color:saveState==="error"?"#ef4444":"var(--muted)",marginLeft:"auto"}}>
         {saveState==="saving"?"저장 중…":saveState==="saved"?"✓ 저장됨":saveState==="error"?"⚠ 저장 실패":""}</div>
     </div>
 
+    {impMsg&&<div style={{fontSize:12,color:impMsg.startsWith("✓")?"#22c55e":"#f59e0b",marginBottom:10}}>{impMsg}</div>}
+    {imp&&<PriceImportModal imp={imp} items={data?.items||[]} rowsById={Object.fromEntries(r.rows.map(x=>[x.id,x]))} cfg={cfg} onApply={applyImport} onClose={()=>setImp(null)}/>}
     {/* 요약 */}
     <div style={{display:"flex",flexWrap:"wrap",gap:10,marginBottom:12}}>
       {card("월 매출 (추정)",man(r.monthRev),`판매가 있는 ${r.nPriced}개 품목 · 주 판매 × ${COST_WEEKS_PER_MONTH}주`)}
