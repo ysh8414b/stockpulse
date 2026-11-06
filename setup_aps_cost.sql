@@ -55,7 +55,8 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 GRANT EXECUTE ON FUNCTION aps_cost_get_config(TEXT) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION aps_cost_set_config(TEXT, JSONB) TO anon, authenticated;
 
--- 생산일보 chain별 투입 품목 목록 (원육·부자재를 화면에서 코드로 나누기 위해 합치지 않고 돌려줌)
+-- 생산일보 chain별 투입 품목 목록 (원육·기타 투입을 화면에서 코드로 나누기 위해 합치지 않고 돌려줌)
+--  pack_amount = 그 chain의 "XXXXXXXX 부자재 비용" 줄 금액 합 (생산일보 업로드 때 loss_reported_amount 칸에 저장돼 있음)
 CREATE OR REPLACE FUNCTION aps_cost_chain_inputs(p_admin_hash TEXT, p_days_back INT DEFAULT 90)
 RETURNS JSON AS $$
 DECLARE v_cutoff DATE;
@@ -65,7 +66,7 @@ BEGIN
   v_cutoff := CURRENT_DATE - p_days_back;
   RETURN COALESCE((
     WITH s AS (
-      SELECT date, chain_id, product_code, product_name, product_boxes, product_kg
+      SELECT date, chain_id, product_code, product_name, product_boxes, product_kg, product_amount
       FROM aps_production_log
       WHERE is_chain_start AND NOT is_loss_summary AND product_code <> '' AND date >= v_cutoff
     ),
@@ -76,12 +77,19 @@ BEGIN
       FROM aps_production_log
       WHERE NOT is_loss_summary AND raw_meat_code <> '' AND date >= v_cutoff
       GROUP BY date, chain_id
+    ),
+    pk AS (
+      SELECT date, chain_id, SUM(loss_reported_amount) AS amt
+      FROM aps_production_log
+      WHERE is_loss_summary AND date >= v_cutoff
+      GROUP BY date, chain_id
     )
     SELECT json_agg(json_build_object(
       'date', s.date, 'chain_id', s.chain_id, 'product_code', s.product_code, 'product_name', s.product_name,
-      'product_boxes', s.product_boxes, 'product_kg', s.product_kg, 'inputs', COALESCE(i.inputs, '[]'::json)
+      'product_boxes', s.product_boxes, 'product_kg', s.product_kg, 'product_amount', s.product_amount, 'pack_amount', COALESCE(pk.amt, 0), 'inputs', COALESCE(i.inputs, '[]'::json)
     ) ORDER BY s.date, s.chain_id)
     FROM s LEFT JOIN i ON i.date = s.date AND i.chain_id = s.chain_id
+           LEFT JOIN pk ON pk.date = s.date AND pk.chain_id = s.chain_id
   ), '[]'::json);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
