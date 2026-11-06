@@ -5130,19 +5130,65 @@ function FzOutQtyCell({value,max,onSave}){
 const fzManCache=new Map();
 const fzLotSig=l=>`${l.expiry||""}|${(l.location||"").trim()}`;
 
+// ── 여러 컴퓨터 동시 사용: 바뀐 부분만 서버에서 합침 (setup_orders_sync.sql) ──
+// op: {set:{키:값}, unset:[키]} (객체) 또는 {add:[항목], remove:[항목]} (배열)
+// SQL 실행 전이면 fallback()이 만든 전체 값을 예전처럼 덮어씀
+let _olSyncMissing=false;
+let _olSaveSeq=0,_olPending=0;  // 저장 중이거나 조회 사이에 저장했으면 조회 결과를 버림
+const _isMissingFn=e=>/PGRST202|Could not find the function|schema cache/i.test(String(e?.message||e));
+async function olEditSetting(key,op,fallback){
+  _olSaveSeq++;_olPending++;
+  try{return await _olEditSetting(key,op,fallback)}finally{_olPending--}
+}
+async function _olEditSetting(key,op,fallback){
+  if(!_olSyncMissing){
+    try{
+      const r=await rpc("ol_edit_setting",{p_admin_hash:"",p_key:key,p_set:op.set||null,p_unset:op.unset||null,
+        p_add:op.add||null,p_remove:op.remove||null});
+      return {value:r?.value,missing:false};
+    }catch(e){if(!_isMissingFn(e))throw e;_olSyncMissing=true}
+  }
+  const v=fallback();
+  await rpc("ol_set_setting",{p_admin_hash:"",p_key:key,p_value:v});
+  return {value:v,missing:true};
+}
+// 지정한 키들의 최신값 {키:값} — SQL 실행 전이면 마스터 전체 조회로 대신
+async function olGetSettings(keys){
+  if(!_olSyncMissing){
+    try{const r=await rpc("ol_get_settings",{p_admin_hash:"",p_keys:keys});
+      const out={};for(const k of keys)out[k]=r?.[k]?r[k].value:undefined;return out}
+    catch(e){if(!_isMissingFn(e))throw e;_olSyncMissing=true}
+  }
+  const d=await rpc("ol_list_masters",{p_admin_hash:""});
+  const out={};for(const k of keys)out[k]=d?.settings?.[k];return out;
+}
+const sameJson=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+// 입력 중이면 다른 컴퓨터 값으로 화면을 바꾸지 않음 (입력칸이 닫히는 것 방지)
+const isTyping=()=>{const a=document.activeElement;return !!a&&(a.tagName==="INPUT"||a.tagName==="TEXTAREA"||a.isContentEditable)};
+const FZ_SYNC_MS=15000;
+
 function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrders}){
   const[prefix,setPrefix]=useState(()=>lsGet("ol-prefix","쿠팡"));
   useEffect(()=>lsSet("ol-prefix",prefix),[prefix]);
-  const[withExtra,setWithExtra]=useState(()=>lsGet("ol-ship-extra","1")==="1");
-  useEffect(()=>lsSet("ol-ship-extra",withExtra?"1":"0"),[withExtra]);
-  const[whole,setWhole]=useState(()=>lsGet("ol-fzout-whole","1")==="1");
-  useEffect(()=>lsSet("ol-fzout-whole",whole?"1":"0"),[whole]);
-  const[skipExpired,setSkipExpired]=useState(()=>lsGet("ol-fzout-skipexp","1")==="1");
-  useEffect(()=>lsSet("ol-fzout-skipexp",skipExpired?"1":"0"),[skipExpired]);
+  // 자동 배정 옵션 — 컴퓨터마다 다르면 배정 결과가 달라지므로 서버(ol_settings `fzout_opts`)에서 공유
+  // {whole, skipExpired, locPref, withExtra}. 서버 값이 없으면 이 브라우저에 있던 값
+  const optsFromLocal=()=>({withExtra:lsGet("ol-ship-extra","1")==="1",whole:lsGet("ol-fzout-whole","1")==="1",
+    skipExpired:lsGet("ol-fzout-skipexp","1")==="1",locPref:lsGet("ol-fzout-loc","")});
+  const normOpts=o=>({...optsFromLocal(),...(o&&typeof o==="object"?o:{})});
+  const[opts,setOpts]=useState(()=>normOpts(fzManCache.has("fzout_opts")?fzManCache.get("fzout_opts"):masters.settings?.fzout_opts));
+  const applyOpts=o=>{const n=normOpts(o);fzManCache.set("fzout_opts",n);setOpts(p=>sameJson(p,n)?p:n)};
+  const{withExtra,whole,skipExpired,locPref}=opts;
+  const setOpt=(k,v)=>{
+    const n={...opts,[k]:v};setOpts(n);fzManCache.set("fzout_opts",n);
+    lsSet({withExtra:"ol-ship-extra",whole:"ol-fzout-whole",skipExpired:"ol-fzout-skipexp",locPref:"ol-fzout-loc"}[k],
+      typeof v==="boolean"?(v?"1":"0"):v);
+    olEditSetting("fzout_opts",{set:{[k]:v}},()=>n).then(r=>applyOpts(r.value))
+      .catch(e=>setMsg("⚠ 옵션을 서버에 저장하지 못했습니다 (이 컴퓨터에만 적용됨): "+errMsg(e)));
+  };
+  const setWithExtra=v=>setOpt("withExtra",v),setWhole=v=>setOpt("whole",v),
+    setSkipExpired=v=>setOpt("skipExpired",v),setLocPref=v=>setOpt("locPref",v);
   const[onlyOut,setOnlyOut]=useState(()=>lsGet("ol-fzout-only","0")==="1");
   useEffect(()=>lsSet("ol-fzout-only",onlyOut?"1":"0"),[onlyOut]);
-  const[locPref,setLocPref]=useState(()=>lsGet("ol-fzout-loc",""));
-  useEffect(()=>lsSet("ol-fzout-loc",locPref),[locPref]);
   const[vendor,setVendor]=useState("");
   const[extraOrders,setExtraOrders]=useState([]);
   const[rawLots,setRawLots]=useState([]);
@@ -5182,20 +5228,35 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
     if(srv&&typeof srv==="object"){setManual(srv);return}
     try{setManual(JSON.parse(lsGet(manKey,"{}"))||{})}catch(e){setManual({})}
   },[srvManKey,masters.settings]);
-  const saveManual=m=>{
-    // 로트가 다시 만들어져 id가 바뀌어도 찾을 수 있게 소비기한·위치를 함께 기록
+  const applyManual=v=>{
+    const n=v&&typeof v==="object"&&!Array.isArray(v)?v:{};
+    fzManCache.set(srvManKey,n);lsSet(manKey,JSON.stringify(n));setManual(p=>sameJson(p,n)?p:n);
+  };
+  const manErr=e=>setMsg("⚠ 직접 고친 수량을 서버에 저장하지 못했습니다 (이 브라우저에만 저장됨): "+errMsg(e));
+  // 제품 하나만 서버에서 합침 → 다른 컴퓨터가 고친 다른 제품은 그대로 남음
+  // 로트가 다시 만들어져 id가 바뀌어도 찾을 수 있게 소비기한·위치를 `__lots:{제품코드}`에 함께 기록
+  const saveManualItem=(code,cur)=>{
     const sig={};
-    for(const c in m){if(c==="__lots")continue;for(const id in m[c]){const l=rawLots.find(x=>String(x.id)===String(id));if(l)sig[id]=fzLotSig(l)}}
-    const next=Object.keys(sig).length?{...m,__lots:sig}:Object.fromEntries(Object.entries(m).filter(([k])=>k!=="__lots"));
-    setManual(next);fzManCache.set(srvManKey,next);lsSet(manKey,JSON.stringify(next));
-    rpc("ol_set_setting",{p_admin_hash:adminHash,p_key:srvManKey,p_value:next})
-      .catch(e=>setMsg("⚠ 직접 고친 수량을 서버에 저장하지 못했습니다 (이 브라우저에만 저장됨): "+errMsg(e)));
+    for(const id in cur){const l=rawLots.find(x=>String(x.id)===String(id));if(l)sig[id]=fzLotSig(l)}
+    const hasCur=Object.keys(cur).length>0;
+    const local={...manual};
+    if(hasCur){local[code]=cur;local["__lots:"+code]=sig}else{delete local[code];delete local["__lots:"+code]}
+    applyManual(local);
+    const op=hasCur?{set:{[code]:cur,["__lots:"+code]:sig}}:{unset:[code,"__lots:"+code]};
+    olEditSetting(srvManKey,op,()=>local).then(r=>applyManual(r.value)).catch(manErr);
+  };
+  // 날짜 전체를 한 번에 바꿀 때만 (출고 확정 후 비우기, 되돌리기 후 복원)
+  const saveManualAll=m=>{
+    applyManual(m);_olSaveSeq++;_olPending++;
+    rpc("ol_set_setting",{p_admin_hash:adminHash,p_key:srvManKey,p_value:m}).catch(manErr).finally(()=>_olPending--);
   };
   // 저장된 로트 id가 지금 재고에 없으면 같은 제품·소비기한·위치 로트로 연결
   const manualEff=useMemo(()=>{
-    const sig=manual.__lots||{};const out={};
+    const sig={...(manual.__lots||{})};
+    for(const k in manual)if(k.startsWith("__lots:"))Object.assign(sig,manual[k]);
+    const out={};
     for(const c in manual){
-      if(c==="__lots")continue;
+      if(c.startsWith("__lots"))continue;
       const cur={};
       for(const id in manual[c]){
         if(rawLots.some(x=>String(x.id)===String(id))){cur[id]=manual[c][id];continue}
@@ -5219,11 +5280,27 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
     try{const old=JSON.parse(lsGet(doneKey,"null"));if(old&&old.at&&!list.some(r=>r.at===old.at))list.push({vendor:"",...old,legacy:true})}catch(e){}
     setDoneList(list);
   },[srvDoneKey,masters.settings]);
-  const saveDone=async list=>{
-    const srv=list.filter(r=>!r.legacy);
-    setDoneList(list);fzManCache.set(srvDoneKey,srv);
-    if(!list.some(r=>r.legacy))lsSet(doneKey,"null");
-    await rpc("ol_set_setting",{p_admin_hash:adminHash,p_key:srvDoneKey,p_value:srv});
+  // 서버 값 + 이 브라우저의 예전 기록(legacy)
+  const withLegacy=srv=>{
+    const list=Array.isArray(srv)?[...srv]:[];
+    try{const old=JSON.parse(lsGet(doneKey,"null"));if(old&&old.at&&!list.some(r=>r.at===old.at))list.push({vendor:"",...old,legacy:true})}catch(e){}
+    return list;
+  };
+  const applyDone=srv=>{
+    const s=Array.isArray(srv)?srv:[];fzManCache.set(srvDoneKey,s);
+    setDoneList(p=>{const n=withLegacy(s);return sameJson(p,n)?p:n});
+  };
+  // add: 새 확정 기록, remove: 지울 기록 — 다른 컴퓨터가 남긴 기록은 건드리지 않음
+  const saveDone=async({add=[],remove=[]})=>{
+    const rmLegacy=remove.some(r=>r.legacy);
+    const addS=add.filter(r=>!r.legacy),rmS=remove.filter(r=>!r.legacy);
+    if(rmLegacy)lsSet(doneKey,"null");
+    const cur=(fzManCache.get(srvDoneKey)||doneList.filter(r=>!r.legacy));
+    const local=[...cur.filter(r=>!rmS.some(x=>x.at===r.at)),...addS];
+    applyDone(local);
+    if(!addS.length&&!rmS.length)return;
+    const r=await olEditSetting(srvDoneKey,{add:addS,remove:rmS},()=>local);
+    applyDone(r.value);
   };
   // 지금 보는 업체에 걸리는 확정 기록 (전체로 확정했거나, 같은 업체, 또는 전체 보기에서 아무 업체나)
   const doneHits=doneList.filter(r=>!vendor||!r.vendor||r.vendor===vendor);
@@ -5248,14 +5325,46 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
     const srv=fzManCache.has("fzout_hidden")?fzManCache.get("fzout_hidden"):masters.settings?.fzout_hidden;
     if(Array.isArray(srv))return new Set(srv);
     try{return new Set(JSON.parse(lsGet("ol-fzout-hidden","[]")))}catch(e){return new Set()}});
-  const setHidden=n=>{
-    setHiddenCodes(n);const arr=[...n];
-    lsSet("ol-fzout-hidden",JSON.stringify(arr));fzManCache.set("fzout_hidden",arr);
-    rpc("ol_set_setting",{p_admin_hash:adminHash,p_key:"fzout_hidden",p_value:arr})
+  const applyHidden=arr=>{
+    const a=Array.isArray(arr)?arr:[];
+    lsSet("ol-fzout-hidden",JSON.stringify(a));fzManCache.set("fzout_hidden",a);
+    setHiddenCodes(p=>sameJson([...p].sort(),[...a].sort())?p:new Set(a));
+  };
+  // 제품 하나씩 추가/빼기 → 다른 컴퓨터가 숨긴 제품은 그대로
+  const editHidden=(add,remove)=>{
+    const n=new Set(hiddenCodes);add.forEach(c=>n.add(c));remove.forEach(c=>n.delete(c));
+    applyHidden([...n]);
+    olEditSetting("fzout_hidden",{add,remove},()=>[...n]).then(r=>applyHidden(r.value))
       .catch(e=>setMsg("⚠ 숨긴 제품을 서버에 저장하지 못했습니다: "+errMsg(e)));
   };
-  const hideItem=code=>setHidden(new Set([...hiddenCodes,code]));
-  const unhideItem=code=>{const n=new Set(hiddenCodes);n.delete(code);setHidden(n)};
+  const hideItem=code=>editHidden([code],[]);
+  const unhideItem=code=>editHidden([],[code]);
+
+  // 다른 컴퓨터에서 바꾼 것 가져오기 — 화면이 보일 때 15초마다 + 이 탭으로 돌아올 때
+  // (직접 고친 수량·숨김·확정 기록·옵션 + 냉동재고). 입력 중에는 건너뜀
+  const syncRef=useRef(null);
+  syncRef.current=async()=>{
+    if(document.visibilityState!=="visible"||isTyping()||progress||_olPending)return;
+    const seq=_olSaveSeq;
+    try{
+      const s=await olGetSettings([srvManKey,srvDoneKey,"fzout_hidden","fzout_opts"]);
+      if(isTyping()||_olPending||seq!==_olSaveSeq)return;
+      if(s[srvManKey]!==undefined)applyManual(s[srvManKey]);
+      applyDone(s[srvDoneKey]);
+      if(s.fzout_hidden!==undefined)applyHidden(s.fzout_hidden);
+      if(s.fzout_opts!==undefined)applyOpts(s.fzout_opts);
+      const d=await rpc("ol_list_frozen",{p_admin_hash:adminHash});
+      if(!isTyping()){const lots=d?.lots||[];setRawLots(p=>sameJson(p,lots)?p:lots)}
+    }catch(e){}
+  };
+  useEffect(()=>{
+    const run=()=>syncRef.current&&syncRef.current();
+    const t=setInterval(run,FZ_SYNC_MS);
+    const onVis=()=>{if(document.visibilityState==="visible")run()};
+    document.addEventListener("visibilitychange",onVis);window.addEventListener("focus",run);
+    run();
+    return()=>{clearInterval(t);document.removeEventListener("visibilitychange",onVis);window.removeEventListener("focus",run)};
+  },[selDate]);
   const plan=useMemo(()=>fullPlan.filter(x=>!hiddenCodes.has(x.code)),[fullPlan,hiddenCodes]);
   const hiddenItems=fullPlan.filter(x=>hiddenCodes.has(x.code));
   const moves=plan.flatMap(it=>it.rows.filter(x=>x.out>0).map(x=>({it,x})));
@@ -5285,9 +5394,9 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
       cur[r.lot.id]=fzoRound(cur[r.lot.id]-t);if(!(cur[r.lot.id]>0))delete cur[r.lot.id];
       over=fzoRound(over-t);
     }
-    saveManual({...manualEff,[it.code]:cur});
+    saveManualItem(it.code,cur);
   };
-  const resetItem=code=>{const m={...manualEff};delete m[code];saveManual(m)};
+  const resetItem=code=>saveManualItem(code,{});
   // 🏷 이력번호: 제품 → APS 품목 → BOM 원육, 같은 소비기한 기록
   const[fzTraces,setFzTraces]=useState([]);
   const[fzMats,setFzMats]=useState(_apsMatsCache);
@@ -5311,6 +5420,15 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
   const confirm=async()=>{
     setAsk(false);setMsg("");
     if(locked){setMsg("⚠ 이미 출고 확정된 날짜입니다");return}
+    // 다른 컴퓨터가 그 사이에 확정했는지 서버에서 다시 확인 (두 번 차감 방지)
+    try{
+      const s=await olGetSettings([srvDoneKey]);
+      const latest=Array.isArray(s[srvDoneKey])?s[srvDoneKey]:[];
+      if(latest.some(r=>!vendor||!r.vendor||r.vendor===vendor)){
+        applyDone(latest);await loadLots();
+        setMsg("⚠ 다른 컴퓨터에서 이미 출고 확정했습니다 — 차감하지 않았습니다");return;
+      }
+    }catch(e){setMsg("⚠ 확정 여부를 확인하지 못해 차감하지 않았습니다: "+errMsg(e));return}
     const memo=`${fmtMd(selDate)} 입고 발주 출고${vendor?" · "+vendor:""}`;
     const manSnap=manual;
     let fail=0;const okMoves=[];setProgress({done:0,total:moves.length});
@@ -5330,8 +5448,8 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
     setProgress(null);
     const info={vendor,at:Date.now(),boxes:fzoRound(okMoves.reduce((a,m)=>a+m.boxes,0)),fail,moves:okMoves,man:manSnap};
     let saveErr="";
-    if(okMoves.length){try{await saveDone([...doneList,info])}catch(e){saveErr=errMsg(e)}}
-    saveManual({});
+    if(okMoves.length){try{await saveDone({add:[info]})}catch(e){saveErr=errMsg(e)}}
+    saveManualAll({});
     await loadLots();
     setMsg(saveErr?`⚠ 차감은 됐지만 확정 기록을 서버에 저장하지 못했습니다 (잠금·되돌리기 안 됨): ${saveErr}`
       :fail?`⚠ ${fail}건 차감 실패 — 냉동재고 탭에서 확인하세요`:`✓ 재고에서 ${fmtBoxes(info.boxes)}박스를 차감했습니다`);
@@ -5359,10 +5477,10 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
     }
     setProgress(null);
     let saveErr="";
-    try{await saveDone(doneList.filter(r=>!doneHits.includes(r)))}catch(e){saveErr=errMsg(e)}
+    try{await saveDone({remove:doneHits})}catch(e){saveErr=errMsg(e)}
     // 확정 전에 직접 고쳐 둔 출고 수량 복원
     const man=targets.length===1?targets[0].man:null;
-    if(man&&typeof man==="object"&&Object.keys(man).length)saveManual(man);
+    if(man&&typeof man==="object"&&Object.keys(man).length)saveManualAll(man);
     await loadLots();
     const boxes=fzoRound(targets.reduce((a,r)=>a+(r.boxes||0),0));
     setMsg(fail?`⚠ ${fail}건 되돌리기 실패 — 냉동재고 탭에서 확인하세요`
@@ -5441,7 +5559,7 @@ function FzOutTab({adminHash,masters,dates,selDate,setSelDate,orders,loadingOrde
           {view==="floor"&&selGroups.length>1&&<button className="ol-btn ol-btn-secondary" disabled={!!saving} onClick={()=>save("png",true)} title="생산지점마다 이미지 한 장씩">{saving==="png-floor"?"저장 중…":`🖼 지점별로 저장 (${selGroups.length}장)`}</button>}
           <button className="ol-btn ol-btn-secondary" disabled={!plan.length} onClick={()=>downloadFzOutXlsx(plan,selDate,prefix,vendor,onlyOut)}>📥 엑셀</button>
           <button className="ol-btn ol-btn-secondary" title="냉동재고 다시 불러오기" onClick={loadLots}>↻</button>
-          {anyManual&&<button className="ol-btn ol-btn-secondary" onClick={()=>saveManual({})} title="직접 고친 출고 수량을 모두 지우고 자동 배정으로">↺ 모두 자동 배정</button>}
+          {anyManual&&<button className="ol-btn ol-btn-secondary" onClick={()=>saveManualAll({})} title="직접 고친 출고 수량을 모두 지우고 자동 배정으로">↺ 모두 자동 배정</button>}
           {msg&&<span style={{fontSize:12,fontWeight:600,color:msg.startsWith("✓")||msg.includes("저장했")?"#16a34a":"#ef4444"}}>{msg}</span>}
         </div>
 
