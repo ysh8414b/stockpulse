@@ -1205,7 +1205,7 @@ function BomEditor({adminHash,parent,allItems,onClose}){
 
   useEffect(()=>{load()},[load]);
 
-  const candidates=useMemo(()=>allItems.filter(i=>i.id!==parent.id&&!rows.find(r=>r.child_id===i.id)),[allItems,parent.id,rows]);
+  const candidates=useMemo(()=>allItems.filter(i=>i.id!==parent.id&&i.active!==false&&!rows.find(r=>r.child_id===i.id)),[allItems,parent.id,rows]);
 
   const add=async()=>{
     if(!childId){setErr("자재를 선택하세요");return}
@@ -1421,6 +1421,8 @@ function ItemsTab({adminHash}){
   const[bomTarget,setBomTarget]=useState(null);
   const[histTarget,setHistTarget]=useState(null);
   const[lines,setLines]=useState([]);
+  const[showHidden,setShowHidden]=useState(false);
+  const[hideErr,setHideErr]=useState("");
 
   const load=useCallback(async()=>{
     try{
@@ -1434,13 +1436,26 @@ function ItemsTab({adminHash}){
   },[adminHash]);
   useEffect(()=>{load()},[load]);
 
+  const hiddenCount=useMemo(()=>items.filter(i=>i.active===false).length,[items]);
   const filtered=useMemo(()=>{
-    let arr=items;
+    let arr=showHidden?items.filter(i=>i.active===false):items.filter(i=>i.active!==false);
     if(filter!=="all")arr=arr.filter(i=>i.type===filter);
     const q=query.trim().toLowerCase();
     if(q)arr=arr.filter(i=>i.code.toLowerCase().includes(q)||i.name.toLowerCase().includes(q));
     return arr;
-  },[items,filter,query]);
+  },[items,filter,query,showHidden]);
+
+  const setActive=async(it,active)=>{
+    setHideErr("");
+    try{
+      await rpc("aps_set_item_active",{p_admin_hash:adminHash,p_item_id:it.id,p_active:active});
+      if(!("active" in it)){setHideErr("Supabase에서 setup_aps_item_active.sql 을 먼저 실행하세요");return}
+      load();
+    }catch(e){
+      const m=String(e?.message||e);
+      setHideErr(/aps_set_item_active|does not exist|404/i.test(m)?"Supabase에서 setup_aps_item_active.sql 을 먼저 실행하세요":errMsg(e,{unauthorized:"인증 실패",read_only:"읽기 전용 모드라 수정할 수 없습니다"}));
+    }
+  };
 
   const del=async(it)=>{
     if(!confirm(`품목 "${it.name}" 을(를) 삭제하시겠습니까?`))return;
@@ -1448,17 +1463,21 @@ function ItemsTab({adminHash}){
       await rpc("aps_delete_item",{p_admin_hash:adminHash,p_id:it.id});
       load();
     }catch(e){
-      const m=errMsg(e,{has_txns:"입출고 이력이 있어 삭제할 수 없습니다",has_plans:"생산계획에 사용 중이라 삭제할 수 없습니다",used_in_bom:"다른 품목의 BOM에 사용 중입니다",unauthorized:"인증 실패"});
-      alert(m);
+      const m=errMsg(e,{has_txns:"입출고 이력이 있어 삭제할 수 없습니다",has_plans:"생산계획 이력이 있어 삭제할 수 없습니다",used_in_bom:"다른 품목의 BOM에 사용 중입니다",unauthorized:"인증 실패"});
+      const msg=(e?.message||"").match(/has_txns|has_plans|used_in_bom/)?m+"\n\n대신 '숨기기'를 누르면 목록·계획 추가·자동 생성에서 빠지고 과거 실적은 남습니다.":m;
+      alert(msg);
     }
   };
 
-  const counts=useMemo(()=>({
-    all:items.length,
-    product:items.filter(i=>i.type==="product").length,
-    semi:items.filter(i=>i.type==="semi").length,
-    material:items.filter(i=>i.type==="material").length
-  }),[items]);
+  const counts=useMemo(()=>{
+    const base=showHidden?items.filter(i=>i.active===false):items.filter(i=>i.active!==false);
+    return{
+      all:base.length,
+      product:base.filter(i=>i.type==="product").length,
+      semi:base.filter(i=>i.type==="semi").length,
+      material:base.filter(i=>i.type==="material").length
+    };
+  },[items,showHidden]);
 
   return <div>
     <div className="aps-toolbar">
@@ -1469,11 +1488,14 @@ function ItemsTab({adminHash}){
         <button className={filter==="material"?"on":""} onClick={()=>setFilter("material")}>원자재 {counts.material}</button>
       </div>
       <input className="aps-input" placeholder="코드/품목명 검색" value={query} onChange={e=>setQuery(e.target.value)} style={{flex:"1 1 180px",maxWidth:240}}/>
+      {(hiddenCount>0||showHidden)&&<button className={"aps-btn aps-btn-sm "+(showHidden?"aps-btn-primary":"aps-btn-secondary")} onClick={()=>setShowHidden(v=>!v)} title="사용 안 함으로 숨긴 품목">{showHidden?"← 사용 중 품목 보기":`🙈 숨긴 품목 ${hiddenCount}`}</button>}
       <button className="aps-btn aps-btn-primary" onClick={()=>{setEditing(null);setShowForm(true)}}>+ 품목 추가</button>
     </div>
+    {hideErr&&<div style={{color:"#ef4444",fontSize:13,margin:"-4px 0 10px"}}>⚠ {hideErr}</div>}
+    {showHidden&&<div style={{fontSize:12,color:"var(--muted)",margin:"-4px 0 10px"}}>숨긴 품목은 생산계획 추가·자동 생성·BOM 자재 선택에서 빠집니다. 과거 계획과 통계는 그대로 남아 있습니다.</div>}
 
     {loading?<Loader/>:filtered.length===0?
-      <Empty emoji="📦" text={items.length===0?"등록된 품목이 없습니다. 우측 상단에서 추가하세요.":"검색 결과가 없습니다"}/>:
+      <Empty emoji="📦" text={items.length===0?"등록된 품목이 없습니다. 우측 상단에서 추가하세요.":showHidden?"숨긴 품목이 없습니다":"검색 결과가 없습니다"}/>:
       <div style={{overflow:"auto",border:"1px solid var(--div2)",borderRadius:8}}>
         <table className="aps-table">
           <thead><tr>
@@ -1486,7 +1508,7 @@ function ItemsTab({adminHash}){
             <th className="center" style={{width:170}}>작업</th>
           </tr></thead>
           <tbody>
-            {filtered.map(i=><tr key={i.id}>
+            {filtered.map(i=><tr key={i.id} style={i.active===false?{opacity:.6}:undefined}>
               <td style={{fontFamily:"monospace",color:"var(--text-sub)"}}>{i.code}</td>
               <td>
                 <div style={{fontWeight:600}}>{i.name}</div>
@@ -1511,6 +1533,9 @@ function ItemsTab({adminHash}){
                   {(i.type==="product"||i.type==="semi")&&
                     <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>setHistTarget(i)} title="이 제품 만들 때 사용한 원육 이력">🥩 원육</button>}
                   <button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>{setEditing(i);setShowForm(true)}}>수정</button>
+                  {i.active===false
+                    ?<button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>setActive(i,true)} title="다시 목록·계획에 보이게">다시 쓰기</button>
+                    :<button className="aps-btn aps-btn-secondary aps-btn-sm" onClick={()=>setActive(i,false)} title="지우지 않고 목록·계획 추가·자동 생성에서 숨김 (과거 실적 유지)">숨기기</button>}
                   <button className="aps-btn aps-btn-danger aps-btn-sm" onClick={()=>del(i)}>삭제</button>
                 </div>
               </td>
@@ -2536,7 +2561,8 @@ function PlanForm({adminHash,items,lines,settings,initial,prefill,defaultDate,pl
     setLoading(false);
   };
 
-  const producible=items.filter(i=>i.type==="product"||i.type==="semi");
+  // 숨긴 품목은 선택 목록에서 뺌 (수정 중인 계획의 품목은 유지)
+  const producible=items.filter(i=>(i.type==="product"||i.type==="semi")&&(i.active!==false||String(i.id)===String(initial?.item_id)));
   const selectedItem=producible.find(i=>String(i.id)===String(itemId));
   const filteredProducible=useMemo(()=>{
     const q=itemQuery.trim().toLowerCase();
@@ -3918,7 +3944,7 @@ function computeAutoPlan({targetDay,items,lines,plans,invProducts,dowMap,rateByI
   const simEnd2=mergeOn&&mergeEnd>simEnd?mergeEnd:simEnd;
   const candidates=[],skipped=[],fillPool=[];
   for(const it of items){
-    if(it.type==="material"||!it.code)continue;
+    if(it.type==="material"||!it.code||it.active===false)continue;
     const lineIds=(Array.isArray(it.line_ids)?it.line_ids:[]).map(Number);
     if(lineIds.length===0){skipped.push({item:it,reason:"생산 라인 미지정",kind:"noline"});continue}
     const eligible=lineIds.filter(id=>autoLineIds.has(id));
