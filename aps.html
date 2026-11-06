@@ -9022,6 +9022,358 @@ function ExportCombinedView({title,dateStr,deptGroups,offIds,totalAvail,plans,li
   </div>;
 }
 
+// ═══ 📐 인원 산정 ═══
+// 필요 인원 = Σ(주간 생산량 ÷ 라인 시간당 생산량 × 라인 투입 인원) ÷ (1인 주간 근무 시간 × 출근율 × 가동률)
+const STAFFCALC_KEY="aps-staffcalc-v2";
+function loadStaffCalcOpts(){
+  const def={weeks:8,src:"sales",growth:0,workDays:null,attend:null,util:85,depts:null,crew:{}};
+  try{
+    const v2=localStorage.getItem(STAFFCALC_KEY);
+    if(v2)return{...def,...JSON.parse(v2)};
+    // 예전 저장값(부서 [] = 기본)은 부서만 빼고 가져옴 → 생산 부서 기본 적용
+    const old=JSON.parse(localStorage.getItem("aps-staffcalc")||"{}");delete old.depts;
+    return{...def,...old};
+  }catch(e){return def}
+}
+function scRound(v,d=1){const p=Math.pow(10,d);return Math.round((Number(v)||0)*p)/p}
+function computeStaffing(data,opts){
+  const{items=[],stats180=[],statsAll=[],sales=[],salesDates=[],forecast=[],plans=[],staff=[],lines=[],att=[],settings={}}=data||{};
+  const today=todayStr();
+  const days=opts.weeks*7,cutoff=addDays(today,-(days-1));
+  const lunch=getLunch(settings);
+  const ws=Number(settings.work_start_hour??8),we=Number(settings.work_end_hour??17);
+  const dayHours=Math.max(0,we-ws-(lunch?Math.max(0,Math.min(lunch.e,we)-Math.max(lunch.s,ws)):0));
+  const prodDays=loadProdDays();
+  const workDays=Number(opts.workDays)>0?Number(opts.workDays):prodDays.length;
+  const util=Math.min(100,Math.max(10,Number(opts.util)||85))/100;
+
+  // 대상 직원 (부서 선택 없으면 전체 활성 직원)
+  const allDepts=[...new Set(staff.filter(s=>s.active!==false).map(s=>s.department||"").filter(Boolean))].sort((a,b)=>a.localeCompare(b,"ko"));
+  // 부서를 고른 적 없으면 이름에 "생산"이 들어간 부서만 (없으면 전체)
+  const depts=Array.isArray(opts.depts)?opts.depts.filter(d=>allDepts.includes(d)):allDepts.filter(d=>d.includes("생산"));
+  const team=staff.filter(s=>s.active!==false&&(!depts.length||depts.includes(s.department)));
+
+  // 출근율 = 최근 8주 생산 요일 중 휴무가 아닌 비율 (휴무 기록이 하루도 없으면 90%로 봄)
+  const attFrom=addDays(today,-56),teamIds=new Set(team.map(s=>s.id));
+  let wd=0;for(let d=attFrom;d<today;d=addDays(d,1))if(prodDays.includes(isoDowOf(d)))wd++;
+  const offs=att.filter(a=>a.status&&a.status!=="work"&&teamIds.has(a.staff_id)&&String(a.date).slice(0,10)>=attFrom&&String(a.date).slice(0,10)<today&&prodDays.includes(isoDowOf(String(a.date).slice(0,10)))).length;
+  const anyAtt=att.some(a=>teamIds.has(a.staff_id));
+  const attendAuto=anyAtt&&team.length&&wd?Math.max(0.5,1-offs/(team.length*wd)):null;
+  const attend=Number(opts.attend)>0?Math.min(100,Number(opts.attend))/100:(attendAuto??0.9);
+  const perPerson=dayHours*workDays*attend*util;
+
+  // 주간 수요 (매출: 기간 판매 ÷ 기간 주 수 / 예측: 앞으로 4주 ÷ 4)
+  const upDates=salesDates.map(r=>String(r.date).slice(0,10)).filter(d=>d>=cutoff&&d<=today).sort();
+  const spanWeeks=upDates.length?((Date.parse(upDates[upDates.length-1])-Date.parse(upDates[0]>cutoff?cutoff:upDates[0]))/86400000+1)/7:0;
+  const weeklyByCode={};
+  let srcUsed="sales";
+  if(opts.src==="forecast"&&forecast.length){
+    srcUsed="forecast";
+    forecast.forEach(r=>{const k=salesCodeKey(r.code);weeklyByCode[k]=(weeklyByCode[k]||0)+(Number(r.qty)||0)/4});
+  }else if(spanWeeks>0){
+    sales.forEach(r=>{const k=salesCodeKey(r.code);weeklyByCode[k]=(weeklyByCode[k]||0)+(Number(r.total_qty)||0)/spanWeeks});
+  }
+  // 바쁜 주 배수 = 꽉 찬 주 중 가장 많이 판 주 ÷ 평균 주 (매출 전체 박스 기준)
+  const wk={};salesDates.forEach(r=>{const d=String(r.date).slice(0,10);if(d<cutoff)return;const m=kstMonday(d);wk[m]=(wk[m]||0)+(Number(r.qty)||0)});
+  const last=upDates[upDates.length-1]||today;
+  const full=Object.keys(wk).filter(m=>m>=cutoff&&addDays(m,6)<=last).map(m=>({m,q:wk[m]}));
+  let peak=1,peakWeek=null;
+  if(full.length>=2){const avg=full.reduce((a,b)=>a+b.q,0)/full.length;const mx=full.reduce((a,b)=>b.q>a.q?b:a);if(avg>0){peak=Math.max(1,mx.q/avg);peakWeek=mx.m}}
+  const growth=1+(Number(opts.growth)||0)/100;
+
+  // 라인 투입 인원 (기본값 = 완료 실적 때 그 라인 출근 인원 중간값)
+  // 대상 부서 직원만 셈. 라인 담당 부서는 대상 부서와 겹치는 것만 (안 겹치면 담당 부서 없는 라인으로 봄)
+  const ctx={staff:team,lineDepts:{},offByDate:{}};
+  lines.forEach(l=>{const ld=Array.isArray(l.staff_depts)?l.staff_depts:[];ctx.lineDepts[l.id]=depts.length?ld.filter(d=>depts.includes(d)):ld});
+  att.forEach(a=>{if(a.status&&a.status!=="work"){const d=String(a.date).slice(0,10);(ctx.offByDate[d]=ctx.offByDate[d]||new Set()).add(a.staff_id)}});
+  const recent=plans.filter(p=>p.actual_start_at&&p.actual_end_at&&isoToKstDateStr(p.actual_start_at)>=cutoff);
+  const linesByDay={};recent.forEach(p=>{const d=isoToKstDateStr(p.actual_start_at);(linesByDay[d]=linesByDay[d]||new Set()).add(p.line_id??"none")});
+  const crewSamples={};
+  recent.forEach(p=>{
+    const d=isoToKstDateStr(p.actual_start_at);
+    let n=speedHeadcount(ctx,d,p.line_id);
+    if(n==null)return;
+    // 담당 부서가 없는 라인은 그날 돌아간 라인 수로 나눔 (같은 사람을 두 번 세지 않게)
+    if(!(ctx.lineDepts[p.line_id]||[]).length)n=n/Math.max(1,linesByDay[d].size);
+    (crewSamples[p.line_id??"none"]=crewSamples[p.line_id??"none"]||[]).push(n);
+  });
+  const lineName={none:"라인 미지정"};lines.forEach(l=>lineName[l.id]=l.name||l.code);
+  const crewDefault=(k)=>{const m=speedMedian(crewSamples[k]||[]);if(m>0)return scRound(m,1);return lines.length?Math.max(1,Math.round(team.length/lines.length)):Math.max(1,team.length)};
+  const crewOf=(k)=>{const v=Number(opts.crew?.[k]);return v>0?v:crewDefault(k)};
+
+  // 품목별 속도·라인
+  const rateOf={};
+  statsAll.forEach(s=>{if(Number(s.qty_per_hour)>0)rateOf[s.item_id]={r:Number(s.qty_per_hour),src:"실적(전체)"}});
+  stats180.forEach(s=>{if(Number(s.qty_per_hour)>0)rateOf[s.item_id]={r:Number(s.qty_per_hour),src:"실적 180일"}});
+  const lineCount={};plans.forEach(p=>{const k=p.item_id+"|"+(p.line_id??"none");lineCount[k]=(lineCount[k]||0)+1});
+  const itemByCode={};items.filter(i=>i.type!=="material").forEach(i=>itemByCode[salesCodeKey(i.code)]=i);
+
+  const rows=[],skipped=[];
+  let totalDemand=0;
+  for(const code of Object.keys(weeklyByCode)){
+    const base=weeklyByCode[code];if(!(base>0))continue;
+    totalDemand+=base;
+    const it=itemByCode[code];
+    const nm=it?.name||(sales.find(s=>salesCodeKey(s.code)===code)?.name)||code;
+    if(!it){skipped.push({code,name:nm,qty:base,why:"📦 품목에 없음"});continue}
+    let rate=rateOf[it.id];
+    if(!rate&&Number(it.units_per_hour)>0)rate={r:Number(it.units_per_hour),src:"품목 입력값"};
+    if(!rate){skipped.push({code,name:nm,qty:base,why:"생산 속도 없음"});continue}
+    let cand=(Array.isArray(it.line_ids)?it.line_ids:[]).map(String);
+    let lk=null;
+    if(cand.length)lk=cand.slice().sort((a,b)=>(lineCount[it.id+"|"+b]||0)-(lineCount[it.id+"|"+a]||0))[0];
+    else{const best=Object.keys(lineCount).filter(k=>k.startsWith(it.id+"|")).sort((a,b)=>lineCount[b]-lineCount[a])[0];lk=best?best.split("|")[1]:"none"}
+    const lineKey=lines.find(l=>String(l.id)===String(lk))?lines.find(l=>String(l.id)===String(lk)).id:"none";
+    const qty=base*growth;
+    const lineH=qty/rate.r,crew=crewOf(lineKey);
+    rows.push({id:it.id,code,name:nm,unit:it.unit||"박스",qty,rate:rate.r,rateSrc:rate.src,lineKey,lineH,crew,manH:lineH*crew});
+  }
+  rows.sort((a,b)=>b.manH-a.manH);
+  const manH=rows.reduce((a,r)=>a+r.manH,0);
+  const skippedQty=skipped.reduce((a,s)=>a+s.qty,0);
+
+  // 라인별
+  const lineCap=dayHours*workDays*util;
+  const usedKeys=[...new Set([...rows.map(r=>String(r.lineKey)),...Object.keys(crewSamples)])];
+  const lineRows=usedKeys.map(k=>{
+    const rs=rows.filter(r=>String(r.lineKey)===k);
+    const lh=rs.reduce((a,r)=>a+r.lineH,0);
+    const key=k==="none"?"none":(lines.find(l=>String(l.id)===k)?.id??k);
+    return{key,name:lineName[key]||k,crew:crewOf(key),crewDef:crewDefault(key),lineH:lh,manH:lh*crewOf(key),load:lineCap>0?lh/lineCap:0,items:rs.length};
+  }).sort((a,b)=>b.manH-a.manH);
+
+  // 최근 실제 (기간 안 완료 계획): 쓴 인시·잔업
+  let actManH=0,otManH=0;
+  recent.forEach(p=>{
+    const h=workHoursOf(p.actual_start_at,p.actual_end_at,lunch);
+    const c=crewOf(p.line_id??"none");
+    actManH+=h*c;
+    if(isoToKstDateStr(p.actual_start_at)===isoToKstDateStr(p.actual_end_at)){
+      const s=isoToKstHourFloat(p.actual_start_at),e=isoToKstHourFloat(p.actual_end_at);
+      otManH+=Math.max(0,e-Math.max(s,we))*c+Math.max(0,Math.min(e,ws)-s)*c;
+    }
+  });
+  const planDays=[...new Set(recent.map(p=>isoToKstDateStr(p.actual_start_at)))];
+  const actWeeks=planDays.length?((Date.parse(planDays.sort()[planDays.length-1])-Date.parse(planDays[0]))/86400000+1)/7:0;
+
+  const need=perPerson>0?manH/perPerson:0;
+  const needPeak=need*peak;
+  return{days,cutoff,dayHours,workDays,attend,attendAuto,attendOffs:offs,attendDays:wd,util,perPerson,
+    srcUsed,spanWeeks,uploadDays:upDates.length,peak,peakWeek,fullWeeks:full.length,growth,
+    allDepts,depts,team,current:team.length,rows,skipped,skippedQty,totalDemand,manH,need,needPeak,
+    needInt:Math.ceil(need-1e-9),needPeakInt:Math.ceil(needPeak-1e-9),
+    lineRows,lineCap,recentCount:recent.length,actWeeks,
+    actManHWeek:actWeeks>0?actManH/Math.max(1,actWeeks):null,otManHWeek:actWeeks>0?otManH/Math.max(1,actWeeks):null,
+    hasLunch:!!lunch,ws,we};
+}
+
+// 보고용 이미지 (라이트 820px)
+function ExportStaffCalcView({r,title}){
+  const C={ink:"#111827",mut:"#6b7280",line:"#e5e7eb",red:"#dc2626",grn:"#16a34a"};
+  const short=r.needInt-r.current,shortPeak=r.needPeakInt-r.current;
+  const box=(t,v,sub,color,bg)=><div style={{flex:1,padding:"14px 16px",border:`1.5px solid ${color||C.line}`,borderRadius:10,background:bg||"#fff"}}>
+    <div style={{fontSize:12,color:C.mut,fontWeight:700}}>{t}</div>
+    <div style={{fontSize:30,fontWeight:900,color:color||C.ink,marginTop:4,lineHeight:1.1}}>{v}</div>
+    {sub&&<div style={{fontSize:11,color:C.mut,marginTop:4,lineHeight:1.5}}>{sub}</div>}
+  </div>;
+  const th={textAlign:"left",fontSize:11,color:C.mut,fontWeight:700,padding:"6px 8px",borderBottom:`2px solid ${C.ink}`};
+  const td={fontSize:12.5,padding:"6px 8px",borderBottom:`1px solid ${C.line}`,color:C.ink};
+  const R={...td,textAlign:"right",fontVariantNumeric:"tabular-nums"};
+  return <div style={{width:820,background:"#fff",color:C.ink,padding:"30px 34px",fontFamily:"Pretendard,sans-serif",boxSizing:"border-box"}}>
+    <div style={{fontSize:12,color:C.mut,fontWeight:700,letterSpacing:1}}>STAFFING PLAN · 인원 산정</div>
+    <div style={{fontSize:26,fontWeight:900,marginTop:4}}>{title||"생산 인원 산정"}</div>
+    <div style={{fontSize:12,color:C.mut,marginTop:4,paddingBottom:12,borderBottom:`3px solid ${C.ink}`}}>
+      {todayStr()} 기준 · {r.srcUsed==="forecast"?"🔮 수요 예측 앞으로 4주":`최근 ${r.days/7}주 매출 (${fmtMD(r.cutoff)}~)`}{r.growth!==1?` · 판매 ${r.growth>1?"+":""}${Math.round((r.growth-1)*100)}% 가정`:""}{r.depts.length?` · 대상 ${r.depts.join(", ")}`:""}
+    </div>
+    <div style={{display:"flex",gap:10,marginTop:16}}>
+      {box("필요 인원 (평균 주)",`${r.needInt}명`,`계산값 ${scRound(r.need,1)}명`)}
+      {box("바쁜 주 기준",`${r.needPeakInt}명`,r.peak>1?`평균 대비 ×${scRound(r.peak,2)}`:"바쁜 주 자료 부족")}
+      {box("현재 인원",`${r.current}명`,`출근율 ${Math.round(r.attend*100)}%`)}
+      {box(short>0?"부족":"여유",`${short>0?short:-short}명`,shortPeak>0?`바쁜 주엔 ${shortPeak}명 부족`:null,short>0?C.red:C.grn,short>0?"#fef2f2":"#f0fdf4")}
+    </div>
+    <div style={{marginTop:18,padding:"12px 14px",background:"#f8fafc",borderRadius:8,fontSize:13,lineHeight:1.9}}>
+      <div><b>① 필요 작업 시간</b> = Σ(주간 생산량 ÷ 시간당 생산량 × 라인 인원) = <b>주 {fmtNum(Math.round(r.manH))}인시</b></div>
+      <div><b>② 1인 주간 작업 시간</b> = {scRound(r.dayHours,2)}시간 × {r.workDays}일 × 출근율 {Math.round(r.attend*100)}% × 가동률 {Math.round(r.util*100)}% = <b>{scRound(r.perPerson,1)}시간</b></div>
+      <div><b>③ 필요 인원</b> = {fmtNum(Math.round(r.manH))} ÷ {scRound(r.perPerson,1)} = {scRound(r.need,1)}명 → <b>{r.needInt}명</b>{r.peak>1?<> · 바쁜 주 ×{scRound(r.peak,2)} → <b>{r.needPeakInt}명</b></>:null}</div>
+    </div>
+    <div style={{fontSize:14,fontWeight:800,margin:"18px 0 6px"}}>🏭 라인별</div>
+    <table style={{width:"100%",borderCollapse:"collapse"}}><thead><tr><th style={th}>라인</th><th style={{...th,textAlign:"right"}}>투입 인원</th><th style={{...th,textAlign:"right"}}>주 생산 시간</th><th style={{...th,textAlign:"right"}}>라인 가동</th><th style={{...th,textAlign:"right"}}>필요 인시</th></tr></thead>
+      <tbody>{r.lineRows.map(l=><tr key={l.key}><td style={{...td,fontWeight:700}}>{l.name}</td><td style={R}>{scRound(l.crew,1)}명</td><td style={R}>{scRound(l.lineH,1)}시간</td>
+        <td style={{...R,color:l.load>1?C.red:C.ink,fontWeight:l.load>1?800:400}}>{Math.round(l.load*100)}%</td><td style={R}>{fmtNum(Math.round(l.manH))}</td></tr>)}</tbody></table>
+    <div style={{fontSize:14,fontWeight:800,margin:"18px 0 6px"}}>📦 작업 시간이 많은 품목</div>
+    <table style={{width:"100%",borderCollapse:"collapse"}}><thead><tr><th style={th}>품목</th><th style={{...th,textAlign:"right"}}>주 생산량</th><th style={{...th,textAlign:"right"}}>시간당</th><th style={{...th,textAlign:"right"}}>필요 인시</th><th style={{...th,textAlign:"right"}}>비중</th></tr></thead>
+      <tbody>{r.rows.slice(0,12).map(x=><tr key={x.code}><td style={td}>{x.name}</td><td style={R}>{fmtNum(Math.round(x.qty))}</td><td style={R}>{fmtNum(scRound(x.rate,1))}</td><td style={R}>{fmtNum(Math.round(x.manH))}</td><td style={R}>{r.manH>0?Math.round(x.manH/r.manH*100):0}%</td></tr>)}</tbody></table>
+    {(r.actManHWeek!=null||r.skipped.length>0)&&<div style={{fontSize:12,color:C.mut,marginTop:14,lineHeight:1.7}}>
+      {r.actManHWeek!=null&&<div>최근 실제: 주 {fmtNum(Math.round(r.actManHWeek))}인시 생산 · 근무시간 밖 작업 주 {fmtNum(scRound(r.otManHWeek,1))}인시</div>}
+      {r.skipped.length>0&&<div>생산 속도·품목 정보가 없어 빠진 상품 {r.skipped.length}개 (주 {fmtNum(Math.round(r.skippedQty))}박스, 판매의 {r.totalDemand>0?Math.round(r.skippedQty/r.totalDemand*100):0}%) — 실제 필요 인원은 이보다 많을 수 있음</div>}
+    </div>}
+    <div style={{marginTop:18,paddingTop:10,borderTop:`1px solid ${C.line}`,fontSize:10,color:C.mut,display:"flex",justifyContent:"space-between"}}><span>STOCKPULSE · APS</span><span>{new Date().toLocaleString("ko-KR")}</span></div>
+  </div>;
+}
+
+function StaffCalcView({adminHash}){
+  const[data,setData]=useState(null);
+  const[err,setErr]=useState("");
+  const[loading,setLoading]=useState(true);
+  const[opts,setOpts]=useState(loadStaffCalcOpts);
+  const[title,setTitle]=useState(()=>{try{return localStorage.getItem("aps-staffcalc-title")||"생산 인원 산정"}catch(e){return "생산 인원 산정"}});
+  const[capturing,setCapturing]=useState(false);
+  const[showAllItems,setShowAllItems]=useState(false);
+  const exportRef=useRef(null);
+  useEffect(()=>{try{localStorage.setItem(STAFFCALC_KEY,JSON.stringify(opts))}catch(e){}},[opts]);
+  useEffect(()=>{try{localStorage.setItem("aps-staffcalc-title",title)}catch(e){}},[title]);
+  const set=(k,v)=>setOpts(o=>({...o,[k]:v}));
+
+  useEffect(()=>{
+    let c=false;
+    (async()=>{
+      setLoading(true);setErr("");
+      try{
+        const today=todayStr(),days=opts.weeks*7;
+        const[items,s180,sAll,sales,sDates,plans,staff,lines,settings,forecast]=await Promise.all([
+          rpc("aps_list_items",{p_admin_hash:adminHash}).catch(()=>[]),
+          rpc("aps_get_item_stats",{p_admin_hash:adminHash,p_days_back:180}).catch(()=>[]),
+          rpc("aps_get_item_stats",{p_admin_hash:adminHash,p_days_back:null}).catch(()=>[]),
+          rpc("aps_get_sales_stats",{p_admin_hash:adminHash,p_days:days}).catch(()=>[]),
+          rpc("aps_get_sales_dates",{p_admin_hash:adminHash,p_days:400}).catch(()=>[]),
+          rpc("aps_get_done_plans_all",{p_admin_hash:adminHash,p_days_back:Math.max(180,days)}).catch(()=>[]),
+          rpc("aps_list_staff",{p_admin_hash:adminHash,p_only_active:false}).catch(()=>[]),
+          rpc("aps_list_lines",{p_admin_hash:adminHash}).catch(()=>[]),
+          rpc("aps_get_settings",{p_admin_hash:adminHash}).catch(()=>({})),
+          opts.src==="forecast"?rpc("aps_get_forecast",{p_admin_hash:adminHash,p_from:today,p_to:addDays(today,27)}).catch(()=>[]):Promise.resolve([])
+        ]);
+        const att=await rpc("aps_get_attendance_range",{p_admin_hash:adminHash,p_start:addDays(today,-Math.max(180,days)),p_end:today}).catch(()=>[]);
+        if(c)return;
+        const A=x=>Array.isArray(x)?x:[];
+        setData({items:A(items),stats180:A(s180),statsAll:A(sAll),sales:A(sales),salesDates:A(sDates),plans:A(plans),staff:A(staff),lines:A(lines),att:A(att),settings:settings||{},forecast:A(forecast)});
+      }catch(e){if(!c)setErr("불러오기 실패: "+String(e.message||e).slice(0,160))}
+      if(!c)setLoading(false);
+    })();
+    return()=>{c=true};
+  },[adminHash,opts.weeks,opts.src]);
+
+  const r=useMemo(()=>data?computeStaffing(data,opts):null,[data,opts]);
+
+  async function exportPng(){
+    if(!r)return;
+    setCapturing(true);
+    await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
+    try{
+      const canvas=await window.html2canvas(exportRef.current,{backgroundColor:"#ffffff",scale:2,logging:false,useCORS:true});
+      const a=document.createElement("a");a.download=`인원산정_${todayStr()}.png`;a.href=canvas.toDataURL("image/png");
+      document.body.appendChild(a);a.click();document.body.removeChild(a);
+    }catch(e){alert("이미지 저장 실패: "+(e.message||e))}
+    setCapturing(false);
+  }
+
+  if(loading)return <Loader/>;
+  if(err)return <div style={{color:"#ef4444",fontSize:13}}>{err}</div>;
+  if(!r)return null;
+  const short=r.needInt-r.current,shortPeak=r.needPeakInt-r.current;
+  const card=(t,v,sub,color)=><div style={{flex:"1 1 160px",padding:"12px 14px",border:`1px solid ${color||"var(--div2)"}`,borderRadius:10}}>
+    <div style={{fontSize:11,color:"var(--muted)",fontWeight:600}}>{t}</div>
+    <div style={{fontSize:26,fontWeight:800,marginTop:4,color:color||"var(--text)"}}>{v}</div>
+    {sub&&<div style={{fontSize:11,color:"var(--muted)",marginTop:2,lineHeight:1.5}}>{sub}</div>}
+  </div>;
+  const lbl={fontSize:11,color:"var(--muted)",fontWeight:600,marginBottom:4};
+  const numIn=(v,on,ph,w=70,max)=><input type="number" className="aps-input" style={{width:w,padding:"5px 8px"}} value={v??""} placeholder={ph} min="0" max={max} onChange={e=>on(e.target.value===""?null:Number(e.target.value))}/>;
+  const notes=[];
+  if(!r.team.length)notes.push("👥 직원 마스터에 직원이 없습니다 — 현재 인원을 0명으로 계산합니다.");
+  if(r.srcUsed==="sales"&&!r.uploadDays)notes.push(`최근 ${opts.weeks}주 매출 자료가 없습니다 — 💰 매출 탭에서 매출 파일을 올려주세요.`);
+  if(opts.src==="forecast"&&r.srcUsed!=="forecast")notes.push("🔮 수요 예측 자료가 없어 매출 기준으로 계산했습니다.");
+  if(r.attendAuto==null&&!(Number(opts.attend)>0))notes.push("휴무 기록이 없어 출근율을 90%로 봤습니다 — 👥 일일 가용에서 휴무를 체크해 두면 실제 출근율로 계산합니다.");
+  if(r.totalDemand>0&&r.skippedQty/r.totalDemand>0.1)notes.push(`판매의 ${Math.round(r.skippedQty/r.totalDemand*100)}%가 생산 속도·품목 정보가 없어 계산에서 빠졌습니다 — 실제 필요 인원은 더 많습니다 (아래 목록 참고).`);
+  if(!r.recentCount)notes.push("기간 안에 실제 시각이 기록된 완료 계획이 없어 라인 투입 인원을 직원 수 ÷ 라인 수로 잡았습니다 — 실제 인원으로 고쳐주세요.");
+  const over=r.lineRows.filter(l=>l.load>1);
+  const items=showAllItems?r.rows:r.rows.slice(0,15);
+
+  return <div>
+    <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.7,marginBottom:12,padding:"8px 12px",border:"1px solid var(--div2)",borderRadius:8}}>
+      팔린 양을 만들려면 <b>사람 × 시간(인시)</b>이 얼마나 드는지 계산하고, 한 사람이 일주일에 실제로 일할 수 있는 시간으로 나눠 <b>필요 인원</b>을 구합니다.
+      시간당 생산량은 📈 통계의 실적(점심 제외), 수요는 💰 매출(또는 🔮 예측), 출근율은 👥 휴무 기록을 씁니다.
+    </div>
+
+    <div style={{display:"flex",gap:14,flexWrap:"wrap",alignItems:"flex-end",marginBottom:12}}>
+      <div><div style={lbl}>수요 기준</div><div className="aps-view-toggle">
+        <button className={opts.src==="sales"?"on":""} onClick={()=>set("src","sales")}>💰 매출</button>
+        <button className={opts.src==="forecast"?"on":""} onClick={()=>set("src","forecast")}>🔮 예측 4주</button></div></div>
+      {opts.src==="sales"&&<div><div style={lbl}>매출 기간</div><div className="aps-view-toggle">
+        {[4,8,12].map(w=><button key={w} className={opts.weeks===w?"on":""} onClick={()=>set("weeks",w)}>{w}주</button>)}</div></div>}
+      <div><div style={lbl}>판매 증가 가정</div>{numIn(opts.growth||0,v=>set("growth",v||0),"0",64)} <span style={{fontSize:12}}>%</span></div>
+      <div><div style={lbl}>주 근무일</div>{numIn(opts.workDays,v=>set("workDays",v),String(r.workDays),56,7)} <span style={{fontSize:12}}>일</span></div>
+      <div><div style={lbl}>출근율 {r.attendAuto!=null&&!(Number(opts.attend)>0)?"(기록)":""}</div>{numIn(opts.attend,v=>set("attend",v),String(Math.round(r.attend*100)),60,100)} <span style={{fontSize:12}}>%</span></div>
+      <div><div style={lbl} title="제품 전환·청소·자재 대기 등을 뺀 실제 작업 비율">가동률</div>{numIn(opts.util,v=>set("util",v),"85",60,100)} <span style={{fontSize:12}}>%</span></div>
+      <div style={{flex:1}}></div>
+      <button className="aps-btn aps-btn-secondary" onClick={exportPng} disabled={capturing}>{capturing?"저장 중...":"📷 보고용 이미지"}</button>
+    </div>
+    {r.allDepts.length>1&&<div className="aps-filter" style={{alignItems:"center",marginBottom:12}}>
+      <span style={{fontSize:12,color:"var(--muted)",fontWeight:600,marginRight:4}}>계산할 부서</span>
+      <button className={!r.depts.length?"on":""} onClick={()=>set("depts",[])}>전체</button>
+      {r.allDepts.map(d=>{const on=r.depts.includes(d);return <button key={d} className={on?"on":""} onClick={()=>set("depts",on?r.depts.filter(x=>x!==d):[...r.depts,d])}>{d}</button>})}
+    </div>}
+    {notes.map((t,i)=><div key={i} style={{fontSize:12,color:"#f59e0b",marginBottom:6}}>⚠ {t}</div>)}
+
+    <div style={{display:"flex",gap:10,flexWrap:"wrap",margin:"10px 0"}}>
+      {card("필요 인원 (평균 주)",`${r.needInt}명`,`계산값 ${scRound(r.need,1)}명`)}
+      {card("바쁜 주 기준",`${r.needPeakInt}명`,r.peak>1?`가장 많이 판 주(${fmtMD(r.peakWeek)}~)가 평균의 ×${scRound(r.peak,2)}`:"꽉 찬 주 2개 이상 매출 필요")}
+      {card(r.depts.length?`현재 인원 (${r.depts.join(", ")})`:"현재 인원 (전체)",`${r.current}명`,r.depts.length?"계산할 부서의 활성 직원":"모든 부서 활성 직원 — 생산 부서만 고르세요")}
+      {card(short>0?"부족":"여유",`${Math.abs(short)}명`,shortPeak>0?`바쁜 주엔 ${shortPeak}명 부족`:"바쁜 주도 감당 가능",short>0?"#ef4444":"#22c55e")}
+    </div>
+
+    <div style={{padding:"10px 14px",border:"1px solid var(--div2)",borderRadius:10,fontSize:13,lineHeight:1.9,marginBottom:14}}>
+      <div>① 필요 작업 시간 = Σ(주간 생산량 ÷ 시간당 생산량 × 라인 인원) = <b>주 {fmtNum(Math.round(r.manH))}인시</b>{r.growth!==1?` (판매 ${opts.growth>0?"+":""}${opts.growth}% 반영)`:""}</div>
+      <div>② 1인 주간 작업 시간 = 하루 {scRound(r.dayHours,2)}시간({r.ws}~{r.we}시{r.hasLunch?", 점심 제외":""}) × {r.workDays}일 × 출근율 {Math.round(r.attend*100)}% × 가동률 {Math.round(r.util*100)}% = <b>{scRound(r.perPerson,1)}시간</b></div>
+      <div>③ 필요 인원 = {fmtNum(Math.round(r.manH))} ÷ {scRound(r.perPerson,1)} = {scRound(r.need,1)}명 → <b>{r.needInt}명</b></div>
+      {r.attendAuto!=null&&<div style={{fontSize:11,color:"var(--muted)"}}>출근율 기록: 최근 8주 생산 요일 {r.attendDays}일 × {r.team.length}명 중 휴무 {r.attendOffs}건</div>}
+    </div>
+
+    {r.actManHWeek!=null&&<div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:14}}>
+      {card("최근 실제 생산에 쓴 시간",`주 ${fmtNum(Math.round(r.actManHWeek))}인시`,`완료 계획 ${r.recentCount}건 · 실제 시각 × 라인 인원`)}
+      {card("근무시간 밖 작업 (잔업)",`주 ${fmtNum(scRound(r.otManHWeek,1))}인시`,`${r.ws}시 전·${r.we}시 후에 한 작업`,r.otManHWeek>0?"#f59e0b":null)}
+    </div>}
+
+    <div style={{fontWeight:700,fontSize:14,margin:"6px 0"}}>🏭 라인별</div>
+    <div style={{overflowX:"auto",marginBottom:6}}><table className="aps-table" style={{minWidth:560}}>
+      <thead><tr><th>라인</th><th className="right" title="라인이 돌아갈 때 붙는 인원">투입 인원</th><th className="right">주 생산 시간</th><th className="right" title="주 생산 시간 ÷ (하루 작업 시간 × 근무일 × 가동률)">라인 가동</th><th className="right">필요 인시</th></tr></thead>
+      <tbody>{r.lineRows.map(l=><tr key={l.key}>
+        <td style={{fontWeight:600}}>{l.name}<div style={{fontSize:11,color:"var(--muted)"}}>품목 {l.items}개</div></td>
+        <td className="right"><input type="number" min="0" step="0.5" className="aps-input" style={{width:64,padding:"4px 6px",textAlign:"right"}}
+          value={opts.crew?.[l.key]??""} placeholder={String(l.crewDef)} onChange={e=>set("crew",{...(opts.crew||{}),[l.key]:e.target.value===""?undefined:Number(e.target.value)})}/> 명</td>
+        <td className="right">{scRound(l.lineH,1)}시간</td>
+        <td className="right" style={{fontWeight:700,color:l.load>1?"#ef4444":l.load>0.85?"#f59e0b":"var(--text)"}}>{Math.round(l.load*100)}%</td>
+        <td className="right">{fmtNum(Math.round(l.manH))}</td>
+      </tr>)}</tbody>
+    </table></div>
+    <div style={{fontSize:11,color:"var(--muted)",marginBottom:over.length?6:14}}>투입 인원 기본값 = 기간 안 완료 실적 때 그 라인 출근 인원의 중간값 (라인 담당 부서가 없으면 그날 출근 인원 ÷ 돌아간 라인 수). 실제와 다르면 고쳐주세요.</div>
+    {over.length>0&&<div style={{fontSize:12,color:"#ef4444",marginBottom:14}}>⚠ {over.map(l=>l.name).join(", ")} — 라인 가동이 100%를 넘습니다. 이 라인은 사람만 늘려서는 안 되고 근무 시간 연장·2교대·라인 추가가 필요합니다.</div>}
+
+    <div style={{fontWeight:700,fontSize:14,margin:"6px 0"}}>📦 품목별 필요 시간</div>
+    <div style={{overflowX:"auto"}}><table className="aps-table" style={{minWidth:640}}>
+      <thead><tr><th>품목</th><th>라인</th><th className="right">주 생산량</th><th className="right">시간당 생산량</th><th className="right">라인 시간</th><th className="right">필요 인시</th></tr></thead>
+      <tbody>{items.map(x=><tr key={x.code}>
+        <td><div className="aps-nm2" style={{fontWeight:600}} title={x.name}>{x.name}</div><div style={{fontSize:11,color:"var(--muted)"}}>{x.code}</div></td>
+        <td style={{fontSize:12}}>{r.lineRows.find(l=>String(l.key)===String(x.lineKey))?.name||"라인 미지정"}</td>
+        <td className="right">{fmtNum(Math.round(x.qty))} <span style={{fontSize:11,color:"var(--muted)"}}>{x.unit}</span></td>
+        <td className="right">{fmtNum(scRound(x.rate,1))}<div style={{fontSize:10,color:"var(--muted)"}}>{x.rateSrc}</div></td>
+        <td className="right">{scRound(x.lineH,1)}시간</td>
+        <td className="right"><b>{fmtNum(Math.round(x.manH))}</b> <span style={{fontSize:11,color:"var(--muted)"}}>{r.manH>0?Math.round(x.manH/r.manH*100):0}%</span></td>
+      </tr>)}</tbody>
+    </table></div>
+    {r.rows.length>15&&<button className="aps-btn aps-btn-secondary aps-btn-sm" style={{marginTop:6}} onClick={()=>setShowAllItems(v=>!v)}>{showAllItems?"접기":`전체 ${r.rows.length}개 보기`}</button>}
+    {r.skipped.length>0&&<details style={{marginTop:12,fontSize:12}}>
+      <summary style={{cursor:"pointer",color:"#f59e0b"}}>계산에서 빠진 상품 {r.skipped.length}개 · 주 {fmtNum(Math.round(r.skippedQty))}박스</summary>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>{r.skipped.sort((a,b)=>b.qty-a.qty).map(s=><span key={s.code} style={{padding:"3px 8px",border:"1px solid var(--div2)",borderRadius:12}} title={s.code}>{s.name} · 주 {fmtNum(Math.round(s.qty))} · <span style={{color:"var(--muted)"}}>{s.why}</span></span>)}</div>
+      <div style={{color:"var(--muted)",marginTop:6}}>📦 품목에 등록하고 시간당 생산량(또는 완료 실적)이 생기면 계산에 들어갑니다.</div>
+    </details>}
+
+    <div style={{marginTop:14,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+      <span style={{fontSize:12,color:"var(--muted)"}}>이미지 제목</span>
+      <input className="aps-input" style={{maxWidth:320}} value={title} maxLength={40} onChange={e=>setTitle(e.target.value)}/>
+    </div>
+    {capturing&&<div style={{position:"fixed",left:-99999,top:0,zIndex:-1,pointerEvents:"none"}}><div ref={exportRef}><ExportStaffCalcView r={r} title={title}/></div></div>}
+  </div>;
+}
+
 function StaffTab({adminHash}){
   const[staff,setStaff]=useState([]);
   const[offIds,setOffIds]=useState(new Set()); // 휴무자 staff_id Set
@@ -9222,12 +9574,13 @@ function StaffTab({adminHash}){
       <div className="aps-view-toggle">
         <button className={mode==="daily"?"on":""} onClick={()=>setMode("daily")}>📋 일일 가용</button>
         <button className={mode==="master"?"on":""} onClick={()=>setMode("master")}>👥 직원 마스터</button>
+        <button className={mode==="calc"?"on":""} onClick={()=>setMode("calc")}>📐 인원 산정</button>
       </div>
       <div style={{flex:1}}></div>
       {mode==="master"&&<button className="aps-btn aps-btn-primary" onClick={()=>{setEditing(null);setShowForm(true)}}>+ 직원 추가</button>}
     </div>
 
-    {mode==="daily"?
+    {mode==="calc"?<StaffCalcView adminHash={adminHash}/>:mode==="daily"?
       <>
         <div className="aps-staff-head">
           <input
