@@ -7834,10 +7834,17 @@ function useFrozenStock(items){
   const[err,setErr]=useState("");
   const[at,setAt]=useState(0);
   const load=useCallback(async(force)=>{
-    try{const r=await loadFrozenRaw(force);setRaw(r);setAt(_frozenStockAt);setErr("")}
-    catch(e){setErr(String(e?.message||e))}
+    try{const r=await loadFrozenRaw(force);setRaw(r);setAt(_frozenStockAt);setErr("");return r}
+    catch(e){setErr(String(e?.message||e));return null}
   },[]);
   useEffect(()=>{load(false)},[load]);
+  // 탭을 열어 둔 사이 orders.html에서 냉동재고가 바뀔 수 있음 → 화면으로 돌아오면 다시 읽음
+  useEffect(()=>{
+    const onVis=()=>{if(document.visibilityState==="visible")load(false)};
+    document.addEventListener("visibilitychange",onVis);
+    window.addEventListener("focus",onVis);
+    return()=>{document.removeEventListener("visibilitychange",onVis);window.removeEventListener("focus",onVis)};
+  },[load]);
   const fz=useMemo(()=>raw&&items&&items.length?buildFrozenByApsCode(raw,items):null,[raw,items]);
   return {fz,err,at,reload:()=>load(true)};
 }
@@ -7972,6 +7979,15 @@ function InventorySheetTab({adminHash}){
     if(!sheetRef.current)return;
     setBusy(true);setErr("");
     try{
+      // 쿠팡 제품은 냉동재고 값으로 저장해야 함 → 저장 직전에 냉동재고를 새로 읽고 화면에 반영될 때까지 기다림
+      const hasCoupang=template.some(t=>isCoupangName(t.name||productMap[t.code]?.name));
+      if(hasCoupang){
+        const fresh=await frozen.reload();
+        if(!fresh)throw new Error("냉동재고를 불러오지 못해 저장을 멈췄습니다 — 쿠팡 제품이 업로드 파일 값으로 저장될 수 있어요. ↻ 다시 불러오기 후 다시 저장하세요");
+        let tries=0;
+        while(!frozenReadyRef.current&&tries<40){await new Promise(r=>setTimeout(r,100));tries++}
+        if(!frozenReadyRef.current)throw new Error("품목 정보를 아직 불러오는 중입니다 — 잠시 뒤 다시 저장하세요");
+      }
       if(document.fonts&&document.fonts.ready)await document.fonts.ready;
       await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
       // 모바일에서도 PC와 같은 배치로 저장: 복제 화면을 1200px 폭으로 그려 모바일 CSS(좁은 열·줄바꿈)를 끔
@@ -8044,6 +8060,8 @@ function InventorySheetTab({adminHash}){
     const m={};for(const p of products)m[p.code]=p;return m;
   },[products]);
   const frozen=useFrozenStock(items);
+  const frozenReadyRef=useRef(false);
+  frozenReadyRef.current=!!frozen.fz&&frozen.at===_frozenStockAt; // 방금 읽은 값이 화면에 반영됐는지
   const rows=template.map(t=>{
     const p=productMap[t.code];
     const name=t.name||(p?p.name:"");
